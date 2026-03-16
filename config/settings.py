@@ -24,6 +24,14 @@ WATCHED_PAIRS = os.getenv(
     "XAU/USD,EUR/USD,GBP/USD,USD/JPY,EUR/GBP,USD/CHF,AUD/USD,USD/CAD,EUR/JPY,GBP/JPY"
 ).split(",")
 
+# Twelve Data API (gratuit: 8 req/min, 800/jour)
+# Inscription: https://twelvedata.com/register
+TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "")
+
+# Intervalles bougies pour l'analyse de patterns
+CANDLE_INTERVAL = os.getenv("CANDLE_INTERVAL", "5min")
+CANDLE_COUNT = int(os.getenv("CANDLE_COUNT", "50"))
+
 # Mataf URL
 MATAF_VOLATILITY_URL = "https://www.mataf.net/en/forex/tools/volatility"
 

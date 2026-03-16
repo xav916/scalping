@@ -106,6 +106,24 @@ async def get_events():
     return [e.model_dump(mode="json") for e in overview.economic_events]
 
 
+@app.get("/api/trade-setups")
+async def get_trade_setups():
+    """Récupère les setups de trade (entrée/SL/TP)."""
+    overview = get_latest_overview()
+    if overview is None:
+        return []
+    return [s.model_dump(mode="json") for s in overview.trade_setups]
+
+
+@app.get("/api/patterns")
+async def get_patterns():
+    """Récupère les patterns détectés."""
+    overview = get_latest_overview()
+    if overview is None:
+        return []
+    return [p.model_dump(mode="json") for p in overview.patterns]
+
+
 @app.post("/api/refresh")
 async def refresh_analysis():
     """Manually trigger a new analysis cycle."""

@@ -34,23 +34,43 @@ async def broadcast_signals(signals: list[ScalpingSignal]) -> None:
         return
 
     for signal in signals:
-        payload = {
-            "type": "signal",
-            "data": {
-                "pair": signal.pair,
-                "strength": signal.signal_strength.value,
-                "message": signal.message,
-                "volatility_ratio": signal.volatility.volatility_ratio,
-                "volatility_level": signal.volatility.level.value,
-                "trend_direction": signal.trend.direction.value,
-                "trend_strength": signal.trend.strength,
-                "nearby_events": [
-                    {"name": e.event_name, "impact": e.impact.value, "time": e.time}
-                    for e in signal.nearby_events
-                ],
-                "timestamp": signal.timestamp.isoformat(),
-            },
+        signal_data = {
+            "pair": signal.pair,
+            "strength": signal.signal_strength.value,
+            "message": signal.message,
+            "volatility_ratio": signal.volatility.volatility_ratio,
+            "volatility_level": signal.volatility.level.value,
+            "trend_direction": signal.trend.direction.value,
+            "trend_strength": signal.trend.strength,
+            "nearby_events": [
+                {"name": e.event_name, "impact": e.impact.value, "time": e.time}
+                for e in signal.nearby_events
+            ],
+            "timestamp": signal.timestamp.isoformat(),
         }
+
+        # Inclure le trade setup s'il existe
+        if signal.trade_setup:
+            setup = signal.trade_setup
+            signal_data["trade_setup"] = {
+                "pair": setup.pair,
+                "direction": setup.direction.value,
+                "entry_price": setup.entry_price,
+                "stop_loss": setup.stop_loss,
+                "take_profit_1": setup.take_profit_1,
+                "take_profit_2": setup.take_profit_2,
+                "risk_pips": setup.risk_pips,
+                "risk_reward_1": setup.risk_reward_1,
+                "risk_reward_2": setup.risk_reward_2,
+                "pattern": {
+                    "pattern": setup.pattern.pattern.value,
+                    "confidence": setup.pattern.confidence,
+                    "description": setup.pattern.description,
+                },
+                "message": setup.message,
+            }
+
+        payload = {"type": "signal", "data": signal_data}
 
         # Store in history
         _signal_history.append(payload["data"])

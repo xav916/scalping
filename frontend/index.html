@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="fr">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Scalping Radar - Decision Tool</title>
+    <title>Scalping Radar - Outil d'aide a la decision</title>
     <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
@@ -14,43 +14,66 @@
             <span id="trend-info" style="font-size:12px;color:var(--text-muted)"></span>
             <span id="last-update" class="last-update"></span>
             <div id="status-indicator" class="status-indicator"></div>
-            <span id="status-text" style="font-size:12px;color:var(--text-secondary)">Connecting...</span>
-            <button id="refresh-btn" class="btn">Refresh</button>
+            <span id="status-text" style="font-size:12px;color:var(--text-secondary)">Connexion...</span>
+            <button id="refresh-btn" class="btn">Actualiser</button>
         </div>
     </header>
 
     <!-- Dashboard -->
     <main class="dashboard">
+        <!-- Trade Setups (full width, priority) -->
+        <section class="card signals-section">
+            <div class="card-header">
+                <h2>Setups de Trade - Entree / Stop Loss / Take Profit</h2>
+            </div>
+            <div class="card-body" id="setups-list">
+                <div class="empty-state">
+                    <p><strong>Analyse en cours...</strong></p>
+                    <p>Les recommandations d'entree/sortie apparaitront ici.</p>
+                </div>
+            </div>
+        </section>
+
         <!-- Signals (full width) -->
         <section class="card signals-section">
             <div class="card-header">
-                <h2>Scalping Signals</h2>
+                <h2>Signaux de Scalping</h2>
             </div>
             <div class="card-body" id="signals-list">
                 <div class="empty-state">
-                    <p><strong>Initializing radar...</strong></p>
-                    <p>Scanning market for scalping opportunities.</p>
+                    <p><strong>Initialisation du radar...</strong></p>
+                    <p>Scan du marche en cours.</p>
                 </div>
+            </div>
+        </section>
+
+        <!-- Patterns detected -->
+        <section class="card">
+            <div class="card-header">
+                <h2>Patterns Detectes</h2>
+            </div>
+            <div class="card-body" id="patterns-body">
+                <div class="empty-state"><p>Recherche de patterns...</p></div>
             </div>
         </section>
 
         <!-- Volatility -->
         <section class="card">
             <div class="card-header">
-                <h2>Volatility Monitor</h2>
+                <h2>Moniteur de Volatilite</h2>
             </div>
             <div class="card-body" id="volatility-body">
-                <div class="empty-state"><p>Loading volatility data...</p></div>
+                <div class="empty-state"><p>Chargement des donnees de volatilite...</p></div>
             </div>
         </section>
 
-        <!-- Economic Events -->
-        <section class="card">
+        <!-- Economic Events (full width) -->
+        <section class="card signals-section">
             <div class="card-header">
-                <h2>Economic Calendar</h2>
+                <h2>Calendrier Economique</h2>
             </div>
             <div class="card-body" id="events-body">
-                <div class="empty-state"><p>Loading events...</p></div>
+                <div class="empty-state"><p>Chargement des evenements...</p></div>
             </div>
         </section>
     </main>

@@ -1,4 +1,4 @@
-"""Scheduler that periodically fetches data and runs analysis."""
+"""Scheduler qui récupère périodiquement les données et lance l'analyse."""
 
 import asyncio
 import logging
@@ -11,11 +11,18 @@ from backend.services.analysis_engine import analyze_trend, detect_signals
 from backend.services.forexfactory_service import fetch_economic_events
 from backend.services.mataf_service import fetch_volatility_data
 from backend.services.notification_service import broadcast_signals, broadcast_update
-from config.settings import MATAF_POLL_INTERVAL, FOREXFACTORY_POLL_INTERVAL, WATCHED_PAIRS
+from backend.services.pattern_detector import calculate_trade_setup, detect_patterns
+from backend.services.price_service import fetch_candles
+from config.settings import (
+    CANDLE_COUNT,
+    CANDLE_INTERVAL,
+    MATAF_POLL_INTERVAL,
+    WATCHED_PAIRS,
+)
 
 logger = logging.getLogger(__name__)
 
-# Shared state for the latest market overview
+# État partagé
 _latest_overview: MarketOverview | None = None
 _scheduler: AsyncIOScheduler | None = None
 
@@ -25,19 +32,32 @@ def get_latest_overview() -> MarketOverview | None:
 
 
 async def run_analysis_cycle() -> None:
-    """Execute a full analysis cycle: fetch data, analyze, notify."""
+    """Exécute un cycle complet : récupération, analyse, détection de patterns, notification."""
     global _latest_overview
 
-    logger.info("Starting analysis cycle...")
+    logger.info("Démarrage du cycle d'analyse...")
 
     try:
-        # Fetch data concurrently
-        volatility_data, economic_events = await asyncio.gather(
+        # Récupérer toutes les données en parallèle
+        fetch_tasks = [
             fetch_volatility_data(),
             fetch_economic_events(),
-        )
+        ]
+        # Ajouter la récupération des bougies pour chaque paire
+        for pair in WATCHED_PAIRS:
+            fetch_tasks.append(fetch_candles(pair, interval=CANDLE_INTERVAL, outputsize=CANDLE_COUNT))
 
-        # Analyze trends for each pair
+        results = await asyncio.gather(*fetch_tasks)
+
+        volatility_data = results[0]
+        economic_events = results[1]
+
+        # Regrouper les bougies par paire
+        all_candles = {}
+        for i, pair in enumerate(WATCHED_PAIRS):
+            all_candles[pair] = results[2 + i]
+
+        # Analyser les tendances pour chaque paire
         trends = [
             analyze_trend(pair, vol, economic_events)
             for pair in WATCHED_PAIRS
@@ -45,57 +65,86 @@ async def run_analysis_cycle() -> None:
             if vol.pair == pair
         ]
 
-        # Detect scalping signals
-        signals = detect_signals(volatility_data, economic_events, trends)
+        # Détecter les patterns de scalping sur chaque paire
+        all_patterns = []
+        all_trade_setups = []
+        all_candles_flat = []
 
-        # Build overview
+        for pair in WATCHED_PAIRS:
+            candles = all_candles.get(pair, [])
+            all_candles_flat.extend(candles)
+
+            if candles:
+                patterns = detect_patterns(candles, pair)
+                all_patterns.extend(patterns)
+
+                # Calculer les setups de trade pour chaque pattern
+                for pattern in patterns:
+                    setup = calculate_trade_setup(pair, pattern, candles)
+                    if setup:
+                        all_trade_setups.append(setup)
+
+        # Détecter les signaux de scalping (volatilité + tendance)
+        signals = detect_signals(
+            volatility_data, economic_events, trends,
+            trade_setups=all_trade_setups,
+        )
+
         now = datetime.now(timezone.utc)
         _latest_overview = MarketOverview(
             volatility_data=volatility_data,
             economic_events=economic_events,
             trends=trends,
             signals=signals,
+            candles=all_candles_flat[-100:],  # Garder les 100 dernières bougies
+            patterns=all_patterns,
+            trade_setups=all_trade_setups,
             last_update=now,
         )
 
-        # Broadcast to connected clients
+        # Notifier les clients connectés
         if signals:
-            logger.info(f"Detected {len(signals)} scalping signal(s)")
+            logger.info(f"{len(signals)} signal(s) de scalping détecté(s)")
             await broadcast_signals(signals)
 
-        # Broadcast full market update
+        # Envoyer la mise à jour complète
         await broadcast_update({
             "volatility": [v.model_dump(mode="json") for v in volatility_data],
             "events": [e.model_dump(mode="json") for e in economic_events],
             "trends": [t.model_dump(mode="json") for t in trends],
+            "patterns": [p.model_dump(mode="json") for p in all_patterns],
+            "trade_setups": [s.model_dump(mode="json") for s in all_trade_setups],
             "signals_count": len(signals),
+            "setups_count": len(all_trade_setups),
             "last_update": now.isoformat(),
         })
 
-        logger.info(f"Analysis cycle complete. {len(signals)} signal(s) found.")
+        logger.info(
+            f"Cycle terminé: {len(signals)} signal(s), "
+            f"{len(all_patterns)} pattern(s), "
+            f"{len(all_trade_setups)} setup(s) de trade"
+        )
 
     except Exception as e:
-        logger.error(f"Analysis cycle failed: {e}", exc_info=True)
+        logger.error(f"Erreur cycle d'analyse: {e}", exc_info=True)
 
 
 def start_scheduler() -> AsyncIOScheduler:
-    """Start the background scheduler for periodic analysis."""
+    """Démarre le scheduler périodique."""
     global _scheduler
 
     _scheduler = AsyncIOScheduler()
-
-    # Run analysis at the shorter interval (Mataf)
     _scheduler.add_job(
         run_analysis_cycle,
         "interval",
         seconds=MATAF_POLL_INTERVAL,
         id="analysis_cycle",
-        name="Market Analysis Cycle",
+        name="Cycle d'analyse marché",
         replace_existing=True,
     )
 
     _scheduler.start()
-    logger.info(f"Scheduler started. Analysis every {MATAF_POLL_INTERVAL}s")
+    logger.info(f"Scheduler démarré. Analyse toutes les {MATAF_POLL_INTERVAL}s")
     return _scheduler
 
 

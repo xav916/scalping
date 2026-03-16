@@ -364,6 +364,216 @@ body {
     color: var(--text-muted);
 }
 
+/* ─── Trade Setups ────────────────────────────────────────────────── */
+
+.trade-setup {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 12px;
+    border-left: 4px solid var(--accent-blue);
+    animation: slideIn 0.3s ease-out;
+}
+
+.trade-setup.buy {
+    border-left-color: var(--accent-green);
+}
+
+.trade-setup.sell {
+    border-left-color: var(--accent-red);
+}
+
+.setup-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+}
+
+.setup-direction {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 16px;
+    font-weight: 700;
+}
+
+.setup-direction.buy { color: var(--accent-green); }
+.setup-direction.sell { color: var(--accent-red); }
+
+.dir-icon {
+    font-size: 20px;
+}
+
+.setup-pair {
+    color: var(--text-primary);
+    font-size: 18px;
+}
+
+.setup-confidence {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.confidence-bar {
+    width: 60px;
+    height: 6px;
+    background: var(--border-color);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.confidence-fill {
+    height: 100%;
+    background: var(--accent-blue);
+    border-radius: 3px;
+    transition: width 0.3s;
+}
+
+.confidence-text {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-weight: 600;
+}
+
+.setup-levels {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.level-box {
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 10px;
+    text-align: center;
+}
+
+.level-box.entry {
+    border-color: var(--accent-blue);
+}
+
+.level-box.sl {
+    border-color: var(--accent-red);
+}
+
+.level-box.tp1 {
+    border-color: var(--accent-green);
+}
+
+.level-box.tp2 {
+    border-color: var(--accent-purple);
+}
+
+.level-label {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+}
+
+.level-value {
+    font-size: 18px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-primary);
+}
+
+.level-box.entry .level-value { color: var(--accent-blue); }
+.level-box.sl .level-value { color: var(--accent-red); }
+.level-box.tp1 .level-value { color: var(--accent-green); }
+.level-box.tp2 .level-value { color: var(--accent-purple); }
+
+.level-pips {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+
+.setup-pattern {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+
+.pattern-tag {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    background: rgba(88, 166, 255, 0.12);
+    color: var(--accent-blue);
+    white-space: nowrap;
+}
+
+.pattern-desc {
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.setup-time {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+/* Signal with mini setup */
+.signal-setup-mini {
+    background: rgba(88, 166, 255, 0.08);
+    border: 1px solid rgba(88, 166, 255, 0.2);
+    border-radius: 4px;
+    padding: 6px 10px;
+    margin-top: 6px;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+    color: var(--accent-blue);
+}
+
+/* ─── Patterns list ───────────────────────────────────────────────── */
+
+.pattern-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 0;
+    border-bottom: 1px solid rgba(48, 54, 61, 0.5);
+    font-size: 13px;
+}
+
+.pattern-item:last-child {
+    border-bottom: none;
+}
+
+.pattern-item.bullish .pattern-tag {
+    background: rgba(63, 185, 80, 0.12);
+    color: var(--accent-green);
+}
+
+.pattern-item.bearish .pattern-tag {
+    background: rgba(248, 81, 73, 0.12);
+    color: var(--accent-red);
+}
+
+.pattern-conf {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    min-width: 35px;
+}
+
+.pattern-desc-text {
+    font-size: 12px;
+    color: var(--text-muted);
+    flex: 1;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
     .dashboard {

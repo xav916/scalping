@@ -13,6 +13,7 @@ from backend.models.schemas import (
     MarketTrend,
     ScalpingSignal,
     SignalStrength,
+    TradeSetup,
     TrendDirection,
     VolatilityData,
     VolatilityLevel,
@@ -79,54 +80,79 @@ def detect_signals(
     volatility_data: list[VolatilityData],
     events: list[EconomicEvent],
     trends: list[MarketTrend],
+    trade_setups: list[TradeSetup] | None = None,
 ) -> list[ScalpingSignal]:
-    """Detect scalping opportunities by combining all data sources.
+    """Détecte les opportunités de scalping en combinant toutes les sources.
 
-    A signal is generated when:
-    1. Volatility is medium or high (market is moving)
-    2. Trend strength meets minimum threshold
-    3. No imminent high-impact event that could cause unpredictable moves
+    Un signal est généré quand :
+    1. Volatilité moyenne ou haute (le marché bouge)
+    2. Force de tendance suffisante
+    3. Pattern détecté avec un trade setup valide (si disponible)
     """
     signals: list[ScalpingSignal] = []
     now = datetime.now(timezone.utc)
 
+    trade_setups = trade_setups or []
+    setup_map: dict[str, list[TradeSetup]] = {}
+    for setup in trade_setups:
+        setup_map.setdefault(setup.pair, []).append(setup)
+
     trend_map = {t.pair: t for t in trends}
 
     for vol in volatility_data:
-        if vol.level == VolatilityLevel.LOW:
-            continue
-
         trend = trend_map.get(vol.pair)
         if not trend:
             continue
 
-        if trend.strength < TREND_STRENGTH_MIN:
-            continue
-
-        # Check for nearby high-impact events (risky for scalping)
         pair_currencies = _extract_currencies(vol.pair)
         nearby = [
             e for e in events
             if e.currency in pair_currencies and e.impact == EventImpact.HIGH
         ]
 
-        # Determine signal strength
-        signal_strength = _calculate_signal_strength(vol, trend, nearby)
+        pair_setups = setup_map.get(vol.pair, [])
 
-        # Build notification message
-        message = _build_signal_message(vol, trend, signal_strength, nearby)
+        # Si on a des trade setups avec patterns, créer un signal pour chaque
+        if pair_setups:
+            # Prendre le meilleur setup (confiance la plus haute)
+            best_setup = max(pair_setups, key=lambda s: s.pattern.confidence)
 
-        signals.append(ScalpingSignal(
-            pair=vol.pair,
-            signal_strength=signal_strength,
-            volatility=vol,
-            trend=trend,
-            nearby_events=nearby,
-            message=message,
-            timestamp=now,
-        ))
+            signal_strength = _calculate_signal_strength(vol, trend, nearby)
 
-    # Sort by signal strength (strong first)
+            # Booster le signal si le pattern a une bonne confiance
+            if best_setup.pattern.confidence >= 0.7 and signal_strength == SignalStrength.MODERATE:
+                signal_strength = SignalStrength.STRONG
+            elif best_setup.pattern.confidence >= 0.6 and signal_strength == SignalStrength.WEAK:
+                signal_strength = SignalStrength.MODERATE
+
+            message = _build_signal_message(vol, trend, signal_strength, nearby)
+
+            signals.append(ScalpingSignal(
+                pair=vol.pair,
+                signal_strength=signal_strength,
+                volatility=vol,
+                trend=trend,
+                nearby_events=nearby,
+                trade_setup=best_setup,
+                message=message,
+                timestamp=now,
+            ))
+        elif vol.level != VolatilityLevel.LOW and trend.strength >= TREND_STRENGTH_MIN:
+            # Pas de pattern, mais volatilité + tendance suffisantes
+            signal_strength = _calculate_signal_strength(vol, trend, nearby)
+            message = _build_signal_message(vol, trend, signal_strength, nearby)
+
+            signals.append(ScalpingSignal(
+                pair=vol.pair,
+                signal_strength=signal_strength,
+                volatility=vol,
+                trend=trend,
+                nearby_events=nearby,
+                message=message,
+                timestamp=now,
+            ))
+
+    # Trier par force de signal (fort en premier)
     strength_order = {SignalStrength.STRONG: 0, SignalStrength.MODERATE: 1, SignalStrength.WEAK: 2}
     signals.sort(key=lambda s: strength_order.get(s.signal_strength, 3))
 
