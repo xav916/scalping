@@ -21,7 +21,7 @@ TREND_STRENGTH_MIN = float(os.getenv("TREND_STRENGTH_MIN", "0.6"))  # 0-1 scale
 # Currency pairs to monitor
 WATCHED_PAIRS = os.getenv(
     "WATCHED_PAIRS",
-    "EUR/USD,GBP/USD,USD/JPY,EUR/GBP,USD/CHF,AUD/USD,USD/CAD,EUR/JPY,GBP/JPY"
+    "XAU/USD,EUR/USD,GBP/USD,USD/JPY,EUR/GBP,USD/CHF,AUD/USD,USD/CAD,EUR/JPY,GBP/JPY"
 ).split(",")
 
 # Mataf URL

@@ -174,21 +174,31 @@ def _build_signal_message(
 ) -> str:
     """Build a human-readable notification message."""
     strength_label = {
-        SignalStrength.STRONG: "STRONG",
-        SignalStrength.MODERATE: "MODERATE",
-        SignalStrength.WEAK: "WEAK",
+        SignalStrength.STRONG: "FORT",
+        SignalStrength.MODERATE: "MODERE",
+        SignalStrength.WEAK: "FAIBLE",
     }
 
-    direction = trend.direction.value.upper()
+    direction_label = {
+        "bullish": "HAUSSIER",
+        "bearish": "BAISSIER",
+        "neutral": "NEUTRE",
+    }
+
+    vol_label = {"high": "haute", "medium": "moyenne", "low": "basse"}
+
+    direction = direction_label.get(trend.direction.value, trend.direction.value.upper())
+    vol_level = vol_label.get(vol.level.value, vol.level.value)
+
     msg = (
-        f"[{strength_label[strength]}] Scalping opportunity on {vol.pair} - "
-        f"Volatility: {vol.level.value} ({vol.volatility_ratio:.1f}x avg) | "
-        f"Trend: {direction} (strength: {trend.strength:.0%})"
+        f"[{strength_label[strength]}] Opportunite scalping sur {vol.pair} - "
+        f"Volatilite: {vol_level} ({vol.volatility_ratio:.1f}x moy) | "
+        f"Tendance: {direction} (force: {trend.strength:.0%})"
     )
 
     if nearby_events:
         event_names = ", ".join(e.event_name for e in nearby_events[:2])
-        msg += f" | Watch: {event_names}"
+        msg += f" | Attention: {event_names}"
 
     return msg
 
@@ -212,11 +222,24 @@ def _build_trend_description(
 
 
 def _extract_currencies(pair: str) -> set[str]:
-    """Extract the two currencies from a pair like EUR/USD."""
+    """Extract the two currencies from a pair like EUR/USD.
+
+    For commodities like XAU/USD (gold), maps XAU to USD since
+    gold is primarily affected by USD-related economic events.
+    """
     parts = pair.replace("/", "").strip()
+    currencies = set()
     if len(parts) >= 6:
-        return {parts[:3], parts[3:6]}
-    return set()
+        currencies = {parts[:3], parts[3:6]}
+
+    # Commodities are affected by their quote currency's events
+    # XAU (gold), XAG (silver) → impacted by USD events
+    COMMODITY_CURRENCY_MAP = {"XAU": "USD", "XAG": "USD", "XPT": "USD"}
+    for commodity, related in COMMODITY_CURRENCY_MAP.items():
+        if commodity in currencies:
+            currencies.add(related)
+
+    return currencies
 
 
 def _parse_number(text: str) -> float:

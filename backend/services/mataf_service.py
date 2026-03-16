@@ -40,6 +40,7 @@ HEADERS = {
 # Typical average volatility ranges (1H in pips) for major pairs
 # Used as baseline for simulation when scraping fails
 TYPICAL_VOLATILITY = {
+    "XAU/USD": 250.0,  # Or (Gold) - très volatile, ~250 pips/heure en moyenne
     "EUR/USD": 8.0,
     "GBP/USD": 12.0,
     "USD/JPY": 10.0,
