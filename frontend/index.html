@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scalping Radar - Decision Tool</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <h1>Scalping Radar</h1>
+        <div class="header-status">
+            <span id="trend-info" style="font-size:12px;color:var(--text-muted)"></span>
+            <span id="last-update" class="last-update"></span>
+            <div id="status-indicator" class="status-indicator"></div>
+            <span id="status-text" style="font-size:12px;color:var(--text-secondary)">Connecting...</span>
+            <button id="refresh-btn" class="btn">Refresh</button>
+        </div>
+    </header>
+
+    <!-- Dashboard -->
+    <main class="dashboard">
+        <!-- Signals (full width) -->
+        <section class="card signals-section">
+            <div class="card-header">
+                <h2>Scalping Signals</h2>
+            </div>
+            <div class="card-body" id="signals-list">
+                <div class="empty-state">
+                    <p><strong>Initializing radar...</strong></p>
+                    <p>Scanning market for scalping opportunities.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Volatility -->
+        <section class="card">
+            <div class="card-header">
+                <h2>Volatility Monitor</h2>
+            </div>
+            <div class="card-body" id="volatility-body">
+                <div class="empty-state"><p>Loading volatility data...</p></div>
+            </div>
+        </section>
+
+        <!-- Economic Events -->
+        <section class="card">
+            <div class="card-header">
+                <h2>Economic Calendar</h2>
+            </div>
+            <div class="card-body" id="events-body">
+                <div class="empty-state"><p>Loading events...</p></div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Toast notifications -->
+    <div id="toast-container" class="toast-container"></div>
+
+    <script src="/js/app.js"></script>
+</body>
+</html>
