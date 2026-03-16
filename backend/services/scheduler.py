@@ -52,10 +52,13 @@ async def run_analysis_cycle() -> None:
         volatility_data = results[0]
         economic_events = results[1]
 
-        # Regrouper les bougies par paire
+        # Regrouper les bougies par paire (fetch_candles retourne (candles, is_simulated))
         all_candles = {}
+        simulated_pairs = {}
         for i, pair in enumerate(WATCHED_PAIRS):
-            all_candles[pair] = results[2 + i]
+            candles, is_simulated = results[2 + i]
+            all_candles[pair] = candles
+            simulated_pairs[pair] = is_simulated
 
         # Analyser les tendances pour chaque paire
         trends = [
@@ -80,7 +83,7 @@ async def run_analysis_cycle() -> None:
 
                 # Calculer les setups de trade pour chaque pattern
                 for pattern in patterns:
-                    setup = calculate_trade_setup(pair, pattern, candles)
+                    setup = calculate_trade_setup(pair, pattern, candles, is_simulated=simulated_pairs.get(pair, False))
                     if setup:
                         all_trade_setups.append(setup)
 

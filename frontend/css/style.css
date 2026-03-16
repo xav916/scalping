@@ -411,6 +411,28 @@ body {
     font-size: 18px;
 }
 
+.data-badge {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 6px;
+    border-radius: 3px;
+    letter-spacing: 0.5px;
+    margin-left: 8px;
+    vertical-align: middle;
+}
+
+.data-badge.live {
+    background: rgba(0, 200, 100, 0.2);
+    color: #00c864;
+    border: 1px solid rgba(0, 200, 100, 0.4);
+}
+
+.data-badge.simulated {
+    background: rgba(255, 170, 0, 0.2);
+    color: #ffaa00;
+    border: 1px solid rgba(255, 170, 0, 0.4);
+}
+
 .setup-confidence {
     display: flex;
     align-items: center;

@@ -53,6 +53,7 @@ def calculate_trade_setup(
     pair: str,
     pattern: PatternDetection,
     candles: list[Candle],
+    is_simulated: bool = False,
 ) -> TradeSetup | None:
     """Calcule un setup de trade complet à partir d'un pattern détecté."""
     if len(candles) < 5:
@@ -125,6 +126,7 @@ def calculate_trade_setup(
         risk_reward_2=round(reward_2 / risk, 2) if risk > 0 else 0,
         message=message,
         timestamp=now,
+        is_simulated=is_simulated,
     )
 
 

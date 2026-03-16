@@ -147,6 +147,9 @@ function tradeSetupHTML(s) {
     const confPct = (confidence * 100).toFixed(0);
 
     const time = s.timestamp ? new Date(s.timestamp).toLocaleTimeString() : '';
+    const simBadge = s.is_simulated
+        ? '<span class="data-badge simulated">SIMULE</span>'
+        : '<span class="data-badge live">LIVE</span>';
 
     return `
         <div class="trade-setup ${dirClass}">
@@ -155,6 +158,7 @@ function tradeSetupHTML(s) {
                     <span class="dir-icon">${dirIcon}</span>
                     <span class="dir-label">${dirLabel}</span>
                     <span class="setup-pair">${s.pair}</span>
+                    ${simBadge}
                 </div>
                 <div class="setup-confidence">
                     <span class="confidence-bar">

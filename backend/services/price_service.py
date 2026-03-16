@@ -39,7 +39,7 @@ async def fetch_candles(
     pair: str,
     interval: str = "5min",
     outputsize: int = 50,
-) -> list[Candle]:
+) -> tuple[list[Candle], bool]:
     """Récupère les bougies OHLC pour une paire donnée.
 
     Args:
@@ -48,16 +48,16 @@ async def fetch_candles(
         outputsize: Nombre de bougies à récupérer
 
     Returns:
-        Liste de Candle triées du plus ancien au plus récent
+        Tuple (liste de Candle triées du plus ancien au plus récent, is_simulated)
     """
     # Essayer Twelve Data en premier
     candles = await _fetch_twelvedata(pair, interval, outputsize)
     if candles:
-        return candles
+        return candles, False
 
     # Fallback : données simulées
     logger.info(f"API indisponible pour {pair}, utilisation de données simulées")
-    return _generate_simulated_candles(pair, outputsize)
+    return _generate_simulated_candles(pair, outputsize), True
 
 
 async def fetch_current_price(pair: str) -> float | None:

@@ -108,6 +108,7 @@ class TradeSetup(BaseModel):
     risk_reward_2: float  # Ratio risque/récompense TP2
     message: str
     timestamp: datetime
+    is_simulated: bool = False  # True si données simulées (pas de clé API ou rate limit)
 
 
 class ScalpingSignal(BaseModel):
