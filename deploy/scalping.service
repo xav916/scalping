@@ -1,0 +1,15 @@
+[Unit]
+Description=Scalping Radar Decision Tool
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/scalping
+EnvironmentFile=/home/ubuntu/scalping/.env
+ExecStart=/home/ubuntu/scalping/venv/bin/uvicorn backend.app:app --host 127.0.0.1 --port 8000 --log-level info
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
