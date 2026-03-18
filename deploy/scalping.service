@@ -1,0 +1,13 @@
+Requires=docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/scalping
+ExecStartPre=-/usr/bin/docker rm -f scalping-radar
+ExecStart=/usr/bin/docker run --name scalping-radar --env-file /opt/scalping/.env -p 127.0.0.1:8000:8000 scalping-radar:latest
+ExecStop=/usr/bin/docker stop scalping-radar
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
