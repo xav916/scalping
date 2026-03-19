@@ -213,6 +213,10 @@ function _patternLabel(pattern) {
         'engulfing_bearish': 'Englobante Baissiere',
         'pin_bar_up': 'Pin Bar Haussiere',
         'pin_bar_down': 'Pin Bar Baissiere',
+        'sibi': 'SIBI (FVG Baissier)',
+        'bisi': 'BISI (FVG Haussier)',
+        'sibi_discussion': 'Discussion SIBI',
+        'bisi_discussion': 'Discussion BISI',
     };
     return labels[pattern] || pattern || '';
 }
@@ -228,7 +232,7 @@ function renderPatterns(patterns) {
 
     container.innerHTML = patterns.map(p => {
         const confPct = (p.confidence * 100).toFixed(0);
-        const isBull = p.pattern.includes('up') || p.pattern.includes('bullish');
+        const isBull = p.pattern.includes('up') || p.pattern.includes('bullish') || p.pattern === 'bisi' || p.pattern === 'bisi_discussion';
         const colorClass = isBull ? 'bullish' : 'bearish';
 
         return `

@@ -70,6 +70,10 @@ class PatternType(str, Enum):
     ENGULFING_BEARISH = "engulfing_bearish"  # Englobante baissière
     PIN_BAR_UP = "pin_bar_up"            # Pin bar haussière
     PIN_BAR_DOWN = "pin_bar_down"        # Pin bar baissière
+    SIBI = "sibi"                        # Sell-side Imbalance, Buy-side Inefficiency (FVG baissier)
+    BISI = "bisi"                        # Buy-side Imbalance, Sell-side Inefficiency (FVG haussier)
+    SIBI_DISCUSSION = "sibi_discussion"  # Prix revient tester la zone SIBI
+    BISI_DISCUSSION = "bisi_discussion"  # Prix revient tester la zone BISI
 
 
 class TradeDirection(str, Enum):

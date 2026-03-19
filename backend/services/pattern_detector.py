@@ -7,6 +7,8 @@ Analyse les bougies OHLC pour identifier les patterns exploitables :
 - Mean reversion (retour à la moyenne)
 - Engulfing (bougie englobante)
 - Pin bar (mèche de rejet)
+- SIBI / BISI (Fair Value Gap ICT - déséquilibre acheteur/vendeur)
+- Discussion SIBI/BISI (prix revient tester la zone FVG)
 
 Pour chaque pattern détecté, calcule un setup de trade
 avec entrée, stop loss et take profit.
@@ -43,6 +45,7 @@ def detect_patterns(candles: list[Candle], pair: str = "XAU/USD") -> list[Patter
     patterns.extend(_detect_mean_reversion(candles, pair))
     patterns.extend(_detect_engulfing(candles, pair))
     patterns.extend(_detect_pin_bar(candles, pair))
+    patterns.extend(_detect_fvg(candles, pair))
 
     # Trier par confiance décroissante
     patterns.sort(key=lambda p: p.confidence, reverse=True)
@@ -71,6 +74,9 @@ def calculate_trade_setup(
         PatternType.MEAN_REVERSION_UP,
         PatternType.ENGULFING_BULLISH,
         PatternType.PIN_BAR_UP,
+        PatternType.BISI,
+        PatternType.BISI_DISCUSSION,
+        PatternType.SIBI_DISCUSSION,  # Discussion SIBI = prix reteste puis rebondit → achat
     )
 
     direction = TradeDirection.BUY if is_buy else TradeDirection.SELL
@@ -449,6 +455,142 @@ def _detect_pin_bar(candles: list[Candle], pair: str) -> list[PatternDetection]:
     return patterns
 
 
+def _detect_fvg(candles: list[Candle], pair: str) -> list[PatternDetection]:
+    """Détecte les Fair Value Gaps (SIBI/BISI) et leur discussion (retest).
+
+    SIBI (Sell-side Imbalance, Buy-side Inefficiency) = FVG baissier :
+        La bougie 1 a un low supérieur au high de la bougie 3 dans une
+        séquence baissière de 3 bougies. Zone de déséquilibre vendeur.
+
+    BISI (Buy-side Imbalance, Sell-side Inefficiency) = FVG haussier :
+        La bougie 1 a un high inférieur au low de la bougie 3 dans une
+        séquence haussière de 3 bougies. Zone de déséquilibre acheteur.
+
+    Discussion = le prix revient tester la zone FVG sans la casser.
+    C'est le signal le plus fiable (entrée sur retest).
+    """
+    patterns = []
+    now = datetime.now(timezone.utc)
+
+    if len(candles) < 10:
+        return patterns
+
+    atr = _calculate_atr(candles, period=14)
+    min_gap = atr * 0.3  # Gap minimum significatif
+    last = candles[-1]
+
+    # Chercher les FVG dans les 20 dernières bougies
+    lookback = min(len(candles) - 2, 20)
+
+    for i in range(-lookback, -2):
+        c1 = candles[i]      # Bougie 1
+        c2 = candles[i + 1]  # Bougie 2 (impulsion)
+        c3 = candles[i + 2]  # Bougie 3
+
+        # SIBI (FVG baissier) : low de c1 > high de c3
+        sibi_gap = c1.low - c3.high
+        if sibi_gap > min_gap:
+            fvg_top = c1.low
+            fvg_bottom = c3.high
+            fvg_mid = (fvg_top + fvg_bottom) / 2
+
+            # Vérifier si la bougie actuelle "discute" la zone SIBI
+            # = le prix revient dans la zone FVG
+            if last.high >= fvg_bottom and last.low <= fvg_top:
+                # Discussion en cours : le prix est dans la zone SIBI
+                if last.close < fvg_mid and last.close < last.open:
+                    # Rejet baissier depuis la zone → signal de vente
+                    confidence = min(0.85, 0.65 + sibi_gap / atr * 0.1)
+                    patterns.append(PatternDetection(
+                        pattern=PatternType.SIBI_DISCUSSION,
+                        confidence=round(confidence, 2),
+                        description=(
+                            f"Discussion SIBI: prix reteste la zone FVG "
+                            f"[{fvg_bottom:.2f} - {fvg_top:.2f}] et rejette. "
+                            f"Signal de vente sur retest."
+                        ),
+                        detected_at=now,
+                    ))
+                elif last.close > fvg_mid and last.close > last.open:
+                    # Le prix traverse la zone → invalidation potentielle
+                    # mais peut être un signal d'achat si le FVG est comblé
+                    confidence = min(0.70, 0.50 + sibi_gap / atr * 0.1)
+                    patterns.append(PatternDetection(
+                        pattern=PatternType.SIBI_DISCUSSION,
+                        confidence=round(confidence, 2),
+                        description=(
+                            f"Discussion SIBI: prix comble la zone FVG "
+                            f"[{fvg_bottom:.2f} - {fvg_top:.2f}]. "
+                            f"Possible retournement haussier."
+                        ),
+                        detected_at=now,
+                    ))
+            elif i >= -5:
+                # FVG récent pas encore retesté → signal SIBI pur
+                confidence = min(0.75, 0.55 + sibi_gap / atr * 0.1)
+                patterns.append(PatternDetection(
+                    pattern=PatternType.SIBI,
+                    confidence=round(confidence, 2),
+                    description=(
+                        f"SIBI detecte: FVG baissier "
+                        f"[{fvg_bottom:.2f} - {fvg_top:.2f}] "
+                        f"(gap: {sibi_gap:.2f}, {sibi_gap/atr:.1f}x ATR). "
+                        f"Zone de vente potentielle si le prix y revient."
+                    ),
+                    detected_at=now,
+                ))
+
+        # BISI (FVG haussier) : high de c1 < low de c3
+        bisi_gap = c3.low - c1.high
+        if bisi_gap > min_gap:
+            fvg_bottom = c1.high
+            fvg_top = c3.low
+            fvg_mid = (fvg_top + fvg_bottom) / 2
+
+            # Vérifier si la bougie actuelle "discute" la zone BISI
+            if last.high >= fvg_bottom and last.low <= fvg_top:
+                if last.close > fvg_mid and last.close > last.open:
+                    # Rebond haussier depuis la zone → signal d'achat
+                    confidence = min(0.85, 0.65 + bisi_gap / atr * 0.1)
+                    patterns.append(PatternDetection(
+                        pattern=PatternType.BISI_DISCUSSION,
+                        confidence=round(confidence, 2),
+                        description=(
+                            f"Discussion BISI: prix reteste la zone FVG "
+                            f"[{fvg_bottom:.2f} - {fvg_top:.2f}] et rebondit. "
+                            f"Signal d'achat sur retest."
+                        ),
+                        detected_at=now,
+                    ))
+                elif last.close < fvg_mid and last.close < last.open:
+                    confidence = min(0.70, 0.50 + bisi_gap / atr * 0.1)
+                    patterns.append(PatternDetection(
+                        pattern=PatternType.BISI_DISCUSSION,
+                        confidence=round(confidence, 2),
+                        description=(
+                            f"Discussion BISI: prix comble la zone FVG "
+                            f"[{fvg_bottom:.2f} - {fvg_top:.2f}]. "
+                            f"Possible retournement baissier."
+                        ),
+                        detected_at=now,
+                    ))
+            elif i >= -5:
+                confidence = min(0.75, 0.55 + bisi_gap / atr * 0.1)
+                patterns.append(PatternDetection(
+                    pattern=PatternType.BISI,
+                    confidence=round(confidence, 2),
+                    description=(
+                        f"BISI detecte: FVG haussier "
+                        f"[{fvg_bottom:.2f} - {fvg_top:.2f}] "
+                        f"(gap: {bisi_gap:.2f}, {bisi_gap/atr:.1f}x ATR). "
+                        f"Zone d'achat potentielle si le prix y revient."
+                    ),
+                    detected_at=now,
+                ))
+
+    return patterns
+
+
 # ─── Utilitaires ──────────────────────────────────────────────────────
 
 
@@ -511,5 +653,9 @@ def _pattern_french_name(pattern: PatternType) -> str:
         PatternType.ENGULFING_BEARISH: "Englobante baissiere",
         PatternType.PIN_BAR_UP: "Pin bar haussiere",
         PatternType.PIN_BAR_DOWN: "Pin bar baissiere",
+        PatternType.SIBI: "SIBI (FVG baissier)",
+        PatternType.BISI: "BISI (FVG haussier)",
+        PatternType.SIBI_DISCUSSION: "Discussion SIBI",
+        PatternType.BISI_DISCUSSION: "Discussion BISI",
     }
     return names.get(pattern, pattern.value)
