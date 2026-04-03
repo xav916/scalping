@@ -10,8 +10,22 @@ HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8000"))
 
 # Authentification (laisser vide = pas d'auth)
+# Format multi-utilisateurs : "user1:pass1,user2:pass2"
 AUTH_USERNAME = os.getenv("AUTH_USERNAME", "")
 AUTH_PASSWORD = os.getenv("AUTH_PASSWORD", "")
+AUTH_USERS_RAW = os.getenv("AUTH_USERS", "")
+
+# Construire le dict {username: password}
+AUTH_USERS: dict[str, str] = {}
+if AUTH_USERS_RAW:
+    for entry in AUTH_USERS_RAW.split(","):
+        entry = entry.strip()
+        if ":" in entry:
+            u, p = entry.split(":", 1)
+            AUTH_USERS[u.strip()] = p.strip()
+# Fallback : ancien format simple AUTH_USERNAME/AUTH_PASSWORD
+if AUTH_USERNAME and AUTH_PASSWORD and AUTH_USERNAME not in AUTH_USERS:
+    AUTH_USERS[AUTH_USERNAME] = AUTH_PASSWORD
 
 # Scraping intervals (seconds)
 MATAF_POLL_INTERVAL = int(os.getenv("MATAF_POLL_INTERVAL", "300"))  # 5 min

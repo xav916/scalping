@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 
-from config.settings import AUTH_USERNAME, AUTH_PASSWORD
+from config.settings import AUTH_USERS
 
 from backend.services.notification_service import (
     get_signal_history,
@@ -60,12 +60,11 @@ security = HTTPBasic()
 
 
 def verify_credentials(credentials: HTTPBasicCredentials = Depends(security)):
-    """Vérifie le login/mot de passe."""
-    if not AUTH_USERNAME or not AUTH_PASSWORD:
+    """Vérifie le login/mot de passe parmi les utilisateurs configurés."""
+    if not AUTH_USERS:
         return  # Pas d'auth configurée = accès libre
-    correct_user = secrets.compare_digest(credentials.username, AUTH_USERNAME)
-    correct_pass = secrets.compare_digest(credentials.password, AUTH_PASSWORD)
-    if not (correct_user and correct_pass):
+    expected_password = AUTH_USERS.get(credentials.username)
+    if expected_password is None or not secrets.compare_digest(credentials.password, expected_password):
         raise HTTPException(
             status_code=401,
             detail="Identifiants incorrects",
