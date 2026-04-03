@@ -127,6 +127,10 @@ class TradeSetup(BaseModel):
     risk_amount: float = 0.0  # Montant risqué (USD)
     estimated_gain_1: float = 0.0  # Gain estimé TP1 (USD)
     estimated_gain_2: float = 0.0  # Gain estimé TP2 (USD)
+    # Timestamps d'entrée et sortie
+    entry_time: datetime | None = None  # Quand le setup a été détecté (= moment d'entrée suggéré)
+    expiry_time: datetime | None = None  # Après cette heure, le setup n'est plus valide
+    validity_minutes: int = 15  # Durée de validité en minutes
 
 
 class ScalpingSignal(BaseModel):

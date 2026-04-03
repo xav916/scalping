@@ -10,6 +10,9 @@ const WS_URL = `${WS_PROTO}//${window.location.host}/ws`;
 let ws = null;
 let reconnectAttempts = 0;
 const MAX_RECONNECT_DELAY = 30000;
+const AUTO_REFRESH_INTERVAL = 5000; // Polling API toutes les 5s
+let lastUpdateTime = null;
+let liveClockInterval = null;
 
 // ─── WebSocket ───────────────────────────────────────────────────────
 
@@ -245,7 +248,24 @@ function tradeSetupHTML(s) {
                 <span class="pattern-desc">${patternName}</span>
             </div>
 
-            <div class="setup-time">${time}</div>
+            <div class="setup-timestamps">
+                <div class="ts-entry">
+                    <span class="ts-label">ENTREE</span>
+                    <span class="ts-value">${s.entry_time ? new Date(s.entry_time).toLocaleTimeString() : time}</span>
+                </div>
+                <div class="ts-expiry ${_isExpired(s.expiry_time) ? 'expired' : 'active'}">
+                    <span class="ts-label">${_isExpired(s.expiry_time) ? 'EXPIRE' : 'VALIDE JUSQU\'A'}</span>
+                    <span class="ts-value">${s.expiry_time ? new Date(s.expiry_time).toLocaleTimeString() : '--:--'}</span>
+                </div>
+                <div class="ts-countdown" data-expiry="${s.expiry_time || ''}">
+                    <span class="ts-label">TEMPS RESTANT</span>
+                    <span class="ts-value countdown-value">${_countdown(s.expiry_time)}</span>
+                </div>
+                <div class="ts-validity">
+                    <span class="ts-label">VALIDITE</span>
+                    <span class="ts-value">${s.validity_minutes || 15} min</span>
+                </div>
+            </div>
         </div>`;
 }
 
@@ -487,9 +507,33 @@ function renderTrends(trends) {
 }
 
 function updateLastUpdate(timestamp) {
+    if (timestamp) {
+        lastUpdateTime = new Date(timestamp);
+    }
+    _renderClock();
+}
+
+function _renderClock() {
     const el = document.getElementById('last-update');
-    if (el && timestamp) {
-        el.textContent = `MAJ: ${new Date(timestamp).toLocaleTimeString()}`;
+    const clockEl = document.getElementById('live-clock');
+    if (!el) return;
+
+    const now = new Date();
+
+    // Horloge live
+    if (clockEl) {
+        clockEl.textContent = now.toLocaleTimeString();
+    }
+
+    if (lastUpdateTime) {
+        const diffSec = Math.floor((now - lastUpdateTime) / 1000);
+        if (diffSec < 60) {
+            el.textContent = `MAJ: il y a ${diffSec}s`;
+        } else {
+            const diffMin = Math.floor(diffSec / 60);
+            el.textContent = `MAJ: il y a ${diffMin}min`;
+        }
+        el.className = diffSec > 30 ? 'last-update stale' : 'last-update fresh';
     }
 }
 
@@ -550,6 +594,41 @@ function sendBrowserNotification(signal) {
     });
 }
 
+// ─── Timestamps helpers ─────────────────────────────────────────────
+
+function _isExpired(expiryTime) {
+    if (!expiryTime) return false;
+    return new Date() > new Date(expiryTime);
+}
+
+function _countdown(expiryTime) {
+    if (!expiryTime) return '--:--';
+    const diff = new Date(expiryTime) - new Date();
+    if (diff <= 0) return 'EXPIRE';
+    const min = Math.floor(diff / 60000);
+    const sec = Math.floor((diff % 60000) / 1000);
+    return `${min}:${sec.toString().padStart(2, '0')}`;
+}
+
+function _updateCountdowns() {
+    document.querySelectorAll('.ts-countdown').forEach(el => {
+        const expiry = el.dataset.expiry;
+        if (!expiry) return;
+        const val = el.querySelector('.countdown-value');
+        if (val) val.textContent = _countdown(expiry);
+
+        // Mettre à jour le style expired/active
+        const expiryEl = el.parentElement?.querySelector('.ts-expiry');
+        if (expiryEl) {
+            if (_isExpired(expiry)) {
+                expiryEl.classList.add('expired');
+                expiryEl.classList.remove('active');
+                expiryEl.querySelector('.ts-label').textContent = 'EXPIRE';
+            }
+        }
+    });
+}
+
 // ─── Glossaire ──────────────────────────────────────────────────────
 
 let glossaryData = [];
@@ -603,4 +682,13 @@ document.addEventListener('DOMContentLoaded', () => {
     fetchGlossary();
     connectWebSocket();
     document.getElementById('refresh-btn').addEventListener('click', refreshAnalysis);
+
+    // Horloge live + compteurs : mise à jour toutes les secondes
+    setInterval(() => {
+        _renderClock();
+        _updateCountdowns();
+    }, 1000);
+
+    // Auto-refresh des données toutes les 5 secondes
+    setInterval(fetchOverview, AUTO_REFRESH_INTERVAL);
 });

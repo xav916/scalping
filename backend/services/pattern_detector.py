@@ -13,7 +13,7 @@ avec entrée, stop loss et take profit.
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from backend.models.schemas import (
     Candle,
@@ -270,6 +270,11 @@ def calculate_trade_setup(
         f"TP2: {take_profit_2:.2f} (R:R {reward_2/risk:.1f})"
     )
 
+    # Durée de validité : 15 min pour scalping 5min
+    validity_minutes = 15
+    entry_time = now
+    expiry_time = now + timedelta(minutes=validity_minutes)
+
     return TradeSetup(
         pair=pair,
         direction=direction,
@@ -286,6 +291,9 @@ def calculate_trade_setup(
         message=message,
         timestamp=now,
         is_simulated=is_simulated,
+        entry_time=entry_time,
+        expiry_time=expiry_time,
+        validity_minutes=validity_minutes,
     )
 
 

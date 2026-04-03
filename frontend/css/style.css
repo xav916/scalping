@@ -596,6 +596,76 @@ body {
     flex: 1;
 }
 
+/* ─── Live Clock & Timestamps ────────────────────────────────────── */
+
+.live-clock {
+    font-size: 16px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: var(--accent-blue);
+    letter-spacing: 0.5px;
+}
+
+.last-update.fresh {
+    color: var(--accent-green);
+}
+
+.last-update.stale {
+    color: var(--accent-yellow);
+}
+
+.setup-timestamps {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    margin: 8px 0;
+    padding: 8px 0;
+    border-top: 1px solid var(--border-color);
+}
+
+.ts-entry, .ts-expiry, .ts-countdown, .ts-validity {
+    text-align: center;
+}
+
+.ts-label {
+    display: block;
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    margin-bottom: 2px;
+}
+
+.ts-value {
+    display: block;
+    font-size: 14px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-primary);
+}
+
+.ts-entry .ts-value {
+    color: var(--accent-blue);
+}
+
+.ts-expiry.active .ts-value {
+    color: var(--accent-green);
+}
+
+.ts-expiry.expired .ts-value {
+    color: var(--accent-red);
+}
+
+.ts-expiry.expired .ts-label {
+    color: var(--accent-red);
+}
+
+.ts-countdown .countdown-value {
+    color: var(--accent-yellow);
+    font-size: 16px;
+}
+
 /* ─── Confidence Score Badge ─────────────────────────────────────── */
 
 .setup-confidence-score {
@@ -943,5 +1013,9 @@ body {
 
     .glossary-list {
         grid-template-columns: 1fr;
+    }
+
+    .setup-timestamps {
+        grid-template-columns: repeat(2, 1fr);
     }
 }
