@@ -91,6 +91,16 @@ class PatternDetection(BaseModel):
     confidence: float  # 0 à 1
     description: str
     detected_at: datetime
+    # Explication étendue du pattern
+    explanation: str = ""  # Explication détaillée : qu'est-ce que ce pattern, pourquoi il est significatif
+    reliability: str = ""  # Fiabilité historique du pattern (texte descriptif)
+
+
+class ConfidenceFactor(BaseModel):
+    name: str  # Nom du facteur (ex: "Pattern", "Volatilité")
+    score: float  # Score 0-100
+    detail: str  # Explication courte
+    positive: bool = True  # Facteur favorable ou défavorable
 
 
 class TradeSetup(BaseModel):
@@ -109,6 +119,14 @@ class TradeSetup(BaseModel):
     message: str
     timestamp: datetime
     is_simulated: bool = False  # True si données simulées (pas de clé API ou rate limit)
+    # Nouveaux champs : explication, money management, confiance
+    confidence_score: float = 0.0  # Score de confiance global 0-100
+    confidence_factors: list[ConfidenceFactor] = []  # Détail des facteurs
+    explanation: str = ""  # Explication détaillée en français
+    suggested_amount: float = 0.0  # Montant suggéré à miser (USD)
+    risk_amount: float = 0.0  # Montant risqué (USD)
+    estimated_gain_1: float = 0.0  # Gain estimé TP1 (USD)
+    estimated_gain_2: float = 0.0  # Gain estimé TP2 (USD)
 
 
 class ScalpingSignal(BaseModel):
@@ -120,6 +138,10 @@ class ScalpingSignal(BaseModel):
     trade_setup: TradeSetup | None = None
     message: str
     timestamp: datetime
+    # Score de confiance et explication pour les signaux aussi
+    confidence_score: float = 0.0  # Score 0-100
+    confidence_factors: list[ConfidenceFactor] = []
+    explanation: str = ""  # Explication détaillée du signal
 
 
 class MarketOverview(BaseModel):

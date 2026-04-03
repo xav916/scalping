@@ -596,6 +596,328 @@ body {
     flex: 1;
 }
 
+/* ─── Confidence Score Badge ─────────────────────────────────────── */
+
+.setup-confidence-score {
+    display: flex;
+    align-items: baseline;
+    gap: 2px;
+    padding: 6px 12px;
+    border-radius: 8px;
+    background: rgba(88, 166, 255, 0.1);
+    border: 1px solid rgba(88, 166, 255, 0.3);
+}
+
+.setup-confidence-score.conf-high {
+    background: rgba(63, 185, 80, 0.15);
+    border-color: rgba(63, 185, 80, 0.4);
+}
+
+.setup-confidence-score.conf-medium {
+    background: rgba(210, 153, 34, 0.15);
+    border-color: rgba(210, 153, 34, 0.4);
+}
+
+.setup-confidence-score.conf-low {
+    background: rgba(248, 81, 73, 0.1);
+    border-color: rgba(248, 81, 73, 0.3);
+}
+
+.conf-score-value {
+    font-size: 24px;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+}
+
+.conf-high .conf-score-value { color: var(--accent-green); }
+.conf-medium .conf-score-value { color: var(--accent-yellow); }
+.conf-low .conf-score-value { color: var(--accent-red); }
+
+.conf-score-label {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-weight: 600;
+}
+
+/* ─── Money Management Boxes ────────────────────────────────────── */
+
+.setup-money {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.money-box {
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 8px;
+    text-align: center;
+}
+
+.money-label {
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+}
+
+.money-value {
+    font-size: 16px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+
+.money-box.suggested .money-value { color: var(--accent-blue); }
+.money-box.risk .money-value { color: var(--accent-red); }
+.money-box.gain1 .money-value { color: var(--accent-green); }
+.money-box.gain2 .money-value { color: var(--accent-purple); }
+
+/* ─── Explanation Toggle & Panel ────────────────────────────────── */
+
+.setup-explanation-toggle {
+    font-size: 12px;
+    color: var(--accent-blue);
+    cursor: pointer;
+    padding: 6px 0;
+    margin-bottom: 8px;
+    user-select: none;
+    transition: color 0.15s;
+}
+
+.setup-explanation-toggle:hover {
+    color: var(--text-primary);
+}
+
+.setup-explanation-toggle::before {
+    content: "▸ ";
+}
+
+.setup-explanation {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.3s ease-out;
+}
+
+.setup-explanation.open {
+    max-height: 600px;
+}
+
+.explanation-factors {
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 12px;
+    margin-bottom: 10px;
+}
+
+.factors-title {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-muted);
+    margin-bottom: 10px;
+}
+
+.confidence-factor {
+    display: grid;
+    grid-template-columns: 16px 80px 32px 1fr;
+    gap: 8px;
+    align-items: start;
+    padding: 6px 0;
+    border-bottom: 1px solid rgba(48, 54, 61, 0.3);
+    font-size: 12px;
+}
+
+.confidence-factor:last-child {
+    border-bottom: none;
+}
+
+.factor-icon {
+    font-weight: 800;
+    font-size: 14px;
+    text-align: center;
+}
+
+.factor-positive .factor-icon { color: var(--accent-green); }
+.factor-negative .factor-icon { color: var(--accent-red); }
+
+.factor-name {
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.factor-score {
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    color: var(--text-primary);
+}
+
+.factor-detail {
+    color: var(--text-muted);
+    line-height: 1.4;
+}
+
+/* ─── Glossaire ──────────────────────────────────────────────────── */
+
+.glossary-header {
+    cursor: pointer;
+    user-select: none;
+}
+
+.glossary-toggle {
+    font-size: 11px;
+    color: var(--accent-blue);
+}
+
+.glossary-panel {
+    max-height: 0;
+    overflow: hidden;
+    padding: 0 16px;
+    transition: max-height 0.4s ease-out, padding 0.3s;
+}
+
+.glossary-panel.open {
+    max-height: 2000px;
+    padding: 12px 16px;
+}
+
+.glossary-search {
+    margin-bottom: 12px;
+}
+
+.glossary-search input {
+    width: 100%;
+    padding: 8px 12px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-size: 13px;
+    outline: none;
+}
+
+.glossary-search input:focus {
+    border-color: var(--accent-blue);
+}
+
+.glossary-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+    gap: 8px;
+}
+
+.glossary-item {
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 10px 12px;
+}
+
+.glossary-term {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+}
+
+.glossary-abbr {
+    font-weight: 800;
+    font-size: 14px;
+    color: var(--accent-blue);
+    min-width: 40px;
+}
+
+.glossary-full {
+    font-size: 12px;
+    color: var(--text-secondary);
+    font-weight: 600;
+}
+
+.glossary-def {
+    font-size: 12px;
+    color: var(--text-muted);
+    line-height: 1.5;
+}
+
+/* ─── Pattern Details ────────────────────────────────────────────── */
+
+.pattern-item-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+}
+
+.pattern-item-card.bullish {
+    border-left: 3px solid var(--accent-green);
+}
+
+.pattern-item-card.bearish {
+    border-left: 3px solid var(--accent-red);
+}
+
+.pattern-item-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+}
+
+.pattern-details-toggle {
+    font-size: 11px;
+    color: var(--accent-blue);
+    cursor: pointer;
+    padding: 4px 0;
+    user-select: none;
+}
+
+.pattern-details-toggle::before {
+    content: "▸ ";
+}
+
+.pattern-details-toggle:hover {
+    color: var(--text-primary);
+}
+
+.pattern-details-panel {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.3s ease-out;
+}
+
+.pattern-details-panel.open {
+    max-height: 400px;
+}
+
+.pattern-explanation {
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    padding: 10px;
+    margin-top: 6px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.6;
+}
+
+.pattern-reliability {
+    background: rgba(210, 153, 34, 0.08);
+    border: 1px solid rgba(210, 153, 34, 0.2);
+    border-radius: 4px;
+    padding: 8px 10px;
+    margin-top: 6px;
+    font-size: 11px;
+    color: var(--accent-yellow);
+    line-height: 1.5;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
     .dashboard {
@@ -607,5 +929,19 @@ body {
         flex-direction: column;
         gap: 8px;
         align-items: flex-start;
+    }
+
+    .setup-levels,
+    .setup-money {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .confidence-factor {
+        grid-template-columns: 16px 60px 28px 1fr;
+        font-size: 11px;
+    }
+
+    .glossary-list {
+        grid-template-columns: 1fr;
     }
 }

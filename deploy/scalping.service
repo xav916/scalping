@@ -1,3 +1,6 @@
+[Unit]
+Description=Scalping Radar - Outil d'aide a la decision
+After=docker.service network-online.target
 Requires=docker.service
 
 [Service]

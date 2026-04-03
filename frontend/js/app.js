@@ -4,7 +4,8 @@
  */
 
 const API_BASE = window.location.origin;
-const WS_URL = `ws://${window.location.host}/ws`;
+const WS_PROTO = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+const WS_URL = `${WS_PROTO}//${window.location.host}/ws`;
 
 let ws = null;
 let reconnectAttempts = 0;
@@ -143,13 +144,35 @@ function tradeSetupHTML(s) {
     const dirIcon = isBuy ? '&#9650;' : '&#9660;';
 
     const patternName = s.pattern?.description || '';
-    const confidence = s.pattern?.confidence || 0;
-    const confPct = (confidence * 100).toFixed(0);
+    const confScore = s.confidence_score || 0;
+    const confScoreInt = confScore.toFixed(0);
 
     const time = s.timestamp ? new Date(s.timestamp).toLocaleTimeString() : '';
     const simBadge = s.is_simulated
         ? '<span class="data-badge simulated">SIMULE</span>'
         : '<span class="data-badge live">LIVE</span>';
+
+    // Confidence score color
+    const confColor = confScore >= 85 ? 'conf-high' : confScore >= 75 ? 'conf-medium' : 'conf-low';
+
+    // Confidence factors
+    const factors = s.confidence_factors || [];
+    const factorsHTML = factors.map(f => {
+        const icon = f.positive ? '+' : '-';
+        const cls = f.positive ? 'factor-positive' : 'factor-negative';
+        return `<div class="confidence-factor ${cls}">
+            <span class="factor-icon">${icon}</span>
+            <span class="factor-name">${f.name}</span>
+            <span class="factor-score">${f.score.toFixed(0)}</span>
+            <span class="factor-detail">${f.detail}</span>
+        </div>`;
+    }).join('');
+
+    // Money management
+    const suggestedAmt = s.suggested_amount || 0;
+    const riskAmt = s.risk_amount || 0;
+    const gain1 = s.estimated_gain_1 || 0;
+    const gain2 = s.estimated_gain_2 || 0;
 
     return `
         <div class="trade-setup ${dirClass}">
@@ -160,11 +183,9 @@ function tradeSetupHTML(s) {
                     <span class="setup-pair">${s.pair}</span>
                     ${simBadge}
                 </div>
-                <div class="setup-confidence">
-                    <span class="confidence-bar">
-                        <span class="confidence-fill" style="width:${confPct}%"></span>
-                    </span>
-                    <span class="confidence-text">${confPct}%</span>
+                <div class="setup-confidence-score ${confColor}">
+                    <span class="conf-score-value">${confScoreInt}</span>
+                    <span class="conf-score-label">/100</span>
                 </div>
             </div>
 
@@ -187,6 +208,35 @@ function tradeSetupHTML(s) {
                     <div class="level-label">TP2 (agressif)</div>
                     <div class="level-value">${s.take_profit_2?.toFixed(2)}</div>
                     <div class="level-pips">R:R ${s.risk_reward_2?.toFixed(1)}</div>
+                </div>
+            </div>
+
+            <div class="setup-money">
+                <div class="money-box suggested">
+                    <div class="money-label">POSITION</div>
+                    <div class="money-value">${suggestedAmt.toFixed(0)} $</div>
+                </div>
+                <div class="money-box risk">
+                    <div class="money-label">RISQUE MAX</div>
+                    <div class="money-value">-${riskAmt.toFixed(0)} $</div>
+                </div>
+                <div class="money-box gain1">
+                    <div class="money-label">GAIN TP1</div>
+                    <div class="money-value">+${gain1.toFixed(0)} $</div>
+                </div>
+                <div class="money-box gain2">
+                    <div class="money-label">GAIN TP2</div>
+                    <div class="money-value">+${gain2.toFixed(0)} $</div>
+                </div>
+            </div>
+
+            <div class="setup-explanation-toggle" onclick="this.parentElement.querySelector('.setup-explanation').classList.toggle('open')">
+                Voir l'analyse detaillee
+            </div>
+            <div class="setup-explanation">
+                <div class="explanation-factors">
+                    <div class="factors-title">FACTEURS DE CONFIANCE</div>
+                    ${factorsHTML}
                 </div>
             </div>
 
@@ -231,11 +281,23 @@ function renderPatterns(patterns) {
         const isBull = p.pattern.includes('up') || p.pattern.includes('bullish');
         const colorClass = isBull ? 'bullish' : 'bearish';
 
+        const explanationHTML = p.explanation ? `<div class="pattern-explanation">${p.explanation}</div>` : '';
+        const reliabilityHTML = p.reliability ? `<div class="pattern-reliability">${p.reliability}</div>` : '';
+        const hasDetails = p.explanation || p.reliability;
+
         return `
-            <div class="pattern-item ${colorClass}">
-                <span class="pattern-tag">${_patternLabel(p.pattern)}</span>
-                <span class="pattern-conf">${confPct}%</span>
-                <span class="pattern-desc-text">${p.description}</span>
+            <div class="pattern-item-card ${colorClass}">
+                <div class="pattern-item-header">
+                    <span class="pattern-tag">${_patternLabel(p.pattern)}</span>
+                    <span class="pattern-conf">${confPct}%</span>
+                    <span class="pattern-desc-text">${p.description}</span>
+                </div>
+                ${hasDetails ? `
+                <div class="pattern-details-toggle" onclick="this.nextElementSibling.classList.toggle('open')">Comprendre ce pattern</div>
+                <div class="pattern-details-panel">
+                    ${explanationHTML}
+                    ${reliabilityHTML}
+                </div>` : ''}
             </div>`;
     }).join('');
 }
@@ -298,12 +360,32 @@ function signalCardHTML(s) {
     const dirLabels = { bullish: 'HAUSSIER', bearish: 'BAISSIER', neutral: 'NEUTRE' };
     const volLabels = { high: 'haute', medium: 'moyenne', low: 'basse' };
 
+    const sigScore = s.confidence_score || 0;
+    const sigScoreInt = sigScore.toFixed(0);
+    const sigConfColor = sigScore >= 70 ? 'conf-high' : sigScore >= 50 ? 'conf-medium' : 'conf-low';
+
+    const sigFactors = s.confidence_factors || [];
+    const sigFactorsHTML = sigFactors.length ? sigFactors.map(f => {
+        const icon = f.positive ? '+' : '-';
+        const cls = f.positive ? 'factor-positive' : 'factor-negative';
+        return `<div class="confidence-factor ${cls}">
+            <span class="factor-icon">${icon}</span>
+            <span class="factor-name">${f.name}</span>
+            <span class="factor-score">${f.score.toFixed(0)}</span>
+            <span class="factor-detail">${f.detail}</span>
+        </div>`;
+    }).join('') : '';
+
     return `
         <div class="signal-card ${strength}">
             <div style="display:flex;align-items:center;gap:8px;">
                 <span class="signal-pair">${s.pair}</span>
                 <span class="signal-badge ${strength}">${_strengthLabel(strength)}</span>
                 <span class="level-tag ${volLevel}">vol ${volRatio.toFixed(1)}x</span>
+                <span class="setup-confidence-score ${sigConfColor}" style="margin-left:auto;padding:3px 8px;">
+                    <span class="conf-score-value" style="font-size:16px;">${sigScoreInt}</span>
+                    <span class="conf-score-label">/100</span>
+                </span>
             </div>
             <div class="signal-details">
                 Tendance ${dirLabels[trendDir] || trendDir} (force: ${(trendStr * 100).toFixed(0)}%) |
@@ -311,6 +393,14 @@ function signalCardHTML(s) {
             </div>
             ${setupHTML}
             ${eventsHTML}
+            ${sigFactorsHTML ? `
+            <div class="setup-explanation-toggle" onclick="this.nextElementSibling.classList.toggle('open')">Voir l'analyse detaillee</div>
+            <div class="setup-explanation">
+                <div class="explanation-factors">
+                    <div class="factors-title">FACTEURS DE CONFIANCE</div>
+                    ${sigFactorsHTML}
+                </div>
+            </div>` : ''}
             <div class="signal-time">${time}</div>
         </div>`;
 }
@@ -460,10 +550,57 @@ function sendBrowserNotification(signal) {
     });
 }
 
+// ─── Glossaire ──────────────────────────────────────────────────────
+
+let glossaryData = [];
+
+async function fetchGlossary() {
+    try {
+        const res = await fetch(`${API_BASE}/api/glossary`);
+        glossaryData = await res.json();
+        renderGlossary(glossaryData);
+    } catch (err) {
+        console.error('Erreur fetch glossaire:', err);
+    }
+}
+
+function renderGlossary(items) {
+    const container = document.getElementById('glossary-list');
+    if (!items.length) {
+        container.innerHTML = '<div class="empty-state"><p>Aucun terme trouve</p></div>';
+        return;
+    }
+
+    container.innerHTML = items.map(g => `
+        <div class="glossary-item">
+            <div class="glossary-term">
+                <span class="glossary-abbr">${g.term}</span>
+                <span class="glossary-full">${g.full}</span>
+            </div>
+            <div class="glossary-def">${g.definition}</div>
+        </div>
+    `).join('');
+}
+
+function filterGlossary(query) {
+    const q = query.toLowerCase().trim();
+    if (!q) {
+        renderGlossary(glossaryData);
+        return;
+    }
+    const filtered = glossaryData.filter(g =>
+        g.term.toLowerCase().includes(q) ||
+        g.full.toLowerCase().includes(q) ||
+        g.definition.toLowerCase().includes(q)
+    );
+    renderGlossary(filtered);
+}
+
 // ─── Init ────────────────────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', () => {
     fetchOverview();
+    fetchGlossary();
     connectWebSocket();
     document.getElementById('refresh-btn').addEventListener('click', refreshAnalysis);
 });

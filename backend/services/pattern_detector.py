@@ -29,6 +29,161 @@ logger = logging.getLogger(__name__)
 # Adaptés au scalping 5min
 GOLD_ATR_DEFAULT = 3.0  # ATR moyen sur 5min en $
 
+# ─── Définitions et fiabilité des patterns ──────────────────────────
+
+PATTERN_EXPLANATIONS: dict[str, dict[str, str]] = {
+    PatternType.BREAKOUT_UP: {
+        "explanation": (
+            "CASSURE DE RESISTANCE : Le prix franchit un niveau ou les vendeurs "
+            "bloquaient precedemment la hausse. Cela signale un afflux d'acheteurs "
+            "suffisant pour absorber toute l'offre a ce niveau. Plus le nombre de "
+            "rejets precedents est eleve, plus la cassure est significative."
+        ),
+        "reliability": (
+            "Fiabilite moderee a elevee (60-75%). Les fausses cassures sont "
+            "frequentes — une cloture au-dessus du niveau avec du volume confirme "
+            "le mouvement. Meilleur resultat quand la volatilite accompagne la cassure."
+        ),
+    },
+    PatternType.BREAKOUT_DOWN: {
+        "explanation": (
+            "CASSURE DE SUPPORT : Le prix enfonce un niveau ou les acheteurs "
+            "intervenaient precedemment. Les stops des acheteurs sous ce niveau "
+            "accelerent souvent la chute (effet cascade). Signal de vente."
+        ),
+        "reliability": (
+            "Fiabilite moderee a elevee (60-75%). Memes precautions que la cassure "
+            "haussiere : attendre la cloture sous le niveau pour confirmer."
+        ),
+    },
+    PatternType.MOMENTUM_UP: {
+        "explanation": (
+            "MOMENTUM HAUSSIER : Plusieurs bougies consecutives cloturent en hausse "
+            "avec une amplitude croissante. Cela traduit une pression acheteuse "
+            "soutenue — les acheteurs dominent clairement le marche a court terme."
+        ),
+        "reliability": (
+            "Fiabilite moderee (55-65%). Le momentum peut s'essouffler rapidement "
+            "en scalping. Le SL serre est essentiel car un retournement brutal "
+            "est possible apres un mouvement etendu."
+        ),
+    },
+    PatternType.MOMENTUM_DOWN: {
+        "explanation": (
+            "MOMENTUM BAISSIER : Plusieurs bougies rouges consecutives avec "
+            "une acceleration de la baisse. Les vendeurs controlent le marche. "
+            "Signal de vente a decouvert (short)."
+        ),
+        "reliability": (
+            "Fiabilite moderee (55-65%). Meme precaution que le momentum haussier : "
+            "le mouvement peut se retourner brutalement. SL obligatoire."
+        ),
+    },
+    PatternType.RANGE_BOUNCE_UP: {
+        "explanation": (
+            "REBOND SUR SUPPORT (bas de range) : Le prix evolue dans un canal "
+            "horizontal et touche la borne basse avec une bougie de rejet (verte). "
+            "Les acheteurs defendent ce niveau — signal d'achat vers le haut du range."
+        ),
+        "reliability": (
+            "Fiabilite elevee en marche calme (65-75%). Le range doit etre bien "
+            "etabli (plusieurs rebonds precedents). Moins fiable si la volatilite "
+            "augmente soudainement (risque de cassure)."
+        ),
+    },
+    PatternType.RANGE_BOUNCE_DOWN: {
+        "explanation": (
+            "REJET SUR RESISTANCE (haut de range) : Le prix touche la borne haute "
+            "du canal avec une bougie rouge de rejet. Les vendeurs defendent ce "
+            "niveau — signal de vente vers le bas du range."
+        ),
+        "reliability": (
+            "Fiabilite elevee en marche calme (65-75%). Memes conditions que le "
+            "rebond bas. Le TP naturel est la borne opposee du range."
+        ),
+    },
+    PatternType.MEAN_REVERSION_UP: {
+        "explanation": (
+            "RETOUR A LA MOYENNE (achat) : Le prix s'est eloigne anormalement "
+            "sous sa moyenne mobile (plus de 2 ecarts-types). Statistiquement, "
+            "le prix tend a revenir vers la moyenne — signal d'achat contrarian."
+        ),
+        "reliability": (
+            "Fiabilite moderee (55-65%). Fonctionne bien en marche sans tendance "
+            "forte. DANGER si une tendance baissiere est en cours : le prix peut "
+            "continuer a chuter malgre la sur-extension."
+        ),
+    },
+    PatternType.MEAN_REVERSION_DOWN: {
+        "explanation": (
+            "RETOUR A LA MOYENNE (vente) : Le prix est anormalement au-dessus de "
+            "sa moyenne mobile. Signal de vente base sur la regression vers la moyenne. "
+            "Approche contrariante — on anticipe un repli."
+        ),
+        "reliability": (
+            "Fiabilite moderee (55-65%). Meme logique inversee. Eviter ce pattern "
+            "dans un marche en forte tendance haussiere."
+        ),
+    },
+    PatternType.ENGULFING_BULLISH: {
+        "explanation": (
+            "ENGLOBANTE HAUSSIERE : Une grande bougie verte englobe entierement "
+            "le corps de la bougie rouge precedente. Les acheteurs ont repris le "
+            "controle de facon decisive — c'est l'un des patterns de retournement "
+            "les plus fiables en analyse technique."
+        ),
+        "reliability": (
+            "Fiabilite elevee (65-78%). Un des meilleurs patterns de retournement "
+            "haussier. Encore plus fiable quand il apparait apres une baisse "
+            "prolongee ou sur un support cle."
+        ),
+    },
+    PatternType.ENGULFING_BEARISH: {
+        "explanation": (
+            "ENGLOBANTE BAISSIERE : Une grande bougie rouge englobe le corps de "
+            "la bougie verte precedente. Les vendeurs ont pris le dessus brutalement. "
+            "Signal de retournement baissier fort."
+        ),
+        "reliability": (
+            "Fiabilite elevee (65-78%). Miroir de l'englobante haussiere. "
+            "Plus significative apres une hausse prolongee ou sur une resistance."
+        ),
+    },
+    PatternType.PIN_BAR_UP: {
+        "explanation": (
+            "PIN BAR HAUSSIERE : Bougie avec une tres longue meche basse et un "
+            "petit corps en haut. Les vendeurs ont pousse le prix bas mais les "
+            "acheteurs ont rejete violemment ce niveau. Signal de rejet baissier "
+            "= probable rebond haussier."
+        ),
+        "reliability": (
+            "Fiabilite moderee a elevee (60-72%). La longueur de la meche est "
+            "proportionnelle a la force du rejet. Plus fiable sur un niveau "
+            "de support connu."
+        ),
+    },
+    PatternType.PIN_BAR_DOWN: {
+        "explanation": (
+            "PIN BAR BAISSIERE : Bougie avec une longue meche haute et un petit "
+            "corps en bas. Les acheteurs ont tente de monter mais ont ete rejetes. "
+            "Signal de rejet acheteur = probable baisse."
+        ),
+        "reliability": (
+            "Fiabilite moderee a elevee (60-72%). Plus significative sur une "
+            "resistance ou apres une hausse. La meche doit representer au "
+            "moins 2/3 de la bougie totale."
+        ),
+    },
+}
+
+
+def _enrich_pattern(pattern: PatternDetection) -> PatternDetection:
+    """Ajoute l'explication et la fiabilité à un pattern détecté."""
+    info = PATTERN_EXPLANATIONS.get(pattern.pattern, {})
+    pattern.explanation = info.get("explanation", "")
+    pattern.reliability = info.get("reliability", "")
+    return pattern
+
 
 def detect_patterns(candles: list[Candle], pair: str = "XAU/USD") -> list[PatternDetection]:
     """Détecte tous les patterns de scalping dans les bougies données."""
@@ -43,6 +198,10 @@ def detect_patterns(candles: list[Candle], pair: str = "XAU/USD") -> list[Patter
     patterns.extend(_detect_mean_reversion(candles, pair))
     patterns.extend(_detect_engulfing(candles, pair))
     patterns.extend(_detect_pin_bar(candles, pair))
+
+    # Enrichir chaque pattern avec explication et fiabilité
+    for p in patterns:
+        _enrich_pattern(p)
 
     # Trier par confiance décroissante
     patterns.sort(key=lambda p: p.confidence, reverse=True)

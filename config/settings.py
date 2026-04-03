@@ -28,6 +28,11 @@ WATCHED_PAIRS = os.getenv(
 # Inscription: https://twelvedata.com/register
 TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "")
 
+# Money management
+TRADING_CAPITAL = float(os.getenv("TRADING_CAPITAL", "10000"))  # Capital en USD
+RISK_PER_TRADE_PCT = float(os.getenv("RISK_PER_TRADE_PCT", "1.0"))  # % du capital risqué par trade
+MIN_CONFIDENCE_SCORE = float(os.getenv("MIN_CONFIDENCE_SCORE", "75"))  # Score min pour afficher un setup (0-100)
+
 # Intervalles bougies pour l'analyse de patterns
 CANDLE_INTERVAL = os.getenv("CANDLE_INTERVAL", "5min")
 CANDLE_COUNT = int(os.getenv("CANDLE_COUNT", "50"))

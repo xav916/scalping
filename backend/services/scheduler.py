@@ -7,7 +7,12 @@ from datetime import datetime, timezone
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from backend.models.schemas import MarketOverview
-from backend.services.analysis_engine import analyze_trend, detect_signals
+from backend.services.analysis_engine import (
+    analyze_trend,
+    detect_signals,
+    enrich_trade_setup,
+    filter_high_confidence_setups,
+)
 from backend.services.forexfactory_service import fetch_economic_events
 from backend.services.mataf_service import fetch_volatility_data
 from backend.services.notification_service import broadcast_signals, broadcast_update
@@ -73,6 +78,10 @@ async def run_analysis_cycle() -> None:
         all_trade_setups = []
         all_candles_flat = []
 
+        # Map volatility par paire pour enrichissement
+        vol_map = {v.pair: v for v in volatility_data}
+        trend_map = {t.pair: t for t in trends}
+
         for pair in WATCHED_PAIRS:
             candles = all_candles.get(pair, [])
             all_candles_flat.extend(candles)
@@ -85,7 +94,17 @@ async def run_analysis_cycle() -> None:
                 for pattern in patterns:
                     setup = calculate_trade_setup(pair, pattern, candles, is_simulated=simulated_pairs.get(pair, False))
                     if setup:
+                        # Enrichir avec score de confiance, explications, money management
+                        enrich_trade_setup(
+                            setup,
+                            volatility=vol_map.get(pair),
+                            trend=trend_map.get(pair),
+                            events=economic_events,
+                        )
                         all_trade_setups.append(setup)
+
+        # Filtrer pour ne garder que les setups haute confiance
+        all_trade_setups = filter_high_confidence_setups(all_trade_setups)
 
         # Détecter les signaux de scalping (volatilité + tendance)
         signals = detect_signals(

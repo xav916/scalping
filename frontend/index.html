@@ -24,7 +24,8 @@
         <!-- Trade Setups (full width, priority) -->
         <section class="card signals-section">
             <div class="card-header">
-                <h2>Setups de Trade - Entree / Stop Loss / Take Profit</h2>
+                <h2>Setups de Trade - Analyse Detaillee</h2>
+                <span style="font-size:11px;color:var(--text-muted)">Seuls les setups haute confiance sont affiches</span>
             </div>
             <div class="card-body" id="setups-list">
                 <div class="empty-state">
@@ -74,6 +75,22 @@
             </div>
             <div class="card-body" id="events-body">
                 <div class="empty-state"><p>Chargement des evenements...</p></div>
+            </div>
+        </section>
+
+        <!-- Glossaire -->
+        <section class="card signals-section">
+            <div class="card-header glossary-header" onclick="document.getElementById('glossary-body').classList.toggle('open')">
+                <h2>Glossaire des Termes et Abreviations</h2>
+                <span class="glossary-toggle">Afficher / Masquer</span>
+            </div>
+            <div class="card-body glossary-panel" id="glossary-body">
+                <div class="glossary-search">
+                    <input type="text" id="glossary-search-input" placeholder="Rechercher un terme..." oninput="filterGlossary(this.value)">
+                </div>
+                <div id="glossary-list" class="glossary-list">
+                    <div class="empty-state"><p>Chargement du glossaire...</p></div>
+                </div>
             </div>
         </section>
     </main>
