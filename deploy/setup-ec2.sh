@@ -54,8 +54,8 @@ echo "Sous-domaine:   ${DUCKDNS_SUBDOMAIN}"
 # ─── Installation des paquets ───────────────────────────────────────
 if [[ "${PKG_MGR}" == "dnf" ]]; then
   dnf update -y
-  ${PKG_INSTALL} docker nginx git curl rsync python3 python3-pip
-  # Amazon Linux 2023 : activer docker
+  # Amazon Linux 2023 : curl-minimal est pre-installe, ne pas installer curl (conflit)
+  ${PKG_INSTALL} docker nginx git rsync python3 python3-pip
   systemctl enable --now docker
   usermod -aG docker ec2-user 2>/dev/null || true
 else
