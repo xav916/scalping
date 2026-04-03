@@ -81,7 +81,7 @@ fi
 
 # ─── Cron DuckDNS (mise a jour IP toutes les 5 min) ────────────────
 DUCKDNS_CRON="*/5 * * * * curl -s 'https://www.duckdns.org/update?domains=${DUCKDNS_SUBDOMAIN}&token=${DUCKDNS_TOKEN}&ip=' > /dev/null 2>&1"
-(crontab -l 2>/dev/null | grep -v duckdns.org; echo "${DUCKDNS_CRON}") | crontab -
+( (crontab -l 2>/dev/null || true) | grep -v duckdns.org; echo "${DUCKDNS_CRON}") | crontab - || true
 echo "Cron DuckDNS installe (mise a jour IP toutes les 5 min)."
 
 # ─── Copie du projet ────────────────────────────────────────────────
@@ -269,7 +269,7 @@ systemctl restart nginx
 
 # ─── Renouvellement automatique SSL ────────────────────────────────
 RENEW_CRON="0 3,15 * * * ${CERTBOT_CMD} renew --quiet --deploy-hook 'systemctl reload nginx'"
-(crontab -l 2>/dev/null | grep -v certbot; echo "${RENEW_CRON}") | crontab -
+( (crontab -l 2>/dev/null || true) | grep -v certbot; echo "${RENEW_CRON}") | crontab - || true
 echo "Cron de renouvellement SSL installe (2x/jour)."
 
 # ─── Service systemd ────────────────────────────────────────────────
