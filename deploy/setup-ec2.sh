@@ -55,13 +55,15 @@ echo "Sous-domaine:   ${DUCKDNS_SUBDOMAIN}"
 if [[ "${PKG_MGR}" == "dnf" ]]; then
   dnf update -y
   # Amazon Linux 2023 : curl-minimal est pre-installe, ne pas installer curl (conflit)
-  ${PKG_INSTALL} docker nginx git rsync python3 python3-pip
+  ${PKG_INSTALL} docker nginx git rsync python3 python3-pip cronie
   systemctl enable --now docker
+  systemctl enable --now crond
   usermod -aG docker ec2-user 2>/dev/null || true
 else
   apt-get update
-  ${PKG_INSTALL} docker.io nginx git curl rsync python3 python3-pip python3-venv
+  ${PKG_INSTALL} docker.io nginx git curl rsync python3 python3-pip python3-venv cron
   systemctl enable --now docker
+  systemctl enable --now cron
 fi
 
 systemctl enable --now nginx
