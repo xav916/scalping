@@ -1,13 +1,18 @@
 """FastAPI application for the Scalping Decision Tool."""
 
 import asyncio
+import hashlib
 import logging
+import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
+
+from config.settings import AUTH_USERNAME, AUTH_PASSWORD
 
 from backend.services.notification_service import (
     get_signal_history,
@@ -50,19 +55,37 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# ─── Authentification HTTP Basic ────────────────────────────────────
+security = HTTPBasic()
+
+
+def verify_credentials(credentials: HTTPBasicCredentials = Depends(security)):
+    """Vérifie le login/mot de passe."""
+    if not AUTH_USERNAME or not AUTH_PASSWORD:
+        return  # Pas d'auth configurée = accès libre
+    correct_user = secrets.compare_digest(credentials.username, AUTH_USERNAME)
+    correct_pass = secrets.compare_digest(credentials.password, AUTH_PASSWORD)
+    if not (correct_user and correct_pass):
+        raise HTTPException(
+            status_code=401,
+            detail="Identifiants incorrects",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+
+
 # Serve static files
 app.mount("/css", StaticFiles(directory=str(FRONTEND_DIR / "css")), name="css")
 app.mount("/js", StaticFiles(directory=str(FRONTEND_DIR / "js")), name="js")
 
 
 @app.get("/")
-async def index():
+async def index(credentials: HTTPBasicCredentials = Depends(verify_credentials)):
     """Serve the main dashboard page."""
     return FileResponse(str(FRONTEND_DIR / "index.html"))
 
 
 @app.get("/api/overview")
-async def get_overview():
+async def get_overview(_=Depends(verify_credentials)):
     """Get the latest market overview data."""
     overview = get_latest_overview()
     if overview is None:
@@ -74,7 +97,7 @@ async def get_overview():
 
 
 @app.get("/api/signals")
-async def get_signals():
+async def get_signals(_=Depends(verify_credentials)):
     """Get current active signals."""
     overview = get_latest_overview()
     if overview is None:
@@ -83,13 +106,13 @@ async def get_signals():
 
 
 @app.get("/api/signals/history")
-async def get_signals_history():
+async def get_signals_history(_=Depends(verify_credentials)):
     """Get signal history."""
     return get_signal_history()
 
 
 @app.get("/api/volatility")
-async def get_volatility():
+async def get_volatility(_=Depends(verify_credentials)):
     """Get current volatility data."""
     overview = get_latest_overview()
     if overview is None:
@@ -98,7 +121,7 @@ async def get_volatility():
 
 
 @app.get("/api/events")
-async def get_events():
+async def get_events(_=Depends(verify_credentials)):
     """Get economic events."""
     overview = get_latest_overview()
     if overview is None:
@@ -107,7 +130,7 @@ async def get_events():
 
 
 @app.get("/api/trade-setups")
-async def get_trade_setups():
+async def get_trade_setups(_=Depends(verify_credentials)):
     """Récupère les setups de trade (entrée/SL/TP)."""
     overview = get_latest_overview()
     if overview is None:
@@ -116,7 +139,7 @@ async def get_trade_setups():
 
 
 @app.get("/api/patterns")
-async def get_patterns():
+async def get_patterns(_=Depends(verify_credentials)):
     """Récupère les patterns détectés."""
     overview = get_latest_overview()
     if overview is None:
@@ -125,7 +148,7 @@ async def get_patterns():
 
 
 @app.get("/api/glossary")
-async def get_glossary():
+async def get_glossary(_=Depends(verify_credentials)):
     """Retourne le glossaire de tous les termes et abréviations."""
     return GLOSSARY
 
@@ -167,7 +190,7 @@ GLOSSARY = [
 
 
 @app.post("/api/refresh")
-async def refresh_analysis():
+async def refresh_analysis(_=Depends(verify_credentials)):
     """Manually trigger a new analysis cycle."""
     asyncio.create_task(run_analysis_cycle())
     return {"status": "ok", "message": "Analysis refresh triggered"}
