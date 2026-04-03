@@ -9,6 +9,19 @@ if [[ "${EUID}" -ne 0 ]]; then
   exit 1
 fi
 
+# ─── Detection du gestionnaire de paquets ───────────────────────────
+if command -v dnf &>/dev/null; then
+  PKG_MGR="dnf"
+  PKG_INSTALL="dnf install -y"
+elif command -v apt-get &>/dev/null; then
+  PKG_MGR="apt"
+  PKG_INSTALL="apt-get install -y"
+else
+  echo "ERREUR: Ni dnf ni apt-get trouve. OS non supporte."
+  exit 1
+fi
+echo "Gestionnaire de paquets: ${PKG_MGR}"
+
 # ─── Parametres ─────────────────────────────────────────────────────
 DOMAIN="${1:-}"
 DUCKDNS_TOKEN="${2:-}"
@@ -39,9 +52,19 @@ echo "Domaine:        ${DOMAIN}"
 echo "Sous-domaine:   ${DUCKDNS_SUBDOMAIN}"
 
 # ─── Installation des paquets ───────────────────────────────────────
-apt-get update
-apt-get install -y docker.io nginx git curl rsync python3 python3-pip python3-venv
-systemctl enable --now docker
+if [[ "${PKG_MGR}" == "dnf" ]]; then
+  dnf update -y
+  ${PKG_INSTALL} docker nginx git curl rsync python3 python3-pip
+  # Amazon Linux 2023 : activer docker
+  systemctl enable --now docker
+  usermod -aG docker ec2-user 2>/dev/null || true
+else
+  apt-get update
+  ${PKG_INSTALL} docker.io nginx git curl rsync python3 python3-pip python3-venv
+  systemctl enable --now docker
+fi
+
+systemctl enable --now nginx
 
 # ─── Mise a jour IP DuckDNS ─────────────────────────────────────────
 echo "Mise a jour de l'IP DuckDNS..."
@@ -67,6 +90,7 @@ rsync -a --delete \
   --exclude '.venv' \
   --exclude '.pytest_cache' \
   --exclude 'scalping-key.pem' \
+  --exclude '.claude' \
   "${REPO_DIR}/" "${APP_DIR}/"
 
 cd "${APP_DIR}"
@@ -93,19 +117,13 @@ echo "Pense a renseigner TWELVEDATA_API_KEY dans .env si besoin."
 docker build -t scalping-radar:latest .
 
 # ─── Certbot + plugin DNS DuckDNS ──────────────────────────────────
-# Le plugin certbot-dns-duckdns permet le challenge DNS-01
-# necessaire car DuckDNS ne supporte pas le challenge HTTP-01
-if ! command -v certbot &>/dev/null; then
-  apt-get install -y certbot
-fi
-
-# Installer le plugin DNS DuckDNS dans un venv dedie
 CERTBOT_VENV="/opt/certbot-duckdns"
 if [[ ! -d "${CERTBOT_VENV}" ]]; then
   python3 -m venv "${CERTBOT_VENV}"
 fi
 "${CERTBOT_VENV}/bin/pip" install --upgrade pip certbot certbot-dns-duckdns > /dev/null 2>&1
 CERTBOT_CMD="${CERTBOT_VENV}/bin/certbot"
+echo "Certbot + plugin DNS DuckDNS installes."
 
 # Creer le fichier credentials DuckDNS
 DUCKDNS_CREDS="/etc/letsencrypt/duckdns.ini"
@@ -116,9 +134,18 @@ EOF
 chmod 600 "${DUCKDNS_CREDS}"
 
 # ─── Nginx config HTTP temporaire ──────────────────────────────────
-mkdir -p /var/www/certbot
+# Determiner le dossier de config Nginx
+if [[ -d /etc/nginx/conf.d ]]; then
+  NGINX_CONF="/etc/nginx/conf.d/scalping.conf"
+  # Amazon Linux utilise conf.d, pas sites-available
+  # Supprimer la config par defaut si elle existe
+  rm -f /etc/nginx/conf.d/default.conf 2>/dev/null || true
+else
+  mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled
+  NGINX_CONF="/etc/nginx/sites-available/scalping"
+fi
 
-cat > /etc/nginx/sites-available/scalping <<NGINX_TEMP
+cat > "${NGINX_CONF}" <<NGINX_TEMP
 server {
     listen 80;
     server_name ${DOMAIN};
@@ -138,8 +165,12 @@ server {
 }
 NGINX_TEMP
 
-ln -sf /etc/nginx/sites-available/scalping /etc/nginx/sites-enabled/scalping
-rm -f /etc/nginx/sites-enabled/default
+# Lien symbolique pour Ubuntu/Debian
+if [[ -d /etc/nginx/sites-enabled ]]; then
+  ln -sf /etc/nginx/sites-available/scalping /etc/nginx/sites-enabled/scalping
+  rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
+fi
+
 nginx -t
 systemctl restart nginx
 
@@ -149,6 +180,7 @@ CERT_DIR="/etc/letsencrypt/live/${DOMAIN}"
 if [[ ! -d "${CERT_DIR}" ]]; then
   echo ""
   echo "Obtention du certificat SSL pour ${DOMAIN} (DNS-01 challenge)..."
+  echo "Cela peut prendre 1-2 minutes (propagation DNS)..."
   "${CERTBOT_CMD}" certonly \
     --authenticator dns-duckdns \
     --dns-duckdns-credentials "${DUCKDNS_CREDS}" \
@@ -165,8 +197,7 @@ else
 fi
 
 # ─── Nginx config HTTPS definitive ─────────────────────────────────
-# DuckDNS n'a pas de www, on genere la config sans www.
-cat > /etc/nginx/sites-available/scalping <<NGINX_SSL
+cat > "${NGINX_CONF}" <<NGINX_SSL
 # ─── HTTP → redirige tout vers HTTPS ────────────────────────────────
 server {
     listen 80;
@@ -235,7 +266,6 @@ nginx -t
 systemctl restart nginx
 
 # ─── Renouvellement automatique SSL ────────────────────────────────
-# Cron 2x par jour avec le certbot du venv
 RENEW_CRON="0 3,15 * * * ${CERTBOT_CMD} renew --quiet --deploy-hook 'systemctl reload nginx'"
 (crontab -l 2>/dev/null | grep -v certbot; echo "${RENEW_CRON}") | crontab -
 echo "Cron de renouvellement SSL installe (2x/jour)."
@@ -257,9 +287,9 @@ echo "============================================================"
 echo ""
 echo "  URL:        https://${DOMAIN}"
 echo "  IP EC2:     ${PUBLIC_IP}"
-echo "  DuckDNS:    ${DUCKDNS_SUBDOMAIN}.duckdns.org → ${PUBLIC_IP}"
+echo "  DuckDNS:    ${DUCKDNS_SUBDOMAIN}.duckdns.org -> ${PUBLIC_IP}"
 echo ""
-echo "  HTTP → redirige vers HTTPS automatiquement"
+echo "  HTTP -> redirige vers HTTPS automatiquement"
 echo "  SSL:  Let's Encrypt (renouvellement auto 2x/jour)"
 echo "  IP:   Mise a jour DuckDNS auto (toutes les 5 min)"
 echo ""
