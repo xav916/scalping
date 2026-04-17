@@ -1,7 +1,10 @@
 """Service de prix temps réel pour XAU/USD et autres paires.
 
-Utilise Twelve Data API (gratuit, 8 requêtes/min, 800/jour)
-comme source principale, avec fallback sur d'autres sources.
+Sources supportées (sélectionnées via PRICE_SOURCE) :
+- "mt5" : MetaTrader 5 (temps réel, requiert MT5 desktop + package MetaTrader5)
+- "twelvedata" : Twelve Data API (polling, gratuit 800 req/jour)
+
+Fallback : données simulées si la source est indisponible.
 """
 
 import logging
@@ -10,7 +13,8 @@ from datetime import datetime, timezone
 import httpx
 
 from backend.models.schemas import Candle
-from config.settings import TWELVEDATA_API_KEY
+from backend.services import mt5_service
+from config.settings import PRICE_SOURCE, TWELVEDATA_API_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +54,15 @@ async def fetch_candles(
     Returns:
         Tuple (liste de Candle triées du plus ancien au plus récent, is_simulated)
     """
-    # Essayer Twelve Data en premier
+    # Source MT5 (temps réel)
+    if PRICE_SOURCE == "mt5":
+        candles, is_sim = await mt5_service.fetch_candles(pair, interval, outputsize)
+        if candles:
+            return candles, is_sim
+        logger.info(f"MT5 indisponible pour {pair}, fallback sur données simulées")
+        return _generate_simulated_candles(pair, outputsize), True
+
+    # Source Twelve Data (polling)
     candles = await _fetch_twelvedata(pair, interval, outputsize)
     if candles:
         return candles, False
@@ -62,6 +74,13 @@ async def fetch_candles(
 
 async def fetch_current_price(pair: str) -> float | None:
     """Récupère le prix actuel d'une paire."""
+    if PRICE_SOURCE == "mt5":
+        price = await mt5_service.fetch_current_price(pair)
+        if price is not None:
+            return price
+        # Pas de fallback Twelve Data ici si MT5 est sélectionné explicitement
+        return None
+
     symbol = SYMBOL_MAP.get(pair, pair)
 
     if not TWELVEDATA_API_KEY:

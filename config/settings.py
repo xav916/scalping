@@ -42,9 +42,31 @@ WATCHED_PAIRS = os.getenv(
     "XAU/USD,EUR/USD,GBP/USD,USD/JPY,EUR/GBP,USD/CHF,AUD/USD,USD/CAD,EUR/JPY,GBP/JPY"
 ).split(",")
 
+# Source de prix : "mt5" (MetaTrader 5 temps réel) ou "twelvedata" (polling)
+PRICE_SOURCE = os.getenv("PRICE_SOURCE", "twelvedata").lower()
+
 # Twelve Data API (gratuit: 8 req/min, 800/jour)
 # Inscription: https://twelvedata.com/register
 TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "")
+
+# MetaTrader 5 (utilisé uniquement si PRICE_SOURCE=mt5)
+# Le terminal MT5 doit être installé et lancé sur la machine.
+MT5_LOGIN = os.getenv("MT5_LOGIN", "")  # ex: 62789843
+MT5_PASSWORD = os.getenv("MT5_PASSWORD", "")
+MT5_SERVER = os.getenv("MT5_SERVER", "")  # ex: OANDATMS-MT5
+MT5_TERMINAL_PATH = os.getenv("MT5_TERMINAL_PATH", "")  # optionnel, chemin vers terminal64.exe
+
+# Mapping paire Scalping Radar -> symbole MT5 (dépend du broker)
+# Format: "XAU/USD:GOLD.pro,EUR/USD:EURUSD.pro,..."
+# Pour OANDA TMS : XAU/USD:GOLD.pro, EUR/USD:EURUSD.pro, GBP/USD:GBPUSD.pro, etc.
+_MT5_SYMBOL_MAP_RAW = os.getenv("MT5_SYMBOL_MAP", "")
+MT5_SYMBOL_MAP: dict[str, str] = {}
+if _MT5_SYMBOL_MAP_RAW:
+    for entry in _MT5_SYMBOL_MAP_RAW.split(","):
+        entry = entry.strip()
+        if ":" in entry:
+            k, v = entry.split(":", 1)
+            MT5_SYMBOL_MAP[k.strip()] = v.strip()
 
 # Money management
 TRADING_CAPITAL = float(os.getenv("TRADING_CAPITAL", "10000"))  # Capital en USD
