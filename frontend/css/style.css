@@ -1190,3 +1190,91 @@ body {
     font-weight: 700;
     font-family: 'Courier New', monospace;
 }
+
+/* ─── Light theme ────────────────────────────────────────── */
+[data-theme="light"] {
+    --bg-primary: #ffffff;
+    --bg-secondary: #f6f8fa;
+    --bg-card: #ffffff;
+    --border-color: #d0d7de;
+    --text-primary: #1f2328;
+    --text-secondary: #57606a;
+    --text-muted: #848d97;
+    --accent-green: #1a7f37;
+    --accent-red: #cf222e;
+    --accent-yellow: #9a6700;
+    --accent-blue: #0969da;
+    --accent-purple: #8250df;
+    --signal-strong: #1a7f37;
+    --signal-moderate: #9a6700;
+    --signal-weak: #848d97;
+}
+
+[data-theme="light"] .tick-card.tick-up {
+    background: rgba(26, 127, 55, 0.1);
+    border-color: #1a7f37;
+}
+[data-theme="light"] .tick-card.tick-down {
+    background: rgba(207, 34, 46, 0.1);
+    border-color: #cf222e;
+}
+[data-theme="light"] .setup-chart {
+    background: #fafbfc;
+}
+
+/* ─── Responsive mobile ──────────────────────────────────── */
+@media (max-width: 768px) {
+    .header {
+        padding: 10px 12px;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+    .header h1 {
+        font-size: 16px;
+    }
+    .header-status {
+        flex-wrap: wrap;
+        gap: 6px;
+        font-size: 11px;
+    }
+    .live-clock {
+        font-size: 12px;
+    }
+    .dashboard {
+        padding: 8px;
+    }
+    .card {
+        margin-bottom: 10px;
+    }
+    .card-header h2 {
+        font-size: 14px;
+    }
+    .filter-bar {
+        padding: 6px 10px;
+        gap: 8px;
+    }
+    .setup-chart {
+        height: 140px;
+        margin: 8px 0;
+    }
+    .backtest-summary {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 8px;
+    }
+    .bt-stat-value {
+        font-size: 18px;
+    }
+    #live-ticks-grid {
+        grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+    }
+    .tick-price {
+        font-size: 14px;
+    }
+    .filter-group {
+        flex-wrap: wrap;
+    }
+    .session-markers .session-badge {
+        font-size: 9px;
+        padding: 1px 4px;
+    }
+}

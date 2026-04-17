@@ -216,6 +216,32 @@ function renderBacktestStats(stats) {
     `;
 }
 
+// ─── Theme toggle (light/dark) ─────────────────────────────────────
+
+function _currentTheme() {
+    return localStorage.getItem('scalping_theme') || 'dark';
+}
+
+function _applyTheme(theme) {
+    const root = document.documentElement;
+    if (theme === 'light') {
+        root.setAttribute('data-theme', 'light');
+    } else {
+        root.removeAttribute('data-theme');
+    }
+    const btn = document.getElementById('theme-toggle');
+    if (btn) btn.textContent = theme === 'light' ? '☀️' : '🌙';
+}
+
+function toggleTheme() {
+    const next = _currentTheme() === 'light' ? 'dark' : 'light';
+    localStorage.setItem('scalping_theme', next);
+    _applyTheme(next);
+}
+
+// Applique le theme le plus tot possible (avant DOMContentLoaded pour eviter flash)
+_applyTheme(_currentTheme());
+
 // ─── Sessions forex (Sydney/Tokyo/London/New York) ─────────────────
 
 const _SESSIONS = [
@@ -1039,6 +1065,8 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('refresh-btn').addEventListener('click', refreshAnalysis);
     const soundBtn = document.getElementById('sound-toggle');
     if (soundBtn) soundBtn.addEventListener('click', toggleSound);
+    const themeBtn = document.getElementById('theme-toggle');
+    if (themeBtn) themeBtn.addEventListener('click', toggleTheme);
 
     // Horloge live + compteurs : mise à jour toutes les secondes
     setInterval(() => {
