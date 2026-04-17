@@ -1151,3 +1151,16 @@ body {
     border-radius: 6px;
     overflow: hidden;
 }
+
+/* ─── Sound toggle button ──────────────────────────────────── */
+.btn-sm {
+    font-size: 11px;
+    padding: 4px 10px;
+    font-weight: 600;
+}
+#sound-toggle.sound-off {
+    opacity: 0.6;
+    background: transparent;
+    border: 1px solid var(--border-color);
+    color: var(--text-muted);
+}

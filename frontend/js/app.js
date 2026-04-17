@@ -65,11 +65,66 @@ function handleWebSocketMessage(message) {
         addSignalToUI(message.data);
         showToast(message.data);
         requestBrowserNotification(message.data);
+        _playSignalSound(message.data);
     } else if (message.type === 'update') {
         updateDashboard(message.data);
     } else if (message.type === 'tick') {
         handleTick(message.data);
     }
+}
+
+// ─── Sons d'alerte (Web Audio API, aucun asset externe) ────────────
+
+let _audioCtx = null;
+function _ensureAudio() {
+    if (!_audioCtx) {
+        try { _audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
+        catch (e) { return null; }
+    }
+    return _audioCtx;
+}
+
+function _beep(freq, duration, gain = 0.15) {
+    const ctx = _ensureAudio();
+    if (!ctx) return;
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = freq;
+    g.gain.setValueAtTime(gain, ctx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
+    osc.connect(g); g.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + duration);
+}
+
+function _playSignalSound(signal) {
+    if (!_soundEnabled()) return;
+    const strength = signal.signal_strength || signal.strength;
+    // Strong: triple bip aigu, moderate: double medium, weak: simple grave
+    if (strength === 'strong') {
+        _beep(880, 0.15); setTimeout(() => _beep(1100, 0.15), 180); setTimeout(() => _beep(1320, 0.25), 360);
+    } else if (strength === 'moderate') {
+        _beep(660, 0.15); setTimeout(() => _beep(880, 0.2), 200);
+    } else {
+        _beep(440, 0.25);
+    }
+}
+
+function _soundEnabled() {
+    return localStorage.getItem('scalping_sound') !== 'off';
+}
+function toggleSound() {
+    const enabled = !_soundEnabled();
+    localStorage.setItem('scalping_sound', enabled ? 'on' : 'off');
+    _updateSoundBtn();
+    if (enabled) _beep(880, 0.1); // confirmation audible
+}
+function _updateSoundBtn() {
+    const btn = document.getElementById('sound-toggle');
+    if (!btn) return;
+    btn.textContent = _soundEnabled() ? 'Son ON' : 'Son OFF';
+    btn.classList.toggle('sound-off', !_soundEnabled());
 }
 
 // ─── API ─────────────────────────────────────────────────────────────
@@ -923,7 +978,10 @@ document.addEventListener('DOMContentLoaded', () => {
     connectWebSocket();
     _bindFilters();
     _renderSessionMarkers();
+    _updateSoundBtn();
     document.getElementById('refresh-btn').addEventListener('click', refreshAnalysis);
+    const soundBtn = document.getElementById('sound-toggle');
+    if (soundBtn) soundBtn.addEventListener('click', toggleSound);
 
     // Horloge live + compteurs : mise à jour toutes les secondes
     setInterval(() => {

@@ -54,6 +54,16 @@ TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "")
 TWELVEDATA_WS_ENABLED = os.getenv("TWELVEDATA_WS_ENABLED", "false").lower() in ("1", "true", "yes")
 TWELVEDATA_WS_MAX_SYMBOLS = int(os.getenv("TWELVEDATA_WS_MAX_SYMBOLS", "2"))
 
+# Telegram bot (notifications mobiles des signaux)
+# Setup:
+#   1. Parler a @BotFather sur Telegram, /newbot, recuperer le token
+#   2. Parler a votre nouveau bot (envoyer "bonjour"), puis ouvrir
+#      https://api.telegram.org/bot<TOKEN>/getUpdates pour recuperer chat_id
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+# Force minimum pour qu'un signal soit envoye : weak / moderate / strong
+TELEGRAM_MIN_STRENGTH = os.getenv("TELEGRAM_MIN_STRENGTH", "strong")
+
 # MetaTrader 5 (utilisé uniquement si PRICE_SOURCE=mt5)
 # Le terminal MT5 doit être installé et lancé sur la machine.
 MT5_LOGIN = os.getenv("MT5_LOGIN", "")  # ex: 62789843

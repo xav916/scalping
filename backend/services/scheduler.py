@@ -16,6 +16,7 @@ from backend.services.analysis_engine import (
 from backend.services.forexfactory_service import fetch_economic_events
 from backend.services.mataf_service import fetch_volatility_data
 from backend.services.notification_service import broadcast_signals, broadcast_update
+from backend.services.telegram_service import send_signals as telegram_send_signals
 from backend.services.pattern_detector import calculate_trade_setup, detect_patterns
 from backend.services.price_service import fetch_candles
 from config.settings import (
@@ -139,6 +140,8 @@ async def run_analysis_cycle() -> None:
         if signals:
             logger.info(f"{len(signals)} signal(s) de scalping détecté(s)")
             await broadcast_signals(signals)
+            # Push Telegram en parallele (non-bloquant, best effort)
+            asyncio.create_task(telegram_send_signals(signals))
 
         # Envoyer la mise à jour complète
         await broadcast_update({
