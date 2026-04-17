@@ -160,6 +160,62 @@ async function refreshAnalysis() {
     }
 }
 
+// ─── Backtest stats ────────────────────────────────────────────────
+
+async function fetchBacktestStats() {
+    try {
+        const res = await fetch(`${API_BASE}/api/backtest/stats`);
+        if (!res.ok) return;
+        const stats = await res.json();
+        renderBacktestStats(stats);
+    } catch (err) {
+        console.warn('Backtest stats error:', err);
+    }
+}
+
+function renderBacktestStats(stats) {
+    const container = document.getElementById('backtest-stats');
+    if (!container) return;
+    if (!stats.total_trades) {
+        container.innerHTML = '<div class="empty-state"><p>Aucun trade enregistre pour le moment.</p><p>Les stats apparaitront des qu\'un signal aura ete emis.</p></div>';
+        return;
+    }
+    const winRateClass = stats.win_rate_pct >= 60 ? 'conf-high' : stats.win_rate_pct >= 50 ? 'conf-medium' : 'conf-low';
+    const pairsHTML = (stats.by_pair || []).map(p => `
+        <tr>
+            <td><strong>${p.pair}</strong></td>
+            <td>${p.wins}W / ${p.losses}L</td>
+            <td>${p.total}</td>
+            <td><span class="${p.win_rate_pct >= 50 ? 'factor-positive' : 'factor-negative'}">${p.win_rate_pct}%</span></td>
+        </tr>`).join('');
+
+    container.innerHTML = `
+        <div class="backtest-summary">
+            <div class="bt-stat">
+                <div class="bt-stat-label">TAUX DE REUSSITE</div>
+                <div class="bt-stat-value ${winRateClass}">${stats.win_rate_pct}%</div>
+            </div>
+            <div class="bt-stat">
+                <div class="bt-stat-label">TRADES FERMES</div>
+                <div class="bt-stat-value">${stats.closed_trades}</div>
+            </div>
+            <div class="bt-stat">
+                <div class="bt-stat-label">OUVERTS</div>
+                <div class="bt-stat-value">${stats.open_trades}</div>
+            </div>
+            <div class="bt-stat">
+                <div class="bt-stat-label">R:R MOYEN</div>
+                <div class="bt-stat-value">${stats.avg_rr_realized.toFixed(2)}</div>
+            </div>
+        </div>
+        ${pairsHTML ? `
+        <table class="vol-table" style="margin-top:12px">
+            <thead><tr><th>Paire</th><th>W / L</th><th>Total</th><th>Win rate</th></tr></thead>
+            <tbody>${pairsHTML}</tbody>
+        </table>` : ''}
+    `;
+}
+
 // ─── Sessions forex (Sydney/Tokyo/London/New York) ─────────────────
 
 const _SESSIONS = [
@@ -975,6 +1031,7 @@ document.addEventListener('DOMContentLoaded', () => {
     fetchOverview();
     fetchGlossary();
     fetchTicks();
+    fetchBacktestStats();
     connectWebSocket();
     _bindFilters();
     _renderSessionMarkers();
@@ -994,4 +1051,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Auto-refresh des données toutes les 5 secondes
     setInterval(fetchOverview, AUTO_REFRESH_INTERVAL);
+
+    // Refresh des stats backtest toutes les 30s
+    setInterval(fetchBacktestStats, 30000);
 });

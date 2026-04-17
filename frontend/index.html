@@ -24,6 +24,17 @@
 
     <!-- Dashboard -->
     <main class="dashboard">
+        <!-- Backtest stats -->
+        <section class="card signals-section">
+            <div class="card-header">
+                <h2>Performance des signaux (backtest)</h2>
+                <span style="font-size:11px;color:var(--text-muted)">Evolue en continu a partir des signaux reels emis</span>
+            </div>
+            <div class="card-body" id="backtest-stats">
+                <div class="empty-state"><p>Chargement des stats...</p></div>
+            </div>
+        </section>
+
         <!-- Live Ticks (WebSocket Twelve Data) -->
         <section class="card signals-section" id="live-ticks-section" style="display:none">
             <div class="card-header">

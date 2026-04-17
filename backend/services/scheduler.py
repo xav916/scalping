@@ -15,6 +15,7 @@ from backend.services.analysis_engine import (
 )
 from backend.services.forexfactory_service import fetch_economic_events
 from backend.services.mataf_service import fetch_volatility_data
+from backend.services import backtest_service
 from backend.services.notification_service import broadcast_signals, broadcast_update
 from backend.services.telegram_service import send_signals as telegram_send_signals
 from backend.services.pattern_detector import calculate_trade_setup, detect_patterns
@@ -117,6 +118,12 @@ async def run_analysis_cycle() -> None:
         # Filtrer pour ne garder que les setups haute confiance
         all_trade_setups = filter_high_confidence_setups(all_trade_setups)
 
+        # Enregistrer les setups pour le backtest (dedup par pair+entry)
+        try:
+            backtest_service.record_setups(all_trade_setups)
+        except Exception as e:
+            logger.warning(f"Backtest record_setups a echoue: {e}")
+
         # Détecter les signaux de scalping (volatilité + tendance)
         signals = detect_signals(
             volatility_data, economic_events, trends,
@@ -165,6 +172,14 @@ async def run_analysis_cycle() -> None:
         logger.error(f"Erreur cycle d'analyse: {e}", exc_info=True)
 
 
+async def backtest_check_cycle() -> None:
+    """Cycle periodique : verifie les trades ouverts (hit SL / TP / open)."""
+    try:
+        await backtest_service.check_open_trades()
+    except Exception as e:
+        logger.warning(f"Backtest check_open_trades a echoue: {e}")
+
+
 def start_scheduler() -> AsyncIOScheduler:
     """Démarre le scheduler périodique."""
     global _scheduler
@@ -178,9 +193,18 @@ def start_scheduler() -> AsyncIOScheduler:
         name="Cycle d'analyse marché",
         replace_existing=True,
     )
+    # Check backtest toutes les 60s (independant du cycle d'analyse)
+    _scheduler.add_job(
+        backtest_check_cycle,
+        "interval",
+        seconds=60,
+        id="backtest_check",
+        name="Check trades backtest",
+        replace_existing=True,
+    )
 
     _scheduler.start()
-    logger.info(f"Scheduler démarré. Analyse toutes les {MATAF_POLL_INTERVAL}s")
+    logger.info(f"Scheduler démarré. Analyse toutes les {MATAF_POLL_INTERVAL}s, backtest toutes les 60s")
     return _scheduler
 
 

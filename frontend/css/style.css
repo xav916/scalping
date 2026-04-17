@@ -1164,3 +1164,29 @@ body {
     border: 1px solid var(--border-color);
     color: var(--text-muted);
 }
+
+/* ─── Backtest stats ───────────────────────────────────── */
+.backtest-summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 12px;
+}
+.bt-stat {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 12px;
+    text-align: center;
+}
+.bt-stat-label {
+    font-size: 10px;
+    color: var(--text-muted);
+    font-weight: 700;
+    letter-spacing: 1px;
+    margin-bottom: 6px;
+}
+.bt-stat-value {
+    font-size: 24px;
+    font-weight: 700;
+    font-family: 'Courier New', monospace;
+}

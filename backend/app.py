@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 
 from config.settings import AUTH_USERS
 
-from backend.services import twelvedata_ws
+from backend.services import backtest_service, indicators, twelvedata_ws
 from backend.services.notification_service import (
     get_signal_history,
     register_client,
@@ -213,6 +213,25 @@ async def get_all_candles(_=Depends(verify_credentials)):
         pair: [c.model_dump(mode="json") for c in candles]
         for pair, candles in all_candles.items()
     }
+
+
+@app.get("/api/backtest/stats")
+async def get_backtest_stats(_=Depends(verify_credentials)):
+    """Statistiques globales des signaux backtestes."""
+    return backtest_service.get_stats()
+
+
+@app.get("/api/backtest/trades")
+async def get_backtest_trades(limit: int = 50, _=Depends(verify_credentials)):
+    """Historique des trades backtestes."""
+    return backtest_service.get_recent_trades(limit=limit)
+
+
+@app.get("/api/indicators/{pair:path}")
+async def get_indicators(pair: str, _=Depends(verify_credentials)):
+    """RSI + MACD + Bollinger pour une paire a partir des dernieres bougies."""
+    candles = get_candles_for_pair(pair)
+    return {"pair": pair, **indicators.compute_all(candles)}
 
 
 @app.get("/api/ticks")
