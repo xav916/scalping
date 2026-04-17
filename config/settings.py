@@ -49,6 +49,11 @@ PRICE_SOURCE = os.getenv("PRICE_SOURCE", "twelvedata").lower()
 # Inscription: https://twelvedata.com/register
 TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "")
 
+# WebSocket Twelve Data (temps reel tick <1s, necessite plan Grow ou plus)
+# Grow: 8 symboles max en WebSocket. Pro: 80 symboles.
+TWELVEDATA_WS_ENABLED = os.getenv("TWELVEDATA_WS_ENABLED", "false").lower() in ("1", "true", "yes")
+TWELVEDATA_WS_MAX_SYMBOLS = int(os.getenv("TWELVEDATA_WS_MAX_SYMBOLS", "8"))
+
 # MetaTrader 5 (utilisé uniquement si PRICE_SOURCE=mt5)
 # Le terminal MT5 doit être installé et lancé sur la machine.
 MT5_LOGIN = os.getenv("MT5_LOGIN", "")  # ex: 62789843

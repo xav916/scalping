@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 
 from config.settings import AUTH_USERS
 
+from backend.services import twelvedata_ws
 from backend.services.notification_service import (
     get_signal_history,
     register_client,
@@ -43,7 +44,10 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(run_analysis_cycle())
     # Start periodic scheduler
     start_scheduler()
+    # Start live-tick WebSocket (opt-in via TWELVEDATA_WS_ENABLED)
+    twelvedata_ws.start()
     yield
+    await twelvedata_ws.stop()
     stop_scheduler()
     logger.info("Scalping Decision Tool stopped.")
 
@@ -186,6 +190,17 @@ GLOSSARY = [
     {"term": "Position", "full": "Taille de position", "definition": "Montant investi sur un trade. Calculee en fonction du risque accepte (% du capital) et de la distance au SL."},
     {"term": "Risque max", "full": "Perte maximale", "definition": "Montant maximum que vous perdez si le SL est touche. Generalement 1-2% du capital par trade pour une gestion saine."},
 ]
+
+
+@app.get("/api/ticks")
+async def get_ticks(_=Depends(verify_credentials)):
+    """Derniers ticks temps reel recus via WebSocket Twelve Data."""
+    ticks = twelvedata_ws.get_latest_ticks()
+    return {
+        "enabled": bool(ticks) or len(twelvedata_ws.get_subscribed_symbols()) > 0,
+        "symbols": twelvedata_ws.get_subscribed_symbols(),
+        "ticks": {pair: t.model_dump(mode="json") for pair, t in ticks.items()},
+    }
 
 
 @app.post("/api/refresh")

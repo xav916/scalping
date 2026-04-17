@@ -1019,3 +1019,47 @@ body {
         grid-template-columns: repeat(2, 1fr);
     }
 }
+
+/* ─── Live Ticks (WebSocket) ─────────────────────────────────────── */
+#live-ticks-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 10px;
+}
+
+.tick-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 10px 12px;
+    transition: background 0.3s ease, border-color 0.3s ease;
+}
+
+.tick-card.tick-up {
+    background: rgba(38, 166, 154, 0.15);
+    border-color: var(--accent-green, #26a69a);
+}
+
+.tick-card.tick-down {
+    background: rgba(239, 83, 80, 0.15);
+    border-color: var(--accent-red, #ef5350);
+}
+
+.tick-pair {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.tick-price {
+    font-size: 18px;
+    font-weight: 700;
+    font-family: 'Courier New', monospace;
+    margin: 2px 0;
+}
+
+.tick-ts {
+    font-size: 10px;
+    color: var(--text-muted);
+}

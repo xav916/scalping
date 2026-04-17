@@ -6,7 +6,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from backend.models.schemas import ScalpingSignal
+from backend.models.schemas import ScalpingSignal, Tick
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +94,31 @@ async def broadcast_signals(signals: list[ScalpingSignal]) -> None:
 async def broadcast_update(data: dict) -> None:
     """Broadcast a general market update to all clients."""
     message = json.dumps({"type": "update", "data": data})
+    disconnected = set()
+    for client in _connected_clients:
+        try:
+            await client.send_text(message)
+        except Exception:
+            disconnected.add(client)
+    for client in disconnected:
+        _connected_clients.discard(client)
+
+
+async def broadcast_tick(tick: Tick) -> None:
+    """Broadcast un tick temps reel a tous les clients connectes."""
+    if not _connected_clients:
+        return
+    payload = {
+        "type": "tick",
+        "data": {
+            "pair": tick.pair,
+            "price": tick.price,
+            "bid": tick.bid,
+            "ask": tick.ask,
+            "timestamp": tick.timestamp.isoformat(),
+        },
+    }
+    message = json.dumps(payload)
     disconnected = set()
     for client in _connected_clients:
         try:

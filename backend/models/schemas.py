@@ -86,6 +86,15 @@ class Candle(BaseModel):
     volume: float = 0.0
 
 
+class Tick(BaseModel):
+    """Dernier prix d'une paire (source WebSocket temps reel)."""
+    pair: str
+    price: float
+    bid: float | None = None
+    ask: float | None = None
+    timestamp: datetime
+
+
 class PatternDetection(BaseModel):
     pattern: PatternType
     confidence: float  # 0 à 1

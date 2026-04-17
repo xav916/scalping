@@ -67,6 +67,8 @@ function handleWebSocketMessage(message) {
         requestBrowserNotification(message.data);
     } else if (message.type === 'update') {
         updateDashboard(message.data);
+    } else if (message.type === 'tick') {
+        handleTick(message.data);
     }
 }
 
@@ -101,6 +103,78 @@ async function refreshAnalysis() {
         btn.disabled = false;
         btn.textContent = 'Actualiser';
     }
+}
+
+// ─── Live Ticks (WebSocket Twelve Data) ─────────────────────────────
+
+const _tickState = {}; // { [pair]: { price, prev, lastTs } }
+
+async function fetchTicks() {
+    try {
+        const res = await fetch(`${API_BASE}/api/ticks`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!data.symbols || data.symbols.length === 0) return;
+        document.getElementById('live-ticks-section').style.display = '';
+        const info = document.getElementById('live-ticks-info');
+        if (info) info.textContent = `${data.symbols.length} symbole(s) streame(s)`;
+        // Seed du state avec les derniers ticks deja recus
+        Object.entries(data.ticks || {}).forEach(([pair, t]) => {
+            _tickState[pair] = { price: t.price, prev: t.price, lastTs: t.timestamp };
+        });
+        renderTicks(data.symbols);
+    } catch (err) {
+        // WS pas active, on ignore silencieusement
+    }
+}
+
+function renderTicks(symbols) {
+    const grid = document.getElementById('live-ticks-grid');
+    if (!grid) return;
+    grid.innerHTML = symbols.map(pair => {
+        const state = _tickState[pair] || {};
+        const price = state.price !== undefined ? state.price.toFixed(pair.includes('JPY') ? 3 : 5) : '—';
+        return `
+            <div class="tick-card" data-pair="${pair}">
+                <div class="tick-pair">${pair}</div>
+                <div class="tick-price" data-pair-price="${pair}">${price}</div>
+                <div class="tick-ts" data-pair-ts="${pair}">${state.lastTs ? _relativeTime(state.lastTs) : '—'}</div>
+            </div>`;
+    }).join('');
+}
+
+function handleTick(tick) {
+    const section = document.getElementById('live-ticks-section');
+    if (section) section.style.display = '';
+    const prev = _tickState[tick.pair]?.price;
+    _tickState[tick.pair] = { price: tick.price, prev: prev ?? tick.price, lastTs: tick.timestamp };
+
+    const priceEl = document.querySelector(`[data-pair-price="${tick.pair}"]`);
+    const card = document.querySelector(`.tick-card[data-pair="${tick.pair}"]`);
+    if (!priceEl) {
+        // La carte n'existe pas encore, re-render la grille
+        const symbols = Array.from(new Set([...Object.keys(_tickState), tick.pair]));
+        renderTicks(symbols);
+        return;
+    }
+    priceEl.textContent = tick.price.toFixed(tick.pair.includes('JPY') ? 3 : 5);
+
+    // Pulse visuel (vert si up, rouge si down)
+    if (card && prev !== undefined) {
+        card.classList.remove('tick-up', 'tick-down');
+        if (tick.price > prev) card.classList.add('tick-up');
+        else if (tick.price < prev) card.classList.add('tick-down');
+        setTimeout(() => card.classList.remove('tick-up', 'tick-down'), 400);
+    }
+    const tsEl = document.querySelector(`[data-pair-ts="${tick.pair}"]`);
+    if (tsEl) tsEl.textContent = _relativeTime(tick.timestamp);
+}
+
+function _relativeTime(isoTs) {
+    const sec = Math.max(0, Math.floor((Date.now() - new Date(isoTs)) / 1000));
+    if (sec < 2) return 'maintenant';
+    if (sec < 60) return `il y a ${sec}s`;
+    return `il y a ${Math.floor(sec / 60)}min`;
 }
 
 // ─── Rendu principal ─────────────────────────────────────────────────
@@ -680,6 +754,7 @@ function filterGlossary(query) {
 document.addEventListener('DOMContentLoaded', () => {
     fetchOverview();
     fetchGlossary();
+    fetchTicks();
     connectWebSocket();
     document.getElementById('refresh-btn').addEventListener('click', refreshAnalysis);
 

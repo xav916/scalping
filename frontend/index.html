@@ -22,6 +22,17 @@
 
     <!-- Dashboard -->
     <main class="dashboard">
+        <!-- Live Ticks (WebSocket Twelve Data) -->
+        <section class="card signals-section" id="live-ticks-section" style="display:none">
+            <div class="card-header">
+                <h2>Prix Live (WebSocket)</h2>
+                <span style="font-size:11px;color:var(--text-muted)" id="live-ticks-info">En attente de ticks...</span>
+            </div>
+            <div class="card-body" id="live-ticks-grid">
+                <div class="empty-state"><p>Aucun tick recu pour l'instant.</p></div>
+            </div>
+        </section>
+
         <!-- Trade Setups (full width, priority) -->
         <section class="card signals-section">
             <div class="card-header">
