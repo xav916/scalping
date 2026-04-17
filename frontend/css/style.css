@@ -1063,3 +1063,91 @@ body {
     font-size: 10px;
     color: var(--text-muted);
 }
+
+/* ─── Session markers ─────────────────────────────────────── */
+.session-markers {
+    display: inline-flex;
+    gap: 4px;
+}
+.session-badge {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    padding: 2px 6px;
+    border-radius: 4px;
+    border: 1px solid;
+    letter-spacing: 0.5px;
+}
+.session-closed {
+    background: rgba(128,128,128,0.1);
+    border-color: #555;
+    color: #888;
+}
+
+/* ─── Filter bar ─────────────────────────────────────────── */
+.filter-bar {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    padding: 8px 16px;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-color);
+    align-items: center;
+}
+.filter-group {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+.filter-label {
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+}
+.filter-btn {
+    background: transparent;
+    color: var(--text-secondary);
+    border: 1px solid var(--border-color);
+    padding: 3px 10px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+.filter-btn:hover { border-color: var(--accent-blue, #3498db); color: #fff; }
+.filter-btn.active {
+    background: var(--accent-blue, #3498db);
+    border-color: var(--accent-blue, #3498db);
+    color: #fff;
+}
+.filter-select {
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    cursor: pointer;
+}
+
+/* ─── Sparkline sur tickers ─────────────────────────────── */
+.tick-sparkline {
+    width: 100%;
+    height: 30px;
+    margin: 4px 0;
+    display: block;
+}
+
+/* ─── Mini-chart dans setups ────────────────────────────── */
+.setup-chart {
+    width: 100%;
+    height: 180px;
+    margin: 12px 0;
+    background: var(--bg-primary, #0d1117);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    overflow: hidden;
+}

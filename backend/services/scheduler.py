@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 
 # État partagé
 _latest_overview: MarketOverview | None = None
+_latest_candles_by_pair: dict[str, list] = {}
 _scheduler: AsyncIOScheduler | None = None
 
 
@@ -36,9 +37,18 @@ def get_latest_overview() -> MarketOverview | None:
     return _latest_overview
 
 
+def get_candles_for_pair(pair: str) -> list:
+    """Retourne les dernieres bougies pour une paire donnee."""
+    return _latest_candles_by_pair.get(pair, [])
+
+
+def get_all_pair_candles() -> dict[str, list]:
+    return dict(_latest_candles_by_pair)
+
+
 async def run_analysis_cycle() -> None:
     """Exécute un cycle complet : récupération, analyse, détection de patterns, notification."""
-    global _latest_overview
+    global _latest_overview, _latest_candles_by_pair
 
     logger.info("Démarrage du cycle d'analyse...")
 
@@ -113,6 +123,7 @@ async def run_analysis_cycle() -> None:
         )
 
         now = datetime.now(timezone.utc)
+        _latest_candles_by_pair = all_candles
         _latest_overview = MarketOverview(
             volatility_data=volatility_data,
             economic_events=economic_events,

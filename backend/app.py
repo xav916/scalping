@@ -21,6 +21,8 @@ from backend.services.notification_service import (
     unregister_client,
 )
 from backend.services.scheduler import (
+    get_all_pair_candles,
+    get_candles_for_pair,
     get_latest_overview,
     run_analysis_cycle,
     start_scheduler,
@@ -190,6 +192,27 @@ GLOSSARY = [
     {"term": "Position", "full": "Taille de position", "definition": "Montant investi sur un trade. Calculee en fonction du risque accepte (% du capital) et de la distance au SL."},
     {"term": "Risque max", "full": "Perte maximale", "definition": "Montant maximum que vous perdez si le SL est touche. Generalement 1-2% du capital par trade pour une gestion saine."},
 ]
+
+
+@app.get("/api/candles/{pair:path}")
+async def get_candles_by_pair(pair: str, _=Depends(verify_credentials)):
+    """Retourne les dernieres bougies OHLC pour une paire (ex: XAU/USD)."""
+    candles = get_candles_for_pair(pair)
+    return {
+        "pair": pair,
+        "interval": "5min",
+        "candles": [c.model_dump(mode="json") for c in candles],
+    }
+
+
+@app.get("/api/candles")
+async def get_all_candles(_=Depends(verify_credentials)):
+    """Retourne toutes les bougies groupees par paire."""
+    all_candles = get_all_pair_candles()
+    return {
+        pair: [c.model_dump(mode="json") for c in candles]
+        for pair, candles in all_candles.items()
+    }
 
 
 @app.get("/api/ticks")

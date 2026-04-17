@@ -105,9 +105,40 @@ async function refreshAnalysis() {
     }
 }
 
+// ─── Sessions forex (Sydney/Tokyo/London/New York) ─────────────────
+
+const _SESSIONS = [
+    { name: 'Sydney',   start: 22, end: 7,  color: '#8e44ad' },
+    { name: 'Tokyo',    start: 0,  end: 9,  color: '#e74c3c' },
+    { name: 'London',   start: 8,  end: 17, color: '#3498db' },
+    { name: 'New York', start: 13, end: 22, color: '#27ae60' },
+];
+
+function _activeSessions() {
+    const hour = new Date().getUTCHours();
+    return _SESSIONS.filter(s =>
+        s.start <= s.end ? (hour >= s.start && hour < s.end)
+                         : (hour >= s.start || hour < s.end)
+    );
+}
+
+function _renderSessionMarkers() {
+    const el = document.getElementById('session-markers');
+    if (!el) return;
+    const active = _activeSessions();
+    if (!active.length) {
+        el.innerHTML = '<span class="session-badge session-closed">Marche ferme</span>';
+        return;
+    }
+    el.innerHTML = active.map(s =>
+        `<span class="session-badge" style="background:${s.color}20;border-color:${s.color};color:${s.color}">${s.name}</span>`
+    ).join('');
+}
+
 // ─── Live Ticks (WebSocket Twelve Data) ─────────────────────────────
 
-const _tickState = {}; // { [pair]: { price, prev, lastTs } }
+const _tickState = {}; // { [pair]: { price, prev, lastTs, history: number[] } }
+const SPARKLINE_POINTS = 40;
 
 async function fetchTicks() {
     try {
@@ -120,7 +151,7 @@ async function fetchTicks() {
         if (info) info.textContent = `${data.symbols.length} symbole(s) streame(s)`;
         // Seed du state avec les derniers ticks deja recus
         Object.entries(data.ticks || {}).forEach(([pair, t]) => {
-            _tickState[pair] = { price: t.price, prev: t.price, lastTs: t.timestamp };
+            _tickState[pair] = { price: t.price, prev: t.price, lastTs: t.timestamp, history: [t.price] };
         });
         renderTicks(data.symbols);
     } catch (err) {
@@ -138,16 +169,42 @@ function renderTicks(symbols) {
             <div class="tick-card" data-pair="${pair}">
                 <div class="tick-pair">${pair}</div>
                 <div class="tick-price" data-pair-price="${pair}">${price}</div>
+                <svg class="tick-sparkline" data-pair-spark="${pair}" viewBox="0 0 100 30" preserveAspectRatio="none"></svg>
                 <div class="tick-ts" data-pair-ts="${pair}">${state.lastTs ? _relativeTime(state.lastTs) : '—'}</div>
             </div>`;
     }).join('');
+    symbols.forEach(pair => _drawSparkline(pair));
+}
+
+function _drawSparkline(pair) {
+    const svg = document.querySelector(`[data-pair-spark="${pair}"]`);
+    if (!svg) return;
+    const state = _tickState[pair];
+    const history = state?.history || [];
+    if (history.length < 2) { svg.innerHTML = ''; return; }
+    const min = Math.min(...history);
+    const max = Math.max(...history);
+    const range = (max - min) || 1;
+    const step = 100 / (history.length - 1);
+    const points = history.map((v, i) => {
+        const x = (i * step).toFixed(2);
+        const y = (28 - ((v - min) / range) * 26).toFixed(2);
+        return `${x},${y}`;
+    }).join(' ');
+    const last = history[history.length - 1];
+    const first = history[0];
+    const color = last >= first ? '#26a69a' : '#ef5350';
+    svg.innerHTML = `<polyline points="${points}" fill="none" stroke="${color}" stroke-width="1.2" />`;
 }
 
 function handleTick(tick) {
     const section = document.getElementById('live-ticks-section');
     if (section) section.style.display = '';
     const prev = _tickState[tick.pair]?.price;
-    _tickState[tick.pair] = { price: tick.price, prev: prev ?? tick.price, lastTs: tick.timestamp };
+    const history = _tickState[tick.pair]?.history || [];
+    history.push(tick.price);
+    while (history.length > SPARKLINE_POINTS) history.shift();
+    _tickState[tick.pair] = { price: tick.price, prev: prev ?? tick.price, lastTs: tick.timestamp, history };
 
     const priceEl = document.querySelector(`[data-pair-price="${tick.pair}"]`);
     const card = document.querySelector(`.tick-card[data-pair="${tick.pair}"]`);
@@ -168,6 +225,7 @@ function handleTick(tick) {
     }
     const tsEl = document.querySelector(`[data-pair-ts="${tick.pair}"]`);
     if (tsEl) tsEl.textContent = _relativeTime(tick.timestamp);
+    _drawSparkline(tick.pair);
 }
 
 function _relativeTime(isoTs) {
@@ -200,18 +258,123 @@ function updateDashboard(data) {
 
 // ─── Trade Setups (entrée/SL/TP) ────────────────────────────────────
 
+const _setupFilters = { direction: 'all', pair: 'all' };
+let _lastSetups = [];
+const _activeCharts = new Map(); // setup_id -> { chart, series }
+
 function renderTradeSetups(setups) {
+    _lastSetups = setups || [];
+    _updatePairFilterOptions(_lastSetups);
+    _renderFilteredSetups();
+}
+
+function _renderFilteredSetups() {
     const container = document.getElementById('setups-list');
-    if (!setups.length) {
-        container.innerHTML = `
-            <div class="empty-state">
-                <p><strong>Aucun setup de trade actif</strong></p>
-                <p>Les recommandations d'entree/sortie apparaitront quand un pattern sera detecte.</p>
-            </div>`;
+    const filtered = _lastSetups.filter(s => {
+        if (_setupFilters.direction !== 'all' && s.direction !== _setupFilters.direction) return false;
+        if (_setupFilters.pair !== 'all' && s.pair !== _setupFilters.pair) return false;
+        return true;
+    });
+
+    if (!filtered.length) {
+        const msg = _lastSetups.length
+            ? `<p>Aucun setup ne correspond aux filtres actuels.</p>`
+            : `<p><strong>Aucun setup de trade actif</strong></p><p>Les recommandations d'entree/sortie apparaitront quand un pattern sera detecte.</p>`;
+        container.innerHTML = `<div class="empty-state">${msg}</div>`;
+        _disposeAllCharts();
         return;
     }
 
-    container.innerHTML = setups.map(s => tradeSetupHTML(s)).join('');
+    // Nettoyer les charts existants avant re-render
+    _disposeAllCharts();
+    container.innerHTML = filtered.map(s => tradeSetupHTML(s)).join('');
+
+    // Monter les mini-charts en async
+    filtered.forEach(s => _mountMiniChart(s));
+}
+
+function _updatePairFilterOptions(setups) {
+    const select = document.querySelector('[data-filter="pair"]');
+    if (!select) return;
+    const pairs = Array.from(new Set(setups.map(s => s.pair))).sort();
+    const current = select.value;
+    select.innerHTML = '<option value="all">Toutes</option>' +
+        pairs.map(p => `<option value="${p}">${p}</option>`).join('');
+    if (pairs.includes(current)) select.value = current;
+}
+
+function _bindFilters() {
+    document.querySelectorAll('#setup-filter-bar .filter-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const filter = btn.dataset.filter;
+            document.querySelectorAll(`#setup-filter-bar .filter-btn[data-filter="${filter}"]`)
+                .forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            _setupFilters[filter] = btn.dataset.value;
+            _renderFilteredSetups();
+        });
+    });
+    const pairSelect = document.querySelector('#setup-filter-bar [data-filter="pair"]');
+    if (pairSelect) {
+        pairSelect.addEventListener('change', e => {
+            _setupFilters.pair = e.target.value;
+            _renderFilteredSetups();
+        });
+    }
+}
+
+// ─── Mini-charts (lightweight-charts) ────────────────────────────────
+
+function _setupChartId(s) {
+    return `${s.pair}-${s.direction}-${s.entry_price}`.replace(/[^a-zA-Z0-9-]/g, '_');
+}
+
+function _disposeAllCharts() {
+    _activeCharts.forEach(({ chart }) => { try { chart.remove(); } catch (e) {} });
+    _activeCharts.clear();
+}
+
+async function _mountMiniChart(setup) {
+    if (typeof LightweightCharts === 'undefined') return;
+    const id = _setupChartId(setup);
+    const el = document.querySelector(`[data-chart-id="${id}"]`);
+    if (!el) return;
+
+    try {
+        const res = await fetch(`${API_BASE}/api/candles/${encodeURIComponent(setup.pair)}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const candles = data.candles || [];
+        if (!candles.length) return;
+
+        const chart = LightweightCharts.createChart(el, {
+            width: el.clientWidth,
+            height: 180,
+            layout: { background: { color: 'transparent' }, textColor: '#aaa', fontSize: 10 },
+            grid: { vertLines: { color: '#1e222d' }, horzLines: { color: '#1e222d' } },
+            rightPriceScale: { borderColor: '#333' },
+            timeScale: { borderColor: '#333', timeVisible: true, secondsVisible: false },
+        });
+        const series = chart.addCandlestickSeries({
+            upColor: '#26a69a', downColor: '#ef5350', borderVisible: false,
+            wickUpColor: '#26a69a', wickDownColor: '#ef5350',
+        });
+        series.setData(candles.map(c => ({
+            time: Math.floor(new Date(c.timestamp).getTime() / 1000),
+            open: c.open, high: c.high, low: c.low, close: c.close,
+        })));
+
+        // Marqueurs de niveaux : entry, SL, TP1, TP2
+        series.createPriceLine({ price: setup.entry_price, color: '#f1c40f', lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: 'Entry' });
+        series.createPriceLine({ price: setup.stop_loss,   color: '#ef5350', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'SL' });
+        series.createPriceLine({ price: setup.take_profit_1, color: '#26a69a', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'TP1' });
+        series.createPriceLine({ price: setup.take_profit_2, color: '#2ecc71', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'TP2' });
+
+        chart.timeScale().fitContent();
+        _activeCharts.set(id, { chart, series });
+    } catch (e) {
+        console.warn('Chart error for', setup.pair, e);
+    }
 }
 
 function tradeSetupHTML(s) {
@@ -265,6 +428,8 @@ function tradeSetupHTML(s) {
                     <span class="conf-score-label">/100</span>
                 </div>
             </div>
+
+            <div class="setup-chart" data-chart-id="${_setupChartId(s)}"></div>
 
             <div class="setup-levels">
                 <div class="level-box entry">
@@ -756,6 +921,8 @@ document.addEventListener('DOMContentLoaded', () => {
     fetchGlossary();
     fetchTicks();
     connectWebSocket();
+    _bindFilters();
+    _renderSessionMarkers();
     document.getElementById('refresh-btn').addEventListener('click', refreshAnalysis);
 
     // Horloge live + compteurs : mise à jour toutes les secondes
@@ -763,6 +930,9 @@ document.addEventListener('DOMContentLoaded', () => {
         _renderClock();
         _updateCountdowns();
     }, 1000);
+
+    // Session markers : recalcul toutes les minutes
+    setInterval(_renderSessionMarkers, 60000);
 
     // Auto-refresh des données toutes les 5 secondes
     setInterval(fetchOverview, AUTO_REFRESH_INTERVAL);
