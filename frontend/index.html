@@ -43,6 +43,77 @@
     <!-- Daily status banner -->
     <div id="daily-banner" class="daily-banner" style="display:none"></div>
 
+    <!-- ═══ Barre KPI (résumé scannable depuis l'autre bout de la pièce) ═══
+         Utilise les classes utilitaires Tailwind compilées depuis l'étape
+         Docker node:20-alpine — valide la chaîne Tailwind et fournit un
+         résumé des 4 métriques critiques. -->
+    <section id="kpi-row" class="grid grid-cols-2 gap-3 px-6 pt-4 pb-2 lg:grid-cols-4" aria-label="Résumé de la journée">
+        <!-- PnL du jour -->
+        <article class="bg-card border border-border rounded-xl p-4 transition hover:border-primary/50 kpi-card">
+            <div class="flex items-center justify-between mb-1.5">
+                <span class="text-[10px] uppercase tracking-[1.5px] text-muted-foreground font-bold">PnL du jour</span>
+                <a href="#zone-revue" class="text-muted-foreground/60 hover:text-primary text-sm transition" aria-label="Aller à la courbe d'équité">↗</a>
+            </div>
+            <div class="text-[26px] leading-tight font-bold font-mono tabular-nums" id="kpi-pnl">—</div>
+            <div class="text-[11px] font-mono tabular-nums mt-0.5" id="kpi-pnl-delta" aria-live="polite">&nbsp;</div>
+            <div class="kpi-gauge kpi-gauge-bipolar mt-3" data-gauge="pnl" aria-hidden="true">
+                <span class="kpi-gauge-fill"></span>
+                <span class="kpi-gauge-center"></span>
+            </div>
+            <div class="flex justify-between text-[9px] text-muted-foreground/60 mt-1 font-mono">
+                <span id="kpi-pnl-min">−2%</span><span>0</span><span id="kpi-pnl-max">+2%</span>
+            </div>
+        </article>
+
+        <!-- Trades du jour -->
+        <article class="bg-card border border-border rounded-xl p-4 transition hover:border-primary/50 kpi-card">
+            <div class="flex items-center justify-between mb-1.5">
+                <span class="text-[10px] uppercase tracking-[1.5px] text-muted-foreground font-bold">Trades</span>
+                <a href="#zone-revue" class="text-muted-foreground/60 hover:text-primary text-sm transition" aria-label="Aller au journal des trades">↗</a>
+            </div>
+            <div class="text-[26px] leading-tight font-bold font-mono tabular-nums" id="kpi-trades">—</div>
+            <div class="text-[11px] font-mono tabular-nums mt-0.5 text-muted-foreground" id="kpi-trades-delta">&nbsp;</div>
+            <div class="kpi-gauge kpi-gauge-linear mt-3" data-gauge="trades" aria-hidden="true">
+                <span class="kpi-gauge-fill"></span>
+            </div>
+            <div class="flex justify-between text-[9px] text-muted-foreground/60 mt-1 font-mono">
+                <span>0</span><span>10 trades/jour</span>
+            </div>
+        </article>
+
+        <!-- Win rate backtest -->
+        <article class="bg-card border border-border rounded-xl p-4 transition hover:border-primary/50 kpi-card">
+            <div class="flex items-center justify-between mb-1.5">
+                <span class="text-[10px] uppercase tracking-[1.5px] text-muted-foreground font-bold">Win rate</span>
+                <a href="#zone-revue" class="text-muted-foreground/60 hover:text-primary text-sm transition" aria-label="Aller aux stats backtest">↗</a>
+            </div>
+            <div class="text-[26px] leading-tight font-bold font-mono tabular-nums" id="kpi-winrate">—</div>
+            <div class="text-[11px] font-mono tabular-nums mt-0.5 text-muted-foreground" id="kpi-winrate-delta">&nbsp;</div>
+            <div class="kpi-gauge kpi-gauge-linear mt-3" data-gauge="winrate" aria-hidden="true">
+                <span class="kpi-gauge-fill"></span>
+            </div>
+            <div class="flex justify-between text-[9px] text-muted-foreground/60 mt-1 font-mono">
+                <span>0%</span><span>50%</span><span>100%</span>
+            </div>
+        </article>
+
+        <!-- Risque ouvert (% capital) -->
+        <article class="bg-card border border-border rounded-xl p-4 transition hover:border-primary/50 kpi-card">
+            <div class="flex items-center justify-between mb-1.5">
+                <span class="text-[10px] uppercase tracking-[1.5px] text-muted-foreground font-bold">Risque ouvert</span>
+                <a href="#zone-revue" class="text-muted-foreground/60 hover:text-primary text-sm transition" aria-label="Aller au dashboard de risque">↗</a>
+            </div>
+            <div class="text-[26px] leading-tight font-bold font-mono tabular-nums" id="kpi-risk">—</div>
+            <div class="text-[11px] font-mono tabular-nums mt-0.5 text-muted-foreground" id="kpi-risk-delta">&nbsp;</div>
+            <div class="kpi-gauge kpi-gauge-linear mt-3" data-gauge="risk" aria-hidden="true">
+                <span class="kpi-gauge-fill"></span>
+            </div>
+            <div class="flex justify-between text-[9px] text-muted-foreground/60 mt-1 font-mono">
+                <span>0%</span><span>3% max</span>
+            </div>
+        </article>
+    </section>
+
     <!-- Sous-navigation sticky : saut rapide entre les 3 zones -->
     <nav class="sub-nav" aria-label="Accès rapide aux zones">
         <a href="#zone-marche">📈 Marché</a>

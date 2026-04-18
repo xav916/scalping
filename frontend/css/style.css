@@ -2129,6 +2129,51 @@ button.glossary-header {
 *::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
 * { scrollbar-width: thin; scrollbar-color: var(--border-color) var(--bg-primary); }
 
+/* ─── KPI row : gauges custom (Tailwind gère le reste via utilities) ── */
+.kpi-card:hover { transform: translateY(-1px); }
+.kpi-card { transition: transform 0.15s, border-color 0.2s; }
+
+/* Barre de gauge linéaire (0 → max), fill en vert-menthe */
+.kpi-gauge {
+    position: relative;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--border-color);
+    overflow: hidden;
+}
+.kpi-gauge .kpi-gauge-fill {
+    position: absolute;
+    top: 0; bottom: 0;
+    border-radius: 2px;
+    transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1),
+                left 0.4s cubic-bezier(0.4, 0, 0.2, 1),
+                background 0.2s;
+}
+.kpi-gauge-linear .kpi-gauge-fill {
+    left: 0;
+    background: var(--accent-buy);
+}
+
+/* Bipolaire : trait central + fill qui s'étend d'un côté ou de l'autre */
+.kpi-gauge-bipolar .kpi-gauge-center {
+    position: absolute;
+    left: 50%;
+    top: -2px;
+    bottom: -2px;
+    width: 1px;
+    background: var(--text-muted);
+    opacity: 0.5;
+}
+.kpi-gauge-bipolar .kpi-gauge-fill {
+    /* left/width définis en JS selon PnL */
+    background: var(--accent-buy);
+}
+.kpi-gauge-bipolar.negative .kpi-gauge-fill { background: var(--accent-sell); }
+
+/* Variantes selon seuil : gauche => alerte */
+.kpi-gauge.warn .kpi-gauge-fill { background: var(--accent-yellow); }
+.kpi-gauge.danger .kpi-gauge-fill { background: var(--accent-sell); }
+
 /* ─── Bougies live (paires principales, indépendantes des setups) ─── */
 .live-charts-grid {
     display: grid;

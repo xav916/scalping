@@ -266,6 +266,7 @@ async function fetchDailyStatus() {
         const res = await fetch(`${API_BASE}/api/daily-status`);
         if (!res.ok) return;
         _dailyStatus = await res.json();
+        _kpiUpdate('daily', _dailyStatus);
         renderDailyBanner(_dailyStatus);
     } catch (e) { /* silent */ }
 }
@@ -602,6 +603,7 @@ async function fetchRiskDashboard() {
         const res = await fetch(`${API_BASE}/api/risk`);
         if (!res.ok) return;
         const data = await res.json();
+        _kpiUpdate('risk', data);
         const sec = document.getElementById('risk-section');
         const body = document.getElementById('risk-body');
         if (!sec || !body) return;
@@ -743,6 +745,7 @@ async function fetchBacktestStats() {
         const res = await fetch(`${API_BASE}/api/backtest/stats`);
         if (!res.ok) return;
         const stats = await res.json();
+        _kpiUpdate('backtest', stats);
         renderBacktestStats(stats);
     } catch (err) {
         console.warn('Backtest stats error:', err);
@@ -1750,6 +1753,97 @@ document.addEventListener('DOMContentLoaded', () => {
     fetchLiveCharts();
     setInterval(fetchLiveCharts, 60000);
 });
+
+// ─── KPI row (barre résumé en haut du dashboard) ─────────────────
+
+const _kpiState = { daily: null, risk: null, backtest: null };
+
+/** Update incrémental : chaque fetch pousse sa slice puis render global. */
+function _kpiUpdate(key, data) {
+    _kpiState[key] = data;
+    _renderKpi();
+}
+
+function _renderKpi() {
+    const { daily, risk, backtest } = _kpiState;
+    const $ = (id) => document.getElementById(id);
+
+    // ─── PnL du jour (bipolaire) ───
+    if (daily) {
+        const pnl = daily.pnl_today || 0;
+        const pnlPct = daily.pnl_pct || 0;
+        const limit = daily.daily_loss_limit_pct || 2;
+        const sign = pnl >= 0 ? '+' : '';
+        $('kpi-pnl').textContent = `${sign}${pnl.toFixed(2)} $`;
+        $('kpi-pnl').className = 'text-[26px] leading-tight font-bold font-mono tabular-nums ' +
+            (pnl > 0 ? 'text-buy' : pnl < 0 ? 'text-sell' : 'text-foreground');
+        $('kpi-pnl-delta').textContent = `${sign}${pnlPct.toFixed(2)} % · ${daily.n_trades_today || 0} trade(s)`;
+        $('kpi-pnl-min').textContent = `−${limit}%`;
+        $('kpi-pnl-max').textContent = `+${limit}%`;
+
+        // Fill : position et largeur selon valeur clampée à ±limit
+        const gauge = document.querySelector('[data-gauge="pnl"]');
+        const fill = gauge?.querySelector('.kpi-gauge-fill');
+        if (fill) {
+            const clamped = Math.max(-limit, Math.min(limit, pnlPct));
+            const widthPct = Math.abs(clamped) / limit * 50;
+            if (clamped >= 0) {
+                fill.style.left = '50%';
+                fill.style.right = 'auto';
+                fill.style.width = `${widthPct}%`;
+            } else {
+                fill.style.right = '50%';
+                fill.style.left = 'auto';
+                fill.style.width = `${widthPct}%`;
+            }
+            gauge.classList.toggle('negative', clamped < 0);
+        }
+    }
+
+    // ─── Trades (unipolaire 0 → 10) ───
+    if (daily) {
+        const n = daily.n_trades_today || 0;
+        const nOpen = daily.n_open || 0;
+        $('kpi-trades').textContent = `${n}`;
+        $('kpi-trades-delta').textContent = nOpen > 0 ? `${nOpen} ouvert(s)` : 'aucun ouvert';
+        const gauge = document.querySelector('[data-gauge="trades"]');
+        const fill = gauge?.querySelector('.kpi-gauge-fill');
+        if (fill) fill.style.width = `${Math.min(100, (n / 10) * 100)}%`;
+    }
+
+    // ─── Win rate backtest (0 → 100%) ───
+    if (backtest) {
+        const wr = backtest.win_rate_pct ?? 0;
+        $('kpi-winrate').textContent = `${wr.toFixed(0)} %`;
+        $('kpi-winrate').className = 'text-[26px] leading-tight font-bold font-mono tabular-nums ' +
+            (wr >= 60 ? 'text-buy' : wr >= 50 ? 'text-foreground' : 'text-sell');
+        $('kpi-winrate-delta').textContent = `${backtest.closed_trades || 0} trades fermés`;
+        const gauge = document.querySelector('[data-gauge="winrate"]');
+        const fill = gauge?.querySelector('.kpi-gauge-fill');
+        if (fill) {
+            fill.style.width = `${Math.max(0, Math.min(100, wr))}%`;
+            gauge.classList.toggle('warn', wr >= 50 && wr < 60);
+            gauge.classList.toggle('danger', wr < 50);
+        }
+    }
+
+    // ─── Risque ouvert (0 → 3%, danger ≥ 3) ───
+    if (risk) {
+        const pct = risk.total_risk_pct || 0;
+        const usd = risk.total_risk_usd || 0;
+        $('kpi-risk').textContent = `${pct.toFixed(2)} %`;
+        $('kpi-risk').className = 'text-[26px] leading-tight font-bold font-mono tabular-nums ' +
+            (pct >= 3 ? 'text-sell' : pct >= 2 ? 'text-foreground' : 'text-foreground');
+        $('kpi-risk-delta').textContent = `${usd.toFixed(0)} $ · ${risk.n_open || 0} position(s)`;
+        const gauge = document.querySelector('[data-gauge="risk"]');
+        const fill = gauge?.querySelector('.kpi-gauge-fill');
+        if (fill) {
+            fill.style.width = `${Math.max(0, Math.min(100, pct / 3 * 100))}%`;
+            gauge.classList.toggle('warn', pct >= 2 && pct < 3);
+            gauge.classList.toggle('danger', pct >= 3);
+        }
+    }
+}
 
 // ─── Bougies live (indépendant des setups) ──────────────────────────
 
