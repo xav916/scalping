@@ -302,6 +302,56 @@ async def robots_txt():
     return FileResponse(str(FRONTEND_DIR / "robots.txt"), media_type="text/plain")
 
 
+# ─── Icônes PNG pour manifest PWA (WebAPK Android exige du raster) ───
+# Générées une fois à l'import puis mises en cache mémoire. Chrome refuse
+# de promouvoir la PWA en WebAPK si les icônes sont en data URI ou SVG —
+# il faut des PNG servies depuis une URL HTTP réelle.
+
+from functools import lru_cache
+
+
+def _generate_icon_png(size: int) -> bytes:
+    """Crée le badge 'SR' sur fond #0d1117 en PNG. Taille en pixels (192 ou 512)."""
+    from io import BytesIO
+    from PIL import Image, ImageDraw, ImageFont
+
+    bg = (13, 17, 23, 255)       # #0d1117
+    fg = (88, 166, 255, 255)     # #58a6ff
+    img = Image.new("RGBA", (size, size), bg)
+    draw = ImageDraw.Draw(img)
+    # Texte "SR" centré. Police : DejaVu Sans Bold (présente dans python:slim).
+    try:
+        # Taille de police ~55% du canvas — donne un rendu propre aux deux tailles.
+        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", int(size * 0.42))
+    except Exception:
+        font = ImageFont.load_default()
+    text = "SR"
+    bbox = draw.textbbox((0, 0), text, font=font)
+    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    draw.text(((size - tw) / 2 - bbox[0], (size - th) / 2 - bbox[1]), text, fill=fg, font=font)
+    buf = BytesIO()
+    img.save(buf, format="PNG", optimize=True)
+    return buf.getvalue()
+
+
+@lru_cache(maxsize=4)
+def _get_icon_bytes(size: int) -> bytes:
+    return _generate_icon_png(size)
+
+
+@app.get("/icons/icon-{size}.png", include_in_schema=False)
+async def pwa_icon(size: int):
+    """Icône PNG générée pour le manifest PWA. Taille autorisée : 192 ou 512."""
+    if size not in (192, 512):
+        raise HTTPException(status_code=404, detail="Taille inconnue")
+    from fastapi.responses import Response
+    return Response(
+        content=_get_icon_bytes(size),
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=2592000, immutable"},
+    )
+
+
 @app.get("/mobile")
 async def mobile_view(_=Depends(verify_credentials)):
     """Vue mobile-first focalisee sur les setups TAKE uniquement."""

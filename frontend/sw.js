@@ -4,7 +4,7 @@
  * Aucun cache dynamique des données marché : elles doivent toujours être fraîches.
  */
 
-const CACHE_VERSION = 'scalping-shell-v11';
+const CACHE_VERSION = 'scalping-shell-v12';
 const SHELL_ASSETS = [
     '/',
     '/css/tailwind.css',
@@ -14,6 +14,8 @@ const SHELL_ASSETS = [
     '/js/modules/utils.js',
     '/js/vendor/lightweight-charts.standalone.production.js',
     '/manifest.json',
+    '/icons/icon-192.png',
+    '/icons/icon-512.png',
 ];
 
 self.addEventListener('install', (event) => {
