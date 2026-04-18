@@ -22,7 +22,18 @@ _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
 def _init_schema() -> None:
+    """Crée/migre le schéma SQLite.
+
+    Ordre critique : on crée d'abord les TABLES (sans les INDEX), puis on
+    migre les colonnes manquantes sur les bases existantes, et SEULEMENT
+    ENSUITE on pose les INDEX (qui référencent ces colonnes).
+
+    Avant ce fix : sur une DB pré-migration (sans colonne `user`), le
+    `CREATE INDEX ... ON personal_trades(user)` du executescript plantait
+    avec "no such column: user" et empêchait tout le reste de tourner.
+    """
     with _conn() as c:
+        # 1) Créer les tables si elles n'existent pas (no-op sur DB ancienne)
         c.executescript("""
             CREATE TABLE IF NOT EXISTS personal_trades (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -43,9 +54,6 @@ def _init_schema() -> None:
                 created_at TEXT NOT NULL,
                 closed_at TEXT
             );
-            CREATE INDEX IF NOT EXISTS idx_pt_user ON personal_trades(user);
-            CREATE INDEX IF NOT EXISTS idx_pt_status ON personal_trades(status);
-            CREATE INDEX IF NOT EXISTS idx_pt_created ON personal_trades(created_at);
 
             CREATE TABLE IF NOT EXISTS user_prefs (
                 user TEXT PRIMARY KEY,
@@ -53,7 +61,10 @@ def _init_schema() -> None:
                 updated_at TEXT
             );
         """)
-        # Migration : ajoute les colonnes manquantes si DB existante
+
+        # 2) Migration : ajouter les colonnes manquantes sur DB pré-migration.
+        # SQLite n'accepte pas ADD COLUMN NOT NULL sans DEFAULT, donc on
+        # reste sur DEFAULT 'anonymous' (identique au CREATE TABLE).
         cols = [r[1] for r in c.execute("PRAGMA table_info(personal_trades)").fetchall()]
         if "user" not in cols:
             c.execute("ALTER TABLE personal_trades ADD COLUMN user TEXT NOT NULL DEFAULT 'anonymous'")
@@ -65,6 +76,13 @@ def _init_schema() -> None:
             c.execute("ALTER TABLE personal_trades ADD COLUMN post_entry_size INTEGER DEFAULT 0")
         if "post_entry_alarm" not in cols:
             c.execute("ALTER TABLE personal_trades ADD COLUMN post_entry_alarm INTEGER DEFAULT 0")
+
+        # 3) Poser les INDEX une fois toutes les colonnes présentes
+        c.executescript("""
+            CREATE INDEX IF NOT EXISTS idx_pt_user ON personal_trades(user);
+            CREATE INDEX IF NOT EXISTS idx_pt_status ON personal_trades(status);
+            CREATE INDEX IF NOT EXISTS idx_pt_created ON personal_trades(created_at);
+        """)
 
 
 def get_manual_silent(user: str) -> bool:
