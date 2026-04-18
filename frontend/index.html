@@ -22,8 +22,42 @@
 <body>
     <a href="#main" class="skip-link">Aller au contenu principal</a>
 
+    <!-- ═══ Sidebar navigation (desktop fixe, mobile drawer) ═══════════ -->
+    <aside class="sidebar" id="sidebar" aria-label="Navigation principale">
+        <div class="sidebar-logo">
+            <span class="sidebar-badge" aria-hidden="true">SR</span>
+            <span class="sidebar-logo-text">Scalping Radar</span>
+        </div>
+        <nav class="sidebar-nav" aria-label="Sections du dashboard">
+            <a href="#zone-marche" class="sidebar-link" data-section="marche">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+                <span>Marché</span>
+            </a>
+            <a href="#zone-revue" class="sidebar-link" data-section="revue">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 12v5"/><path d="M11 8v9"/><path d="M15 5v12"/></svg>
+                <span>Revue</span>
+            </a>
+            <a href="#zone-glossaire" class="sidebar-link" data-section="glossaire">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z"/></svg>
+                <span>Glossaire</span>
+            </a>
+        </nav>
+        <div class="sidebar-footer">
+            <span class="sidebar-user" id="sidebar-user">—</span>
+            <form method="post" action="/api/logout" class="sidebar-logout-form">
+                <button type="button" class="sidebar-logout" data-action="logout" title="Se déconnecter">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                </button>
+            </form>
+        </div>
+    </aside>
+    <div class="sidebar-backdrop" id="sidebar-backdrop" aria-hidden="true"></div>
+
     <!-- Header -->
     <header class="header" role="banner">
+        <button type="button" class="header-burger" data-action="toggle-sidebar" aria-label="Ouvrir le menu" aria-controls="sidebar">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        </button>
         <h1>Scalping Radar</h1>
         <div class="header-status" role="status" aria-live="polite">
             <span id="user-greeting" class="user-greeting"></span>
@@ -114,12 +148,9 @@
         </article>
     </section>
 
-    <!-- Sous-navigation sticky : saut rapide entre les 3 zones -->
-    <nav class="sub-nav" aria-label="Accès rapide aux zones">
-        <a href="#zone-marche">📈 Marché</a>
-        <a href="#zone-revue">📊 Revue</a>
-        <a href="#zone-glossaire">📖 Glossaire</a>
-    </nav>
+    <!-- La sub-nav horizontale a été remplacée par la sidebar (desktop fixe,
+         mobile drawer). Les ancres #zone-marche / #zone-revue / #zone-glossaire
+         restent disponibles pour les KPI ↗ et les deep-links. -->
 
     <!-- Dashboard -->
     <main id="main" class="dashboard" role="main">
