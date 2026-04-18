@@ -8,3 +8,9 @@ dist/
 build/
 .mypy_cache/
 .pytest_cache/
+
+# Clés et secrets — ne JAMAIS committer
+*.pem
+*.key
+scalping-key*
+
