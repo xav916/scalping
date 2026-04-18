@@ -14,7 +14,13 @@ from fastapi.staticfiles import StaticFiles
 
 from config.settings import AUTH_USERS
 
-from backend.services import backtest_service, indicators, twelvedata_ws
+from backend.services import (
+    backtest_service,
+    correlation,
+    indicators,
+    trade_log_service,
+    twelvedata_ws,
+)
 from backend.services.notification_service import (
     get_signal_history,
     register_client,
@@ -212,6 +218,59 @@ async def get_all_candles(_=Depends(verify_credentials)):
     return {
         pair: [c.model_dump(mode="json") for c in candles]
         for pair, candles in all_candles.items()
+    }
+
+
+@app.post("/api/trades")
+async def create_trade(payload: dict, _=Depends(verify_credentials)):
+    """Enregistre un trade que l'utilisateur vient de prendre."""
+    required = {"pair", "direction", "entry_price", "stop_loss", "take_profit", "size_lot"}
+    missing = required - set(payload.keys())
+    if missing:
+        raise HTTPException(status_code=400, detail=f"Champs manquants: {sorted(missing)}")
+    trade_id = trade_log_service.record_trade(payload)
+    return {"id": trade_id, **trade_log_service.get_trade(trade_id)}
+
+
+@app.patch("/api/trades/{trade_id}")
+async def close_trade(trade_id: int, payload: dict, _=Depends(verify_credentials)):
+    """Cloture un trade avec le prix de sortie reel."""
+    if "exit_price" not in payload:
+        raise HTTPException(status_code=400, detail="exit_price requis")
+    ok = trade_log_service.close_trade(
+        trade_id, float(payload["exit_price"]), payload.get("notes")
+    )
+    if not ok:
+        raise HTTPException(status_code=404, detail="Trade introuvable ou deja ferme")
+    return trade_log_service.get_trade(trade_id)
+
+
+@app.get("/api/trades")
+async def list_trades(status: str | None = None, limit: int = 100, _=Depends(verify_credentials)):
+    return trade_log_service.list_trades(status=status, limit=limit)
+
+
+@app.get("/api/daily-status")
+async def daily_status(_=Depends(verify_credentials)):
+    """Statut journalier : PnL, nb trades, mode silencieux."""
+    status = trade_log_service.get_daily_status()
+    open_trades = trade_log_service.list_trades(status="OPEN")
+    status["open_trades"] = open_trades
+    return status
+
+
+@app.post("/api/correlation-check")
+async def correlation_check(payload: dict, _=Depends(verify_credentials)):
+    """Retourne les trades ouverts correles au signal propose."""
+    pair = payload.get("pair", "")
+    direction = payload.get("direction", "")
+    open_trades = trade_log_service.list_trades(status="OPEN")
+    conflicts = correlation.has_open_correlation(pair, direction, open_trades)
+    return {
+        "pair": pair,
+        "direction": direction,
+        "correlated_open_trades": conflicts,
+        "warning": bool(conflicts),
     }
 
 

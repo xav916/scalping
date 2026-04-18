@@ -15,6 +15,7 @@ import logging
 import httpx
 
 from backend.models.schemas import ScalpingSignal
+from backend.services import trade_log_service
 from config.settings import (
     TELEGRAM_BOT_TOKEN,
     TELEGRAM_CHAT_ID,
@@ -69,6 +70,10 @@ async def send_signal(signal: ScalpingSignal) -> None:
     if not is_configured():
         return
     if not _should_send(signal):
+        return
+    # Mode silencieux : si -X% atteint aujourd'hui, on coupe tout
+    if trade_log_service.silent_mode_active():
+        logger.info(f"Mode silencieux actif, signal {signal.pair} non envoye a Telegram")
         return
 
     url = TELEGRAM_API.format(token=TELEGRAM_BOT_TOKEN)

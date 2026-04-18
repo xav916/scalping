@@ -1278,3 +1278,142 @@ body {
         padding: 1px 4px;
     }
 }
+
+/* ─── Daily banner ──────────────────────────────────────── */
+.daily-banner {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+    background: var(--bg-secondary);
+    border-bottom: 2px solid var(--accent-blue);
+    padding: 10px 20px;
+    font-size: 13px;
+    align-items: center;
+}
+.daily-banner.silent {
+    border-bottom-color: var(--accent-red);
+    background: rgba(248, 81, 73, 0.08);
+}
+.db-stat { display: flex; flex-direction: column; }
+.db-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; font-weight: 600; letter-spacing: 0.5px; }
+.db-value { font-weight: 700; font-family: 'Courier New', monospace; }
+.pnl-positive { color: var(--accent-green); }
+.pnl-negative { color: var(--accent-red); }
+.silent-badge {
+    background: var(--accent-red);
+    color: white;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-weight: 700;
+    font-size: 11px;
+    margin-left: auto;
+}
+
+/* ─── Modal ─────────────────────────────────────────────── */
+.modal-overlay {
+    position: fixed; top:0; left:0; right:0; bottom:0;
+    background: rgba(0,0,0,0.7);
+    z-index: 1000;
+    display: flex; align-items: center; justify-content: center;
+    padding: 20px;
+}
+.modal {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    max-width: 560px; width: 100%;
+    max-height: 90vh; overflow-y: auto;
+    display: flex; flex-direction: column;
+}
+.modal-small { max-width: 420px; }
+.modal-header {
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border-color);
+    display: flex; justify-content: space-between; align-items: center;
+}
+.modal-header h3 { font-size: 16px; }
+.modal-close {
+    background: none; border: none; color: var(--text-secondary);
+    font-size: 24px; cursor: pointer; line-height: 1;
+}
+.modal-body { padding: 16px 18px; }
+.modal-footer {
+    padding: 12px 18px;
+    border-top: 1px solid var(--border-color);
+    display: flex; justify-content: flex-end; gap: 10px;
+}
+.btn-primary {
+    background: var(--accent-blue);
+    border-color: var(--accent-blue);
+    color: white;
+    font-weight: 600;
+}
+.btn-primary:hover { opacity: 0.9; }
+
+/* Checklist */
+.checklist {
+    background: var(--bg-secondary);
+    padding: 12px;
+    border-radius: 6px;
+    margin-bottom: 14px;
+}
+.checklist h4 { font-size: 12px; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); }
+.checklist label {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 0; font-size: 13px; cursor: pointer;
+}
+.checklist input[type="checkbox"] {
+    accent-color: var(--accent-blue);
+}
+
+/* Trade form */
+.trade-form { display: flex; flex-direction: column; gap: 10px; }
+.trade-form label {
+    display: flex; flex-direction: column;
+    font-size: 11px; color: var(--text-muted); text-transform: uppercase; font-weight: 600;
+    letter-spacing: 0.5px;
+}
+.trade-form input,
+.trade-form textarea {
+    margin-top: 4px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px; padding: 6px 10px;
+    color: var(--text-primary);
+    font-family: inherit; font-size: 13px;
+    text-transform: none;
+}
+.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+.correlation-warning {
+    background: rgba(210, 153, 34, 0.15);
+    border: 1px solid var(--accent-yellow);
+    padding: 10px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    margin-bottom: 12px;
+}
+
+/* Setup action button */
+.setup-actions { margin-top: 12px; display: flex; justify-content: flex-end; }
+.btn-take-signal { padding: 8px 20px; font-size: 13px; }
+
+/* Trade status */
+.trade-status {
+    padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.5px;
+}
+.trade-status.open { background: rgba(88, 166, 255, 0.2); color: var(--accent-blue); }
+.trade-status.closed { background: rgba(139, 148, 158, 0.2); color: var(--text-muted); }
+
+.dir-buy { color: var(--accent-green); font-weight: 700; }
+.dir-sell { color: var(--accent-red); font-weight: 700; }
+.trades-table { font-size: 12px; }
+.trade-open { background: rgba(88, 166, 255, 0.05); }
+
+@media (max-width: 768px) {
+    .daily-banner { gap: 12px; padding: 8px 12px; font-size: 11px; }
+    .form-row { grid-template-columns: 1fr; }
+    .modal { max-height: 100vh; border-radius: 0; }
+    .trades-table { font-size: 11px; }
+}

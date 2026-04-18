@@ -23,6 +23,9 @@
         </div>
     </header>
 
+    <!-- Daily status banner -->
+    <div id="daily-banner" class="daily-banner" style="display:none"></div>
+
     <!-- Dashboard -->
     <main class="dashboard">
         <!-- Backtest stats -->
@@ -33,6 +36,17 @@
             </div>
             <div class="card-body" id="backtest-stats">
                 <div class="empty-state"><p>Chargement des stats...</p></div>
+            </div>
+        </section>
+
+        <!-- Mes trades personnels -->
+        <section class="card signals-section">
+            <div class="card-header">
+                <h2>Mes trades (journal personnel)</h2>
+                <span style="font-size:11px;color:var(--text-muted)">Cliquez "J'ai pris ce signal" sur un setup pour commencer</span>
+            </div>
+            <div class="card-body" id="personal-trades">
+                <div class="empty-state"><p>Aucun trade enregistre pour l'instant.</p></div>
             </div>
         </section>
 
@@ -135,6 +149,74 @@
 
     <!-- Toast notifications -->
     <div id="toast-container" class="toast-container"></div>
+
+    <!-- Modal "J'ai pris ce signal" -->
+    <div id="trade-modal" class="modal-overlay" style="display:none">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>Enregistrer un trade</h3>
+                <button class="modal-close" onclick="closeTradeModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="checklist">
+                    <h4>Checklist pre-trade</h4>
+                    <label><input type="checkbox" data-check="session"> Session active favorable (London/NY/overlap)</label>
+                    <label><input type="checkbox" data-check="news"> Aucune news high-impact &lt; 30 min</label>
+                    <label><input type="checkbox" data-check="daily"> Mon PnL du jour est sain (pas deja a -2%)</label>
+                    <label><input type="checkbox" data-check="corr"> Pas de position correlee deja ouverte</label>
+                    <label><input type="checkbox" data-check="calm"> Je suis calme (pas impulsif)</label>
+                </div>
+                <div id="correlation-warning" class="correlation-warning" style="display:none"></div>
+                <form id="trade-form" class="trade-form">
+                    <div class="form-row">
+                        <label>Paire <input type="text" name="pair" readonly></label>
+                        <label>Direction <input type="text" name="direction" readonly></label>
+                    </div>
+                    <div class="form-row">
+                        <label>Entry reelle <input type="number" name="entry_price" step="any" required></label>
+                        <label>SL <input type="number" name="stop_loss" step="any" required></label>
+                    </div>
+                    <div class="form-row">
+                        <label>TP <input type="number" name="take_profit" step="any" required></label>
+                        <label>Taille (lots) <input type="number" name="size_lot" step="0.01" value="0.01" required></label>
+                    </div>
+                    <label>Notes
+                        <textarea name="notes" rows="2" placeholder="Ressenti, raison du trade..."></textarea>
+                    </label>
+                    <input type="hidden" name="signal_pattern">
+                    <input type="hidden" name="signal_confidence">
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" onclick="closeTradeModal()">Annuler</button>
+                <button class="btn btn-primary" onclick="confirmTradeSubmit()">Confirmer le trade</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal cloture de trade -->
+    <div id="close-modal" class="modal-overlay" style="display:none">
+        <div class="modal modal-small">
+            <div class="modal-header">
+                <h3>Cloturer le trade</h3>
+                <button class="modal-close" onclick="closeCloseModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="close-form">
+                    <label>Prix de sortie reel
+                        <input type="number" name="exit_price" step="any" required>
+                    </label>
+                    <label>Notes / ressenti
+                        <textarea name="notes" rows="3" placeholder="Ce que j'ai bien fait, ce que j'ai mal fait..."></textarea>
+                    </label>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" onclick="closeCloseModal()">Annuler</button>
+                <button class="btn btn-primary" onclick="confirmCloseTrade()">Valider cloture</button>
+            </div>
+        </div>
+    </div>
 
     <!-- TradingView lightweight-charts (mini-charts sur les setups) -->
     <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>

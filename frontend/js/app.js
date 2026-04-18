@@ -100,6 +100,8 @@ function _beep(freq, duration, gain = 0.15) {
 
 function _playSignalSound(signal) {
     if (!_soundEnabled()) return;
+    // Respecter le mode silencieux (-X% journalier)
+    if (_dailyStatus && _dailyStatus.silent_mode) return;
     const strength = signal.signal_strength || signal.strength;
     // Strong: triple bip aigu, moderate: double medium, weak: simple grave
     if (strength === 'strong') {
@@ -159,6 +161,205 @@ async function refreshAnalysis() {
         btn.textContent = 'Actualiser';
     }
 }
+
+// ─── Workflow : daily status + modal trade + historique ────────────
+
+let _dailyStatus = null;
+let _currentSignalForModal = null;
+let _closeTradeId = null;
+
+async function fetchDailyStatus() {
+    try {
+        const res = await fetch(`${API_BASE}/api/daily-status`);
+        if (!res.ok) return;
+        _dailyStatus = await res.json();
+        renderDailyBanner(_dailyStatus);
+    } catch (e) { /* silent */ }
+}
+
+function renderDailyBanner(status) {
+    const banner = document.getElementById('daily-banner');
+    if (!banner) return;
+    const hasActivity = status.n_trades_today > 0 || status.silent_mode;
+    if (!hasActivity) { banner.style.display = 'none'; return; }
+    banner.style.display = '';
+    const pnlClass = status.pnl_today > 0 ? 'pnl-positive' : status.pnl_today < 0 ? 'pnl-negative' : '';
+    const silentHTML = status.silent_mode
+        ? `<span class="silent-badge">⛔ MODE SILENCIEUX (-${status.daily_loss_limit_pct}% atteint — pas de nouvelle alerte aujourd'hui)</span>`
+        : '';
+    banner.className = 'daily-banner' + (status.silent_mode ? ' silent' : '');
+    banner.innerHTML = `
+        <div class="db-stat"><span class="db-label">Aujourd'hui</span><span class="db-value">${status.date}</span></div>
+        <div class="db-stat"><span class="db-label">Trades</span><span class="db-value">${status.n_trades_today} (${status.n_open} ouverts)</span></div>
+        <div class="db-stat"><span class="db-label">PnL</span><span class="db-value ${pnlClass}">${status.pnl_today >= 0 ? '+' : ''}${status.pnl_today.toFixed(2)} USD (${status.pnl_pct >= 0 ? '+' : ''}${status.pnl_pct.toFixed(2)}%)</span></div>
+        ${silentHTML}
+    `;
+}
+
+// Expose le bouton "J'ai pris ce signal" depuis tradeSetupHTML
+function openTradeModal(pair, direction, entry, sl, tp1, pattern, confidence) {
+    _currentSignalForModal = { pair, direction, entry, sl, tp1, pattern, confidence };
+    const modal = document.getElementById('trade-modal');
+    const form = document.getElementById('trade-form');
+    form.pair.value = pair;
+    form.direction.value = direction.toUpperCase();
+    form.entry_price.value = entry;
+    form.stop_loss.value = sl;
+    form.take_profit.value = tp1;
+    form.signal_pattern.value = pattern || '';
+    form.signal_confidence.value = confidence || '';
+    // Reset checklist
+    modal.querySelectorAll('[data-check]').forEach(c => c.checked = false);
+    modal.style.display = '';
+    // Check corr warning
+    _checkCorrelation(pair, direction);
+}
+
+function closeTradeModal() {
+    document.getElementById('trade-modal').style.display = 'none';
+    _currentSignalForModal = null;
+}
+
+async function _checkCorrelation(pair, direction) {
+    const warn = document.getElementById('correlation-warning');
+    warn.style.display = 'none';
+    warn.innerHTML = '';
+    try {
+        const res = await fetch(`${API_BASE}/api/correlation-check`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({pair, direction}),
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.warning && data.correlated_open_trades.length) {
+            const list = data.correlated_open_trades.map(t => `${t.pair} (${t.direction})`).join(', ');
+            warn.style.display = '';
+            warn.innerHTML = `⚠️ <strong>Attention corrélation</strong> — vous avez déjà ces positions ouvertes qui bougent dans le même sens : <strong>${list}</strong>. Prendre ce trade double votre exposition.`;
+        }
+    } catch (e) {}
+}
+
+async function confirmTradeSubmit() {
+    const form = document.getElementById('trade-form');
+    const modal = document.getElementById('trade-modal');
+    const checks = Array.from(modal.querySelectorAll('[data-check]'));
+    const allChecked = checks.every(c => c.checked);
+    if (!allChecked) {
+        if (!confirm('La checklist n\'est pas entierement validee. Voulez-vous quand meme enregistrer le trade ?')) return;
+    }
+    const payload = {
+        pair: form.pair.value,
+        direction: form.direction.value.toLowerCase(),
+        entry_price: parseFloat(form.entry_price.value),
+        stop_loss: parseFloat(form.stop_loss.value),
+        take_profit: parseFloat(form.take_profit.value),
+        size_lot: parseFloat(form.size_lot.value),
+        signal_pattern: form.signal_pattern.value || null,
+        signal_confidence: form.signal_confidence.value ? parseFloat(form.signal_confidence.value) : null,
+        checklist_passed: allChecked,
+        notes: form.notes.value || null,
+    };
+    try {
+        const res = await fetch(`${API_BASE}/api/trades`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload),
+        });
+        if (!res.ok) { alert('Erreur enregistrement trade'); return; }
+        closeTradeModal();
+        fetchPersonalTrades();
+        fetchDailyStatus();
+    } catch (e) { alert('Erreur : ' + e.message); }
+}
+
+async function fetchPersonalTrades() {
+    try {
+        const res = await fetch(`${API_BASE}/api/trades?limit=30`);
+        if (!res.ok) return;
+        const trades = await res.json();
+        renderPersonalTrades(trades);
+    } catch (e) {}
+}
+
+function renderPersonalTrades(trades) {
+    const container = document.getElementById('personal-trades');
+    if (!container) return;
+    if (!trades.length) {
+        container.innerHTML = '<div class="empty-state"><p>Aucun trade enregistre pour l\'instant.</p><p>Cliquez "J\'ai pris ce signal" sur un setup pour commencer.</p></div>';
+        return;
+    }
+    container.innerHTML = `
+        <table class="vol-table trades-table">
+            <thead>
+                <tr>
+                    <th>Date</th><th>Paire</th><th>Dir</th><th>Entry</th><th>SL</th><th>TP</th>
+                    <th>Taille</th><th>Statut</th><th>PnL</th><th></th>
+                </tr>
+            </thead>
+            <tbody>
+                ${trades.map(t => {
+                    const dt = new Date(t.created_at).toLocaleString('fr-FR', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'});
+                    const pnlClass = t.pnl > 0 ? 'pnl-positive' : t.pnl < 0 ? 'pnl-negative' : '';
+                    const action = t.status === 'OPEN'
+                        ? `<button class="btn btn-sm" onclick="openCloseModal(${t.id})">Cloturer</button>`
+                        : '';
+                    return `<tr class="${t.status === 'OPEN' ? 'trade-open' : ''}">
+                        <td>${dt}</td>
+                        <td><strong>${t.pair}</strong></td>
+                        <td class="${t.direction === 'buy' ? 'dir-buy' : 'dir-sell'}">${t.direction.toUpperCase()}</td>
+                        <td>${t.entry_price.toFixed(4)}</td>
+                        <td>${t.stop_loss.toFixed(4)}</td>
+                        <td>${t.take_profit.toFixed(4)}</td>
+                        <td>${t.size_lot}</td>
+                        <td><span class="trade-status ${t.status.toLowerCase()}">${t.status}</span></td>
+                        <td class="${pnlClass}">${t.pnl ? (t.pnl >= 0 ? '+' : '') + t.pnl.toFixed(2) : '—'}</td>
+                        <td>${action}</td>
+                    </tr>`;
+                }).join('')}
+            </tbody>
+        </table>
+    `;
+}
+
+function openCloseModal(tradeId) {
+    _closeTradeId = tradeId;
+    const modal = document.getElementById('close-modal');
+    const form = document.getElementById('close-form');
+    form.exit_price.value = '';
+    form.notes.value = '';
+    modal.style.display = '';
+}
+
+function closeCloseModal() {
+    document.getElementById('close-modal').style.display = 'none';
+    _closeTradeId = null;
+}
+
+async function confirmCloseTrade() {
+    const form = document.getElementById('close-form');
+    const exit_price = parseFloat(form.exit_price.value);
+    if (!exit_price || !_closeTradeId) return;
+    try {
+        const res = await fetch(`${API_BASE}/api/trades/${_closeTradeId}`, {
+            method: 'PATCH',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({exit_price, notes: form.notes.value || null}),
+        });
+        if (!res.ok) { alert('Erreur cloture'); return; }
+        closeCloseModal();
+        fetchPersonalTrades();
+        fetchDailyStatus();
+    } catch (e) { alert('Erreur : ' + e.message); }
+}
+
+// Expose toggleTheme/toggleSound et al. aux onclick inline
+window.openTradeModal = openTradeModal;
+window.closeTradeModal = closeTradeModal;
+window.openCloseModal = openCloseModal;
+window.closeCloseModal = closeCloseModal;
+window.confirmTradeSubmit = confirmTradeSubmit;
+window.confirmCloseTrade = confirmCloseTrade;
 
 // ─── Backtest stats ────────────────────────────────────────────────
 
@@ -624,6 +825,12 @@ function tradeSetupHTML(s) {
                 <span class="pattern-desc">${patternName}</span>
             </div>
 
+            <div class="setup-actions">
+                <button class="btn btn-primary btn-take-signal" onclick='openTradeModal(${JSON.stringify(s.pair)}, ${JSON.stringify(s.direction)}, ${s.entry_price}, ${s.stop_loss}, ${s.take_profit_1}, ${JSON.stringify(s.pattern?.pattern || "")}, ${s.confidence_score || 0})'>
+                    ✅ J'ai pris ce signal
+                </button>
+            </div>
+
             <div class="setup-timestamps">
                 <div class="ts-entry">
                     <span class="ts-label">ENTREE</span>
@@ -1058,6 +1265,8 @@ document.addEventListener('DOMContentLoaded', () => {
     fetchGlossary();
     fetchTicks();
     fetchBacktestStats();
+    fetchDailyStatus();
+    fetchPersonalTrades();
     connectWebSocket();
     _bindFilters();
     _renderSessionMarkers();
@@ -1082,4 +1291,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Refresh des stats backtest toutes les 30s
     setInterval(fetchBacktestStats, 30000);
+
+    // Refresh du statut journalier + trades perso toutes les 30s
+    setInterval(() => { fetchDailyStatus(); fetchPersonalTrades(); }, 30000);
 });

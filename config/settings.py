@@ -87,6 +87,8 @@ if _MT5_SYMBOL_MAP_RAW:
 TRADING_CAPITAL = float(os.getenv("TRADING_CAPITAL", "10000"))  # Capital en USD
 RISK_PER_TRADE_PCT = float(os.getenv("RISK_PER_TRADE_PCT", "1.0"))  # % du capital risqué par trade
 MIN_CONFIDENCE_SCORE = float(os.getenv("MIN_CONFIDENCE_SCORE", "75"))  # Score min pour afficher un setup (0-100)
+# Limite de perte journaliere : au-dela, mode silencieux (pas de bip, pas de telegram)
+DAILY_LOSS_LIMIT_PCT = float(os.getenv("DAILY_LOSS_LIMIT_PCT", "3.0"))
 
 # Intervalles bougies pour l'analyse de patterns
 CANDLE_INTERVAL = os.getenv("CANDLE_INTERVAL", "5min")
