@@ -1565,3 +1565,77 @@ tr.low-confidence { opacity: 0.5; font-style: italic; }
 .mistake-count { font-size: 18px; font-weight: 700; margin: 6px 0; }
 .mistake-pnl { font-size: 13px; font-family: 'Courier New', monospace; }
 .mistake-advice { font-size: 11px; margin-top: 6px; color: var(--accent-yellow); font-style: italic; }
+
+/* ─── Accessibilité : skip-link, visually-hidden ─────────────────── */
+.skip-link {
+    position: absolute;
+    top: -40px;
+    left: 8px;
+    background: var(--accent-blue);
+    color: #0d1117;
+    padding: 8px 14px;
+    border-radius: 4px;
+    font-weight: 700;
+    z-index: 100;
+    text-decoration: none;
+}
+.skip-link:focus-visible { top: 8px; }
+
+.visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+/* ─── Focus visible uniforme (dark + light) ──────────────────────── */
+:focus:not(:focus-visible) { outline: none; }
+
+:focus-visible {
+    outline: 2px solid var(--accent-blue);
+    outline-offset: 2px;
+    border-radius: 2px;
+}
+
+button:focus-visible,
+.btn:focus-visible {
+    box-shadow: 0 0 0 2px var(--bg-primary), 0 0 0 4px var(--accent-blue);
+    outline: none;
+}
+
+/* ─── Glossary header : reset <button> pour garder l'apparence ───── */
+button.glossary-header {
+    background: transparent;
+    color: inherit;
+    border: none;
+    font: inherit;
+    text-align: left;
+    width: 100%;
+    cursor: pointer;
+}
+
+/* ─── Respect de prefers-reduced-motion ──────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+        scroll-behavior: auto !important;
+    }
+    .status-indicator { animation: none !important; }
+}
+
+/* ─── Mobile serré (≤ 480 px) : touch targets + header compact ───── */
+@media (max-width: 480px) {
+    .btn { min-height: 44px; padding: 8px 14px; } /* WCAG 2.5.5 touch target */
+    .btn-sm { min-height: 36px; padding: 6px 10px; }
+    .header { padding: 10px 12px; flex-wrap: wrap; gap: 6px; }
+    .header h1 { font-size: 16px; }
+    .header-status { flex-wrap: wrap; gap: 6px; font-size: 11px; }
+    .filter-btn, .filter-select { min-height: 40px; }
+}

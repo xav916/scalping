@@ -258,6 +258,26 @@ async def manifest():
     return FileResponse(str(FRONTEND_DIR / "manifest.json"), media_type="application/manifest+json")
 
 
+@app.get("/sw.js", include_in_schema=False)
+async def pwa_service_worker():
+    """Service worker (PWA offline shell). Accessible sans auth pour que le
+    navigateur puisse l'enregistrer et le mettre a jour."""
+    return FileResponse(
+        str(FRONTEND_DIR / "sw.js"),
+        media_type="text/javascript",
+        headers={
+            "Service-Worker-Allowed": "/",
+            "Cache-Control": "no-cache",
+        },
+    )
+
+
+@app.get("/robots.txt", include_in_schema=False)
+async def robots_txt():
+    """Disallow indexation (l'app est derriere Basic Auth)."""
+    return FileResponse(str(FRONTEND_DIR / "robots.txt"), media_type="text/plain")
+
+
 @app.get("/mobile")
 async def mobile_view(_=Depends(verify_credentials)):
     """Vue mobile-first focalisee sur les setups TAKE uniquement."""

@@ -1,22 +1,26 @@
 {
   "name": "Scalping Radar",
   "short_name": "Scalping",
-  "description": "Outil d'aide a la decision pour le scalping forex",
+  "description": "Outil d'aide à la décision pour le scalping forex",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#0d1117",
   "theme_color": "#58a6ff",
   "orientation": "any",
+  "lang": "fr",
   "icons": [
     {
       "src": "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect width='192' height='192' fill='%230d1117'/><text x='50%' y='55%' font-size='100' text-anchor='middle' fill='%2358a6ff' font-family='monospace'>SR</text></svg>",
       "sizes": "192x192",
-      "type": "image/svg+xml"
+      "type": "image/svg+xml",
+      "purpose": "any"
     },
     {
       "src": "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><rect width='512' height='512' fill='%230d1117'/><text x='50%' y='55%' font-size='280' text-anchor='middle' fill='%2358a6ff' font-family='monospace'>SR</text></svg>",
       "sizes": "512x512",
-      "type": "image/svg+xml"
+      "type": "image/svg+xml",
+      "purpose": "any"
     }
   ]
 }

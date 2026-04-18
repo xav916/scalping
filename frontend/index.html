@@ -4,27 +4,36 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#58a6ff">
-    <title>Scalping Radar - Outil d'aide a la decision</title>
+    <meta name="description" content="Scalping Radar — outil d'aide à la décision pour le scalping forex : détection de setups, signaux temps réel, calendrier économique et patterns techniques.">
+    <meta name="robots" content="noindex, nofollow">
+    <meta property="og:title" content="Scalping Radar — Outil d'aide à la décision">
+    <meta property="og:description" content="Détection de signaux, setups de trade et patterns pour le scalping forex en temps réel.">
+    <meta property="og:type" content="website">
+    <meta property="og:locale" content="fr_FR">
+    <title>Scalping Radar — Outil d'aide à la décision</title>
     <link rel="stylesheet" href="/css/style.css">
     <link rel="manifest" href="/manifest.json">
+    <link rel="icon" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' fill='%230d1117'/><text x='50%25' y='58%25' font-size='34' text-anchor='middle' fill='%2358a6ff' font-family='monospace'>SR</text></svg>">
     <link rel="apple-touch-icon" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect width='192' height='192' fill='%230d1117'/><text x='50%25' y='55%25' font-size='100' text-anchor='middle' fill='%2358a6ff' font-family='monospace'>SR</text></svg>">
 </head>
 <body>
+    <a href="#main" class="skip-link">Aller au contenu principal</a>
+
     <!-- Header -->
-    <header class="header">
+    <header class="header" role="banner">
         <h1>Scalping Radar</h1>
-        <div class="header-status">
+        <div class="header-status" role="status" aria-live="polite">
             <span id="user-greeting" class="user-greeting"></span>
-            <span id="live-clock" class="live-clock"></span>
+            <span id="live-clock" class="live-clock" aria-label="Heure courante"></span>
             <span id="session-markers" class="session-markers"></span>
-            <span id="trend-info" style="font-size:12px;color:var(--text-muted)"></span>
+            <span id="trend-info" class="trend-info"></span>
             <span id="last-update" class="last-update"></span>
-            <div id="status-indicator" class="status-indicator"></div>
-            <span id="status-text" style="font-size:12px;color:var(--text-secondary)">Connexion...</span>
-            <button id="theme-toggle" class="btn btn-sm" title="Basculer theme clair/sombre">🌙</button>
-            <button id="sound-toggle" class="btn btn-sm" title="Active/desactive le son des signaux">Son ON</button>
-            <button id="voice-toggle" class="btn btn-sm" title="Active/desactive la voix">🔇 Voix</button>
-            <button id="refresh-btn" class="btn">Actualiser</button>
+            <div id="status-indicator" class="status-indicator" aria-hidden="true"></div>
+            <span id="status-text" class="status-text">Connexion…</span>
+            <button id="theme-toggle" class="btn btn-sm" type="button" aria-label="Basculer thème clair/sombre" title="Basculer thème clair/sombre">🌙</button>
+            <button id="sound-toggle" class="btn btn-sm" type="button" aria-label="Activer/désactiver le son des signaux" title="Activer/désactiver le son des signaux">Son ON</button>
+            <button id="voice-toggle" class="btn btn-sm" type="button" aria-label="Activer/désactiver la synthèse vocale" title="Activer/désactiver la voix">🔇 Voix</button>
+            <button id="refresh-btn" class="btn" type="button" aria-label="Relancer l'analyse du marché">Actualiser</button>
         </div>
     </header>
 
@@ -32,7 +41,7 @@
     <div id="daily-banner" class="daily-banner" style="display:none"></div>
 
     <!-- Dashboard -->
-    <main class="dashboard">
+    <main id="main" class="dashboard" role="main">
         <!-- Risk dashboard -->
         <section class="card signals-section" id="risk-section" style="display:none">
             <div class="card-header">
@@ -45,7 +54,7 @@
         <section class="card signals-section" id="equity-section" style="display:none">
             <div class="card-header">
                 <h2>Courbe d'équité</h2>
-                <button class="btn btn-sm" onclick="downloadCSV()">Exporter mes trades (CSV)</button>
+                <button class="btn btn-sm" type="button" data-action="download-csv">Exporter mes trades (CSV)</button>
             </div>
             <div class="card-body">
                 <div id="equity-summary" class="equity-summary"></div>
@@ -57,10 +66,10 @@
         <section class="card signals-section">
             <div class="card-header">
                 <h2>Performance des signaux (backtest)</h2>
-                <span style="font-size:11px;color:var(--text-muted)">Evolue en continu a partir des signaux reels emis</span>
+                <span class="card-hint">Évolue en continu à partir des signaux réels émis</span>
             </div>
             <div class="card-body" id="backtest-stats">
-                <div class="empty-state"><p>Chargement des stats...</p></div>
+                <div class="empty-state"><p>Chargement des stats…</p></div>
             </div>
         </section>
 
@@ -68,18 +77,18 @@
         <section class="card signals-section">
             <div class="card-header">
                 <h2>Mes trades (journal personnel)</h2>
-                <span style="font-size:11px;color:var(--text-muted)">Cliquez "J'ai pris ce signal" sur un setup pour commencer</span>
+                <span class="card-hint">Cliquez « J'ai pris ce signal » sur un setup pour commencer</span>
             </div>
             <div class="card-body" id="personal-trades">
-                <div class="empty-state"><p>Aucun trade enregistre pour l'instant.</p></div>
+                <div class="empty-state"><p>Aucun trade enregistré pour l'instant.</p></div>
             </div>
         </section>
 
-        <!-- Stats par combinaison (apres N trades) -->
+        <!-- Stats par combinaison (après N trades) -->
         <section class="card signals-section" id="combos-section" style="display:none">
             <div class="card-header">
                 <h2>Combinaisons gagnantes (pattern × paire)</h2>
-                <span style="font-size:11px;color:var(--text-muted)">Apprend de votre historique. Significatif a partir de 5 trades par combo.</span>
+                <span class="card-hint">Apprend de votre historique. Significatif à partir de 5 trades par combo.</span>
             </div>
             <div class="card-body" id="combos-body"></div>
         </section>
@@ -88,7 +97,7 @@
         <section class="card signals-section" id="mistakes-section" style="display:none">
             <div class="card-header">
                 <h2>Détecteur d'erreurs</h2>
-                <span style="font-size:11px;color:var(--text-muted)">Compare vos trades disciplinés vs négligés</span>
+                <span class="card-hint">Compare vos trades disciplinés vs négligés</span>
             </div>
             <div class="card-body" id="mistakes-body"></div>
         </section>
@@ -97,18 +106,18 @@
         <section class="card signals-section" id="live-ticks-section" style="display:none">
             <div class="card-header">
                 <h2>Prix Live (WebSocket)</h2>
-                <span style="font-size:11px;color:var(--text-muted)" id="live-ticks-info">En attente de ticks...</span>
+                <span class="card-hint" id="live-ticks-info">En attente de ticks…</span>
             </div>
             <div class="card-body" id="live-ticks-grid">
-                <div class="empty-state"><p>Aucun tick recu pour l'instant.</p></div>
+                <div class="empty-state"><p>Aucun tick reçu pour l'instant.</p></div>
             </div>
         </section>
 
         <!-- Trade Setups (full width, priority) -->
         <section class="card signals-section">
             <div class="card-header">
-                <h2>Setups de Trade - Analyse Detaillee</h2>
-                <span style="font-size:11px;color:var(--text-muted)">Seuls les setups haute confiance sont affiches</span>
+                <h2>Setups de Trade — Analyse détaillée</h2>
+                <span class="card-hint">Seuls les setups haute confiance sont affichés</span>
             </div>
             <div class="filter-bar" id="setup-filter-bar">
                 <div class="filter-group">
@@ -124,8 +133,8 @@
             </div>
             <div class="card-body" id="setups-list">
                 <div class="empty-state">
-                    <p><strong>Analyse en cours...</strong></p>
-                    <p>Les recommandations d'entree/sortie apparaitront ici.</p>
+                    <p><strong>Analyse en cours…</strong></p>
+                    <p>Les recommandations d'entrée/sortie apparaîtront ici.</p>
                 </div>
             </div>
         </section>
@@ -137,8 +146,8 @@
             </div>
             <div class="card-body" id="signals-list">
                 <div class="empty-state">
-                    <p><strong>Initialisation du radar...</strong></p>
-                    <p>Scan du marche en cours.</p>
+                    <p><strong>Initialisation du radar…</strong></p>
+                    <p>Scan du marché en cours.</p>
                 </div>
             </div>
         </section>
@@ -146,45 +155,46 @@
         <!-- Patterns detected -->
         <section class="card">
             <div class="card-header">
-                <h2>Patterns Detectes</h2>
+                <h2>Patterns détectés</h2>
             </div>
             <div class="card-body" id="patterns-body">
-                <div class="empty-state"><p>Recherche de patterns...</p></div>
+                <div class="empty-state"><p>Recherche de patterns…</p></div>
             </div>
         </section>
 
         <!-- Volatility -->
         <section class="card">
             <div class="card-header">
-                <h2>Moniteur de Volatilite</h2>
+                <h2>Moniteur de volatilité</h2>
             </div>
             <div class="card-body" id="volatility-body">
-                <div class="empty-state"><p>Chargement des donnees de volatilite...</p></div>
+                <div class="empty-state"><p>Chargement des données de volatilité…</p></div>
             </div>
         </section>
 
         <!-- Economic Events (full width) -->
         <section class="card signals-section">
             <div class="card-header">
-                <h2>Calendrier Economique</h2>
+                <h2>Calendrier économique</h2>
             </div>
             <div class="card-body" id="events-body">
-                <div class="empty-state"><p>Chargement des evenements...</p></div>
+                <div class="empty-state"><p>Chargement des événements…</p></div>
             </div>
         </section>
 
         <!-- Glossaire -->
-        <section class="card signals-section">
-            <div class="card-header glossary-header" onclick="document.getElementById('glossary-body').classList.toggle('open')">
-                <h2>Glossaire des Termes et Abreviations</h2>
-                <span class="glossary-toggle">Afficher / Masquer</span>
-            </div>
+        <section class="card signals-section" aria-labelledby="glossary-title">
+            <button type="button" class="card-header glossary-header" data-action="toggle-glossary" aria-expanded="false" aria-controls="glossary-body">
+                <h2 id="glossary-title">Glossaire des termes et abréviations</h2>
+                <span class="glossary-toggle" aria-hidden="true">Afficher / Masquer</span>
+            </button>
             <div class="card-body glossary-panel" id="glossary-body">
                 <div class="glossary-search">
-                    <input type="text" id="glossary-search-input" placeholder="Rechercher un terme..." oninput="filterGlossary(this.value)">
+                    <label for="glossary-search-input" class="visually-hidden">Rechercher un terme</label>
+                    <input type="text" id="glossary-search-input" placeholder="Rechercher un terme…" autocomplete="off">
                 </div>
                 <div id="glossary-list" class="glossary-list">
-                    <div class="empty-state"><p>Chargement du glossaire...</p></div>
+                    <div class="empty-state"><p>Chargement du glossaire…</p></div>
                 </div>
             </div>
         </section>
@@ -194,89 +204,89 @@
     <div id="toast-container" class="toast-container"></div>
 
     <!-- Modal "J'ai pris ce signal" -->
-    <div id="trade-modal" class="modal-overlay" style="display:none">
+    <div id="trade-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="trade-modal-title" style="display:none">
         <div class="modal">
             <div class="modal-header">
-                <h3>Enregistrer un trade</h3>
-                <button class="modal-close" onclick="closeTradeModal()">&times;</button>
+                <h3 id="trade-modal-title">Enregistrer un trade</h3>
+                <button class="modal-close" type="button" data-action="close-trade-modal" aria-label="Fermer">&times;</button>
             </div>
             <div class="modal-body">
                 <div class="checklist">
-                    <h4>Checklist pre-trade</h4>
-                    <label><input type="checkbox" data-check="session"> Session active favorable (London/NY/overlap)</label>
+                    <h4>Checklist pré-trade</h4>
+                    <label><input type="checkbox" data-check="session"> Session active favorable (London / NY / overlap)</label>
                     <label><input type="checkbox" data-check="news"> Aucune news high-impact &lt; 30 min</label>
-                    <label><input type="checkbox" data-check="daily"> Mon PnL du jour est sain (pas deja a -2%)</label>
-                    <label><input type="checkbox" data-check="corr"> Pas de position correlee deja ouverte</label>
+                    <label><input type="checkbox" data-check="daily"> Mon PnL du jour est sain (pas déjà à -2 %)</label>
+                    <label><input type="checkbox" data-check="corr"> Pas de position corrélée déjà ouverte</label>
                     <label><input type="checkbox" data-check="calm"> Je suis calme (pas impulsif)</label>
                 </div>
-                <div id="correlation-warning" class="correlation-warning" style="display:none"></div>
+                <div id="correlation-warning" class="correlation-warning" style="display:none" role="alert"></div>
                 <form id="trade-form" class="trade-form">
                     <div class="form-row">
                         <label>Paire <input type="text" name="pair" readonly></label>
                         <label>Direction <input type="text" name="direction" readonly></label>
                     </div>
                     <div class="form-row">
-                        <label>Entry reelle <input type="number" name="entry_price" step="any" required></label>
-                        <label>SL <input type="number" name="stop_loss" step="any" required></label>
+                        <label>Entry réelle <input type="number" name="entry_price" step="any" inputmode="decimal" required></label>
+                        <label>SL <input type="number" name="stop_loss" step="any" inputmode="decimal" required></label>
                     </div>
                     <div class="form-row">
-                        <label>TP <input type="number" name="take_profit" step="any" required></label>
-                        <label>Taille (lots) <input type="number" name="size_lot" step="0.01" value="0.01" required></label>
+                        <label>TP <input type="number" name="take_profit" step="any" inputmode="decimal" required></label>
+                        <label>Taille (lots) <input type="number" name="size_lot" step="0.01" inputmode="decimal" value="0.01" required></label>
                     </div>
                     <div class="position-calculator">
                         <div class="calc-title">📐 Calculateur de taille</div>
                         <div class="calc-row">
                             <label>Capital
-                                <input type="number" id="calc-capital" value="10000" step="100">
+                                <input type="number" id="calc-capital" inputmode="decimal" value="10000" step="100">
                             </label>
                             <label>Risque %
-                                <input type="number" id="calc-risk-pct" value="1" step="0.1" min="0.1" max="10">
+                                <input type="number" id="calc-risk-pct" inputmode="decimal" value="1" step="0.1" min="0.1" max="10">
                             </label>
-                            <button type="button" class="btn btn-sm" onclick="applyCalculatedSize()">Appliquer</button>
+                            <button type="button" class="btn btn-sm" data-action="apply-calc-size">Appliquer</button>
                         </div>
                         <div class="calc-result" id="calc-result">Risque : — | Lots suggérés : —</div>
                     </div>
                     <label>Notes
-                        <textarea name="notes" rows="2" placeholder="Ressenti, raison du trade..."></textarea>
+                        <textarea name="notes" rows="2" placeholder="Ressenti, raison du trade…"></textarea>
                     </label>
                     <input type="hidden" name="signal_pattern">
                     <input type="hidden" name="signal_confidence">
                 </form>
                 <div class="checklist post-entry">
-                    <h4>Apres avoir passe l'ordre dans MT5</h4>
-                    <label><input type="checkbox" data-post-entry="sl"> SL place dans MT5</label>
-                    <label><input type="checkbox" data-post-entry="tp"> TP place dans MT5</label>
-                    <label><input type="checkbox" data-post-entry="size"> Taille de position verifiee</label>
-                    <label><input type="checkbox" data-post-entry="alarm"> Alarme 15 min reglee (optionnel)</label>
+                    <h4>Après avoir passé l'ordre dans MT5</h4>
+                    <label><input type="checkbox" data-post-entry="sl"> SL placé dans MT5</label>
+                    <label><input type="checkbox" data-post-entry="tp"> TP placé dans MT5</label>
+                    <label><input type="checkbox" data-post-entry="size"> Taille de position vérifiée</label>
+                    <label><input type="checkbox" data-post-entry="alarm"> Alarme 15 min réglée (optionnel)</label>
                 </div>
             </div>
             <div class="modal-footer">
-                <button class="btn" onclick="closeTradeModal()">Annuler</button>
-                <button class="btn btn-primary" onclick="confirmTradeSubmit()">Confirmer le trade</button>
+                <button class="btn" type="button" data-action="close-trade-modal">Annuler</button>
+                <button class="btn btn-primary" type="button" data-action="confirm-trade">Confirmer le trade</button>
             </div>
         </div>
     </div>
 
-    <!-- Modal cloture de trade -->
-    <div id="close-modal" class="modal-overlay" style="display:none">
+    <!-- Modal clôture de trade -->
+    <div id="close-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="close-modal-title" style="display:none">
         <div class="modal modal-small">
             <div class="modal-header">
-                <h3>Cloturer le trade</h3>
-                <button class="modal-close" onclick="closeCloseModal()">&times;</button>
+                <h3 id="close-modal-title">Clôturer le trade</h3>
+                <button class="modal-close" type="button" data-action="close-close-modal" aria-label="Fermer">&times;</button>
             </div>
             <div class="modal-body">
                 <form id="close-form">
-                    <label>Prix de sortie reel
-                        <input type="number" name="exit_price" step="any" required>
+                    <label>Prix de sortie réel
+                        <input type="number" name="exit_price" step="any" inputmode="decimal" required>
                     </label>
                     <label>Notes / ressenti
-                        <textarea name="notes" rows="3" placeholder="Ce que j'ai bien fait, ce que j'ai mal fait..."></textarea>
+                        <textarea name="notes" rows="3" placeholder="Ce que j'ai bien fait, ce que j'ai mal fait…"></textarea>
                     </label>
                 </form>
             </div>
             <div class="modal-footer">
-                <button class="btn" onclick="closeCloseModal()">Annuler</button>
-                <button class="btn btn-primary" onclick="confirmCloseTrade()">Valider cloture</button>
+                <button class="btn" type="button" data-action="close-close-modal">Annuler</button>
+                <button class="btn btn-primary" type="button" data-action="confirm-close-trade">Valider clôture</button>
             </div>
         </div>
     </div>
