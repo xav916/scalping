@@ -1529,29 +1529,81 @@ function _renderClock() {
 
 function showToast(signal) {
     const container = document.getElementById('toast-container');
-    const strength = signal.signal_strength || signal.strength;
-
-    const toast = document.createElement('div');
-    toast.className = 'toast';
-
-    // Si un trade setup est dans le signal
+    const strength = signal.signal_strength || signal.strength; // 'strong' | 'moderate' | 'weak'
     const setup = signal.trade_setup;
-    let setupInfo = '';
-    if (setup) {
-        const dir = setup.direction === 'buy' ? 'ACHAT' : 'VENTE';
-        setupInfo = `${dir} @ ${setup.entry_price?.toFixed(2)} | SL: ${setup.stop_loss?.toFixed(2)} | TP: ${setup.take_profit_1?.toFixed(2)}`;
+    const isBuy = setup && setup.direction === 'buy';
+    const dir = setup ? (isBuy ? 'ACHAT' : 'VENTE') : null;
+    const pair = signal.pair || '';
+    const TTL = 10000;
+
+    // Icône selon direction/force (SVG inline, pas de lib externe)
+    let iconSvg;
+    if (setup && isBuy) {
+        iconSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17l5-5 5 5"/><path d="M7 7l5-5 5 5"/></svg>`;
+    } else if (setup && !isBuy) {
+        iconSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7l5 5 5-5"/><path d="M7 17l5 5 5-5"/></svg>`;
+    } else {
+        iconSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10 21a2 2 0 0 0 4 0"/></svg>`;
     }
 
+    // Détail selon le contexte : setup > message serveur > fallback
+    let detailHTML = '';
+    if (setup) {
+        detailHTML = `
+            <div class="toast-row"><span class="toast-kbd">Entry</span><span>${setup.entry_price?.toFixed(5) ?? '—'}</span></div>
+            <div class="toast-row"><span class="toast-kbd">SL</span><span class="toast-sl">${setup.stop_loss?.toFixed(5) ?? '—'}</span></div>
+            <div class="toast-row"><span class="toast-kbd">TP1</span><span class="toast-tp">${setup.take_profit_1?.toFixed(5) ?? '—'}</span></div>
+            ${setup.risk_reward_1 ? `<div class="toast-row"><span class="toast-kbd">R:R</span><span>${setup.risk_reward_1.toFixed(1)}</span></div>` : ''}
+        `;
+    } else if (signal.message) {
+        detailHTML = `<div class="toast-msg">${escapeHtml(signal.message)}</div>`;
+    } else {
+        detailHTML = `<div class="toast-msg">Signal ${_strengthLabel(strength)} détecté</div>`;
+    }
+
+    // Action CTA uniquement si un setup actionnable est joint
+    const actionsHTML = setup ? `
+        <div class="toast-actions">
+            <button type="button" class="toast-btn toast-btn-primary"
+                    data-action="open-trade"
+                    data-pair="${escapeHtml(pair)}"
+                    data-direction="${escapeHtml(setup.direction)}"
+                    data-entry="${setup.entry_price}"
+                    data-sl="${setup.stop_loss}"
+                    data-tp1="${setup.take_profit_1}"
+                    data-pattern="${escapeHtml(signal.pattern?.pattern || '')}"
+                    data-confidence="${signal.confidence_score || 0}">
+                J'ai pris ce signal
+            </button>
+            <button type="button" class="toast-btn" data-action="dismiss-toast">Ignorer</button>
+        </div>
+    ` : '';
+
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${strength || 'info'}` + (setup ? ` toast-${isBuy ? 'buy' : 'sell'}` : '');
+    toast.setAttribute('role', 'status');
     toast.innerHTML = `
-        <div class="toast-title">Signal Scalping : ${escapeHtml(signal.pair)}</div>
-        <div class="toast-body">${escapeHtml(setupInfo || signal.message || `Signal ${_strengthLabel(strength)} détecté`)}</div>
+        <div class="toast-icon">${iconSvg}</div>
+        <div class="toast-body">
+            <div class="toast-header">
+                <span class="toast-title">${escapeHtml(pair)}${dir ? ' · ' + dir : ''}</span>
+                <span class="toast-badge">${_strengthLabel(strength)}</span>
+            </div>
+            <div class="toast-detail">${detailHTML}</div>
+            ${actionsHTML}
+        </div>
+        <button type="button" class="toast-close" data-action="dismiss-toast" aria-label="Fermer la notification">&times;</button>
+        <div class="toast-progress" style="animation-duration: ${TTL}ms"></div>
     `;
 
     container.appendChild(toast);
-    setTimeout(() => {
+    const dismissTimer = setTimeout(() => {
         toast.classList.add('fade-out');
         setTimeout(() => toast.remove(), 300);
-    }, 10000);
+    }, TTL);
+
+    // Permet à toast.dismiss-toast / toast.open-trade d'arrêter le timer
+    toast._dismiss = () => { clearTimeout(dismissTimer); toast.classList.add('fade-out'); setTimeout(() => toast.remove(), 300); };
 }
 
 // ─── Notifications navigateur ────────────────────────────────────────
@@ -1677,6 +1729,12 @@ function _handleDelegatedClick(e) {
         case 'toggle-next':
             _toggleNextSibling(el);
             break;
+        case 'dismiss-toast': {
+            const toast = el.closest('.toast');
+            if (toast && typeof toast._dismiss === 'function') toast._dismiss();
+            else if (toast) toast.remove();
+            break;
+        }
         case 'toggle-glossary': {
             const body = document.getElementById('glossary-body');
             if (!body) return;
