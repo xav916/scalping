@@ -32,6 +32,8 @@ logger = logging.getLogger(__name__)
 # État partagé
 _latest_overview: MarketOverview | None = None
 _latest_candles_by_pair: dict[str, list] = {}
+_latest_h1_candles_by_pair: dict[str, list] = {}
+_last_cycle_at: datetime | None = None
 _scheduler: AsyncIOScheduler | None = None
 
 
@@ -44,15 +46,38 @@ def get_candles_for_pair(pair: str) -> list:
     return _latest_candles_by_pair.get(pair, [])
 
 
+def get_h1_candles_for_pair(pair: str) -> list:
+    return _latest_h1_candles_by_pair.get(pair, [])
+
+
 def get_all_pair_candles() -> dict[str, list]:
     return dict(_latest_candles_by_pair)
 
 
+def get_last_cycle_at() -> datetime | None:
+    return _last_cycle_at
+
+
+def compute_h1_trend(candles: list) -> str:
+    """Tendance simple sur bougies 1h : compare moyenne 5 dernieres vs 20 dernieres."""
+    if len(candles) < 20:
+        return "neutral"
+    recent = sum(c.close for c in candles[-5:]) / 5
+    longer = sum(c.close for c in candles[-20:]) / 20
+    diff_pct = (recent - longer) / longer * 100
+    if diff_pct > 0.15:
+        return "bullish"
+    if diff_pct < -0.15:
+        return "bearish"
+    return "neutral"
+
+
 async def run_analysis_cycle() -> None:
     """Exécute un cycle complet : récupération, analyse, détection de patterns, notification."""
-    global _latest_overview, _latest_candles_by_pair
+    global _latest_overview, _latest_candles_by_pair, _latest_h1_candles_by_pair, _last_cycle_at
 
     logger.info("Démarrage du cycle d'analyse...")
+    _last_cycle_at = datetime.now(timezone.utc)
 
     try:
         # Récupérer toutes les données en parallèle
@@ -60,22 +85,35 @@ async def run_analysis_cycle() -> None:
             fetch_volatility_data(),
             fetch_economic_events(),
         ]
-        # Ajouter la récupération des bougies pour chaque paire
+        # Bougies CANDLE_INTERVAL (5min) pour analyse principale
         for pair in WATCHED_PAIRS:
             fetch_tasks.append(fetch_candles(pair, interval=CANDLE_INTERVAL, outputsize=CANDLE_COUNT))
+        # Bougies 1h pour confirmation MTF (cap a 50 bougies = 50h d'historique)
+        for pair in WATCHED_PAIRS:
+            fetch_tasks.append(fetch_candles(pair, interval="1h", outputsize=50))
 
         results = await asyncio.gather(*fetch_tasks)
 
         volatility_data = results[0]
         economic_events = results[1]
+        n = len(WATCHED_PAIRS)
 
-        # Regrouper les bougies par paire (fetch_candles retourne (candles, is_simulated))
+        # Bougies 5min
         all_candles = {}
         simulated_pairs = {}
         for i, pair in enumerate(WATCHED_PAIRS):
             candles, is_simulated = results[2 + i]
             all_candles[pair] = candles
             simulated_pairs[pair] = is_simulated
+
+        # Bougies 1h (pour MTF)
+        h1_candles = {}
+        for i, pair in enumerate(WATCHED_PAIRS):
+            try:
+                cs, _sim = results[2 + n + i]
+                h1_candles[pair] = cs
+            except IndexError:
+                h1_candles[pair] = []
 
         # Analyser les tendances pour chaque paire
         trends = [
@@ -113,11 +151,12 @@ async def run_analysis_cycle() -> None:
                             trend=trend_map.get(pair),
                             events=economic_events,
                         )
-                        # Enrichissement coaching : guidance + verdict
+                        # Enrichissement coaching : guidance + verdict (avec MTF)
                         vol = vol_map.get(pair)
                         tr = trend_map.get(pair)
-                        setup.guidance = coaching.generate_guidance(setup, volatility=vol, trend=tr, events=economic_events)
-                        verdict = coaching.compute_verdict(setup, volatility=vol, trend=tr, events=economic_events)
+                        h1_trend = compute_h1_trend(h1_candles.get(pair, []))
+                        setup.guidance = coaching.generate_guidance(setup, volatility=vol, trend=tr, events=economic_events, h1_trend=h1_trend)
+                        verdict = coaching.compute_verdict(setup, volatility=vol, trend=tr, events=economic_events, h1_trend=h1_trend)
                         setup.verdict_action = verdict["action"]
                         setup.verdict_summary = verdict["summary"]
                         setup.verdict_reasons = verdict["reasons"]
@@ -142,6 +181,7 @@ async def run_analysis_cycle() -> None:
 
         now = datetime.now(timezone.utc)
         _latest_candles_by_pair = all_candles
+        _latest_h1_candles_by_pair = h1_candles
         _latest_overview = MarketOverview(
             volatility_data=volatility_data,
             economic_events=economic_events,
@@ -190,6 +230,67 @@ async def backtest_check_cycle() -> None:
         logger.warning(f"Backtest check_open_trades a echoue: {e}")
 
 
+# Suivi des sessions deja annoncees aujourd'hui pour eviter les doublons
+_session_alerts_sent: set[str] = set()
+
+
+async def session_alert_cycle() -> None:
+    """Tourne chaque minute : annonce les ouvertures de session importantes
+    via Telegram, 5 min avant l'evenement."""
+    from backend.services.telegram_service import send_text
+
+    now = datetime.now(timezone.utc)
+    today = now.date().isoformat()
+    # Reset au changement de jour
+    global _session_alerts_sent
+    if not any(k.startswith(today) for k in _session_alerts_sent):
+        _session_alerts_sent.clear()
+
+    # Sessions surveillees (heure UTC d'ouverture)
+    upcoming = [
+        (8, "London", "🇬🇧 Ouverture London dans 5 min — paires EUR/GBP a surveiller"),
+        (13, "New York", "🇺🇸 Ouverture New York dans 5 min — debut de l'overlap London/NY (heure d'or scalping)"),
+        (0, "Tokyo", "🇯🇵 Ouverture Tokyo dans 5 min — paires JPY actives"),
+    ]
+    for open_hour, session_name, msg in upcoming:
+        # Alerte 5 min avant ouverture
+        alert_minute = (open_hour * 60 - 5) % (24 * 60)
+        if now.hour * 60 + now.minute == alert_minute:
+            key = f"{today}-{session_name}"
+            if key in _session_alerts_sent:
+                continue
+            _session_alerts_sent.add(key)
+            try:
+                await send_text(msg)
+                logger.info(f"Pre-session alert envoyee: {session_name}")
+            except Exception as e:
+                logger.warning(f"Erreur alert session {session_name}: {e}")
+
+
+async def health_check_cycle() -> None:
+    """Verifie que le radar tourne. Si aucun cycle d'analyse depuis >10 min,
+    envoie une alerte Telegram (one-shot, evite le spam)."""
+    from backend.services.telegram_service import send_text
+
+    global _health_alerted
+    last = get_last_cycle_at()
+    if last is None:
+        return
+    delta = (datetime.now(timezone.utc) - last).total_seconds()
+    if delta > 600:
+        if not _health_alerted:
+            _health_alerted = True
+            try:
+                await send_text(f"⚠️ *Scalping Radar*: aucun cycle d'analyse depuis {int(delta/60)} min. Le radar est peut-etre en panne.")
+            except Exception as e:
+                logger.warning(f"Health alert echec: {e}")
+    else:
+        _health_alerted = False
+
+
+_health_alerted = False
+
+
 def start_scheduler() -> AsyncIOScheduler:
     """Démarre le scheduler périodique."""
     global _scheduler
@@ -212,9 +313,27 @@ def start_scheduler() -> AsyncIOScheduler:
         name="Check trades backtest",
         replace_existing=True,
     )
+    # Alertes pre-session (toutes les minutes, ne fait quelque chose qu'a l'heure d'alerte)
+    _scheduler.add_job(
+        session_alert_cycle,
+        "interval",
+        seconds=60,
+        id="session_alert",
+        name="Alertes pre-session",
+        replace_existing=True,
+    )
+    # Health check toutes les 2 min
+    _scheduler.add_job(
+        health_check_cycle,
+        "interval",
+        seconds=120,
+        id="health_check",
+        name="Health check radar",
+        replace_existing=True,
+    )
 
     _scheduler.start()
-    logger.info(f"Scheduler démarré. Analyse toutes les {MATAF_POLL_INTERVAL}s, backtest toutes les 60s")
+    logger.info(f"Scheduler démarré. Analyse {MATAF_POLL_INTERVAL}s, backtest 60s, session_alert 60s, health 120s")
     return _scheduler
 
 

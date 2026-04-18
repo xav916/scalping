@@ -112,6 +112,27 @@ async def _send_to(chat_id: str, signal: ScalpingSignal, who: str) -> None:
         logger.warning(f"Erreur envoi Telegram {who}: {e}")
 
 
+async def send_text(text: str, parse_mode: str = "Markdown") -> None:
+    """Envoie un texte libre a tous les destinataires (alertes systeme)."""
+    if not is_configured():
+        return
+    destinataires = _destinataires()
+    if not destinataires:
+        return
+    url = TELEGRAM_API.format(token=TELEGRAM_BOT_TOKEN)
+    for user, chat_id in destinataires:
+        if user != "__any__" and trade_log_service.silent_mode_active_for_user(user):
+            continue
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                await client.post(url, json={
+                    "chat_id": chat_id, "text": text, "parse_mode": parse_mode,
+                    "disable_web_page_preview": True,
+                })
+        except Exception as e:
+            logger.warning(f"Erreur Telegram text {user}: {e}")
+
+
 async def send_signal(signal: ScalpingSignal) -> None:
     """Envoie un signal a chaque destinataire Telegram configure.
 

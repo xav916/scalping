@@ -29,6 +29,8 @@ from backend.services.notification_service import (
 from backend.services.scheduler import (
     get_all_pair_candles,
     get_candles_for_pair,
+    get_h1_candles_for_pair,
+    get_last_cycle_at,
     get_latest_overview,
     run_analysis_cycle,
     start_scheduler,
@@ -92,6 +94,92 @@ def verify_credentials(credentials: HTTPBasicCredentials = Depends(security)) ->
 async def whoami(user: str = Depends(verify_credentials)):
     """Retourne l'utilisateur authentifie et son nom d'affichage."""
     return {"username": user, "display_name": display_name_for(user)}
+
+
+@app.get("/api/health")
+async def health(_=Depends(verify_credentials)):
+    """Etat de sante du radar."""
+    last = get_last_cycle_at()
+    delta = None
+    healthy = False
+    if last:
+        from datetime import datetime, timezone
+        delta = (datetime.now(timezone.utc) - last).total_seconds()
+        healthy = delta < 600  # < 10 min
+    return {
+        "healthy": healthy,
+        "last_cycle_at": last.isoformat() if last else None,
+        "seconds_since_last_cycle": delta,
+    }
+
+
+@app.get("/api/risk")
+async def risk_dashboard(user: str = Depends(verify_credentials)):
+    """Risque cumule sur les positions ouvertes."""
+    open_trades = trade_log_service.list_trades(status="OPEN", user=user)
+    total_risk = 0.0
+    rows = []
+    for t in open_trades:
+        risk_per_lot = abs(t["entry_price"] - t["stop_loss"]) * 100000
+        risk_usd = risk_per_lot * t["size_lot"]
+        total_risk += risk_usd
+        rows.append({
+            "pair": t["pair"], "direction": t["direction"],
+            "size_lot": t["size_lot"], "risk_usd": round(risk_usd, 2),
+        })
+    from config.settings import TRADING_CAPITAL
+    total_pct = (total_risk / TRADING_CAPITAL * 100) if TRADING_CAPITAL else 0
+    warning = total_pct > 3.0
+    return {
+        "n_open": len(open_trades),
+        "total_risk_usd": round(total_risk, 2),
+        "total_risk_pct": round(total_pct, 2),
+        "capital": TRADING_CAPITAL,
+        "warning_over_3pct": warning,
+        "by_trade": rows,
+    }
+
+
+@app.get("/api/equity")
+async def equity_curve(user: str = Depends(verify_credentials)):
+    """Courbe d'equity quotidienne calculee depuis l'historique des trades."""
+    from collections import defaultdict
+    from config.settings import TRADING_CAPITAL
+    trades = trade_log_service.list_trades(status="CLOSED", limit=1000, user=user)
+    by_day = defaultdict(float)
+    for t in trades:
+        if t.get("closed_at"):
+            day = t["closed_at"][:10]
+            by_day[day] += t["pnl"] or 0
+    days = sorted(by_day.keys())
+    equity = TRADING_CAPITAL
+    points = [{"date": "init", "equity": round(equity, 2), "daily_pnl": 0}]
+    for d in days:
+        equity += by_day[d]
+        points.append({"date": d, "equity": round(equity, 2), "daily_pnl": round(by_day[d], 2)})
+    return {"capital_initial": TRADING_CAPITAL, "current_equity": round(equity, 2), "points": points}
+
+
+@app.get("/api/trades.csv")
+async def trades_csv(user: str = Depends(verify_credentials)):
+    """Export CSV de l'historique des trades de l'utilisateur."""
+    import io
+    import csv
+    from fastapi.responses import StreamingResponse
+    trades = trade_log_service.list_trades(limit=10000, user=user)
+    output = io.StringIO()
+    if trades:
+        fieldnames = list(trades[0].keys())
+        writer = csv.DictWriter(output, fieldnames=fieldnames)
+        writer.writeheader()
+        for t in trades:
+            writer.writerow(t)
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=trades_{user}.csv"},
+    )
 
 
 # Serve static files

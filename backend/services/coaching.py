@@ -81,6 +81,7 @@ def generate_guidance(
     volatility: VolatilityData | None = None,
     trend: MarketTrend | None = None,
     events: list[EconomicEvent] | None = None,
+    h1_trend: str = "neutral",
 ) -> str:
     """Genere un texte en langage naturel expliquant le setup."""
     events = events or []
@@ -122,6 +123,13 @@ def generate_guidance(
         ev_names = ", ".join(e.event_name for e in hi[:2])
         lines.append(f"⚠️ Evenements high-impact a surveiller : {ev_names}. Si news dans les 30 min, passer ce trade.")
 
+    # MTF (1h)
+    setup_dir_str = "bullish" if setup.direction == TradeDirection.BUY else "bearish"
+    if h1_trend == setup_dir_str:
+        lines.append(f"✅ Confirmation 1h : la tendance horaire est {h1_trend}, alignee avec le signal 5min. Setup MTF valide.")
+    elif h1_trend != "neutral":
+        lines.append(f"⚠️ Conflit MTF : la tendance 1h est {h1_trend} alors que le signal 5min va dans le sens inverse. Risque eleve de retournement.")
+
     # Conseil SL
     lines.append(f"SL *obligatoire* a {setup.stop_loss:.4f} ({setup.risk_pips:.1f} pips de risque). Respectez-le meme si le prix flotte.")
 
@@ -134,6 +142,7 @@ def compute_verdict(
     volatility: VolatilityData | None = None,
     trend: MarketTrend | None = None,
     events: list[EconomicEvent] | None = None,
+    h1_trend: str = "neutral",
     now: datetime | None = None,
 ) -> dict:
     """Calcule un verdict TAKE / WAIT / SKIP avec raisons."""
@@ -193,6 +202,13 @@ def compute_verdict(
         warnings.append(f"R:R TP1 faible ({setup.risk_reward_1:.1f})")
     elif setup.risk_reward_1 >= 2.0:
         reasons.append(f"R:R TP1 excellent ({setup.risk_reward_1:.1f})")
+
+    # MTF (1h)
+    setup_dir_str = "bullish" if setup.direction == TradeDirection.BUY else "bearish"
+    if h1_trend == setup_dir_str:
+        reasons.append("Tendance 1h confirme le signal (MTF aligne)")
+    elif h1_trend != "neutral":
+        warnings.append(f"Conflit MTF : tendance 1h = {h1_trend}")
 
     # Decision finale
     if blockers:

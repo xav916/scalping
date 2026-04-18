@@ -20,6 +20,7 @@
             <span id="status-text" style="font-size:12px;color:var(--text-secondary)">Connexion...</span>
             <button id="theme-toggle" class="btn btn-sm" title="Basculer theme clair/sombre">🌙</button>
             <button id="sound-toggle" class="btn btn-sm" title="Active/desactive le son des signaux">Son ON</button>
+            <button id="voice-toggle" class="btn btn-sm" title="Active/desactive la voix">🔇 Voix</button>
             <button id="refresh-btn" class="btn">Actualiser</button>
         </div>
     </header>
@@ -29,6 +30,26 @@
 
     <!-- Dashboard -->
     <main class="dashboard">
+        <!-- Risk dashboard -->
+        <section class="card signals-section" id="risk-section" style="display:none">
+            <div class="card-header">
+                <h2>Risque cumulé (positions ouvertes)</h2>
+            </div>
+            <div class="card-body" id="risk-body"></div>
+        </section>
+
+        <!-- Equity curve -->
+        <section class="card signals-section" id="equity-section" style="display:none">
+            <div class="card-header">
+                <h2>Courbe d'équité</h2>
+                <button class="btn btn-sm" onclick="downloadCSV()">Exporter mes trades (CSV)</button>
+            </div>
+            <div class="card-body">
+                <div id="equity-summary" class="equity-summary"></div>
+                <div id="equity-chart" class="equity-chart"></div>
+            </div>
+        </section>
+
         <!-- Backtest stats -->
         <section class="card signals-section">
             <div class="card-header">
@@ -180,6 +201,19 @@
                     <div class="form-row">
                         <label>TP <input type="number" name="take_profit" step="any" required></label>
                         <label>Taille (lots) <input type="number" name="size_lot" step="0.01" value="0.01" required></label>
+                    </div>
+                    <div class="position-calculator">
+                        <div class="calc-title">📐 Calculateur de taille</div>
+                        <div class="calc-row">
+                            <label>Capital
+                                <input type="number" id="calc-capital" value="10000" step="100">
+                            </label>
+                            <label>Risque %
+                                <input type="number" id="calc-risk-pct" value="1" step="0.1" min="0.1" max="10">
+                            </label>
+                            <button type="button" class="btn btn-sm" onclick="applyCalculatedSize()">Appliquer</button>
+                        </div>
+                        <div class="calc-result" id="calc-result">Risque : — | Lots suggérés : —</div>
                     </div>
                     <label>Notes
                         <textarea name="notes" rows="2" placeholder="Ressenti, raison du trade..."></textarea>

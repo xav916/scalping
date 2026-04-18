@@ -66,6 +66,7 @@ function handleWebSocketMessage(message) {
         showToast(message.data);
         requestBrowserNotification(message.data);
         _playSignalSound(message.data);
+        _speakSignal(message.data);
     } else if (message.type === 'update') {
         updateDashboard(message.data);
     } else if (message.type === 'tick') {
@@ -116,6 +117,44 @@ function _playSignalSound(signal) {
 function _soundEnabled() {
     return localStorage.getItem('scalping_sound') !== 'off';
 }
+
+// ─── Voice alerts (Web Speech) ─────────────────────────────────────
+
+function _voiceEnabled() {
+    return localStorage.getItem('scalping_voice') === 'on';
+}
+function toggleVoice() {
+    const next = !_voiceEnabled();
+    localStorage.setItem('scalping_voice', next ? 'on' : 'off');
+    _updateVoiceBtn();
+    if (next && 'speechSynthesis' in window) _speak('Voix activée');
+}
+function _updateVoiceBtn() {
+    const btn = document.getElementById('voice-toggle');
+    if (!btn) return;
+    btn.textContent = _voiceEnabled() ? '🔊 Voix' : '🔇 Voix';
+    btn.classList.toggle('sound-off', !_voiceEnabled());
+}
+function _speak(text) {
+    if (!('speechSynthesis' in window)) return;
+    try {
+        const utter = new SpeechSynthesisUtterance(text);
+        utter.lang = 'fr-FR';
+        utter.rate = 1.05;
+        speechSynthesis.speak(utter);
+    } catch (e) {}
+}
+function _speakSignal(signal) {
+    if (!_voiceEnabled()) return;
+    if (_dailyStatus && _dailyStatus.silent_mode) return;
+    const setup = signal.trade_setup;
+    const dir = setup ? (setup.direction === 'buy' ? 'achat' : 'vente') : '';
+    const verdict = setup?.verdict_action;
+    const verdictFr = { TAKE: 'prendre', WAIT: 'attendre', SKIP: 'passer' }[verdict] || '';
+    const txt = `Signal ${signal.signal_strength || ''} sur ${signal.pair.replace('/', ' ')}${dir ? ', ' + dir : ''}${verdictFr ? ', verdict ' + verdictFr : ''}`;
+    _speak(txt);
+}
+window.toggleVoice = toggleVoice;
 function toggleSound() {
     const enabled = !_soundEnabled();
     localStorage.setItem('scalping_sound', enabled ? 'on' : 'off');
@@ -225,6 +264,40 @@ async function toggleSilentMode() {
 window.toggleSilentMode = toggleSilentMode;
 
 // Expose le bouton "J'ai pris ce signal" depuis tradeSetupHTML
+// ─── Calculateur de taille de position ─────────────────────────────
+
+function _computePositionSize() {
+    const capital = parseFloat(document.getElementById('calc-capital')?.value) || 0;
+    const riskPct = parseFloat(document.getElementById('calc-risk-pct')?.value) || 1;
+    const form = document.getElementById('trade-form');
+    const entry = parseFloat(form.entry_price.value) || 0;
+    const sl = parseFloat(form.stop_loss.value) || 0;
+    if (!entry || !sl) return null;
+    const riskUsd = capital * (riskPct / 100);
+    const distance = Math.abs(entry - sl);
+    if (!distance) return null;
+    // Pour forex/metaux : 1 lot = 100k unites de devise quotee
+    const valuePerLot = distance * 100000;
+    const lots = riskUsd / valuePerLot;
+    return { riskUsd, lots: Math.max(0.01, Math.round(lots * 100) / 100) };
+}
+
+function _refreshCalcDisplay() {
+    const result = document.getElementById('calc-result');
+    if (!result) return;
+    const r = _computePositionSize();
+    if (!r) { result.textContent = 'Risque : — | Lots suggérés : —'; return; }
+    result.textContent = `Risque : ${r.riskUsd.toFixed(2)} USD | Lots suggérés : ${r.lots.toFixed(2)}`;
+}
+
+function applyCalculatedSize() {
+    const r = _computePositionSize();
+    if (!r) return;
+    document.getElementById('trade-form').size_lot.value = r.lots.toFixed(2);
+}
+
+window.applyCalculatedSize = applyCalculatedSize;
+
 function openTradeModal(pair, direction, entry, sl, tp1, pattern, confidence) {
     _currentSignalForModal = { pair, direction, entry, sl, tp1, pattern, confidence };
     const modal = document.getElementById('trade-modal');
@@ -241,6 +314,16 @@ function openTradeModal(pair, direction, entry, sl, tp1, pattern, confidence) {
     modal.style.display = '';
     // Check corr warning
     _checkCorrelation(pair, direction);
+    // Refresh calculator display
+    _refreshCalcDisplay();
+    ['calc-capital','calc-risk-pct'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.oninput = _refreshCalcDisplay;
+    });
+    ['entry_price','stop_loss'].forEach(name => {
+        const el = form[name];
+        if (el) el.oninput = _refreshCalcDisplay;
+    });
 }
 
 function closeTradeModal() {
@@ -393,6 +476,90 @@ window.openCloseModal = openCloseModal;
 window.closeCloseModal = closeCloseModal;
 window.confirmTradeSubmit = confirmTradeSubmit;
 window.confirmCloseTrade = confirmCloseTrade;
+
+// ─── Risk dashboard ─────────────────────────────────────────────────
+
+async function fetchRiskDashboard() {
+    try {
+        const res = await fetch(`${API_BASE}/api/risk`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const sec = document.getElementById('risk-section');
+        const body = document.getElementById('risk-body');
+        if (!sec || !body) return;
+        if (!data.n_open) { sec.style.display = 'none'; return; }
+        sec.style.display = '';
+        const warnHTML = data.warning_over_3pct
+            ? `<div class="risk-warning">⚠️ Risque cumulé > 3% du capital — réduire l'exposition</div>` : '';
+        const rows = data.by_trade.map(t => `
+            <tr><td>${t.pair}</td><td>${t.direction.toUpperCase()}</td><td>${t.size_lot}</td><td>${t.risk_usd.toFixed(2)} USD</td></tr>
+        `).join('');
+        body.innerHTML = `
+            <div class="risk-summary">
+                <div class="bt-stat"><span class="bt-label">POSITIONS OUVERTES</span><span class="bt-value">${data.n_open}</span></div>
+                <div class="bt-stat"><span class="bt-label">RISQUE CUMULÉ</span><span class="bt-value ${data.warning_over_3pct ? 'pnl-negative' : ''}">${data.total_risk_usd.toFixed(2)} USD</span></div>
+                <div class="bt-stat"><span class="bt-label">% CAPITAL</span><span class="bt-value ${data.warning_over_3pct ? 'pnl-negative' : ''}">${data.total_risk_pct.toFixed(2)}%</span></div>
+            </div>
+            ${warnHTML}
+            <table class="vol-table" style="margin-top:10px"><thead><tr><th>Paire</th><th>Dir</th><th>Lots</th><th>Risque</th></tr></thead><tbody>${rows}</tbody></table>
+        `;
+    } catch (e) {}
+}
+
+// ─── Equity curve ───────────────────────────────────────────────────
+
+let _equityChart = null;
+async function fetchEquityCurve() {
+    try {
+        const res = await fetch(`${API_BASE}/api/equity`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const sec = document.getElementById('equity-section');
+        if (!sec) return;
+        if (!data.points || data.points.length <= 1) { sec.style.display = 'none'; return; }
+        sec.style.display = '';
+        const profit = data.current_equity - data.capital_initial;
+        const profitPct = (profit / data.capital_initial * 100);
+        const summary = document.getElementById('equity-summary');
+        if (summary) summary.innerHTML = `
+            <span class="bt-stat"><span class="bt-label">CAPITAL INIT</span><span class="bt-value">${data.capital_initial.toFixed(2)} USD</span></span>
+            <span class="bt-stat"><span class="bt-label">CAPITAL ACTUEL</span><span class="bt-value">${data.current_equity.toFixed(2)} USD</span></span>
+            <span class="bt-stat"><span class="bt-label">PROFIT</span><span class="bt-value ${profit >= 0 ? 'pnl-positive' : 'pnl-negative'}">${profit >= 0 ? '+' : ''}${profit.toFixed(2)} USD (${profit >= 0 ? '+' : ''}${profitPct.toFixed(2)}%)</span></span>
+        `;
+        // Render simple SVG line chart
+        const chartEl = document.getElementById('equity-chart');
+        if (chartEl) chartEl.innerHTML = _renderEquitySVG(data.points);
+    } catch (e) {}
+}
+
+function _renderEquitySVG(points) {
+    if (points.length < 2) return '';
+    const W = 600, H = 200, P = 30;
+    const values = points.map(p => p.equity);
+    const min = Math.min(...values), max = Math.max(...values);
+    const range = (max - min) || 1;
+    const stepX = (W - 2 * P) / (points.length - 1);
+    const polyPoints = points.map((p, i) => {
+        const x = P + i * stepX;
+        const y = H - P - ((p.equity - min) / range) * (H - 2 * P);
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(' ');
+    const last = points[points.length - 1];
+    const first = points[0];
+    const color = last.equity >= first.equity ? '#26a69a' : '#ef5350';
+    return `
+        <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:200px" preserveAspectRatio="none">
+            <polyline points="${polyPoints}" fill="none" stroke="${color}" stroke-width="2"/>
+            <text x="${P}" y="15" font-size="10" fill="#888">Min ${min.toFixed(2)}</text>
+            <text x="${W-P}" y="15" font-size="10" fill="#888" text-anchor="end">Max ${max.toFixed(2)}</text>
+        </svg>
+    `;
+}
+
+function downloadCSV() {
+    window.location.href = `${API_BASE}/api/trades.csv`;
+}
+window.downloadCSV = downloadCSV;
 
 // ─── Backtest stats ────────────────────────────────────────────────
 
@@ -1336,15 +1503,20 @@ document.addEventListener('DOMContentLoaded', () => {
     fetchBacktestStats();
     fetchDailyStatus();
     fetchPersonalTrades();
+    fetchRiskDashboard();
+    fetchEquityCurve();
     connectWebSocket();
     _bindFilters();
     _renderSessionMarkers();
     _updateSoundBtn();
+    _updateVoiceBtn();
     document.getElementById('refresh-btn').addEventListener('click', refreshAnalysis);
     const soundBtn = document.getElementById('sound-toggle');
     if (soundBtn) soundBtn.addEventListener('click', toggleSound);
     const themeBtn = document.getElementById('theme-toggle');
     if (themeBtn) themeBtn.addEventListener('click', toggleTheme);
+    const voiceBtn = document.getElementById('voice-toggle');
+    if (voiceBtn) voiceBtn.addEventListener('click', toggleVoice);
 
     // Horloge live + compteurs : mise à jour toutes les secondes
     setInterval(() => {
@@ -1362,5 +1534,10 @@ document.addEventListener('DOMContentLoaded', () => {
     setInterval(fetchBacktestStats, 30000);
 
     // Refresh du statut journalier + trades perso toutes les 30s
-    setInterval(() => { fetchDailyStatus(); fetchPersonalTrades(); }, 30000);
+    setInterval(() => {
+        fetchDailyStatus();
+        fetchPersonalTrades();
+        fetchRiskDashboard();
+        fetchEquityCurve();
+    }, 30000);
 });
