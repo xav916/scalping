@@ -1,21 +1,31 @@
 /* Scalping Radar - Dashboard Styles */
 
 :root {
-    --bg-primary: #0d1117;
-    --bg-secondary: #161b22;
-    --bg-card: #1c2128;
-    --border-color: #30363d;
+    /* Refonte "Trading Desk haute densité" — bleu-nuit + néon */
+    --bg-primary: #0a0e14;
+    --bg-secondary: #11161f;
+    --bg-card: #161c28;
+    --bg-elevated: #1a2130;
+    --bg-glass: rgba(22, 28, 40, 0.55);
+    --border-color: #1e2636;
+    --border-strong: #2a3548;
     --text-primary: #e6edf3;
     --text-secondary: #8b949e;
-    --text-muted: #6e7681;
+    --text-muted: #5a6475;
+    /* Couleurs sémantiques conservées + version néon pour les setups */
     --accent-green: #3fb950;
     --accent-red: #f85149;
     --accent-yellow: #d29922;
     --accent-blue: #58a6ff;
     --accent-purple: #bc8cff;
+    --accent-buy: #00ffa3;        /* vert-menthe néon pour ACHAT */
+    --accent-sell: #ff4976;       /* rose vif pour VENTE */
     --signal-strong: #3fb950;
     --signal-moderate: #d29922;
     --signal-weak: #8b949e;
+    /* Stack monospace pour chiffres (JetBrains Mono si dispo, sinon system) */
+    --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Code', Consolas, 'Courier New', monospace;
+    --font-sans: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Helvetica, Arial, sans-serif;
 }
 
 * {
@@ -25,10 +35,21 @@
 }
 
 body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    font-family: var(--font-sans);
     background: var(--bg-primary);
+    /* Halo radial en haut + grille blueprint très subtile — donne du caractère
+       sans voler l'attention des cartes de setup. */
+    background-image:
+        radial-gradient(ellipse 1200px 600px at 50% -200px, rgba(88, 166, 255, 0.08) 0%, transparent 60%),
+        linear-gradient(rgba(88, 166, 255, 0.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(88, 166, 255, 0.025) 1px, transparent 1px);
+    background-size: 100% 100%, 32px 32px, 32px 32px;
+    background-attachment: fixed, fixed, fixed;
     color: var(--text-primary);
     min-height: 100vh;
+    /* Meilleur anti-aliasing de la typo sur fond sombre */
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
 }
 
 /* Header */
@@ -1796,3 +1817,330 @@ button.glossary-header {
     .header-status { flex-wrap: wrap; gap: 6px; font-size: 11px; }
     .filter-btn, .filter-select { min-height: 40px; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   ██ REFONTE VISUELLE — "Trading Desk haute densité"
+   ═══════════════════════════════════════════════════════════════════
+   Tout ce qui suit écrase les règles antérieures quand elles existent.
+   Objectif : repérage instantané des setups, densité d'info Bloomberg,
+   touche néon glassmorphique sur les zones actionnables.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ─── Chiffres : monospace partout ───────────────────────────────── */
+.level-value,
+.conf-score-value,
+.money-value,
+.tick-price,
+.signal-pair,
+.setup-pair,
+.bt-value,
+.bt-stat-value,
+.db-value,
+.equity-summary,
+.mistake-count,
+.mistake-pnl,
+.vol-table td:nth-child(3),
+.event-time,
+.event-values,
+.ts-value,
+.countdown-value,
+.calc-result,
+.live-clock,
+.last-update {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.2px;
+}
+
+/* ─── Header : vitrine glass + accent néon ───────────────────────── */
+.header {
+    background: linear-gradient(180deg, rgba(17, 22, 31, 0.95) 0%, rgba(10, 14, 20, 0.7) 100%);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border-color);
+    position: sticky;
+    top: 0;
+    z-index: 30;
+}
+.header h1 {
+    background: linear-gradient(90deg, var(--accent-blue) 0%, #7fc3ff 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    letter-spacing: -0.5px;
+}
+
+/* La sub-nav était sous le header : on la bascule juste en dessous avec le même traitement */
+.sub-nav {
+    top: 52px; /* hauteur approx. du header sticky */
+    background: rgba(10, 14, 20, 0.7);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+}
+
+/* ─── Cards génériques : plus profondes, moins plates ────────────── */
+.card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    position: relative;
+    transition: border-color 0.2s, transform 0.2s;
+}
+.card:hover {
+    border-color: var(--border-strong);
+}
+.card-header {
+    padding: 14px 18px;
+}
+.card-body {
+    padding: 14px 18px;
+}
+
+/* ─── Zone titles : plus distinctifs ─────────────────────────────── */
+.zone-title {
+    font-size: 10px;
+    letter-spacing: 2.5px;
+    color: var(--text-muted);
+    position: relative;
+    padding-left: 22px;
+    border-bottom: none;
+    padding-bottom: 0;
+    margin-top: 24px;
+}
+.zone-title::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 12px;
+    height: 2px;
+    background: var(--accent-blue);
+    box-shadow: 0 0 12px var(--accent-blue);
+}
+.zone-title::after {
+    content: "";
+    display: block;
+    height: 1px;
+    background: linear-gradient(90deg, var(--border-color) 0%, transparent 50%);
+    margin-top: 8px;
+}
+
+/* ─── HERO : trade-setup en mode glassmorphique ──────────────────── */
+.trade-setup {
+    background: var(--bg-glass);
+    backdrop-filter: blur(14px) saturate(1.2);
+    -webkit-backdrop-filter: blur(14px) saturate(1.2);
+    border: 1px solid var(--border-strong);
+    border-radius: 12px;
+    padding: 16px 18px;
+    margin-bottom: 14px;
+    position: relative;
+    overflow: hidden;
+    transition: transform 0.15s, border-color 0.2s, box-shadow 0.25s;
+}
+/* Ligne d'accent néon à gauche selon direction */
+.trade-setup::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 0; bottom: 0;
+    width: 3px;
+    border-radius: 12px 0 0 12px;
+    box-shadow: 0 0 16px currentColor;
+}
+.trade-setup.buy::before { background: var(--accent-buy); color: var(--accent-buy); }
+.trade-setup.sell::before { background: var(--accent-sell); color: var(--accent-sell); }
+
+/* Halo en fond côté direction, discret mais identifiable au coin de l'œil */
+.trade-setup.buy {
+    background-image: radial-gradient(ellipse 400px 200px at 0% 0%, rgba(0, 255, 163, 0.06) 0%, transparent 60%);
+}
+.trade-setup.sell {
+    background-image: radial-gradient(ellipse 400px 200px at 0% 0%, rgba(255, 73, 118, 0.06) 0%, transparent 60%);
+}
+
+.trade-setup:hover {
+    transform: translateY(-1px);
+    border-color: var(--accent-blue);
+    box-shadow: 0 8px 32px rgba(88, 166, 255, 0.12);
+}
+
+/* ─── Badge direction : pastille ACHAT / VENTE bien visible ──────── */
+.setup-direction {
+    gap: 8px;
+}
+.dir-label {
+    font-family: var(--font-mono);
+    font-weight: 700;
+    font-size: 11px;
+    letter-spacing: 1.5px;
+    padding: 3px 10px;
+    border-radius: 4px;
+    text-transform: uppercase;
+}
+.setup-direction.buy .dir-label {
+    background: rgba(0, 255, 163, 0.12);
+    color: var(--accent-buy);
+    border: 1px solid rgba(0, 255, 163, 0.3);
+}
+.setup-direction.sell .dir-label {
+    background: rgba(255, 73, 118, 0.12);
+    color: var(--accent-sell);
+    border: 1px solid rgba(255, 73, 118, 0.3);
+}
+.dir-icon {
+    font-size: 14px;
+    line-height: 1;
+}
+.setup-direction.buy .dir-icon { color: var(--accent-buy); text-shadow: 0 0 8px rgba(0, 255, 163, 0.6); }
+.setup-direction.sell .dir-icon { color: var(--accent-sell); text-shadow: 0 0 8px rgba(255, 73, 118, 0.6); }
+
+/* ─── Confidence score : plus présent, pulse si ≥ 85 ─────────────── */
+.setup-confidence-score {
+    padding: 4px 10px;
+    border-radius: 6px;
+    border: 1px solid currentColor;
+    font-family: var(--font-mono);
+    background: rgba(0, 0, 0, 0.3);
+}
+.setup-confidence-score.conf-high {
+    color: var(--accent-buy);
+    box-shadow: 0 0 12px rgba(0, 255, 163, 0.25);
+    animation: pulseGlow 2.8s ease-in-out infinite;
+}
+.setup-confidence-score.conf-medium { color: var(--accent-yellow); }
+.setup-confidence-score.conf-low { color: var(--text-secondary); }
+
+@keyframes pulseGlow {
+    0%, 100% { box-shadow: 0 0 12px rgba(0, 255, 163, 0.25); }
+    50%      { box-shadow: 0 0 22px rgba(0, 255, 163, 0.55); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .setup-confidence-score.conf-high { animation: none !important; }
+}
+
+/* ─── Verdict pastille bien typée (TAKE / WAIT / SKIP) ──────────── */
+.verdict-block {
+    border-left: 3px solid currentColor;
+    padding: 10px 14px;
+    margin: 12px 0;
+    border-radius: 0 8px 8px 0;
+    background: rgba(0, 0, 0, 0.25);
+}
+.verdict-take { color: var(--accent-buy); background: rgba(0, 255, 163, 0.06); }
+.verdict-wait { color: var(--accent-yellow); background: rgba(210, 153, 34, 0.06); }
+.verdict-skip { color: var(--text-muted); background: rgba(255, 255, 255, 0.02); }
+.verdict-label {
+    font-family: var(--font-mono);
+    font-weight: 700;
+    letter-spacing: 2px;
+    font-size: 13px;
+}
+
+/* ─── Level boxes (ENTRÉE/SL/TP) : chiffres plus forts ──────────── */
+.level-value {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+.level-label {
+    letter-spacing: 1px;
+    color: var(--text-muted);
+}
+.level-box.sl .level-value { color: var(--accent-sell); }
+.level-box.tp1 .level-value, .level-box.tp2 .level-value { color: var(--accent-buy); }
+.level-box.entry .level-value { color: var(--accent-blue); }
+
+/* ─── Signal cards : slide-in avec halo ──────────────────────────── */
+@keyframes slideIn {
+    from { opacity: 0; transform: translateY(-8px); box-shadow: 0 0 0 rgba(88, 166, 255, 0); }
+    60%  { box-shadow: 0 0 24px rgba(88, 166, 255, 0.35); }
+    to   { opacity: 1; transform: translateY(0); box-shadow: 0 0 0 rgba(88, 166, 255, 0); }
+}
+.signal-card {
+    background: var(--bg-secondary);
+    border-radius: 8px;
+}
+.signal-card.strong {
+    background: linear-gradient(135deg, rgba(63, 185, 80, 0.08) 0%, rgba(63, 185, 80, 0) 70%);
+}
+
+/* ─── Ticks live : flash plus marqué sur variation ──────────────── */
+.tick-card {
+    transition: background 0.5s, border-color 0.5s, box-shadow 0.5s;
+}
+.tick-card.tick-up {
+    background: rgba(0, 255, 163, 0.1) !important;
+    border-color: var(--accent-buy) !important;
+    box-shadow: 0 0 16px rgba(0, 255, 163, 0.25);
+}
+.tick-card.tick-down {
+    background: rgba(255, 73, 118, 0.1) !important;
+    border-color: var(--accent-sell) !important;
+    box-shadow: 0 0 16px rgba(255, 73, 118, 0.25);
+}
+.tick-price {
+    font-size: 19px;
+    font-weight: 700;
+}
+
+/* ─── Zone "Revue" : visuellement en retrait (on la regarde post-session) ─── */
+.zone-title#zone-revue ~ .card,
+.zone-title#zone-glossaire ~ .card {
+    opacity: 0.88;
+}
+.zone-title#zone-revue ~ .card:hover,
+.zone-title#zone-glossaire ~ .card:hover {
+    opacity: 1;
+}
+
+/* ─── Bouton principal (prendre un signal) : effet "prêt à cliquer" ─── */
+.btn-primary,
+.btn.btn-primary {
+    background: linear-gradient(135deg, var(--accent-blue) 0%, #4a94ef 100%);
+    color: #0a0e14;
+    font-weight: 700;
+    border: none;
+    letter-spacing: 0.3px;
+    box-shadow: 0 4px 14px rgba(88, 166, 255, 0.25);
+    transition: transform 0.1s, box-shadow 0.2s, filter 0.15s;
+}
+.btn-primary:hover,
+.btn.btn-primary:hover {
+    filter: brightness(1.1);
+    box-shadow: 0 6px 20px rgba(88, 166, 255, 0.4);
+    transform: translateY(-1px);
+}
+.btn-take-signal {
+    width: 100%;
+    padding: 12px;
+    margin-top: 12px;
+    font-size: 14px;
+}
+
+/* ─── Scrollbar dark tech ────────────────────────────────────────── */
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: var(--bg-primary); }
+*::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 5px;
+    border: 2px solid var(--bg-primary);
+}
+*::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
+* { scrollbar-width: thin; scrollbar-color: var(--border-color) var(--bg-primary); }
+
+/* ─── Daily banner : remonte en sticky et gagne un touch glass ──── */
+.daily-banner {
+    background: var(--bg-glass);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    margin: 12px 24px 0;
+    padding: 10px 16px;
+}
+.daily-banner.loss-alert {
+    border-color: var(--accent-sell);
+    box-shadow: 0 0 20px rgba(255, 73, 118, 0.2);
+}
+
