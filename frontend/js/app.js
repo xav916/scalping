@@ -1099,11 +1099,37 @@ function tradeSetupHTML(s) {
 
     const time = s.timestamp ? new Date(s.timestamp).toLocaleTimeString() : '';
     const simBadge = s.is_simulated
-        ? '<span class="data-badge simulated">SIMULE</span>'
+        ? '<span class="data-badge simulated">SIMULÉ</span>'
         : '<span class="data-badge live">LIVE</span>';
 
     // Confidence score color
     const confColor = confScore >= 85 ? 'conf-high' : confScore >= 75 ? 'conf-medium' : 'conf-low';
+
+    // ─── Confidence ring (SVG circular progress) ───
+    // circonférence pour r=26 ≈ 163.36. Dasharray = total, dashoffset = total - rempli.
+    const ringR = 26;
+    const ringC = 2 * Math.PI * ringR;
+    const ringDash = Math.max(0, Math.min(confScore, 100)) / 100 * ringC;
+    const confRingHTML = `
+        <div class="setup-confidence-ring ${confColor}" title="Score de confiance : ${confScoreInt}/100">
+            <svg viewBox="0 0 64 64" class="conf-ring-svg" aria-hidden="true">
+                <circle class="conf-ring-track" cx="32" cy="32" r="${ringR}" fill="none" stroke-width="5"/>
+                <circle class="conf-ring-fill" cx="32" cy="32" r="${ringR}" fill="none" stroke-width="5"
+                        stroke-linecap="round" transform="rotate(-90 32 32)"
+                        stroke-dasharray="${ringC.toFixed(2)}" stroke-dashoffset="${(ringC - ringDash).toFixed(2)}"/>
+            </svg>
+            <div class="conf-ring-text">
+                <span class="conf-ring-value">${confScoreInt}</span>
+                <span class="conf-ring-label">/100</span>
+            </div>
+        </div>
+    `;
+
+    // ─── Ruban "PRENDRE" si verdict TAKE + haute conf : signal fort côté oeil ───
+    const isHotTake = s.verdict_action === 'TAKE' && confScore >= 85;
+    const takeRibbon = isHotTake
+        ? `<div class="setup-hot-ribbon" aria-label="Setup à prendre"><span>⚡ PRENDRE</span></div>`
+        : '';
 
     // Confidence factors
     const factors = s.confidence_factors || [];
@@ -1125,7 +1151,8 @@ function tradeSetupHTML(s) {
     const gain2 = s.estimated_gain_2 || 0;
 
     return `
-        <div class="trade-setup ${dirClass}">
+        <div class="trade-setup ${dirClass}${isHotTake ? ' is-hot' : ''}">
+            ${takeRibbon}
             <div class="setup-header">
                 <div class="setup-direction ${dirClass}">
                     <span class="dir-icon">${dirIcon}</span>
@@ -1133,10 +1160,7 @@ function tradeSetupHTML(s) {
                     <span class="setup-pair">${escapeHtml(s.pair)}</span>
                     ${simBadge}
                 </div>
-                <div class="setup-confidence-score ${confColor}">
-                    <span class="conf-score-value">${confScoreInt}</span>
-                    <span class="conf-score-label">/100</span>
-                </div>
+                ${confRingHTML}
             </div>
 
             <div class="setup-chart" data-chart-id="${_setupChartId(s)}"></div>

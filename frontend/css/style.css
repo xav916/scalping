@@ -2129,6 +2129,83 @@ button.glossary-header {
 *::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
 * { scrollbar-width: thin; scrollbar-color: var(--border-color) var(--bg-primary); }
 
+/* ─── Setup card : confidence ring + hot ribbon ──────────────────── */
+.setup-confidence-ring {
+    position: relative;
+    width: 56px;
+    height: 56px;
+    flex-shrink: 0;
+}
+.conf-ring-svg {
+    width: 100%;
+    height: 100%;
+    transform: rotate(0deg);
+}
+.conf-ring-track {
+    stroke: var(--border-color);
+}
+.conf-ring-fill {
+    stroke: var(--text-secondary);
+    transition: stroke-dashoffset 0.6s cubic-bezier(0.4, 0, 0.2, 1), stroke 0.2s;
+}
+.setup-confidence-ring.conf-high .conf-ring-fill {
+    stroke: var(--accent-buy);
+    filter: drop-shadow(0 0 6px rgba(0, 255, 163, 0.4));
+}
+.setup-confidence-ring.conf-medium .conf-ring-fill {
+    stroke: var(--accent-yellow);
+}
+.setup-confidence-ring.conf-low .conf-ring-fill {
+    stroke: var(--text-muted);
+}
+.conf-ring-text {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    font-family: var(--font-mono);
+    line-height: 1;
+}
+.conf-ring-value {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+.conf-ring-label {
+    font-size: 8px;
+    color: var(--text-muted);
+    letter-spacing: 0.5px;
+    margin-top: 1px;
+}
+/* Hot setup (verdict TAKE + score ≥ 85) : ruban angle + glow renforcé */
+.setup-hot-ribbon {
+    position: absolute;
+    top: 10px;
+    right: -8px;
+    background: var(--accent-buy);
+    color: #0a0e14;
+    font-family: var(--font-mono);
+    font-weight: 700;
+    font-size: 10px;
+    letter-spacing: 1.5px;
+    padding: 3px 10px 3px 14px;
+    border-radius: 3px 0 0 3px;
+    box-shadow: 0 0 20px rgba(0, 255, 163, 0.4), 0 2px 6px rgba(0, 0, 0, 0.4);
+    z-index: 2;
+    clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%, 6px 50%);
+}
+.trade-setup.is-hot {
+    border-color: var(--accent-buy);
+    box-shadow: 0 0 0 1px var(--accent-buy), 0 8px 40px rgba(0, 255, 163, 0.15);
+}
+.trade-setup.is-hot::before {
+    width: 4px;
+    box-shadow: 0 0 22px currentColor, inset 0 0 4px rgba(0, 255, 163, 0.5);
+}
+
 /* ─── KPI row : gauges custom (Tailwind gère le reste via utilities) ── */
 .kpi-card:hover { transform: translateY(-1px); }
 .kpi-card { transition: transform 0.15s, border-color 0.2s; }
