@@ -1744,6 +1744,10 @@ function _handleDelegatedClick(e) {
         case 'toggle-next':
             _toggleNextSibling(el);
             break;
+        case 'close-cmdk': {
+            closeCommandPalette();
+            break;
+        }
         case 'toggle-sidebar': {
             const sidebar = document.getElementById('sidebar');
             const backdrop = document.getElementById('sidebar-backdrop');
@@ -1810,6 +1814,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.body.addEventListener('click', _handleDelegatedClick);
     const glossarySearch = document.getElementById('glossary-search-input');
     if (glossarySearch) glossarySearch.addEventListener('input', (e) => filterGlossary(e.target.value));
+    _bindCommandPaletteHotkey();
 
     fetchOverview();
     // fetchGlossary() est lazy : déclenché à la 1re ouverture du panneau (cf. _handleDelegatedClick)
@@ -1868,6 +1873,142 @@ document.addEventListener('DOMContentLoaded', () => {
     fetchLiveCharts();
     setInterval(fetchLiveCharts, 60000);
 });
+
+// ─── Command palette (Cmd+K / Ctrl+K) ───────────────────────────
+
+let _cmdkSelectedIndex = 0;
+let _cmdkFilteredCommands = [];
+
+/** Liste canonique des commandes. Dynamique : certaines dépendent de l'état UI. */
+function _getCommands() {
+    const list = [
+        { id: 'go-marche', label: 'Aller : Marché', hint: 'Setups, signaux, patterns, vol, events', keywords: 'zone marche marché bougies setups signaux', run: () => _scrollTo('#zone-marche') },
+        { id: 'go-revue', label: 'Aller : Revue', hint: 'PnL, equity, trades, combos, erreurs', keywords: 'zone revue equity trades combos erreurs mistakes', run: () => _scrollTo('#zone-revue') },
+        { id: 'go-glossaire', label: 'Aller : Glossaire', hint: 'Termes et abréviations', keywords: 'zone glossaire termes définitions', run: () => _scrollTo('#zone-glossaire') },
+        { id: 'filter-all', label: 'Filtrer setups : Tous', hint: 'Réinitialise le filtre direction', keywords: 'filtre direction tous reset', run: () => _clickFilter('direction', 'all') },
+        { id: 'filter-buy', label: 'Filtrer setups : ACHAT', hint: 'Affiche uniquement les buy', keywords: 'filtre direction achat buy long', run: () => _clickFilter('direction', 'buy') },
+        { id: 'filter-sell', label: 'Filtrer setups : VENTE', hint: 'Affiche uniquement les sell', keywords: 'filtre direction vente sell short', run: () => _clickFilter('direction', 'sell') },
+        { id: 'refresh', label: 'Actualiser l\'analyse', hint: 'Force un nouveau scan du marché', keywords: 'refresh analyse scan', run: () => document.getElementById('refresh-btn')?.click() },
+        { id: 'toggle-theme', label: 'Basculer thème clair/sombre', hint: 'Dark ↔ light', keywords: 'theme thème clair sombre dark light', run: () => document.getElementById('theme-toggle')?.click() },
+        { id: 'toggle-sound', label: 'Activer/désactiver le son', hint: 'Bip sur signaux', keywords: 'son bip audio alarme', run: () => document.getElementById('sound-toggle')?.click() },
+        { id: 'toggle-voice', label: 'Activer/désactiver la voix', hint: 'Synthèse vocale sur signaux', keywords: 'voix speech parole', run: () => document.getElementById('voice-toggle')?.click() },
+        { id: 'export-csv', label: 'Exporter mes trades (CSV)', hint: 'Télécharge le journal complet', keywords: 'export csv trades download télécharger', run: () => downloadCSV() },
+        { id: 'open-glossary', label: 'Ouvrir le glossaire', hint: 'Panneau dépliant en bas de page', keywords: 'glossaire ouvrir termes', run: () => document.querySelector('[data-action="toggle-glossary"]')?.click() },
+        { id: 'logout', label: 'Se déconnecter', hint: 'Termine la session', keywords: 'logout déconnexion quitter', run: () => {
+            fetch('/api/logout', { method: 'POST', credentials: 'same-origin' })
+                .finally(() => window.location.replace('/login'));
+        }},
+    ];
+    // Les paires présentes dans les setups courants = shortcuts dynamiques
+    if (Array.isArray(_lastSetups)) {
+        const pairs = [...new Set(_lastSetups.map(s => s.pair))];
+        pairs.forEach(p => list.push({
+            id: `filter-pair-${p}`,
+            label: `Filtrer : ${p}`,
+            hint: `Affiche uniquement les setups ${p}`,
+            keywords: `filtre paire pair ${p.toLowerCase()}`,
+            run: () => {
+                const sel = document.getElementById('setup-filter-pair');
+                if (sel) { sel.value = p; sel.dispatchEvent(new Event('change')); }
+            },
+        }));
+    }
+    return list;
+}
+
+function _scrollTo(selector) {
+    const el = document.querySelector(selector);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+function _clickFilter(filter, value) {
+    document.querySelector(`.filter-btn[data-filter="${filter}"][data-value="${value}"]`)?.click();
+}
+
+function openCommandPalette() {
+    const modal = document.getElementById('cmdk');
+    if (!modal) return;
+    modal.hidden = false;
+    document.documentElement.classList.add('cmdk-open');
+    const input = document.getElementById('cmdk-input');
+    if (input) { input.value = ''; input.focus(); }
+    _renderCmdk('');
+}
+
+function closeCommandPalette() {
+    const modal = document.getElementById('cmdk');
+    if (!modal) return;
+    modal.hidden = true;
+    document.documentElement.classList.remove('cmdk-open');
+}
+
+function _renderCmdk(query) {
+    const list = document.getElementById('cmdk-list');
+    if (!list) return;
+    const all = _getCommands();
+    const q = query.toLowerCase().trim();
+    _cmdkFilteredCommands = q
+        ? all.filter(c => c.label.toLowerCase().includes(q) || (c.keywords || '').includes(q))
+        : all;
+    _cmdkSelectedIndex = 0;
+    if (!_cmdkFilteredCommands.length) {
+        list.innerHTML = `<li class="cmdk-empty">Aucune commande correspondante</li>`;
+        return;
+    }
+    list.innerHTML = _cmdkFilteredCommands.map((c, i) => `
+        <li class="cmdk-item${i === 0 ? ' selected' : ''}" role="option" id="cmdk-item-${i}" data-cmd-idx="${i}">
+            <div class="cmdk-item-body">
+                <span class="cmdk-item-label">${escapeHtml(c.label)}</span>
+                ${c.hint ? `<span class="cmdk-item-hint">${escapeHtml(c.hint)}</span>` : ''}
+            </div>
+            <span class="cmdk-item-arrow" aria-hidden="true">↵</span>
+        </li>
+    `).join('');
+}
+
+function _cmdkSelect(delta) {
+    if (!_cmdkFilteredCommands.length) return;
+    _cmdkSelectedIndex = (_cmdkSelectedIndex + delta + _cmdkFilteredCommands.length) % _cmdkFilteredCommands.length;
+    const items = document.querySelectorAll('.cmdk-item');
+    items.forEach((el, i) => el.classList.toggle('selected', i === _cmdkSelectedIndex));
+    items[_cmdkSelectedIndex]?.scrollIntoView({ block: 'nearest' });
+    document.getElementById('cmdk-input')?.setAttribute('aria-activedescendant', `cmdk-item-${_cmdkSelectedIndex}`);
+}
+
+function _cmdkExecute() {
+    const cmd = _cmdkFilteredCommands[_cmdkSelectedIndex];
+    if (!cmd) return;
+    closeCommandPalette();
+    try { cmd.run(); } catch (e) { console.warn('cmdk run error:', e); }
+}
+
+// Keyboard listener global : ouvre le palette + gère la navigation à l'intérieur
+function _bindCommandPaletteHotkey() {
+    document.addEventListener('keydown', (e) => {
+        const isModK = (e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K');
+        if (isModK) {
+            e.preventDefault();
+            const modal = document.getElementById('cmdk');
+            if (modal && modal.hidden) openCommandPalette();
+            else closeCommandPalette();
+            return;
+        }
+        const modal = document.getElementById('cmdk');
+        if (!modal || modal.hidden) return;
+        if (e.key === 'Escape') { e.preventDefault(); closeCommandPalette(); }
+        else if (e.key === 'ArrowDown') { e.preventDefault(); _cmdkSelect(1); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); _cmdkSelect(-1); }
+        else if (e.key === 'Enter') { e.preventDefault(); _cmdkExecute(); }
+    });
+    const input = document.getElementById('cmdk-input');
+    if (input) input.addEventListener('input', (e) => _renderCmdk(e.target.value));
+    // Click sur un item = exécute
+    document.getElementById('cmdk-list')?.addEventListener('click', (e) => {
+        const item = e.target.closest('.cmdk-item');
+        if (!item) return;
+        _cmdkSelectedIndex = parseInt(item.dataset.cmdIdx, 10) || 0;
+        _cmdkExecute();
+    });
+}
 
 // ─── KPI row (barre résumé en haut du dashboard) ─────────────────
 

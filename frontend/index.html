@@ -461,6 +461,25 @@
         </div>
     </div>
 
+    <!-- Command palette (Cmd+K / Ctrl+K) — dialog ARIA accessible -->
+    <div id="cmdk" class="cmdk" role="dialog" aria-modal="true" aria-labelledby="cmdk-title" hidden>
+        <div class="cmdk-backdrop" data-action="close-cmdk"></div>
+        <div class="cmdk-panel">
+            <h2 id="cmdk-title" class="visually-hidden">Palette de commandes</h2>
+            <div class="cmdk-search">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <input type="text" id="cmdk-input" placeholder="Tapez une commande ou une paire… (Esc pour fermer)" autocomplete="off" spellcheck="false" aria-controls="cmdk-list" aria-activedescendant="">
+                <kbd class="cmdk-kbd">ESC</kbd>
+            </div>
+            <ul id="cmdk-list" class="cmdk-list" role="listbox" aria-label="Commandes disponibles"></ul>
+            <div class="cmdk-footer">
+                <span><kbd class="cmdk-kbd">↑</kbd><kbd class="cmdk-kbd">↓</kbd> Naviguer</span>
+                <span><kbd class="cmdk-kbd">↵</kbd> Exécuter</span>
+                <span><kbd class="cmdk-kbd">Esc</kbd> Fermer</span>
+            </div>
+        </div>
+    </div>
+
     <!-- TradingView lightweight-charts v4.2.0 — self-hosté (Apache 2.0) pour éviter
          une dépendance réseau tierce et permettre une CSP sans CDN externe.
          Pour mettre à jour : re-télécharger depuis unpkg et committer le nouveau fichier. -->
