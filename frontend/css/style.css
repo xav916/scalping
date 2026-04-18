@@ -320,16 +320,61 @@ body {
     font-size: 12px;
 }
 
-/* Empty states */
+/* Empty states — soignés avec illustration "radar qui scanne" générée en pur CSS.
+   Refonte 6/7 : les messages "Chargement…", "Aucun trade…", etc. deviennent
+   visuellement distincts, un peu contemplatifs, avec un cercle qui pulse doucement. */
 .empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
     text-align: center;
-    padding: 32px 16px;
+    padding: 44px 20px;
     color: var(--text-muted);
+    position: relative;
 }
 
+/* Ping radar décoratif : 3 cercles concentriques qui pulsent en cascade.
+   Généré via ::before pour ne pas toucher au HTML existant. */
+.empty-state::before {
+    content: "";
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    border: 1px solid var(--border-color);
+    background:
+        radial-gradient(circle, var(--accent-blue) 3px, transparent 3.5px),
+        radial-gradient(circle, transparent 8px, rgba(88, 166, 255, 0.15) 8.5px, transparent 11px),
+        radial-gradient(circle, transparent 14px, rgba(88, 166, 255, 0.08) 14.5px, transparent 17px);
+    animation: emptyStatePulse 2.4s ease-in-out infinite;
+    margin-bottom: 4px;
+}
+@keyframes emptyStatePulse {
+    0%, 100% { opacity: 0.7; transform: scale(1); }
+    50%      { opacity: 1; transform: scale(1.08); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .empty-state::before { animation: none; }
+}
+
+/* Texte : premier <p> en strong = titre. Suivants = description. */
 .empty-state p {
-    margin-top: 8px;
+    margin: 0;
     font-size: 13px;
+    line-height: 1.5;
+    max-width: 320px;
+    color: var(--text-muted);
+}
+.empty-state p strong {
+    color: var(--text-secondary);
+    font-weight: 600;
+    font-size: 14px;
+}
+
+/* Variante "chargement" (animation plus rapide, utiliser via class="empty-state loading") */
+.empty-state.loading::before {
+    animation-duration: 1s;
 }
 
 /* Notification toast */
