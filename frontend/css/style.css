@@ -1547,3 +1547,21 @@ body {
 /* ─── Equity curve ─────────────────────────────────────── */
 .equity-summary { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; }
 .equity-chart svg { background: var(--bg-secondary); border-radius: 4px; }
+
+/* ─── Stats combos & mistakes ──────────────────────────── */
+tr.low-confidence { opacity: 0.5; font-style: italic; }
+.mistakes-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 12px;
+}
+.mistake-box {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 12px;
+}
+.mistake-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; font-weight: 700; }
+.mistake-count { font-size: 18px; font-weight: 700; margin: 6px 0; }
+.mistake-pnl { font-size: 13px; font-family: 'Courier New', monospace; }
+.mistake-advice { font-size: 11px; margin-top: 6px; color: var(--accent-yellow); font-style: italic; }

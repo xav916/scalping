@@ -561,6 +561,63 @@ function downloadCSV() {
 }
 window.downloadCSV = downloadCSV;
 
+// ─── Stats combos + mistakes ───────────────────────────────────────
+
+async function fetchCombos() {
+    try {
+        const res = await fetch(`${API_BASE}/api/stats/combos`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const sec = document.getElementById('combos-section');
+        const body = document.getElementById('combos-body');
+        if (!sec || !body) return;
+        if (!data.combos.length) { sec.style.display = 'none'; return; }
+        sec.style.display = '';
+        const rows = data.combos.slice(0, 20).map(c => {
+            const significant = c.total >= data.min_trades_for_significance;
+            const wrClass = c.win_rate_pct >= 60 ? 'pnl-positive' : c.win_rate_pct >= 50 ? '' : 'pnl-negative';
+            const pnlClass = c.total_pnl > 0 ? 'pnl-positive' : 'pnl-negative';
+            return `<tr class="${significant ? '' : 'low-confidence'}">
+                <td>${c.pattern}</td><td><strong>${c.pair}</strong></td>
+                <td>${c.wins}W / ${c.losses}L</td><td>${c.total}</td>
+                <td class="${wrClass}">${c.win_rate_pct}%</td>
+                <td class="${pnlClass}">${c.total_pnl >= 0 ? '+' : ''}${c.total_pnl.toFixed(2)} USD</td>
+            </tr>`;
+        }).join('');
+        body.innerHTML = `<table class="vol-table"><thead><tr><th>Pattern</th><th>Paire</th><th>W/L</th><th>Total</th><th>Win rate</th><th>PnL cumulé</th></tr></thead><tbody>${rows}</tbody></table>`;
+    } catch (e) {}
+}
+
+async function fetchMistakes() {
+    try {
+        const res = await fetch(`${API_BASE}/api/stats/mistakes`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const sec = document.getElementById('mistakes-section');
+        const body = document.getElementById('mistakes-body');
+        if (!sec || !body) return;
+        if (!data.total_trades) { sec.style.display = 'none'; return; }
+        sec.style.display = '';
+        const formatBox = (label, count, avgPnl, advice) => {
+            const cls = avgPnl > 0 ? 'pnl-positive' : 'pnl-negative';
+            return `<div class="mistake-box">
+                <div class="mistake-label">${label}</div>
+                <div class="mistake-count">${count} trade(s)</div>
+                <div class="mistake-pnl ${cls}">PnL moyen : ${avgPnl >= 0 ? '+' : ''}${avgPnl.toFixed(2)} USD</div>
+                ${advice ? `<div class="mistake-advice">${advice}</div>` : ''}
+            </div>`;
+        };
+        body.innerHTML = `
+            <div class="mistakes-grid">
+                ${formatBox('Sans checklist pré-trade', data.without_checklist.count, data.without_checklist.avg_pnl, data.without_checklist.avg_pnl < 0 ? '⚠️ Vos trades sans checklist sont perdants en moyenne. Toujours valider avant.' : '')}
+                ${formatBox('Avec checklist complète', data.total_trades - data.without_checklist.count, data.with_checklist_avg_pnl, '')}
+                ${formatBox('Sans SL placé dans MT5', data.without_sl_set.count, data.without_sl_set.avg_pnl, data.without_sl_set.count > 0 ? '⛔ Trader sans SL est extrêmement dangereux. Toujours cocher la case post-entry.' : '')}
+                ${formatBox('Sans TP placé dans MT5', data.without_tp_set.count, data.without_tp_set.avg_pnl, '')}
+            </div>
+        `;
+    } catch (e) {}
+}
+
 // ─── Backtest stats ────────────────────────────────────────────────
 
 async function fetchBacktestStats() {
@@ -1505,6 +1562,8 @@ document.addEventListener('DOMContentLoaded', () => {
     fetchPersonalTrades();
     fetchRiskDashboard();
     fetchEquityCurve();
+    fetchCombos();
+    fetchMistakes();
     connectWebSocket();
     _bindFilters();
     _renderSessionMarkers();
@@ -1539,5 +1598,7 @@ document.addEventListener('DOMContentLoaded', () => {
         fetchPersonalTrades();
         fetchRiskDashboard();
         fetchEquityCurve();
+        fetchCombos();
+        fetchMistakes();
     }, 30000);
 });

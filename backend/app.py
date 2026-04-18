@@ -182,6 +182,65 @@ async def trades_csv(user: str = Depends(verify_credentials)):
     )
 
 
+@app.get("/api/stats/combos")
+async def stats_combos(user: str = Depends(verify_credentials)):
+    """Win rate par combinaison (pattern + paire). Necessite un historique
+    de trades clotures pour etre pertinent."""
+    from collections import defaultdict
+    trades = trade_log_service.list_trades(status="CLOSED", limit=1000, user=user)
+    combos: dict[tuple[str, str], dict] = defaultdict(lambda: {"wins": 0, "losses": 0, "total_pnl": 0.0})
+    for t in trades:
+        key = (t.get("signal_pattern") or "unknown", t.get("pair"))
+        c = combos[key]
+        if t["pnl"] > 0:
+            c["wins"] += 1
+        else:
+            c["losses"] += 1
+        c["total_pnl"] += t["pnl"] or 0
+    rows = []
+    for (pattern, pair), c in combos.items():
+        total = c["wins"] + c["losses"]
+        rows.append({
+            "pattern": pattern, "pair": pair,
+            "wins": c["wins"], "losses": c["losses"], "total": total,
+            "win_rate_pct": round(c["wins"] / total * 100, 1) if total else 0,
+            "total_pnl": round(c["total_pnl"], 2),
+        })
+    rows.sort(key=lambda r: r["total"], reverse=True)
+    return {"min_trades_for_significance": 5, "combos": rows}
+
+
+@app.get("/api/stats/mistakes")
+async def stats_mistakes(user: str = Depends(verify_credentials)):
+    """Detection d'erreurs : trades pris sans checklist + trades sans SL/TP poses."""
+    trades = trade_log_service.list_trades(limit=500, user=user)
+    no_checklist = [t for t in trades if not t.get("checklist_passed")]
+    no_sl_in_mt5 = [t for t in trades if not t.get("post_entry_sl")]
+    no_tp_in_mt5 = [t for t in trades if not t.get("post_entry_tp")]
+
+    # Performance comparee
+    def avg_pnl(trades):
+        closed = [t for t in trades if t.get("status") == "CLOSED"]
+        return round(sum(t["pnl"] or 0 for t in closed) / len(closed), 2) if closed else 0
+
+    return {
+        "total_trades": len(trades),
+        "without_checklist": {
+            "count": len(no_checklist),
+            "avg_pnl": avg_pnl(no_checklist),
+        },
+        "without_sl_set": {
+            "count": len(no_sl_in_mt5),
+            "avg_pnl": avg_pnl(no_sl_in_mt5),
+        },
+        "without_tp_set": {
+            "count": len(no_tp_in_mt5),
+            "avg_pnl": avg_pnl(no_tp_in_mt5),
+        },
+        "with_checklist_avg_pnl": avg_pnl([t for t in trades if t.get("checklist_passed")]),
+    }
+
+
 # Serve static files
 app.mount("/css", StaticFiles(directory=str(FRONTEND_DIR / "css")), name="css")
 app.mount("/js", StaticFiles(directory=str(FRONTEND_DIR / "js")), name="js")
@@ -191,6 +250,18 @@ app.mount("/js", StaticFiles(directory=str(FRONTEND_DIR / "js")), name="js")
 async def index(credentials: HTTPBasicCredentials = Depends(verify_credentials)):
     """Serve the main dashboard page."""
     return FileResponse(str(FRONTEND_DIR / "index.html"))
+
+
+@app.get("/manifest.json")
+async def manifest():
+    """Manifest PWA pour installation sur ecran d'accueil mobile."""
+    return FileResponse(str(FRONTEND_DIR / "manifest.json"), media_type="application/manifest+json")
+
+
+@app.get("/mobile")
+async def mobile_view(_=Depends(verify_credentials)):
+    """Vue mobile-first focalisee sur les setups TAKE uniquement."""
+    return FileResponse(str(FRONTEND_DIR / "mobile.html"))
 
 
 @app.get("/api/overview")

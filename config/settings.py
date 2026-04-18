@@ -123,6 +123,14 @@ MIN_CONFIDENCE_SCORE = float(os.getenv("MIN_CONFIDENCE_SCORE", "75"))  # Score m
 # Limite de perte journaliere : au-dela, mode silencieux (pas de bip, pas de telegram)
 DAILY_LOSS_LIMIT_PCT = float(os.getenv("DAILY_LOSS_LIMIT_PCT", "3.0"))
 
+# Email summary quotidien (SMTP)
+EMAIL_SMTP_HOST = os.getenv("EMAIL_SMTP_HOST", "")
+EMAIL_SMTP_PORT = int(os.getenv("EMAIL_SMTP_PORT", "465"))
+EMAIL_SMTP_USER = os.getenv("EMAIL_SMTP_USER", "")
+EMAIL_SMTP_PASSWORD = os.getenv("EMAIL_SMTP_PASSWORD", "")
+EMAIL_FROM = os.getenv("EMAIL_FROM", "")
+EMAIL_RECIPIENTS = [e.strip() for e in os.getenv("EMAIL_RECIPIENTS", "").split(",") if e.strip()]
+
 # Intervalles bougies pour l'analyse de patterns
 CANDLE_INTERVAL = os.getenv("CANDLE_INTERVAL", "5min")
 CANDLE_COUNT = int(os.getenv("CANDLE_COUNT", "50"))

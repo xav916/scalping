@@ -3,8 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#58a6ff">
     <title>Scalping Radar - Outil d'aide a la decision</title>
     <link rel="stylesheet" href="/css/style.css">
+    <link rel="manifest" href="/manifest.json">
+    <link rel="apple-touch-icon" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect width='192' height='192' fill='%230d1117'/><text x='50%25' y='55%25' font-size='100' text-anchor='middle' fill='%2358a6ff' font-family='monospace'>SR</text></svg>">
 </head>
 <body>
     <!-- Header -->
@@ -70,6 +73,24 @@
             <div class="card-body" id="personal-trades">
                 <div class="empty-state"><p>Aucun trade enregistre pour l'instant.</p></div>
             </div>
+        </section>
+
+        <!-- Stats par combinaison (apres N trades) -->
+        <section class="card signals-section" id="combos-section" style="display:none">
+            <div class="card-header">
+                <h2>Combinaisons gagnantes (pattern × paire)</h2>
+                <span style="font-size:11px;color:var(--text-muted)">Apprend de votre historique. Significatif a partir de 5 trades par combo.</span>
+            </div>
+            <div class="card-body" id="combos-body"></div>
+        </section>
+
+        <!-- Détecteur d'erreurs -->
+        <section class="card signals-section" id="mistakes-section" style="display:none">
+            <div class="card-header">
+                <h2>Détecteur d'erreurs</h2>
+                <span style="font-size:11px;color:var(--text-muted)">Compare vos trades disciplinés vs négligés</span>
+            </div>
+            <div class="card-body" id="mistakes-body"></div>
         </section>
 
         <!-- Live Ticks (WebSocket Twelve Data) -->

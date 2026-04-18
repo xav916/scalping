@@ -267,6 +267,21 @@ async def session_alert_cycle() -> None:
                 logger.warning(f"Erreur alert session {session_name}: {e}")
 
 
+async def daily_email_summary_cycle() -> None:
+    """Envoi du resume email quotidien (sans user specifique = tous)."""
+    try:
+        from backend.services.email_summary import send_daily_summary, is_configured
+        if not is_configured():
+            return
+        # Envoi pour chaque user configure (cf AUTH_USERS)
+        from config.settings import AUTH_USERS
+        users = list(AUTH_USERS.keys()) or [None]
+        for u in users:
+            send_daily_summary(user=u)
+    except Exception as e:
+        logger.warning(f"Daily email summary echec: {e}")
+
+
 async def health_check_cycle() -> None:
     """Verifie que le radar tourne. Si aucun cycle d'analyse depuis >10 min,
     envoie une alerte Telegram (one-shot, evite le spam)."""
@@ -329,6 +344,15 @@ def start_scheduler() -> AsyncIOScheduler:
         seconds=120,
         id="health_check",
         name="Health check radar",
+        replace_existing=True,
+    )
+    # Email summary tous les jours a 22h UTC (~ 23h-00h heure FR selon DST)
+    from apscheduler.triggers.cron import CronTrigger
+    _scheduler.add_job(
+        daily_email_summary_cycle,
+        CronTrigger(hour=22, minute=0),
+        id="email_summary",
+        name="Email summary quotidien",
         replace_existing=True,
     )
 
