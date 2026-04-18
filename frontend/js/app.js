@@ -1,7 +1,23 @@
 /**
- * Scalping Radar - Application Frontend
- * Dashboard temps réel pour la détection de signaux de scalping
+ * Scalping Radar — Application Frontend
+ * Dashboard temps réel pour la détection de signaux de scalping.
+ *
+ * Ce fichier est chargé en tant que module ES (<script type="module">).
+ * Les helpers purs ont été extraits dans ./modules/utils.js afin d'être
+ * testables isolément. Un découpage plus fin (ws/render/actions/api) est
+ * documenté dans ./MODULES.md — il nécessite des tests pour être fait
+ * sans régression, donc non réalisé dans cette passe.
  */
+
+import {
+    escapeHtml,
+    strengthLabel as _strengthLabel,
+    patternLabel as _patternLabel,
+    markdownToHtml as _markdownToHtml,
+    isExpired as _isExpired,
+    countdown as _countdown,
+    relativeTime as _relativeTime,
+} from './modules/utils.js';
 
 const API_BASE = window.location.origin;
 const WS_PROTO = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -16,18 +32,10 @@ const MAX_RECONNECT_DELAY = 30000;
 const POLL_FALLBACK_INTERVAL = 60000;
 let lastUpdateTime = null;
 
-// ─── Utilitaires ─────────────────────────────────────────────────────
-
-/** Échappe une valeur dynamique avant insertion via innerHTML. */
-function escapeHtml(v) {
-    if (v === null || v === undefined) return '';
-    return String(v)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-}
+// ─── Utilitaires locaux ──────────────────────────────────────────────
+// escapeHtml et les formatteurs purs (countdown, isExpired, etc.) sont
+// dans ./modules/utils.js. Seuls les helpers qui manipulent l'état
+// global du module (ws, etc.) restent ici.
 
 /** Vrai quand le WebSocket est ouvert — sert à gater le polling de secours. */
 function isWsConnected() {
@@ -932,13 +940,6 @@ function handleTick(tick) {
     _drawSparkline(tick.pair);
 }
 
-function _relativeTime(isoTs) {
-    const sec = Math.max(0, Math.floor((Date.now() - new Date(isoTs)) / 1000));
-    if (sec < 2) return 'maintenant';
-    if (sec < 60) return `il y a ${sec}s`;
-    return `il y a ${Math.floor(sec / 60)}min`;
-}
-
 // ─── Rendu principal ─────────────────────────────────────────────────
 
 function renderFullDashboard(data) {
@@ -1249,37 +1250,6 @@ function _verdictBlockHTML(s) {
         </div>`;
 }
 
-function _markdownToHtml(text) {
-    // Mini parser markdown -> HTML (bold, italic, paragraphs, code)
-    if (!text) return '';
-    const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    return esc(text)
-        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-        .replace(/\*(.+?)\*/g, '<em>$1</em>')
-        .replace(/`(.+?)`/g, '<code>$1</code>')
-        .replace(/\n\n/g, '</p><p>')
-        .replace(/^/, '<p>')
-        .replace(/$/, '</p>');
-}
-
-function _patternLabel(pattern) {
-    const labels = {
-        'breakout_up': 'Cassure Résistance',
-        'breakout_down': 'Cassure Support',
-        'momentum_up': 'Momentum Haussier',
-        'momentum_down': 'Momentum Baissier',
-        'range_bounce_up': 'Rebond Support',
-        'range_bounce_down': 'Rejet Résistance',
-        'mean_reversion_up': 'Retour Moyenne',
-        'mean_reversion_down': 'Retour Moyenne',
-        'engulfing_bullish': 'Englobante Haussière',
-        'engulfing_bearish': 'Englobante Baissière',
-        'pin_bar_up': 'Pin Bar Haussière',
-        'pin_bar_down': 'Pin Bar Baissière',
-    };
-    return labels[pattern] || pattern || '';
-}
-
 // ─── Patterns ────────────────────────────────────────────────────────
 
 function renderPatterns(patterns) {
@@ -1416,10 +1386,6 @@ function signalCardHTML(s) {
             </div>` : ''}
             <div class="signal-time">${time}</div>
         </div>`;
-}
-
-function _strengthLabel(s) {
-    return { strong: 'FORT', moderate: 'MODERE', weak: 'FAIBLE' }[s] || s;
 }
 
 // ─── Volatilité ──────────────────────────────────────────────────────
@@ -1588,20 +1554,7 @@ function sendBrowserNotification(signal) {
 }
 
 // ─── Timestamps helpers ─────────────────────────────────────────────
-
-function _isExpired(expiryTime) {
-    if (!expiryTime) return false;
-    return new Date() > new Date(expiryTime);
-}
-
-function _countdown(expiryTime) {
-    if (!expiryTime) return '--:--';
-    const diff = new Date(expiryTime) - new Date();
-    if (diff <= 0) return 'EXPIRÉ';
-    const min = Math.floor(diff / 60000);
-    const sec = Math.floor((diff % 60000) / 1000);
-    return `${min}:${sec.toString().padStart(2, '0')}`;
-}
+// _isExpired, _countdown, _relativeTime sont dans ./modules/utils.js
 
 function _updateCountdowns() {
     document.querySelectorAll('.ts-countdown').forEach(el => {
