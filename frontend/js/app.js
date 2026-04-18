@@ -1547,8 +1547,11 @@ function _updateCountdowns() {
 // ─── Glossaire ──────────────────────────────────────────────────────
 
 let glossaryData = [];
+let _glossaryLoaded = false;
 
 async function fetchGlossary() {
+    if (_glossaryLoaded) return;
+    _glossaryLoaded = true;
     try {
         const res = await fetch(`${API_BASE}/api/glossary`);
         glossaryData = await res.json();
@@ -1619,6 +1622,8 @@ function _handleDelegatedClick(e) {
             if (!body) return;
             const open = body.classList.toggle('open');
             if (el.hasAttribute('aria-expanded')) el.setAttribute('aria-expanded', open ? 'true' : 'false');
+            // Lazy-load : ne charge le glossaire qu'à la première ouverture
+            if (open && !_glossaryLoaded) fetchGlossary();
             break;
         }
         case 'toggle-silent': toggleSilentMode(); break;
@@ -1654,7 +1659,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (glossarySearch) glossarySearch.addEventListener('input', (e) => filterGlossary(e.target.value));
 
     fetchOverview();
-    fetchGlossary();
+    // fetchGlossary() est lazy : déclenché à la 1re ouverture du panneau (cf. _handleDelegatedClick)
     fetchTicks();
     fetchBacktestStats();
     fetchDailyStatus();
