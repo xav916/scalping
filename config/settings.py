@@ -21,11 +21,31 @@ if AUTH_USERS_RAW:
     for entry in AUTH_USERS_RAW.split(","):
         entry = entry.strip()
         if ":" in entry:
-            u, p = entry.split(":", 1)
+            u, p = entry.rsplit(":", 1)  # rsplit pour gerer les emails dans le username
             AUTH_USERS[u.strip()] = p.strip()
 # Fallback : ancien format simple AUTH_USERNAME/AUTH_PASSWORD
 if AUTH_USERNAME and AUTH_PASSWORD and AUTH_USERNAME not in AUTH_USERS:
     AUTH_USERS[AUTH_USERNAME] = AUTH_PASSWORD
+
+# Mapping username -> nom affiche dans l'UI (format: "user1:Xav,user2:Ced")
+# Utile quand les usernames sont des emails et qu'on veut un prenom a la place.
+_AUTH_DISPLAY_NAMES_RAW = os.getenv("AUTH_DISPLAY_NAMES", "")
+AUTH_DISPLAY_NAMES: dict[str, str] = {}
+if _AUTH_DISPLAY_NAMES_RAW:
+    for entry in _AUTH_DISPLAY_NAMES_RAW.split(","):
+        entry = entry.strip()
+        if ":" in entry:
+            u, name = entry.rsplit(":", 1)
+            AUTH_DISPLAY_NAMES[u.strip()] = name.strip()
+
+
+def display_name_for(username: str) -> str:
+    """Retourne le nom affichable : mapping explicite, ou partie avant @ si email, sinon username."""
+    if username in AUTH_DISPLAY_NAMES:
+        return AUTH_DISPLAY_NAMES[username]
+    if "@" in username:
+        return username.split("@", 1)[0]
+    return username
 
 # Scraping intervals (seconds)
 MATAF_POLL_INTERVAL = int(os.getenv("MATAF_POLL_INTERVAL", "300"))  # 5 min

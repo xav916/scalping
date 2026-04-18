@@ -1417,3 +1417,13 @@ body {
     .modal { max-height: 100vh; border-radius: 0; }
     .trades-table { font-size: 11px; }
 }
+
+/* ─── User greeting in header ───────────────────────────── */
+.user-greeting {
+    font-size: 12px;
+    color: var(--accent-blue);
+    font-weight: 600;
+    padding: 2px 8px;
+    background: rgba(88, 166, 255, 0.1);
+    border-radius: 4px;
+}

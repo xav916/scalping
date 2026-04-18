@@ -26,6 +26,7 @@ def _init_schema() -> None:
         c.executescript("""
             CREATE TABLE IF NOT EXISTS personal_trades (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user TEXT NOT NULL DEFAULT 'anonymous',
                 pair TEXT NOT NULL,
                 direction TEXT NOT NULL,
                 entry_price REAL NOT NULL,
@@ -42,9 +43,14 @@ def _init_schema() -> None:
                 created_at TEXT NOT NULL,
                 closed_at TEXT
             );
+            CREATE INDEX IF NOT EXISTS idx_pt_user ON personal_trades(user);
             CREATE INDEX IF NOT EXISTS idx_pt_status ON personal_trades(status);
             CREATE INDEX IF NOT EXISTS idx_pt_created ON personal_trades(created_at);
         """)
+        # Migration : ajoute la colonne user si elle n'existe pas (db existante)
+        cols = [r[1] for r in c.execute("PRAGMA table_info(personal_trades)").fetchall()]
+        if "user" not in cols:
+            c.execute("ALTER TABLE personal_trades ADD COLUMN user TEXT NOT NULL DEFAULT 'anonymous'")
 
 
 @contextmanager
@@ -57,21 +63,17 @@ def _conn():
         conn.close()
 
 
-def record_trade(data: dict) -> int:
-    """Enregistre un trade pris par l'utilisateur.
-
-    `data` doit contenir : pair, direction, entry_price, stop_loss, take_profit,
-    size_lot. Optionnel : signal_pattern, signal_confidence, checklist_passed, notes.
-    """
+def record_trade(data: dict, user: str = "anonymous") -> int:
+    """Enregistre un trade pris par l'utilisateur `user`."""
     _init_schema()
     with _conn() as c:
         cur = c.execute(
             "INSERT INTO personal_trades "
-            "(pair, direction, entry_price, stop_loss, take_profit, size_lot, "
+            "(user, pair, direction, entry_price, stop_loss, take_profit, size_lot, "
             "signal_pattern, signal_confidence, checklist_passed, notes, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
-                data["pair"], data["direction"], float(data["entry_price"]),
+                user, data["pair"], data["direction"], float(data["entry_price"]),
                 float(data["stop_loss"]), float(data["take_profit"]),
                 float(data["size_lot"]),
                 data.get("signal_pattern"),
@@ -84,11 +86,13 @@ def record_trade(data: dict) -> int:
         return cur.lastrowid
 
 
-def close_trade(trade_id: int, exit_price: float, notes: str | None = None) -> bool:
-    """Cloture un trade : calcule le PnL et enregistre."""
+def close_trade(trade_id: int, exit_price: float, notes: str | None = None, user: str = "anonymous") -> bool:
+    """Cloture un trade : calcule le PnL. Le trade doit appartenir a `user`."""
     _init_schema()
     with _conn() as c:
-        row = c.execute("SELECT * FROM personal_trades WHERE id=?", (trade_id,)).fetchone()
+        row = c.execute(
+            "SELECT * FROM personal_trades WHERE id=? AND user=?", (trade_id, user)
+        ).fetchone()
         if not row or row["status"] != "OPEN":
             return False
         pnl = _compute_pnl(row, exit_price)
@@ -97,8 +101,8 @@ def close_trade(trade_id: int, exit_price: float, notes: str | None = None) -> b
             extra_notes = (extra_notes + "\n" if extra_notes else "") + notes
         c.execute(
             "UPDATE personal_trades SET status='CLOSED', exit_price=?, pnl=?, notes=?, closed_at=? "
-            "WHERE id=?",
-            (exit_price, pnl, extra_notes, datetime.now(timezone.utc).isoformat(), trade_id),
+            "WHERE id=? AND user=?",
+            (exit_price, pnl, extra_notes, datetime.now(timezone.utc).isoformat(), trade_id, user),
         )
     return True
 
@@ -116,36 +120,42 @@ def _compute_pnl(row: sqlite3.Row, exit_price: float) -> float:
     return round((entry - exit_price) * units, 2)
 
 
-def list_trades(status: str | None = None, limit: int = 100) -> list[dict]:
+def list_trades(status: str | None = None, limit: int = 100, user: str = "anonymous") -> list[dict]:
     _init_schema()
     with _conn() as c:
         if status:
             rows = c.execute(
-                "SELECT * FROM personal_trades WHERE status=? ORDER BY created_at DESC LIMIT ?",
-                (status, limit),
+                "SELECT * FROM personal_trades WHERE user=? AND status=? "
+                "ORDER BY created_at DESC LIMIT ?",
+                (user, status, limit),
             ).fetchall()
         else:
             rows = c.execute(
-                "SELECT * FROM personal_trades ORDER BY created_at DESC LIMIT ?", (limit,)
+                "SELECT * FROM personal_trades WHERE user=? "
+                "ORDER BY created_at DESC LIMIT ?",
+                (user, limit),
             ).fetchall()
         return [dict(r) for r in rows]
 
 
-def get_trade(trade_id: int) -> dict | None:
+def get_trade(trade_id: int, user: str = "anonymous") -> dict | None:
     _init_schema()
     with _conn() as c:
-        row = c.execute("SELECT * FROM personal_trades WHERE id=?", (trade_id,)).fetchone()
+        row = c.execute(
+            "SELECT * FROM personal_trades WHERE id=? AND user=?", (trade_id, user)
+        ).fetchone()
         return dict(row) if row else None
 
 
-def get_daily_status() -> dict:
-    """Stats du jour : PnL, nb trades, mode silencieux actif ?"""
+def get_daily_status(user: str = "anonymous") -> dict:
+    """Stats du jour pour `user` : PnL, nb trades, mode silencieux actif ?"""
     _init_schema()
     today_iso = date.today().isoformat()
     with _conn() as c:
         rows = c.execute(
-            "SELECT pnl, status FROM personal_trades WHERE created_at >= ?",
-            (today_iso + "T00:00:00",),
+            "SELECT pnl, status FROM personal_trades "
+            "WHERE user=? AND created_at >= ?",
+            (user, today_iso + "T00:00:00"),
         ).fetchall()
 
     n_total = len(rows)
@@ -167,9 +177,27 @@ def get_daily_status() -> dict:
     }
 
 
-def silent_mode_active() -> bool:
-    """True si -X% atteint aujourd'hui (coupe Telegram + toast + sons)."""
-    try:
-        return get_daily_status()["silent_mode"]
-    except Exception:
+def silent_mode_active_any_user() -> bool:
+    """True si AU MOINS UN user a atteint sa limite aujourd'hui.
+
+    Le telegram_service utilise ca pour decider : si un seul user est KO,
+    tout le monde passe en silencieux (alternative : passer par user en
+    stockant une preference par user, mais ca complique le broadcast).
+    """
+    _init_schema()
+    today_iso = date.today().isoformat()
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT user, SUM(pnl) as pnl FROM personal_trades "
+            "WHERE status='CLOSED' AND created_at >= ? GROUP BY user",
+            (today_iso + "T00:00:00",),
+        ).fetchall()
+    if not rows:
         return False
+    limit_usd = -TRADING_CAPITAL * DAILY_LOSS_LIMIT_PCT / 100
+    return any((r["pnl"] or 0) <= limit_usd for r in rows)
+
+
+# Backward compat : conserve l'ancien nom pour telegram_service
+def silent_mode_active() -> bool:
+    return silent_mode_active_any_user()

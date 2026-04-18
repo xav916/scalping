@@ -178,6 +178,11 @@ async function fetchDailyStatus() {
 }
 
 function renderDailyBanner(status) {
+    // Met a jour le nom d'utilisateur dans le header des qu'on le recoit
+    if (status.display_name) {
+        const greet = document.getElementById('user-greeting');
+        if (greet) greet.textContent = `Bonjour ${status.display_name}`;
+    }
     const banner = document.getElementById('daily-banner');
     if (!banner) return;
     const hasActivity = status.n_trades_today > 0 || status.silent_mode;
