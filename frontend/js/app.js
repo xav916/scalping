@@ -339,6 +339,8 @@ function openTradeModal(pair, direction, entry, sl, tp1, pattern, confidence) {
     form.signal_confidence.value = confidence || '';
     // Reset toutes les checkbox (pre-trade + post-entry)
     modal.querySelectorAll('[data-check], [data-post-entry]').forEach(c => c.checked = false);
+    // Reset à l'étape 1 à chaque ouverture
+    _showTradeStep(1);
     modal.style.display = '';
     // Check corr warning
     _checkCorrelation(pair, direction);
@@ -357,6 +359,65 @@ function openTradeModal(pair, direction, entry, sl, tp1, pattern, confidence) {
 function closeTradeModal() {
     document.getElementById('trade-modal').style.display = 'none';
     _currentSignalForModal = null;
+}
+
+/** Affiche l'étape demandée (1 ou 2) dans la modale trade. */
+function _showTradeStep(step) {
+    const modal = document.getElementById('trade-modal');
+    if (!modal) return;
+    modal.dataset.step = String(step);
+    modal.querySelectorAll('.modal-step[data-step]').forEach(el => {
+        el.hidden = (el.dataset.step !== String(step));
+    });
+    modal.querySelectorAll('[data-step-dot]').forEach(el => {
+        el.classList.toggle('active', el.dataset.stepDot === String(step));
+    });
+    // Rendre le récap pour l'étape 2
+    if (step === 2) _renderTradeSummary();
+}
+
+/** Construit le récap de trade montré à l'étape 2 (synthèse pour validation). */
+function _renderTradeSummary() {
+    const form = document.getElementById('trade-form');
+    const summary = document.getElementById('trade-summary');
+    if (!form || !summary) return;
+    const pair = form.pair.value;
+    const dir = form.direction.value;
+    const entry = parseFloat(form.entry_price.value) || 0;
+    const sl = parseFloat(form.stop_loss.value) || 0;
+    const tp = parseFloat(form.take_profit.value) || 0;
+    const size = parseFloat(form.size_lot.value) || 0;
+    const risk = Math.abs(entry - sl) * size * 100000;
+    summary.innerHTML = `
+        <h4>Récapitulatif</h4>
+        <ul>
+            <li><strong>${escapeHtml(pair)}</strong> · ${escapeHtml(dir)} · ${size} lot(s)</li>
+            <li>Entry : ${entry.toFixed(5)} · SL : ${sl.toFixed(5)} · TP : ${tp.toFixed(5)}</li>
+            <li>Risque estimé : <strong>${risk.toFixed(2)} USD</strong></li>
+        </ul>
+    `;
+}
+
+/** Passe de l'étape 1 à la 2 après validation des pré-checks et du formulaire. */
+function goToTradeStep2() {
+    const form = document.getElementById('trade-form');
+    // Validité du formulaire natif (champs required)
+    if (!form.checkValidity()) {
+        form.reportValidity();
+        return;
+    }
+    // Checklist pré-trade
+    const modal = document.getElementById('trade-modal');
+    const preChecks = Array.from(modal.querySelectorAll('[data-check]'));
+    const allChecked = preChecks.every(c => c.checked);
+    if (!allChecked) {
+        if (!confirm('La checklist pré-trade n\'est pas entièrement validée. Continuer quand même ?')) return;
+    }
+    _showTradeStep(2);
+}
+
+function goToTradeStep1() {
+    _showTradeStep(1);
 }
 
 async function _checkCorrelation(pair, direction) {
@@ -384,11 +445,10 @@ async function _checkCorrelation(pair, direction) {
 async function confirmTradeSubmit() {
     const form = document.getElementById('trade-form');
     const modal = document.getElementById('trade-modal');
-    const checks = Array.from(modal.querySelectorAll('[data-check]'));
-    const allChecked = checks.every(c => c.checked);
-    if (!allChecked) {
-        if (!confirm('La checklist n\'est pas entièrement validée. Voulez-vous quand même enregistrer le trade ?')) return;
-    }
+    // La checklist pré-trade est désormais validée à l'étape 1 (goToTradeStep2).
+    // Ici on ne relit que son état pour l'enregistrer dans le payload.
+    const preChecks = Array.from(modal.querySelectorAll('[data-check]'));
+    const allChecked = preChecks.every(c => c.checked);
     const postEntry = {};
     modal.querySelectorAll('[data-post-entry]').forEach(cb => {
         postEntry[`post_entry_${cb.dataset.postEntry}`] = cb.checked;
@@ -1644,6 +1704,8 @@ function _handleDelegatedClick(e) {
             break;
         }
         case 'close-trade-modal': closeTradeModal(); break;
+        case 'goto-step-2': goToTradeStep2(); break;
+        case 'goto-step-1': goToTradeStep1(); break;
         case 'confirm-trade': confirmTradeSubmit(); break;
         case 'close-close-modal': closeCloseModal(); break;
         case 'confirm-close-trade': confirmCloseTrade(); break;

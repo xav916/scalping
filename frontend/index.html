@@ -203,14 +203,22 @@
     <!-- Toast notifications -->
     <div id="toast-container" class="toast-container"></div>
 
-    <!-- Modal "J'ai pris ce signal" -->
-    <div id="trade-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="trade-modal-title" style="display:none">
+    <!-- Modal "J'ai pris ce signal" — en 2 étapes pour ne pas encombrer la décision -->
+    <div id="trade-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="trade-modal-title" style="display:none" data-step="1">
         <div class="modal">
             <div class="modal-header">
                 <h3 id="trade-modal-title">Enregistrer un trade</h3>
+                <div class="modal-step-indicator" aria-hidden="true">
+                    <span class="step-dot active" data-step-dot="1">1</span>
+                    <span class="step-dot" data-step-dot="2">2</span>
+                </div>
                 <button class="modal-close" type="button" data-action="close-trade-modal" aria-label="Fermer">&times;</button>
             </div>
-            <div class="modal-body">
+
+            <!-- ÉTAPE 1 — Avant de passer l'ordre dans MT5 -->
+            <div class="modal-body modal-step" data-step="1">
+                <p class="step-caption"><strong>Étape 1/2</strong> — Vérifications avant de passer l'ordre.</p>
+
                 <div class="checklist">
                     <h4>Checklist pré-trade</h4>
                     <label><input type="checkbox" data-check="session"> Session active favorable (London / NY / overlap)</label>
@@ -252,17 +260,28 @@
                     <input type="hidden" name="signal_pattern">
                     <input type="hidden" name="signal_confidence">
                 </form>
+            </div>
+
+            <!-- ÉTAPE 2 — Après avoir passé l'ordre dans MT5 -->
+            <div class="modal-body modal-step" data-step="2" hidden>
+                <p class="step-caption"><strong>Étape 2/2</strong> — Confirmez ce qui est effectivement en place dans MT5 avant d'enregistrer le trade.</p>
                 <div class="checklist post-entry">
-                    <h4>Après avoir passé l'ordre dans MT5</h4>
+                    <h4>Ordre passé dans MT5</h4>
                     <label><input type="checkbox" data-post-entry="sl"> SL placé dans MT5</label>
                     <label><input type="checkbox" data-post-entry="tp"> TP placé dans MT5</label>
                     <label><input type="checkbox" data-post-entry="size"> Taille de position vérifiée</label>
                     <label><input type="checkbox" data-post-entry="alarm"> Alarme 15 min réglée (optionnel)</label>
                 </div>
+                <div class="step2-summary" id="trade-summary" aria-live="polite"></div>
             </div>
-            <div class="modal-footer">
+
+            <div class="modal-footer modal-step" data-step="1">
                 <button class="btn" type="button" data-action="close-trade-modal">Annuler</button>
-                <button class="btn btn-primary" type="button" data-action="confirm-trade">Confirmer le trade</button>
+                <button class="btn btn-primary" type="button" data-action="goto-step-2">Passer l'ordre dans MT5 →</button>
+            </div>
+            <div class="modal-footer modal-step" data-step="2" hidden>
+                <button class="btn" type="button" data-action="goto-step-1">← Retour</button>
+                <button class="btn btn-primary" type="button" data-action="confirm-trade">Enregistrer le trade</button>
             </div>
         </div>
     </div>
