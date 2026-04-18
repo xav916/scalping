@@ -4,7 +4,7 @@
  * Aucun cache dynamique des données marché : elles doivent toujours être fraîches.
  */
 
-const CACHE_VERSION = 'scalping-shell-v5';
+const CACHE_VERSION = 'scalping-shell-v6';
 const SHELL_ASSETS = [
     '/',
     '/css/style.css',
@@ -16,8 +16,19 @@ const SHELL_ASSETS = [
 ];
 
 self.addEventListener('install', (event) => {
+    // cache: 'reload' force le SW à bypasser le HTTP cache du navigateur
+    // et à fetch chaque asset directement depuis le serveur. Sans ça, le SW
+    // re-cacherait les versions périmées encore dans le disk cache.
     event.waitUntil(
-        caches.open(CACHE_VERSION).then((cache) => cache.addAll(SHELL_ASSETS)).catch(() => {})
+        caches.open(CACHE_VERSION).then((cache) =>
+            Promise.all(SHELL_ASSETS.map((url) =>
+                fetch(new Request(url, { cache: 'reload' }))
+                    .then((res) => {
+                        if (res.ok) return cache.put(url, res);
+                    })
+                    .catch(() => {})
+            ))
+        )
     );
     self.skipWaiting();
 });
