@@ -2129,6 +2129,49 @@ button.glossary-header {
 *::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
 * { scrollbar-width: thin; scrollbar-color: var(--border-color) var(--bg-primary); }
 
+/* ─── Bougies live (paires principales, indépendantes des setups) ─── */
+.live-charts-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 10px;
+}
+.live-chart-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 10px 12px;
+    transition: border-color 0.15s, box-shadow 0.2s;
+}
+.live-chart-card:hover {
+    border-color: var(--border-strong);
+    box-shadow: 0 4px 18px rgba(88, 166, 255, 0.08);
+}
+.live-chart-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+    font-size: 12px;
+}
+.live-chart-pair {
+    font-family: var(--font-mono);
+    font-weight: 700;
+    color: var(--text-primary);
+    letter-spacing: 0.3px;
+}
+.live-chart-last {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+}
+.live-chart-last.up { color: var(--accent-buy); }
+.live-chart-last.down { color: var(--accent-sell); }
+.live-chart-body {
+    height: 140px;
+    width: 100%;
+}
+
 /* ─── Daily banner : remonte en sticky et gagne un touch glass ──── */
 .daily-banner {
     background: var(--bg-glass);

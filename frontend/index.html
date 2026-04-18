@@ -94,6 +94,19 @@
             </div>
         </section>
 
+        <!-- Bougies live (toutes les paires watchées, indépendant des setups) -->
+        <section class="card signals-section" aria-labelledby="live-charts-title">
+            <div class="card-header">
+                <h2 id="live-charts-title">Bougies live — paires principales</h2>
+                <span class="card-hint">Bougies 5min des paires surveillées · MAJ toutes les 60s</span>
+            </div>
+            <div class="card-body">
+                <div id="live-charts-grid" class="live-charts-grid">
+                    <div class="empty-state"><p>Chargement des bougies…</p></div>
+                </div>
+            </div>
+        </section>
+
         <!-- Live Ticks (WebSocket Twelve Data) -->
         <section class="card signals-section" id="live-ticks-section" style="display:none">
             <div class="card-header">

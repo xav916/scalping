@@ -1745,4 +1745,98 @@ document.addEventListener('DOMContentLoaded', () => {
         fetchCombos();
         fetchMistakes();
     }, 60000);
+
+    // Bougies live des paires principales — first fetch + refresh 60s
+    fetchLiveCharts();
+    setInterval(fetchLiveCharts, 60000);
 });
+
+// ─── Bougies live (indépendant des setups) ──────────────────────────
+
+const _liveCharts = new Map(); // pair -> { chart, series }
+const _LIVE_CHART_PAIRS = ['XAU/USD', 'EUR/USD', 'GBP/USD', 'USD/JPY', 'AUD/USD', 'USD/CAD'];
+
+async function fetchLiveCharts() {
+    try {
+        const res = await fetch(`${API_BASE}/api/candles`);
+        if (!res.ok) return;
+        const allByPair = await res.json();
+        renderLiveCharts(allByPair);
+    } catch (err) {
+        console.warn('fetchLiveCharts:', err);
+    }
+}
+
+function renderLiveCharts(allByPair) {
+    const grid = document.getElementById('live-charts-grid');
+    if (!grid || typeof LightweightCharts === 'undefined') return;
+
+    // Ne garder que les paires de la watchlist ET qui ont au moins 5 bougies
+    const pairs = _LIVE_CHART_PAIRS.filter(p => Array.isArray(allByPair[p]) && allByPair[p].length >= 5);
+    if (!pairs.length) {
+        grid.innerHTML = '<div class="empty-state"><p>Aucune bougie disponible pour le moment.</p></div>';
+        return;
+    }
+
+    // Premier rendu : construire les conteneurs + monter les charts
+    if (grid.querySelector('.empty-state') || grid.children.length === 0) {
+        grid.innerHTML = pairs.map(p => `
+            <div class="live-chart-card" data-pair="${escapeHtml(p)}">
+                <div class="live-chart-header">
+                    <span class="live-chart-pair">${escapeHtml(p)}</span>
+                    <span class="live-chart-last" data-last="${escapeHtml(p)}"></span>
+                </div>
+                <div class="live-chart-body" data-chart-host="${escapeHtml(p)}"></div>
+            </div>
+        `).join('');
+        pairs.forEach(p => _mountOrUpdateLiveChart(p, allByPair[p]));
+        return;
+    }
+
+    // Mise à jour incrémentale : setData sur les séries existantes
+    pairs.forEach(p => _mountOrUpdateLiveChart(p, allByPair[p]));
+}
+
+function _mountOrUpdateLiveChart(pair, candles) {
+    const host = document.querySelector(`[data-chart-host="${CSS.escape(pair)}"]`);
+    if (!host) return;
+    const data = candles.map(c => ({
+        time: Math.floor(new Date(c.timestamp).getTime() / 1000),
+        open: c.open, high: c.high, low: c.low, close: c.close,
+    }));
+    const lastClose = data[data.length - 1]?.close;
+    const firstClose = data[0]?.close;
+    const lastEl = document.querySelector(`[data-last="${CSS.escape(pair)}"]`);
+    if (lastEl && lastClose !== undefined) {
+        const changePct = firstClose ? ((lastClose - firstClose) / firstClose * 100) : 0;
+        const sign = changePct >= 0 ? '+' : '';
+        lastEl.textContent = `${lastClose.toFixed(pair.includes('JPY') ? 3 : 5)}  ${sign}${changePct.toFixed(2)}%`;
+        lastEl.classList.toggle('up', changePct > 0);
+        lastEl.classList.toggle('down', changePct < 0);
+    }
+
+    let entry = _liveCharts.get(pair);
+    if (!entry) {
+        const chart = LightweightCharts.createChart(host, {
+            width: host.clientWidth,
+            height: 140,
+            layout: { background: { color: 'transparent' }, textColor: '#8b949e', fontSize: 10 },
+            grid: { vertLines: { color: 'rgba(30, 38, 54, 0.6)' }, horzLines: { color: 'rgba(30, 38, 54, 0.6)' } },
+            rightPriceScale: { borderColor: 'rgba(30, 38, 54, 0.6)' },
+            timeScale: { borderColor: 'rgba(30, 38, 54, 0.6)', timeVisible: true, secondsVisible: false },
+            handleScale: false,
+            handleScroll: false,
+        });
+        const series = chart.addCandlestickSeries({
+            upColor: '#00ffa3', downColor: '#ff4976', borderVisible: false,
+            wickUpColor: '#00ffa3', wickDownColor: '#ff4976',
+        });
+        entry = { chart, series };
+        _liveCharts.set(pair, entry);
+        // Ajuster la taille quand la fenêtre bouge (debounce simple)
+        const ro = new ResizeObserver(() => chart.resize(host.clientWidth, 140));
+        ro.observe(host);
+    }
+    entry.series.setData(data);
+    entry.chart.timeScale().fitContent();
+}
