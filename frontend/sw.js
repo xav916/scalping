@@ -34,8 +34,8 @@ self.addEventListener('fetch', (event) => {
     if (req.method !== 'GET') return;
 
     const url = new URL(req.url);
-    // Données live : toujours en direct, pas de cache.
-    if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/ws')) return;
+    // Données live + auth : toujours en direct, pas de cache.
+    if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/ws') || url.pathname === '/login') return;
 
     // Shell : cache-first avec fallback réseau puis mise en cache best-effort.
     event.respondWith(

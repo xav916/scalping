@@ -34,6 +34,24 @@ function isWsConnected() {
     return ws && ws.readyState === WebSocket.OPEN;
 }
 
+// ─── Intercepteur fetch : redirige vers /login si la session expire ──
+// Patch global de window.fetch pour que CHAQUE requête API détecte un 401
+// et renvoie l'utilisateur sur la page de login avec ?next=<url_actuelle>.
+// Le service worker est bypass (il ne gère que le shell statique).
+(function installAuthFetchInterceptor() {
+    const originalFetch = window.fetch.bind(window);
+    let redirecting = false;
+    window.fetch = async (...args) => {
+        const res = await originalFetch(...args);
+        if (res.status === 401 && !redirecting) {
+            redirecting = true;
+            const next = encodeURIComponent(window.location.pathname + window.location.search);
+            window.location.replace(`/login?next=${next}`);
+        }
+        return res;
+    };
+})();
+
 // ─── WebSocket ───────────────────────────────────────────────────────
 
 function connectWebSocket() {
