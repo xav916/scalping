@@ -16,11 +16,15 @@ import httpx
 
 from backend.models.schemas import ScalpingSignal
 from backend.services import trade_log_service
+from datetime import date
+
 from config.settings import (
     TELEGRAM_BOT_TOKEN,
     TELEGRAM_CHAT_ID,
     TELEGRAM_CHATS,
     TELEGRAM_MIN_STRENGTH,
+    TELEGRAM_SETUP_MIN_CONFIDENCE,
+    TELEGRAM_SETUP_VERDICTS,
 )
 
 logger = logging.getLogger(__name__)
@@ -158,3 +162,131 @@ async def send_signals(signals: list[ScalpingSignal]) -> None:
     if not is_configured() or not signals:
         return
     await asyncio.gather(*(send_signal(s) for s in signals), return_exceptions=True)
+
+
+# ─── Trade setups (potentiels) — chemin distinct des signaux ────────────────
+#
+# Motivation : un "signal" ne part sur Telegram qu'à partir de strength=strong
+# par défaut. Les setups haute confiance avec verdict TAKE méritent d'être
+# poussés même sans signal "strong" formel. Sinon le user ne voit les
+# opportunités que dans l'UI web.
+#
+# Dedup : on ne re-pousse pas le même (pair, direction, entry arrondi) dans
+# la journée. Reset à minuit (clé date incluse dans le set).
+
+_sent_setups_today: set[tuple[str, str, str, str]] = set()
+
+
+def _setup_dedup_key(setup) -> tuple[str, str, str, str]:
+    """Clé de dédup stable : (date_iso, pair, direction, entry arrondi)."""
+    # entry arrondi à 5 décimales pour tolérer des micro-variations entre cycles.
+    entry_rounded = f"{setup.entry_price:.5f}"
+    return (
+        date.today().isoformat(),
+        setup.pair,
+        setup.direction.value if hasattr(setup.direction, "value") else str(setup.direction),
+        entry_rounded,
+    )
+
+
+def _cleanup_old_dedup_keys() -> None:
+    """Purge les entrées d'hier. Appelée à chaque push : coût négligeable."""
+    today = date.today().isoformat()
+    # on crée une nouvelle set avec seulement les entrées du jour
+    for key in list(_sent_setups_today):
+        if key[0] != today:
+            _sent_setups_today.discard(key)
+
+
+def _should_push_setup(setup) -> bool:
+    """Filtre : verdict dans la liste autorisée + score au-dessus du seuil."""
+    if not setup.verdict_action:
+        return False
+    if setup.verdict_action.upper() not in TELEGRAM_SETUP_VERDICTS:
+        return False
+    score = getattr(setup, "confidence_score", None) or 0
+    if score < TELEGRAM_SETUP_MIN_CONFIDENCE:
+        return False
+    return True
+
+
+def _format_setup(setup) -> str:
+    """Format Telegram Markdown pour un trade_setup (distinct du signal)."""
+    verdict_icon = {"TAKE": "✅", "WAIT": "⏳", "SKIP": "⛔"}.get(setup.verdict_action or "", "📊")
+    dir_value = setup.direction.value if hasattr(setup.direction, "value") else str(setup.direction)
+    dir_label = "ACHAT 🟢" if dir_value == "buy" else "VENTE 🔴"
+    score = getattr(setup, "confidence_score", 0) or 0
+
+    lines = [
+        f"{verdict_icon} *SETUP {setup.verdict_action}* — `{setup.pair}` · *{dir_label}*",
+        f"Confiance : *{score:.0f}/100*",
+        "",
+        f"Entry : `{setup.entry_price:.5f}`",
+        f"SL : `{setup.stop_loss:.5f}` ({setup.risk_pips:.1f} pts)",
+        f"TP1 : `{setup.take_profit_1:.5f}` (R:R {setup.risk_reward_1:.1f})",
+        f"TP2 : `{setup.take_profit_2:.5f}` (R:R {setup.risk_reward_2:.1f})",
+    ]
+
+    if getattr(setup, "verdict_summary", None):
+        lines.append(f"\n_{setup.verdict_summary}_")
+
+    reasons = getattr(setup, "verdict_reasons", None) or []
+    warnings = getattr(setup, "verdict_warnings", None) or []
+    if reasons:
+        lines.append("\n👍 " + " | ".join(reasons[:3]))
+    if warnings:
+        lines.append("⚠️ " + " | ".join(warnings[:3]))
+
+    if getattr(setup, "validity_minutes", None):
+        lines.append(f"\n⏱ Valide {setup.validity_minutes} min")
+
+    return "\n".join(lines)
+
+
+async def _send_setup_to(chat_id: str, setup, who: str) -> None:
+    url = TELEGRAM_API.format(token=TELEGRAM_BOT_TOKEN)
+    payload = {
+        "chat_id": chat_id,
+        "text": _format_setup(setup),
+        "parse_mode": "Markdown",
+        "disable_web_page_preview": True,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(url, json=payload)
+            if response.status_code != 200:
+                logger.warning(f"Telegram setup erreur {response.status_code} pour {who}: {response.text[:200]}")
+            else:
+                logger.info(
+                    f"Setup Telegram envoye a {who} pour {setup.pair} "
+                    f"({setup.verdict_action} {getattr(setup, 'confidence_score', 0):.0f})"
+                )
+    except Exception as e:
+        logger.warning(f"Erreur envoi setup Telegram {who}: {e}")
+
+
+async def send_setup(setup) -> None:
+    """Push un trade_setup unique sur Telegram si verdict + seuil + dedup OK."""
+    if not is_configured() or not _should_push_setup(setup):
+        return
+    key = _setup_dedup_key(setup)
+    _cleanup_old_dedup_keys()
+    if key in _sent_setups_today:
+        return
+    _sent_setups_today.add(key)
+
+    destinataires = _destinataires()
+    if not destinataires:
+        return
+    for user, chat_id in destinataires:
+        if user != "__any__" and trade_log_service.silent_mode_active_for_user(user):
+            logger.info(f"Mode silencieux actif pour {user}, setup {setup.pair} skip")
+            continue
+        await _send_setup_to(chat_id, setup, who=user)
+
+
+async def send_setups(setups: list) -> None:
+    """Push plusieurs trade_setups en parallèle. Dedup + filtres s'appliquent."""
+    if not is_configured() or not setups:
+        return
+    await asyncio.gather(*(send_setup(s) for s in setups), return_exceptions=True)

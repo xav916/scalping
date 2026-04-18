@@ -83,6 +83,16 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 # Force minimum pour qu'un signal soit envoye : weak / moderate / strong
 TELEGRAM_MIN_STRENGTH = os.getenv("TELEGRAM_MIN_STRENGTH", "strong")
+# Confiance minimum (0-100) pour qu'un trade_setup soit poussé sur Telegram.
+# Filtre distinct du MIN_CONFIDENCE_SCORE (qui est juste l'affichage).
+TELEGRAM_SETUP_MIN_CONFIDENCE = float(os.getenv("TELEGRAM_SETUP_MIN_CONFIDENCE", "80"))
+# Verdicts acceptés : liste séparée par virgule (TAKE,WAIT par défaut).
+# Par défaut on ne pousse pas les SKIP — trop de bruit.
+TELEGRAM_SETUP_VERDICTS = [
+    v.strip().upper()
+    for v in os.getenv("TELEGRAM_SETUP_VERDICTS", "TAKE,WAIT").split(",")
+    if v.strip()
+]
 
 # Mapping par utilisateur : "user1:chat_id1,user2:chat_id2"
 # Si defini, chaque user recoit les signaux sur son propre chat Telegram et

@@ -17,7 +17,10 @@ from backend.services.forexfactory_service import fetch_economic_events
 from backend.services.mataf_service import fetch_volatility_data
 from backend.services import backtest_service, coaching
 from backend.services.notification_service import broadcast_signals, broadcast_update
-from backend.services.telegram_service import send_signals as telegram_send_signals
+from backend.services.telegram_service import (
+    send_setups as telegram_send_setups,
+    send_signals as telegram_send_signals,
+)
 from backend.services.pattern_detector import calculate_trade_setup, detect_patterns
 from backend.services.price_service import fetch_candles
 from config.settings import (
@@ -199,6 +202,12 @@ async def run_analysis_cycle() -> None:
             await broadcast_signals(signals)
             # Push Telegram en parallele (non-bloquant, best effort)
             asyncio.create_task(telegram_send_signals(signals))
+
+        # Push Telegram des trade_setups (chemin distinct des signaux) :
+        # pousse tous les setups avec verdict TAKE/WAIT + confiance au-dessus
+        # du seuil. Dedup par (date, pair, direction, entry) dans le service.
+        if all_trade_setups:
+            asyncio.create_task(telegram_send_setups(all_trade_setups))
 
         # Envoyer la mise à jour complète
         await broadcast_update({
