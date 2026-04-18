@@ -271,6 +271,14 @@ async def daily_status(user: str = Depends(verify_credentials)):
     return status
 
 
+@app.post("/api/silent-mode")
+async def toggle_silent_mode(payload: dict, user: str = Depends(verify_credentials)):
+    """Active/desactive le mode silencieux pour l'utilisateur connecte."""
+    enabled = bool(payload.get("enabled", False))
+    trade_log_service.set_manual_silent(user, enabled)
+    return {"silent_mode": enabled, "user": user}
+
+
 @app.post("/api/correlation-check")
 async def correlation_check(payload: dict, user: str = Depends(verify_credentials)):
     """Retourne les trades ouverts correles au signal propose."""

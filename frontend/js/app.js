@@ -185,21 +185,44 @@ function renderDailyBanner(status) {
     }
     const banner = document.getElementById('daily-banner');
     if (!banner) return;
-    const hasActivity = status.n_trades_today > 0 || status.silent_mode;
-    if (!hasActivity) { banner.style.display = 'none'; return; }
+    // Toujours afficher le banner (pour le toggle silent mode) meme sans trade
     banner.style.display = '';
     const pnlClass = status.pnl_today > 0 ? 'pnl-positive' : status.pnl_today < 0 ? 'pnl-negative' : '';
-    const silentHTML = status.silent_mode
-        ? `<span class="silent-badge">⛔ MODE SILENCIEUX (-${status.daily_loss_limit_pct}% atteint — pas de nouvelle alerte aujourd'hui)</span>`
+    const silentBtnLabel = status.silent_mode ? '🔊 Activer les alertes' : '🔇 Couper les alertes';
+    const silentBtnClass = status.silent_mode ? 'btn-primary silent-on' : '';
+    const lossAlertHTML = status.loss_alert && !status.silent_mode
+        ? `<span class="loss-alert-badge">⚠️ Vous avez atteint -${status.daily_loss_limit_pct}% — envisagez d'arrêter pour aujourd'hui</span>`
         : '';
-    banner.className = 'daily-banner' + (status.silent_mode ? ' silent' : '');
+    const silentStateHTML = status.silent_mode
+        ? `<span class="silent-badge">🔇 Mode silencieux actif (pas de son ni Telegram)</span>`
+        : '';
+
+    banner.className = 'daily-banner' + (status.silent_mode ? ' silent' : '') + (status.loss_alert ? ' loss-alert' : '');
     banner.innerHTML = `
         <div class="db-stat"><span class="db-label">Aujourd'hui</span><span class="db-value">${status.date}</span></div>
         <div class="db-stat"><span class="db-label">Trades</span><span class="db-value">${status.n_trades_today} (${status.n_open} ouverts)</span></div>
         <div class="db-stat"><span class="db-label">PnL</span><span class="db-value ${pnlClass}">${status.pnl_today >= 0 ? '+' : ''}${status.pnl_today.toFixed(2)} USD (${status.pnl_pct >= 0 ? '+' : ''}${status.pnl_pct.toFixed(2)}%)</span></div>
-        ${silentHTML}
+        <button class="btn btn-sm ${silentBtnClass}" id="silent-toggle-btn" onclick="toggleSilentMode()">${silentBtnLabel}</button>
+        ${silentStateHTML}
+        ${lossAlertHTML}
     `;
 }
+
+async function toggleSilentMode() {
+    if (!_dailyStatus) return;
+    const newState = !_dailyStatus.silent_mode;
+    try {
+        const res = await fetch(`${API_BASE}/api/silent-mode`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({enabled: newState}),
+        });
+        if (!res.ok) { alert('Erreur toggle silent mode'); return; }
+        fetchDailyStatus();
+    } catch (e) { alert('Erreur : ' + e.message); }
+}
+
+window.toggleSilentMode = toggleSilentMode;
 
 // Expose le bouton "J'ai pris ce signal" depuis tradeSetupHTML
 function openTradeModal(pair, direction, entry, sl, tp1, pattern, confidence) {

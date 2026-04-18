@@ -46,11 +46,38 @@ def _init_schema() -> None:
             CREATE INDEX IF NOT EXISTS idx_pt_user ON personal_trades(user);
             CREATE INDEX IF NOT EXISTS idx_pt_status ON personal_trades(status);
             CREATE INDEX IF NOT EXISTS idx_pt_created ON personal_trades(created_at);
+
+            CREATE TABLE IF NOT EXISTS user_prefs (
+                user TEXT PRIMARY KEY,
+                silent_mode_manual INTEGER DEFAULT 0,
+                updated_at TEXT
+            );
         """)
         # Migration : ajoute la colonne user si elle n'existe pas (db existante)
         cols = [r[1] for r in c.execute("PRAGMA table_info(personal_trades)").fetchall()]
         if "user" not in cols:
             c.execute("ALTER TABLE personal_trades ADD COLUMN user TEXT NOT NULL DEFAULT 'anonymous'")
+
+
+def get_manual_silent(user: str) -> bool:
+    _init_schema()
+    with _conn() as c:
+        row = c.execute(
+            "SELECT silent_mode_manual FROM user_prefs WHERE user=?", (user,)
+        ).fetchone()
+        return bool(row["silent_mode_manual"]) if row else False
+
+
+def set_manual_silent(user: str, active: bool) -> bool:
+    _init_schema()
+    with _conn() as c:
+        c.execute(
+            "INSERT INTO user_prefs (user, silent_mode_manual, updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(user) DO UPDATE SET silent_mode_manual=excluded.silent_mode_manual, "
+            "updated_at=excluded.updated_at",
+            (user, 1 if active else 0, datetime.now(timezone.utc).isoformat()),
+        )
+    return active
 
 
 @contextmanager
@@ -148,7 +175,12 @@ def get_trade(trade_id: int, user: str = "anonymous") -> dict | None:
 
 
 def get_daily_status(user: str = "anonymous") -> dict:
-    """Stats du jour pour `user` : PnL, nb trades, mode silencieux actif ?"""
+    """Stats du jour pour `user`.
+
+    Retourne :
+    - silent_mode : ON/OFF selon le choix manuel du user (source unique de verite)
+    - loss_alert : True si -X% atteint (informatif, non contraignant)
+    """
     _init_schema()
     today_iso = date.today().isoformat()
     with _conn() as c:
@@ -162,7 +194,8 @@ def get_daily_status(user: str = "anonymous") -> dict:
     n_open = sum(1 for r in rows if r["status"] == "OPEN")
     pnl_today = sum(r["pnl"] or 0 for r in rows if r["status"] == "CLOSED")
     pnl_pct = (pnl_today / TRADING_CAPITAL * 100) if TRADING_CAPITAL > 0 else 0.0
-    silent_mode = pnl_pct <= -DAILY_LOSS_LIMIT_PCT
+    loss_alert = pnl_pct <= -DAILY_LOSS_LIMIT_PCT
+    silent_mode = get_manual_silent(user)
 
     return {
         "date": today_iso,
@@ -172,6 +205,7 @@ def get_daily_status(user: str = "anonymous") -> dict:
         "pnl_today": round(pnl_today, 2),
         "pnl_pct": round(pnl_pct, 2),
         "silent_mode": silent_mode,
+        "loss_alert": loss_alert,
         "daily_loss_limit_pct": DAILY_LOSS_LIMIT_PCT,
         "capital": TRADING_CAPITAL,
     }

@@ -1427,3 +1427,21 @@ body {
     background: rgba(88, 166, 255, 0.1);
     border-radius: 4px;
 }
+
+/* ─── Silent mode toggle + loss alert ──────────────────── */
+.daily-banner.loss-alert { border-bottom-color: var(--accent-yellow); }
+#silent-toggle-btn { cursor: pointer; margin-left: auto; }
+#silent-toggle-btn.silent-on {
+    background: var(--accent-red);
+    border-color: var(--accent-red);
+    color: white;
+}
+.loss-alert-badge {
+    background: rgba(210, 153, 34, 0.2);
+    border: 1px solid var(--accent-yellow);
+    color: var(--accent-yellow);
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+}
