@@ -140,6 +140,13 @@ class TradeSetup(BaseModel):
     entry_time: datetime | None = None  # Quand le setup a été détecté (= moment d'entrée suggéré)
     expiry_time: datetime | None = None  # Après cette heure, le setup n'est plus valide
     validity_minutes: int = 15  # Durée de validité en minutes
+    # Coaching : verdict + guidance
+    guidance: str = ""  # Texte en langage naturel expliquant le setup
+    verdict_action: str = ""  # "TAKE" | "WAIT" | "SKIP"
+    verdict_summary: str = ""  # Une phrase de resume
+    verdict_reasons: list[str] = []  # Facteurs favorables
+    verdict_warnings: list[str] = []  # Facteurs defavorables
+    verdict_blockers: list[str] = []  # Facteurs bloquants
 
 
 class ScalpingSignal(BaseModel):

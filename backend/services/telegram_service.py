@@ -58,9 +58,19 @@ def _format_signal(signal: ScalpingSignal) -> str:
     emoji = {"strong": "🔥", "moderate": "⚡", "weak": "💡"}.get(signal.signal_strength.value, "📊")
     lines = [
         f"{emoji} *Signal {signal.signal_strength.value.upper()}* — `{signal.pair}`",
-        f"Tendance : {signal.trend.direction.value} ({int(signal.trend.strength * 100)}%)",
-        f"Volatilite : {signal.volatility.level.value} ({signal.volatility.volatility_ratio:.1f}x)",
     ]
+
+    # Verdict en premier (pour que le user voie immediatement la reco)
+    if signal.trade_setup and signal.trade_setup.verdict_action:
+        s = signal.trade_setup
+        verdict_icon = {"TAKE": "✅", "WAIT": "⏳", "SKIP": "⛔"}.get(s.verdict_action, "")
+        lines.append(f"\n{verdict_icon} *{s.verdict_action}* — {s.verdict_summary}")
+
+    lines.extend([
+        f"\nTendance : {signal.trend.direction.value} ({int(signal.trend.strength * 100)}%)",
+        f"Volatilite : {signal.volatility.level.value} ({signal.volatility.volatility_ratio:.1f}x)",
+    ])
+
     if signal.trade_setup:
         s = signal.trade_setup
         dir_label = "ACHAT 🟢" if s.direction.value == "buy" else "VENTE 🔴"
@@ -72,11 +82,13 @@ def _format_signal(signal: ScalpingSignal) -> str:
             f"TP1 : `{s.take_profit_1:.4f}` (R:R {s.risk_reward_1:.1f})",
             f"TP2 : `{s.take_profit_2:.4f}` (R:R {s.risk_reward_2:.1f})",
         ])
+        # Raisons & warnings si presents
+        if s.verdict_reasons:
+            lines.append("\n👍 " + " | ".join(s.verdict_reasons[:3]))
+        if s.verdict_warnings:
+            lines.append("⚠️ " + " | ".join(s.verdict_warnings[:3]))
     if signal.confidence_score:
         lines.append(f"\nConfiance : *{signal.confidence_score:.0f}/100*")
-    if signal.nearby_events:
-        evs = ", ".join(f"{e.event_name} ({e.impact.value})" for e in signal.nearby_events[:3])
-        lines.append(f"\n⚠️ Evenements : {evs}")
     return "\n".join(lines)
 
 

@@ -53,10 +53,18 @@ def _init_schema() -> None:
                 updated_at TEXT
             );
         """)
-        # Migration : ajoute la colonne user si elle n'existe pas (db existante)
+        # Migration : ajoute les colonnes manquantes si DB existante
         cols = [r[1] for r in c.execute("PRAGMA table_info(personal_trades)").fetchall()]
         if "user" not in cols:
             c.execute("ALTER TABLE personal_trades ADD COLUMN user TEXT NOT NULL DEFAULT 'anonymous'")
+        if "post_entry_sl" not in cols:
+            c.execute("ALTER TABLE personal_trades ADD COLUMN post_entry_sl INTEGER DEFAULT 0")
+        if "post_entry_tp" not in cols:
+            c.execute("ALTER TABLE personal_trades ADD COLUMN post_entry_tp INTEGER DEFAULT 0")
+        if "post_entry_size" not in cols:
+            c.execute("ALTER TABLE personal_trades ADD COLUMN post_entry_size INTEGER DEFAULT 0")
+        if "post_entry_alarm" not in cols:
+            c.execute("ALTER TABLE personal_trades ADD COLUMN post_entry_alarm INTEGER DEFAULT 0")
 
 
 def get_manual_silent(user: str) -> bool:
@@ -97,8 +105,9 @@ def record_trade(data: dict, user: str = "anonymous") -> int:
         cur = c.execute(
             "INSERT INTO personal_trades "
             "(user, pair, direction, entry_price, stop_loss, take_profit, size_lot, "
-            "signal_pattern, signal_confidence, checklist_passed, notes, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "signal_pattern, signal_confidence, checklist_passed, notes, created_at, "
+            "post_entry_sl, post_entry_tp, post_entry_size, post_entry_alarm) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 user, data["pair"], data["direction"], float(data["entry_price"]),
                 float(data["stop_loss"]), float(data["take_profit"]),
@@ -108,6 +117,10 @@ def record_trade(data: dict, user: str = "anonymous") -> int:
                 1 if data.get("checklist_passed") else 0,
                 data.get("notes"),
                 datetime.now(timezone.utc).isoformat(),
+                1 if data.get("post_entry_sl") else 0,
+                1 if data.get("post_entry_tp") else 0,
+                1 if data.get("post_entry_size") else 0,
+                1 if data.get("post_entry_alarm") else 0,
             ),
         )
         return cur.lastrowid

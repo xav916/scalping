@@ -236,8 +236,8 @@ function openTradeModal(pair, direction, entry, sl, tp1, pattern, confidence) {
     form.take_profit.value = tp1;
     form.signal_pattern.value = pattern || '';
     form.signal_confidence.value = confidence || '';
-    // Reset checklist
-    modal.querySelectorAll('[data-check]').forEach(c => c.checked = false);
+    // Reset toutes les checkbox (pre-trade + post-entry)
+    modal.querySelectorAll('[data-check], [data-post-entry]').forEach(c => c.checked = false);
     modal.style.display = '';
     // Check corr warning
     _checkCorrelation(pair, direction);
@@ -276,6 +276,10 @@ async function confirmTradeSubmit() {
     if (!allChecked) {
         if (!confirm('La checklist n\'est pas entierement validee. Voulez-vous quand meme enregistrer le trade ?')) return;
     }
+    const postEntry = {};
+    modal.querySelectorAll('[data-post-entry]').forEach(cb => {
+        postEntry[`post_entry_${cb.dataset.postEntry}`] = cb.checked;
+    });
     const payload = {
         pair: form.pair.value,
         direction: form.direction.value.toLowerCase(),
@@ -287,6 +291,7 @@ async function confirmTradeSubmit() {
         signal_confidence: form.signal_confidence.value ? parseFloat(form.signal_confidence.value) : null,
         checklist_passed: allChecked,
         notes: form.notes.value || null,
+        ...postEntry,
     };
     try {
         const res = await fetch(`${API_BASE}/api/trades`, {
@@ -853,6 +858,10 @@ function tradeSetupHTML(s) {
                 <span class="pattern-desc">${patternName}</span>
             </div>
 
+            ${_verdictBlockHTML(s)}
+
+            ${s.guidance ? `<div class="setup-guidance">${_markdownToHtml(s.guidance)}</div>` : ''}
+
             <div class="setup-actions">
                 <button class="btn btn-primary btn-take-signal" onclick='openTradeModal(${JSON.stringify(s.pair)}, ${JSON.stringify(s.direction)}, ${s.entry_price}, ${s.stop_loss}, ${s.take_profit_1}, ${JSON.stringify(s.pattern?.pattern || "")}, ${s.confidence_score || 0})'>
                     ✅ J'ai pris ce signal
@@ -878,6 +887,38 @@ function tradeSetupHTML(s) {
                 </div>
             </div>
         </div>`;
+}
+
+function _verdictBlockHTML(s) {
+    if (!s.verdict_action) return '';
+    const cls = { TAKE: 'verdict-take', WAIT: 'verdict-wait', SKIP: 'verdict-skip' }[s.verdict_action] || '';
+    const icon = { TAKE: '✅', WAIT: '⏳', SKIP: '⛔' }[s.verdict_action] || '';
+    const label = { TAKE: 'PRENDRE', WAIT: 'ATTENDRE', SKIP: 'PASSER' }[s.verdict_action] || s.verdict_action;
+    const reasons = (s.verdict_reasons || []).map(r => `<li class="verdict-reason">👍 ${r}</li>`).join('');
+    const warns = (s.verdict_warnings || []).map(w => `<li class="verdict-warn">⚠️ ${w}</li>`).join('');
+    const blockers = (s.verdict_blockers || []).map(b => `<li class="verdict-block">⛔ ${b}</li>`).join('');
+    return `
+        <div class="verdict-block ${cls}">
+            <div class="verdict-header">
+                <span class="verdict-icon">${icon}</span>
+                <span class="verdict-label">${label}</span>
+                <span class="verdict-summary">${s.verdict_summary || ''}</span>
+            </div>
+            ${(reasons || warns || blockers) ? `<ul class="verdict-factors">${blockers}${warns}${reasons}</ul>` : ''}
+        </div>`;
+}
+
+function _markdownToHtml(text) {
+    // Mini parser markdown -> HTML (bold, italic, paragraphs, code)
+    if (!text) return '';
+    const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return esc(text)
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.+?)\*/g, '<em>$1</em>')
+        .replace(/`(.+?)`/g, '<code>$1</code>')
+        .replace(/\n\n/g, '</p><p>')
+        .replace(/^/, '<p>')
+        .replace(/$/, '</p>');
 }
 
 function _patternLabel(pattern) {

@@ -1445,3 +1445,77 @@ body {
     font-size: 11px;
     font-weight: 600;
 }
+
+/* ─── Verdict block ─────────────────────────────────────── */
+.verdict-block {
+    margin: 12px 0;
+    padding: 10px 14px;
+    border-radius: 6px;
+    border-left: 4px solid;
+    background: var(--bg-secondary);
+}
+.verdict-block.verdict-take { border-left-color: var(--accent-green); background: rgba(63, 185, 80, 0.08); }
+.verdict-block.verdict-wait { border-left-color: var(--accent-yellow); background: rgba(210, 153, 34, 0.08); }
+.verdict-block.verdict-skip { border-left-color: var(--accent-red); background: rgba(248, 81, 73, 0.08); }
+.verdict-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+.verdict-icon { font-size: 20px; }
+.verdict-label {
+    font-weight: 700;
+    font-size: 14px;
+    letter-spacing: 1px;
+}
+.verdict-take .verdict-label { color: var(--accent-green); }
+.verdict-wait .verdict-label { color: var(--accent-yellow); }
+.verdict-skip .verdict-label { color: var(--accent-red); }
+.verdict-summary { font-size: 13px; color: var(--text-secondary); flex: 1; }
+.verdict-factors {
+    margin-top: 8px;
+    padding-left: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+.verdict-factors li {
+    font-size: 12px;
+    padding: 2px 0;
+}
+.verdict-reason { color: var(--accent-green); }
+.verdict-warn { color: var(--accent-yellow); }
+.verdict-block { color: var(--text-secondary); }
+.verdict-factors .verdict-block { color: var(--accent-red); }
+
+/* ─── Guidance text (paragraphe sous chaque setup) ──────── */
+.setup-guidance {
+    background: var(--bg-secondary);
+    padding: 12px 14px;
+    border-radius: 6px;
+    margin: 10px 0;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--text-secondary);
+}
+.setup-guidance p { margin: 0 0 8px 0; }
+.setup-guidance p:last-child { margin-bottom: 0; }
+.setup-guidance strong { color: var(--text-primary); }
+.setup-guidance em { color: var(--accent-blue); font-style: normal; font-weight: 600; }
+.setup-guidance code {
+    background: var(--bg-primary);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 12px;
+    font-family: 'Courier New', monospace;
+}
+
+/* ─── Post-entry checklist ──────────────────────────────── */
+.checklist.post-entry {
+    margin-top: 14px;
+    border: 1px dashed var(--accent-blue);
+    background: rgba(88, 166, 255, 0.05);
+}
+.checklist.post-entry h4 { color: var(--accent-blue); }

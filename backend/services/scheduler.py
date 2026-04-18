@@ -15,7 +15,7 @@ from backend.services.analysis_engine import (
 )
 from backend.services.forexfactory_service import fetch_economic_events
 from backend.services.mataf_service import fetch_volatility_data
-from backend.services import backtest_service
+from backend.services import backtest_service, coaching
 from backend.services.notification_service import broadcast_signals, broadcast_update
 from backend.services.telegram_service import send_signals as telegram_send_signals
 from backend.services.pattern_detector import calculate_trade_setup, detect_patterns
@@ -113,6 +113,16 @@ async def run_analysis_cycle() -> None:
                             trend=trend_map.get(pair),
                             events=economic_events,
                         )
+                        # Enrichissement coaching : guidance + verdict
+                        vol = vol_map.get(pair)
+                        tr = trend_map.get(pair)
+                        setup.guidance = coaching.generate_guidance(setup, volatility=vol, trend=tr, events=economic_events)
+                        verdict = coaching.compute_verdict(setup, volatility=vol, trend=tr, events=economic_events)
+                        setup.verdict_action = verdict["action"]
+                        setup.verdict_summary = verdict["summary"]
+                        setup.verdict_reasons = verdict["reasons"]
+                        setup.verdict_warnings = verdict["warnings"]
+                        setup.verdict_blockers = verdict["blockers"]
                         all_trade_setups.append(setup)
 
         # Filtrer pour ne garder que les setups haute confiance
