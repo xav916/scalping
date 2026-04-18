@@ -1,7 +1,23 @@
 /**
- * Scalping Radar - Application Frontend
- * Dashboard temps réel pour la détection de signaux de scalping
+ * Scalping Radar — Application Frontend
+ * Dashboard temps réel pour la détection de signaux de scalping.
+ *
+ * Ce fichier est chargé en tant que module ES (<script type="module">).
+ * Les helpers purs ont été extraits dans ./modules/utils.js afin d'être
+ * testables isolément. Un découpage plus fin (ws/render/actions/api) est
+ * documenté dans ./MODULES.md — il nécessite des tests pour être fait
+ * sans régression, donc non réalisé dans cette passe.
  */
+
+import {
+    escapeHtml,
+    strengthLabel as _strengthLabel,
+    patternLabel as _patternLabel,
+    markdownToHtml as _markdownToHtml,
+    isExpired as _isExpired,
+    countdown as _countdown,
+    relativeTime as _relativeTime,
+} from './modules/utils.js';
 
 const API_BASE = window.location.origin;
 const WS_PROTO = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -9,23 +25,56 @@ const WS_URL = `${WS_PROTO}//${window.location.host}/ws`;
 
 let ws = null;
 let reconnectAttempts = 0;
+let reconnectTimer = null;
+let heartbeatInterval = null;
 const MAX_RECONNECT_DELAY = 30000;
-const AUTO_REFRESH_INTERVAL = 5000; // Polling API toutes les 5s
+// Fallback polling : uniquement si le WS est tombé. Réduit drastiquement la bande passante.
+const POLL_FALLBACK_INTERVAL = 60000;
 let lastUpdateTime = null;
-let liveClockInterval = null;
+
+// ─── Utilitaires locaux ──────────────────────────────────────────────
+// escapeHtml et les formatteurs purs (countdown, isExpired, etc.) sont
+// dans ./modules/utils.js. Seuls les helpers qui manipulent l'état
+// global du module (ws, etc.) restent ici.
+
+/** Vrai quand le WebSocket est ouvert — sert à gater le polling de secours. */
+function isWsConnected() {
+    return ws && ws.readyState === WebSocket.OPEN;
+}
+
+// ─── Intercepteur fetch : redirige vers /login si la session expire ──
+// Patch global de window.fetch pour que CHAQUE requête API détecte un 401
+// et renvoie l'utilisateur sur la page de login avec ?next=<url_actuelle>.
+// Le service worker est bypass (il ne gère que le shell statique).
+(function installAuthFetchInterceptor() {
+    const originalFetch = window.fetch.bind(window);
+    let redirecting = false;
+    window.fetch = async (...args) => {
+        const res = await originalFetch(...args);
+        if (res.status === 401 && !redirecting) {
+            redirecting = true;
+            const next = encodeURIComponent(window.location.pathname + window.location.search);
+            window.location.replace(`/login?next=${next}`);
+        }
+        return res;
+    };
+})();
 
 // ─── WebSocket ───────────────────────────────────────────────────────
 
 function connectWebSocket() {
-    if (ws && ws.readyState === WebSocket.OPEN) return;
+    if (isWsConnected()) return;
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
 
     ws = new WebSocket(WS_URL);
 
     ws.onopen = () => {
         reconnectAttempts = 0;
         setConnectionStatus(true);
-        setInterval(() => {
-            if (ws && ws.readyState === WebSocket.OPEN) ws.send('ping');
+        // Empêche l'empilement d'intervalles au reconnect
+        if (heartbeatInterval) clearInterval(heartbeatInterval);
+        heartbeatInterval = setInterval(() => {
+            if (isWsConnected()) ws.send('ping');
         }, 30000);
     };
 
@@ -36,6 +85,7 @@ function connectWebSocket() {
 
     ws.onclose = () => {
         setConnectionStatus(false);
+        if (heartbeatInterval) { clearInterval(heartbeatInterval); heartbeatInterval = null; }
         scheduleReconnect();
     };
 
@@ -43,9 +93,13 @@ function connectWebSocket() {
 }
 
 function scheduleReconnect() {
+    if (reconnectTimer) return; // déjà planifié
     const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), MAX_RECONNECT_DELAY);
     reconnectAttempts++;
-    setTimeout(connectWebSocket, delay);
+    reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        connectWebSocket();
+    }, delay);
 }
 
 function setConnectionStatus(connected) {
@@ -56,7 +110,7 @@ function setConnectionStatus(connected) {
         statusText.textContent = 'En ligne';
     } else {
         indicator.classList.add('disconnected');
-        statusText.textContent = 'Deconnecte';
+        statusText.textContent = 'Déconnecté';
     }
 }
 
@@ -241,7 +295,7 @@ function renderDailyBanner(status) {
         <div class="db-stat"><span class="db-label">Aujourd'hui</span><span class="db-value">${status.date}</span></div>
         <div class="db-stat"><span class="db-label">Trades</span><span class="db-value">${status.n_trades_today} (${status.n_open} ouverts)</span></div>
         <div class="db-stat"><span class="db-label">PnL</span><span class="db-value ${pnlClass}">${status.pnl_today >= 0 ? '+' : ''}${status.pnl_today.toFixed(2)} USD (${status.pnl_pct >= 0 ? '+' : ''}${status.pnl_pct.toFixed(2)}%)</span></div>
-        <button class="btn btn-sm ${silentBtnClass}" id="silent-toggle-btn" onclick="toggleSilentMode()">${silentBtnLabel}</button>
+        <button type="button" class="btn btn-sm ${silentBtnClass}" id="silent-toggle-btn" data-action="toggle-silent">${silentBtnLabel}</button>
         ${silentStateHTML}
         ${lossAlertHTML}
     `;
@@ -311,6 +365,8 @@ function openTradeModal(pair, direction, entry, sl, tp1, pattern, confidence) {
     form.signal_confidence.value = confidence || '';
     // Reset toutes les checkbox (pre-trade + post-entry)
     modal.querySelectorAll('[data-check], [data-post-entry]').forEach(c => c.checked = false);
+    // Reset à l'étape 1 à chaque ouverture
+    _showTradeStep(1);
     modal.style.display = '';
     // Check corr warning
     _checkCorrelation(pair, direction);
@@ -331,6 +387,65 @@ function closeTradeModal() {
     _currentSignalForModal = null;
 }
 
+/** Affiche l'étape demandée (1 ou 2) dans la modale trade. */
+function _showTradeStep(step) {
+    const modal = document.getElementById('trade-modal');
+    if (!modal) return;
+    modal.dataset.step = String(step);
+    modal.querySelectorAll('.modal-step[data-step]').forEach(el => {
+        el.hidden = (el.dataset.step !== String(step));
+    });
+    modal.querySelectorAll('[data-step-dot]').forEach(el => {
+        el.classList.toggle('active', el.dataset.stepDot === String(step));
+    });
+    // Rendre le récap pour l'étape 2
+    if (step === 2) _renderTradeSummary();
+}
+
+/** Construit le récap de trade montré à l'étape 2 (synthèse pour validation). */
+function _renderTradeSummary() {
+    const form = document.getElementById('trade-form');
+    const summary = document.getElementById('trade-summary');
+    if (!form || !summary) return;
+    const pair = form.pair.value;
+    const dir = form.direction.value;
+    const entry = parseFloat(form.entry_price.value) || 0;
+    const sl = parseFloat(form.stop_loss.value) || 0;
+    const tp = parseFloat(form.take_profit.value) || 0;
+    const size = parseFloat(form.size_lot.value) || 0;
+    const risk = Math.abs(entry - sl) * size * 100000;
+    summary.innerHTML = `
+        <h4>Récapitulatif</h4>
+        <ul>
+            <li><strong>${escapeHtml(pair)}</strong> · ${escapeHtml(dir)} · ${size} lot(s)</li>
+            <li>Entry : ${entry.toFixed(5)} · SL : ${sl.toFixed(5)} · TP : ${tp.toFixed(5)}</li>
+            <li>Risque estimé : <strong>${risk.toFixed(2)} USD</strong></li>
+        </ul>
+    `;
+}
+
+/** Passe de l'étape 1 à la 2 après validation des pré-checks et du formulaire. */
+function goToTradeStep2() {
+    const form = document.getElementById('trade-form');
+    // Validité du formulaire natif (champs required)
+    if (!form.checkValidity()) {
+        form.reportValidity();
+        return;
+    }
+    // Checklist pré-trade
+    const modal = document.getElementById('trade-modal');
+    const preChecks = Array.from(modal.querySelectorAll('[data-check]'));
+    const allChecked = preChecks.every(c => c.checked);
+    if (!allChecked) {
+        if (!confirm('La checklist pré-trade n\'est pas entièrement validée. Continuer quand même ?')) return;
+    }
+    _showTradeStep(2);
+}
+
+function goToTradeStep1() {
+    _showTradeStep(1);
+}
+
 async function _checkCorrelation(pair, direction) {
     const warn = document.getElementById('correlation-warning');
     warn.style.display = 'none';
@@ -344,7 +459,9 @@ async function _checkCorrelation(pair, direction) {
         if (!res.ok) return;
         const data = await res.json();
         if (data.warning && data.correlated_open_trades.length) {
-            const list = data.correlated_open_trades.map(t => `${t.pair} (${t.direction})`).join(', ');
+            const list = data.correlated_open_trades
+                .map(t => `${escapeHtml(t.pair)} (${escapeHtml(t.direction)})`)
+                .join(', ');
             warn.style.display = '';
             warn.innerHTML = `⚠️ <strong>Attention corrélation</strong> — vous avez déjà ces positions ouvertes qui bougent dans le même sens : <strong>${list}</strong>. Prendre ce trade double votre exposition.`;
         }
@@ -354,11 +471,10 @@ async function _checkCorrelation(pair, direction) {
 async function confirmTradeSubmit() {
     const form = document.getElementById('trade-form');
     const modal = document.getElementById('trade-modal');
-    const checks = Array.from(modal.querySelectorAll('[data-check]'));
-    const allChecked = checks.every(c => c.checked);
-    if (!allChecked) {
-        if (!confirm('La checklist n\'est pas entierement validee. Voulez-vous quand meme enregistrer le trade ?')) return;
-    }
+    // La checklist pré-trade est désormais validée à l'étape 1 (goToTradeStep2).
+    // Ici on ne relit que son état pour l'enregistrer dans le payload.
+    const preChecks = Array.from(modal.querySelectorAll('[data-check]'));
+    const allChecked = preChecks.every(c => c.checked);
     const postEntry = {};
     modal.querySelectorAll('[data-post-entry]').forEach(cb => {
         postEntry[`post_entry_${cb.dataset.postEntry}`] = cb.checked;
@@ -402,7 +518,7 @@ function renderPersonalTrades(trades) {
     const container = document.getElementById('personal-trades');
     if (!container) return;
     if (!trades.length) {
-        container.innerHTML = '<div class="empty-state"><p>Aucun trade enregistre pour l\'instant.</p><p>Cliquez "J\'ai pris ce signal" sur un setup pour commencer.</p></div>';
+        container.innerHTML = '<div class="empty-state"><p>Aucun trade enregistré pour l\'instant.</p><p>Cliquez « J\'ai pris ce signal » sur un setup pour commencer.</p></div>';
         return;
     }
     container.innerHTML = `
@@ -418,17 +534,17 @@ function renderPersonalTrades(trades) {
                     const dt = new Date(t.created_at).toLocaleString('fr-FR', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'});
                     const pnlClass = t.pnl > 0 ? 'pnl-positive' : t.pnl < 0 ? 'pnl-negative' : '';
                     const action = t.status === 'OPEN'
-                        ? `<button class="btn btn-sm" onclick="openCloseModal(${t.id})">Cloturer</button>`
+                        ? `<button type="button" class="btn btn-sm" data-action="close-trade" data-trade-id="${t.id}">Clôturer</button>`
                         : '';
                     return `<tr class="${t.status === 'OPEN' ? 'trade-open' : ''}">
                         <td>${dt}</td>
-                        <td><strong>${t.pair}</strong></td>
-                        <td class="${t.direction === 'buy' ? 'dir-buy' : 'dir-sell'}">${t.direction.toUpperCase()}</td>
+                        <td><strong>${escapeHtml(t.pair)}</strong></td>
+                        <td class="${t.direction === 'buy' ? 'dir-buy' : 'dir-sell'}">${escapeHtml(t.direction.toUpperCase())}</td>
                         <td>${t.entry_price.toFixed(4)}</td>
                         <td>${t.stop_loss.toFixed(4)}</td>
                         <td>${t.take_profit.toFixed(4)}</td>
                         <td>${t.size_lot}</td>
-                        <td><span class="trade-status ${t.status.toLowerCase()}">${t.status}</span></td>
+                        <td><span class="trade-status ${escapeHtml((t.status || '').toLowerCase())}">${escapeHtml(t.status)}</span></td>
                         <td class="${pnlClass}">${t.pnl ? (t.pnl >= 0 ? '+' : '') + t.pnl.toFixed(2) : '—'}</td>
                         <td>${action}</td>
                     </tr>`;
@@ -462,7 +578,7 @@ async function confirmCloseTrade() {
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({exit_price, notes: form.notes.value || null}),
         });
-        if (!res.ok) { alert('Erreur cloture'); return; }
+        if (!res.ok) { alert('Erreur clôture'); return; }
         closeCloseModal();
         fetchPersonalTrades();
         fetchDailyStatus();
@@ -492,7 +608,7 @@ async function fetchRiskDashboard() {
         const warnHTML = data.warning_over_3pct
             ? `<div class="risk-warning">⚠️ Risque cumulé > 3% du capital — réduire l'exposition</div>` : '';
         const rows = data.by_trade.map(t => `
-            <tr><td>${t.pair}</td><td>${t.direction.toUpperCase()}</td><td>${t.size_lot}</td><td>${t.risk_usd.toFixed(2)} USD</td></tr>
+            <tr><td>${escapeHtml(t.pair)}</td><td>${escapeHtml(t.direction.toUpperCase())}</td><td>${t.size_lot}</td><td>${t.risk_usd.toFixed(2)} USD</td></tr>
         `).join('');
         body.innerHTML = `
             <div class="risk-summary">
@@ -635,13 +751,13 @@ function renderBacktestStats(stats) {
     const container = document.getElementById('backtest-stats');
     if (!container) return;
     if (!stats.total_trades) {
-        container.innerHTML = '<div class="empty-state"><p>Aucun trade enregistre pour le moment.</p><p>Les stats apparaitront des qu\'un signal aura ete emis.</p></div>';
+        container.innerHTML = '<div class="empty-state"><p>Aucun trade enregistré pour le moment.</p><p>Les stats apparaîtront dès qu\'un signal aura été émis.</p></div>';
         return;
     }
     const winRateClass = stats.win_rate_pct >= 60 ? 'conf-high' : stats.win_rate_pct >= 50 ? 'conf-medium' : 'conf-low';
     const pairsHTML = (stats.by_pair || []).map(p => `
         <tr>
-            <td><strong>${p.pair}</strong></td>
+            <td><strong>${escapeHtml(p.pair)}</strong></td>
             <td>${p.wins}W / ${p.losses}L</td>
             <td>${p.total}</td>
             <td><span class="${p.win_rate_pct >= 50 ? 'factor-positive' : 'factor-negative'}">${p.win_rate_pct}%</span></td>
@@ -722,7 +838,7 @@ function _renderSessionMarkers() {
     if (!el) return;
     const active = _activeSessions();
     if (!active.length) {
-        el.innerHTML = '<span class="session-badge session-closed">Marche ferme</span>';
+        el.innerHTML = '<span class="session-badge session-closed">Marché fermé</span>';
         return;
     }
     el.innerHTML = active.map(s =>
@@ -744,7 +860,7 @@ async function fetchTicks() {
         document.getElementById('live-ticks-section').style.display = '';
         const info = document.getElementById('live-ticks-info');
         if (info) info.textContent = `${data.symbols.length} symbole(s) streame(s)`;
-        // Seed du state avec les derniers ticks deja recus
+        // Seed du state avec les derniers ticks déjà reçus
         Object.entries(data.ticks || {}).forEach(([pair, t]) => {
             _tickState[pair] = { price: t.price, prev: t.price, lastTs: t.timestamp, history: [t.price] };
         });
@@ -760,12 +876,13 @@ function renderTicks(symbols) {
     grid.innerHTML = symbols.map(pair => {
         const state = _tickState[pair] || {};
         const price = state.price !== undefined ? state.price.toFixed(pair.includes('JPY') ? 3 : 5) : '—';
+        const safePair = escapeHtml(pair);
         return `
-            <div class="tick-card" data-pair="${pair}">
-                <div class="tick-pair">${pair}</div>
-                <div class="tick-price" data-pair-price="${pair}">${price}</div>
-                <svg class="tick-sparkline" data-pair-spark="${pair}" viewBox="0 0 100 30" preserveAspectRatio="none"></svg>
-                <div class="tick-ts" data-pair-ts="${pair}">${state.lastTs ? _relativeTime(state.lastTs) : '—'}</div>
+            <div class="tick-card" data-pair="${safePair}">
+                <div class="tick-pair">${safePair}</div>
+                <div class="tick-price" data-pair-price="${safePair}">${price}</div>
+                <svg class="tick-sparkline" data-pair-spark="${safePair}" viewBox="0 0 100 30" preserveAspectRatio="none"></svg>
+                <div class="tick-ts" data-pair-ts="${safePair}">${state.lastTs ? _relativeTime(state.lastTs) : '—'}</div>
             </div>`;
     }).join('');
     symbols.forEach(pair => _drawSparkline(pair));
@@ -823,13 +940,6 @@ function handleTick(tick) {
     _drawSparkline(tick.pair);
 }
 
-function _relativeTime(isoTs) {
-    const sec = Math.max(0, Math.floor((Date.now() - new Date(isoTs)) / 1000));
-    if (sec < 2) return 'maintenant';
-    if (sec < 60) return `il y a ${sec}s`;
-    return `il y a ${Math.floor(sec / 60)}min`;
-}
-
 // ─── Rendu principal ─────────────────────────────────────────────────
 
 function renderFullDashboard(data) {
@@ -874,7 +984,7 @@ function _renderFilteredSetups() {
     if (!filtered.length) {
         const msg = _lastSetups.length
             ? `<p>Aucun setup ne correspond aux filtres actuels.</p>`
-            : `<p><strong>Aucun setup de trade actif</strong></p><p>Les recommandations d'entree/sortie apparaitront quand un pattern sera detecte.</p>`;
+            : `<p><strong>Aucun setup de trade actif</strong></p><p>Les recommandations d'entrée/sortie apparaîtront dès qu'un pattern sera détecté.</p>`;
         container.innerHTML = `<div class="empty-state">${msg}</div>`;
         _disposeAllCharts();
         return;
@@ -1015,7 +1125,7 @@ function tradeSetupHTML(s) {
                 <div class="setup-direction ${dirClass}">
                     <span class="dir-icon">${dirIcon}</span>
                     <span class="dir-label">${dirLabel}</span>
-                    <span class="setup-pair">${s.pair}</span>
+                    <span class="setup-pair">${escapeHtml(s.pair)}</span>
                     ${simBadge}
                 </div>
                 <div class="setup-confidence-score ${confColor}">
@@ -1028,7 +1138,7 @@ function tradeSetupHTML(s) {
 
             <div class="setup-levels">
                 <div class="level-box entry">
-                    <div class="level-label">ENTREE</div>
+                    <div class="level-label">ENTRÉE</div>
                     <div class="level-value">${s.entry_price?.toFixed(2)}</div>
                 </div>
                 <div class="level-box sl">
@@ -1067,9 +1177,9 @@ function tradeSetupHTML(s) {
                 </div>
             </div>
 
-            <div class="setup-explanation-toggle" onclick="this.parentElement.querySelector('.setup-explanation').classList.toggle('open')">
-                Voir l'analyse detaillee
-            </div>
+            <button type="button" class="setup-explanation-toggle" data-action="toggle-explanation" aria-expanded="false">
+                Voir l'analyse détaillée
+            </button>
             <div class="setup-explanation">
                 <div class="explanation-factors">
                     <div class="factors-title">FACTEURS DE CONFIANCE</div>
@@ -1078,8 +1188,8 @@ function tradeSetupHTML(s) {
             </div>
 
             <div class="setup-pattern">
-                <span class="pattern-tag">${_patternLabel(s.pattern?.pattern)}</span>
-                <span class="pattern-desc">${patternName}</span>
+                <span class="pattern-tag">${escapeHtml(_patternLabel(s.pattern?.pattern))}</span>
+                <span class="pattern-desc">${escapeHtml(patternName)}</span>
             </div>
 
             ${_verdictBlockHTML(s)}
@@ -1087,18 +1197,26 @@ function tradeSetupHTML(s) {
             ${s.guidance ? `<div class="setup-guidance">${_markdownToHtml(s.guidance)}</div>` : ''}
 
             <div class="setup-actions">
-                <button class="btn btn-primary btn-take-signal" onclick='openTradeModal(${JSON.stringify(s.pair)}, ${JSON.stringify(s.direction)}, ${s.entry_price}, ${s.stop_loss}, ${s.take_profit_1}, ${JSON.stringify(s.pattern?.pattern || "")}, ${s.confidence_score || 0})'>
+                <button type="button" class="btn btn-primary btn-take-signal"
+                        data-action="open-trade"
+                        data-pair="${escapeHtml(s.pair)}"
+                        data-direction="${escapeHtml(s.direction)}"
+                        data-entry="${s.entry_price}"
+                        data-sl="${s.stop_loss}"
+                        data-tp1="${s.take_profit_1}"
+                        data-pattern="${escapeHtml(s.pattern?.pattern || '')}"
+                        data-confidence="${s.confidence_score || 0}">
                     ✅ J'ai pris ce signal
                 </button>
             </div>
 
             <div class="setup-timestamps">
                 <div class="ts-entry">
-                    <span class="ts-label">ENTREE</span>
+                    <span class="ts-label">ENTRÉE</span>
                     <span class="ts-value">${s.entry_time ? new Date(s.entry_time).toLocaleTimeString() : time}</span>
                 </div>
                 <div class="ts-expiry ${_isExpired(s.expiry_time) ? 'expired' : 'active'}">
-                    <span class="ts-label">${_isExpired(s.expiry_time) ? 'EXPIRE' : 'VALIDE JUSQU\'A'}</span>
+                    <span class="ts-label">${_isExpired(s.expiry_time) ? 'EXPIRÉ' : 'VALIDE JUSQU\'À'}</span>
                     <span class="ts-value">${s.expiry_time ? new Date(s.expiry_time).toLocaleTimeString() : '--:--'}</span>
                 </div>
                 <div class="ts-countdown" data-expiry="${s.expiry_time || ''}">
@@ -1106,7 +1224,7 @@ function tradeSetupHTML(s) {
                     <span class="ts-value countdown-value">${_countdown(s.expiry_time)}</span>
                 </div>
                 <div class="ts-validity">
-                    <span class="ts-label">VALIDITE</span>
+                    <span class="ts-label">VALIDITÉ</span>
                     <span class="ts-value">${s.validity_minutes || 15} min</span>
                 </div>
             </div>
@@ -1126,41 +1244,10 @@ function _verdictBlockHTML(s) {
             <div class="verdict-header">
                 <span class="verdict-icon">${icon}</span>
                 <span class="verdict-label">${label}</span>
-                <span class="verdict-summary">${s.verdict_summary || ''}</span>
+                <span class="verdict-summary">${escapeHtml(s.verdict_summary || '')}</span>
             </div>
             ${(reasons || warns || blockers) ? `<ul class="verdict-factors">${blockers}${warns}${reasons}</ul>` : ''}
         </div>`;
-}
-
-function _markdownToHtml(text) {
-    // Mini parser markdown -> HTML (bold, italic, paragraphs, code)
-    if (!text) return '';
-    const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    return esc(text)
-        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-        .replace(/\*(.+?)\*/g, '<em>$1</em>')
-        .replace(/`(.+?)`/g, '<code>$1</code>')
-        .replace(/\n\n/g, '</p><p>')
-        .replace(/^/, '<p>')
-        .replace(/$/, '</p>');
-}
-
-function _patternLabel(pattern) {
-    const labels = {
-        'breakout_up': 'Cassure Resistance',
-        'breakout_down': 'Cassure Support',
-        'momentum_up': 'Momentum Haussier',
-        'momentum_down': 'Momentum Baissier',
-        'range_bounce_up': 'Rebond Support',
-        'range_bounce_down': 'Rejet Resistance',
-        'mean_reversion_up': 'Retour Moyenne',
-        'mean_reversion_down': 'Retour Moyenne',
-        'engulfing_bullish': 'Englobante Haussiere',
-        'engulfing_bearish': 'Englobante Baissiere',
-        'pin_bar_up': 'Pin Bar Haussiere',
-        'pin_bar_down': 'Pin Bar Baissiere',
-    };
-    return labels[pattern] || pattern || '';
 }
 
 // ─── Patterns ────────────────────────────────────────────────────────
@@ -1168,7 +1255,7 @@ function _patternLabel(pattern) {
 function renderPatterns(patterns) {
     const container = document.getElementById('patterns-body');
     if (!patterns.length) {
-        container.innerHTML = '<div class="empty-state"><p>Aucun pattern detecte</p></div>';
+        container.innerHTML = '<div class="empty-state"><p>Aucun pattern détecté</p></div>';
         return;
     }
 
@@ -1177,19 +1264,19 @@ function renderPatterns(patterns) {
         const isBull = p.pattern.includes('up') || p.pattern.includes('bullish');
         const colorClass = isBull ? 'bullish' : 'bearish';
 
-        const explanationHTML = p.explanation ? `<div class="pattern-explanation">${p.explanation}</div>` : '';
-        const reliabilityHTML = p.reliability ? `<div class="pattern-reliability">${p.reliability}</div>` : '';
+        const explanationHTML = p.explanation ? `<div class="pattern-explanation">${escapeHtml(p.explanation)}</div>` : '';
+        const reliabilityHTML = p.reliability ? `<div class="pattern-reliability">${escapeHtml(p.reliability)}</div>` : '';
         const hasDetails = p.explanation || p.reliability;
 
         return `
             <div class="pattern-item-card ${colorClass}">
                 <div class="pattern-item-header">
-                    <span class="pattern-tag">${_patternLabel(p.pattern)}</span>
+                    <span class="pattern-tag">${escapeHtml(_patternLabel(p.pattern))}</span>
                     <span class="pattern-conf">${confPct}%</span>
-                    <span class="pattern-desc-text">${p.description}</span>
+                    <span class="pattern-desc-text">${escapeHtml(p.description)}</span>
                 </div>
                 ${hasDetails ? `
-                <div class="pattern-details-toggle" onclick="this.nextElementSibling.classList.toggle('open')">Comprendre ce pattern</div>
+                <button type="button" class="pattern-details-toggle" data-action="toggle-next" aria-expanded="false">Comprendre ce pattern</button>
                 <div class="pattern-details-panel">
                     ${explanationHTML}
                     ${reliabilityHTML}
@@ -1206,7 +1293,7 @@ function renderSignals(signals) {
         container.innerHTML = `
             <div class="empty-state">
                 <p><strong>Aucun signal actif</strong></p>
-                <p>Le radar scanne le marche. Les signaux apparaitront ici.</p>
+                <p>Le radar scanne le marché. Les signaux apparaîtront ici.</p>
             </div>`;
         return;
     }
@@ -1249,7 +1336,7 @@ function signalCardHTML(s) {
     let eventsHTML = '';
     if (events.length) {
         eventsHTML = `<div style="margin-top:4px;font-size:12px;color:var(--accent-yellow)">
-            Evenements: ${events.map(e => `${e.name || e.event_name} (${e.impact})`).join(', ')}
+            Événements : ${events.map(e => `${escapeHtml(e.name || e.event_name)} (${escapeHtml(e.impact)})`).join(', ')}
         </div>`;
     }
 
@@ -1275,7 +1362,7 @@ function signalCardHTML(s) {
     return `
         <div class="signal-card ${strength}">
             <div style="display:flex;align-items:center;gap:8px;">
-                <span class="signal-pair">${s.pair}</span>
+                <span class="signal-pair">${escapeHtml(s.pair)}</span>
                 <span class="signal-badge ${strength}">${_strengthLabel(strength)}</span>
                 <span class="level-tag ${volLevel}">vol ${volRatio.toFixed(1)}x</span>
                 <span class="setup-confidence-score ${sigConfColor}" style="margin-left:auto;padding:3px 8px;">
@@ -1290,7 +1377,7 @@ function signalCardHTML(s) {
             ${setupHTML}
             ${eventsHTML}
             ${sigFactorsHTML ? `
-            <div class="setup-explanation-toggle" onclick="this.nextElementSibling.classList.toggle('open')">Voir l'analyse detaillee</div>
+            <button type="button" class="setup-explanation-toggle" data-action="toggle-next" aria-expanded="false">Voir l'analyse détaillée</button>
             <div class="setup-explanation">
                 <div class="explanation-factors">
                     <div class="factors-title">FACTEURS DE CONFIANCE</div>
@@ -1299,10 +1386,6 @@ function signalCardHTML(s) {
             </div>` : ''}
             <div class="signal-time">${time}</div>
         </div>`;
-}
-
-function _strengthLabel(s) {
-    return { strong: 'FORT', moderate: 'MODERE', weak: 'FAIBLE' }[s] || s;
 }
 
 // ─── Volatilité ──────────────────────────────────────────────────────
@@ -1322,13 +1405,13 @@ function renderVolatility(volData) {
     container.innerHTML = `
         <table class="vol-table">
             <thead>
-                <tr><th>Paire</th><th>Niveau</th><th>Ratio</th><th>Volatilite</th></tr>
+                <tr><th>Paire</th><th>Niveau</th><th>Ratio</th><th>Volatilité</th></tr>
             </thead>
             <tbody>
                 ${sorted.map(v => {
                     const pct = Math.min((v.volatility_ratio / maxRatio) * 100, 100);
                     return `<tr>
-                        <td><strong>${v.pair}</strong></td>
+                        <td><strong>${escapeHtml(v.pair)}</strong></td>
                         <td><span class="level-tag ${v.level}">${volLabels[v.level] || v.level}</span></td>
                         <td>${v.volatility_ratio.toFixed(2)}x</td>
                         <td>
@@ -1347,7 +1430,7 @@ function renderVolatility(volData) {
 function renderEvents(events) {
     const container = document.getElementById('events-body');
     if (!events.length) {
-        container.innerHTML = '<div class="empty-state"><p>Aucun evenement economique</p></div>';
+        container.innerHTML = '<div class="empty-state"><p>Aucun événement économique</p></div>';
         return;
     }
 
@@ -1355,14 +1438,14 @@ function renderEvents(events) {
 
     container.innerHTML = events.map(e => `
         <div class="event-item">
-            <span class="event-time">${e.time || '--:--'}</span>
-            <span class="impact-dot ${e.impact}"></span>
-            <span class="event-currency">${e.currency}</span>
-            <span class="event-name">${e.event_name}</span>
+            <span class="event-time">${escapeHtml(e.time) || '--:--'}</span>
+            <span class="impact-dot ${escapeHtml(e.impact)}"></span>
+            <span class="event-currency">${escapeHtml(e.currency)}</span>
+            <span class="event-name">${escapeHtml(e.event_name)}</span>
             <span class="event-values">
-                ${e.actual ? `R: ${e.actual}` : ''}
-                ${e.forecast ? `P: ${e.forecast}` : ''}
-                ${e.previous ? `Prec: ${e.previous}` : ''}
+                ${e.actual ? `R : ${escapeHtml(e.actual)}` : ''}
+                ${e.forecast ? `P : ${escapeHtml(e.forecast)}` : ''}
+                ${e.previous ? `Préc. : ${escapeHtml(e.previous)}` : ''}
             </span>
         </div>
     `).join('');
@@ -1431,8 +1514,8 @@ function showToast(signal) {
     }
 
     toast.innerHTML = `
-        <div class="toast-title">Signal Scalping: ${signal.pair}</div>
-        <div class="toast-body">${setupInfo || signal.message || `Signal ${_strengthLabel(strength)} detecte`}</div>
+        <div class="toast-title">Signal Scalping : ${escapeHtml(signal.pair)}</div>
+        <div class="toast-body">${escapeHtml(setupInfo || signal.message || `Signal ${_strengthLabel(strength)} détecté`)}</div>
     `;
 
     container.appendChild(toast);
@@ -1457,7 +1540,7 @@ function requestBrowserNotification(signal) {
 
 function sendBrowserNotification(signal) {
     const setup = signal.trade_setup;
-    let body = signal.message || 'Opportunite detectee';
+    let body = signal.message || 'Opportunité détectée';
     if (setup) {
         const dir = setup.direction === 'buy' ? 'ACHAT' : 'VENTE';
         body = `${dir} @ ${setup.entry_price?.toFixed(2)} | SL: ${setup.stop_loss?.toFixed(2)} | TP: ${setup.take_profit_1?.toFixed(2)}`;
@@ -1471,20 +1554,7 @@ function sendBrowserNotification(signal) {
 }
 
 // ─── Timestamps helpers ─────────────────────────────────────────────
-
-function _isExpired(expiryTime) {
-    if (!expiryTime) return false;
-    return new Date() > new Date(expiryTime);
-}
-
-function _countdown(expiryTime) {
-    if (!expiryTime) return '--:--';
-    const diff = new Date(expiryTime) - new Date();
-    if (diff <= 0) return 'EXPIRE';
-    const min = Math.floor(diff / 60000);
-    const sec = Math.floor((diff % 60000) / 1000);
-    return `${min}:${sec.toString().padStart(2, '0')}`;
-}
+// _isExpired, _countdown, _relativeTime sont dans ./modules/utils.js
 
 function _updateCountdowns() {
     document.querySelectorAll('.ts-countdown').forEach(el => {
@@ -1499,7 +1569,7 @@ function _updateCountdowns() {
             if (_isExpired(expiry)) {
                 expiryEl.classList.add('expired');
                 expiryEl.classList.remove('active');
-                expiryEl.querySelector('.ts-label').textContent = 'EXPIRE';
+                expiryEl.querySelector('.ts-label').textContent = 'EXPIRÉ';
             }
         }
     });
@@ -1508,8 +1578,11 @@ function _updateCountdowns() {
 // ─── Glossaire ──────────────────────────────────────────────────────
 
 let glossaryData = [];
+let _glossaryLoaded = false;
 
 async function fetchGlossary() {
+    if (_glossaryLoaded) return;
+    _glossaryLoaded = true;
     try {
         const res = await fetch(`${API_BASE}/api/glossary`);
         glossaryData = await res.json();
@@ -1522,17 +1595,17 @@ async function fetchGlossary() {
 function renderGlossary(items) {
     const container = document.getElementById('glossary-list');
     if (!items.length) {
-        container.innerHTML = '<div class="empty-state"><p>Aucun terme trouve</p></div>';
+        container.innerHTML = '<div class="empty-state"><p>Aucun terme trouvé</p></div>';
         return;
     }
 
     container.innerHTML = items.map(g => `
         <div class="glossary-item">
             <div class="glossary-term">
-                <span class="glossary-abbr">${g.term}</span>
-                <span class="glossary-full">${g.full}</span>
+                <span class="glossary-abbr">${escapeHtml(g.term)}</span>
+                <span class="glossary-full">${escapeHtml(g.full)}</span>
             </div>
-            <div class="glossary-def">${g.definition}</div>
+            <div class="glossary-def">${escapeHtml(g.definition)}</div>
         </div>
     `).join('');
 }
@@ -1551,11 +1624,75 @@ function filterGlossary(query) {
     renderGlossary(filtered);
 }
 
+// ─── Event delegation (remplace les onclick inline — compatible CSP stricte) ──
+
+function _toggleNextSibling(el) {
+    if (!el.nextElementSibling) return;
+    const open = el.nextElementSibling.classList.toggle('open');
+    if (el.hasAttribute('aria-expanded')) el.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+
+function _handleDelegatedClick(e) {
+    const el = e.target.closest('[data-action]');
+    if (!el) return;
+    switch (el.dataset.action) {
+        case 'toggle-explanation': {
+            const parent = el.parentElement;
+            const panel = parent && parent.querySelector('.setup-explanation');
+            if (panel) {
+                const open = panel.classList.toggle('open');
+                if (el.hasAttribute('aria-expanded')) el.setAttribute('aria-expanded', open ? 'true' : 'false');
+            }
+            break;
+        }
+        case 'toggle-next':
+            _toggleNextSibling(el);
+            break;
+        case 'toggle-glossary': {
+            const body = document.getElementById('glossary-body');
+            if (!body) return;
+            const open = body.classList.toggle('open');
+            if (el.hasAttribute('aria-expanded')) el.setAttribute('aria-expanded', open ? 'true' : 'false');
+            // Lazy-load : ne charge le glossaire qu'à la première ouverture
+            if (open && !_glossaryLoaded) fetchGlossary();
+            break;
+        }
+        case 'toggle-silent': toggleSilentMode(); break;
+        case 'download-csv': downloadCSV(); break;
+        case 'close-trade': {
+            const id = parseInt(el.dataset.tradeId, 10);
+            if (Number.isFinite(id)) openCloseModal(id);
+            break;
+        }
+        case 'open-trade': {
+            const d = el.dataset;
+            openTradeModal(
+                d.pair, d.direction,
+                parseFloat(d.entry), parseFloat(d.sl), parseFloat(d.tp1),
+                d.pattern || '',
+                parseFloat(d.confidence) || 0,
+            );
+            break;
+        }
+        case 'close-trade-modal': closeTradeModal(); break;
+        case 'goto-step-2': goToTradeStep2(); break;
+        case 'goto-step-1': goToTradeStep1(); break;
+        case 'confirm-trade': confirmTradeSubmit(); break;
+        case 'close-close-modal': closeCloseModal(); break;
+        case 'confirm-close-trade': confirmCloseTrade(); break;
+        case 'apply-calc-size': applyCalculatedSize(); break;
+    }
+}
+
 // ─── Init ────────────────────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', () => {
+    document.body.addEventListener('click', _handleDelegatedClick);
+    const glossarySearch = document.getElementById('glossary-search-input');
+    if (glossarySearch) glossarySearch.addEventListener('input', (e) => filterGlossary(e.target.value));
+
     fetchOverview();
-    fetchGlossary();
+    // fetchGlossary() est lazy : déclenché à la 1re ouverture du panneau (cf. _handleDelegatedClick)
     fetchTicks();
     fetchBacktestStats();
     fetchDailyStatus();
@@ -1577,6 +1714,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const voiceBtn = document.getElementById('voice-toggle');
     if (voiceBtn) voiceBtn.addEventListener('click', toggleVoice);
 
+    // Enregistrement best-effort du service worker (PWA app-shell offline)
+    if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/sw.js').catch(() => {});
+    }
+
     // Horloge live + compteurs : mise à jour toutes les secondes
     setInterval(() => {
         _renderClock();
@@ -1586,13 +1728,13 @@ document.addEventListener('DOMContentLoaded', () => {
     // Session markers : recalcul toutes les minutes
     setInterval(_renderSessionMarkers, 60000);
 
-    // Auto-refresh des données toutes les 5 secondes
-    setInterval(fetchOverview, AUTO_REFRESH_INTERVAL);
+    // Fallback : ne poller l'overview que si le WS est tombé (sinon WS push déjà)
+    setInterval(() => {
+        if (!isWsConnected()) fetchOverview();
+    }, POLL_FALLBACK_INTERVAL);
 
-    // Refresh des stats backtest toutes les 30s
-    setInterval(fetchBacktestStats, 30000);
-
-    // Refresh du statut journalier + trades perso toutes les 30s
+    // Stats non poussées par le WS : rafraîchir toutes les 60s
+    setInterval(fetchBacktestStats, 60000);
     setInterval(() => {
         fetchDailyStatus();
         fetchPersonalTrades();
@@ -1600,5 +1742,5 @@ document.addEventListener('DOMContentLoaded', () => {
         fetchEquityCurve();
         fetchCombos();
         fetchMistakes();
-    }, 30000);
+    }, 60000);
 });

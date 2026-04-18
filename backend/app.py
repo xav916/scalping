@@ -7,11 +7,16 @@ import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse
-from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
+from backend.auth import (
+    SESSION_COOKIE,
+    authenticate,
+    login_and_set_cookie,
+    logout_and_clear_cookie,
+)
 from config.settings import AUTH_USERS, display_name_for
 
 from backend.services import (
@@ -69,25 +74,39 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# ─── Authentification HTTP Basic ────────────────────────────────────
-security = HTTPBasic()
+# ─── Authentification (session cookie prioritaire, Basic Auth en fallback) ───
+# Implémentation dans backend/auth.py. Cette fonction reste un alias pour
+# minimiser le bruit sur les routes existantes.
+def verify_credentials(request: Request) -> str:
+    return authenticate(request)
 
 
-def verify_credentials(credentials: HTTPBasicCredentials = Depends(security)) -> str:
-    """Vérifie le login/mot de passe et retourne le username authentifie.
+# ─── Routes de login/logout ─────────────────────────────────────────
+@app.post("/api/login")
+async def api_login(payload: dict, response: Response):
+    """Échange login/password contre un cookie de session HttpOnly."""
+    username = (payload or {}).get("username", "")
+    password = (payload or {}).get("password", "")
+    if not login_and_set_cookie(response, username, password):
+        raise HTTPException(status_code=401, detail="Identifiants incorrects")
+    return {"ok": True, "user": username, "display_name": display_name_for(username)}
 
-    Retourne "anonymous" quand aucune auth n'est configuree (acces libre).
-    """
-    if not AUTH_USERS:
-        return "anonymous"
-    expected_password = AUTH_USERS.get(credentials.username)
-    if expected_password is None or not secrets.compare_digest(credentials.password, expected_password):
-        raise HTTPException(
-            status_code=401,
-            detail="Identifiants incorrects",
-            headers={"WWW-Authenticate": "Basic"},
-        )
-    return credentials.username
+
+@app.post("/api/logout")
+async def api_logout(request: Request, response: Response):
+    logout_and_clear_cookie(request, response)
+    return {"ok": True}
+
+
+@app.get("/login", include_in_schema=False)
+async def login_page(request: Request):
+    """Sert la page de login. Si déjà authentifié, redirige vers /."""
+    sid = request.cookies.get(SESSION_COOKIE)
+    if sid:
+        from backend.auth import validate_session
+        if validate_session(sid):
+            return RedirectResponse("/", status_code=303)
+    return FileResponse(str(FRONTEND_DIR / "login.html"))
 
 
 @app.get("/api/me")
@@ -247,8 +266,13 @@ app.mount("/js", StaticFiles(directory=str(FRONTEND_DIR / "js")), name="js")
 
 
 @app.get("/")
-async def index(credentials: HTTPBasicCredentials = Depends(verify_credentials)):
-    """Serve the main dashboard page."""
+async def index(request: Request):
+    """Serve the main dashboard page. Redirige vers /login si pas authentifié
+    (plus agréable qu'un prompt Basic Auth sur la route principale)."""
+    try:
+        authenticate(request)
+    except HTTPException:
+        return RedirectResponse("/login", status_code=303)
     return FileResponse(str(FRONTEND_DIR / "index.html"))
 
 
@@ -256,6 +280,26 @@ async def index(credentials: HTTPBasicCredentials = Depends(verify_credentials))
 async def manifest():
     """Manifest PWA pour installation sur ecran d'accueil mobile."""
     return FileResponse(str(FRONTEND_DIR / "manifest.json"), media_type="application/manifest+json")
+
+
+@app.get("/sw.js", include_in_schema=False)
+async def pwa_service_worker():
+    """Service worker (PWA offline shell). Accessible sans auth pour que le
+    navigateur puisse l'enregistrer et le mettre a jour."""
+    return FileResponse(
+        str(FRONTEND_DIR / "sw.js"),
+        media_type="text/javascript",
+        headers={
+            "Service-Worker-Allowed": "/",
+            "Cache-Control": "no-cache",
+        },
+    )
+
+
+@app.get("/robots.txt", include_in_schema=False)
+async def robots_txt():
+    """Disallow indexation (l'app est derriere Basic Auth)."""
+    return FileResponse(str(FRONTEND_DIR / "robots.txt"), media_type="text/plain")
 
 
 @app.get("/mobile")
@@ -492,12 +536,23 @@ async def refresh_analysis(_=Depends(verify_credentials)):
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    """WebSocket endpoint for real-time signal notifications."""
+    """WebSocket pour notifications temps réel des signaux.
+
+    Auth : cookie de session > Basic Auth. Si aucun utilisateur n'est
+    configuré (AUTH_USERS vide), la WS reste ouverte comme avant.
+    """
+    if AUTH_USERS:
+        from backend.auth import _basic_auth_user, validate_session
+        user = validate_session(websocket.cookies.get(SESSION_COOKIE))
+        if not user:
+            user = _basic_auth_user(websocket.headers.get("authorization"))
+        if not user:
+            await websocket.close(code=1008)  # Policy Violation
+            return
     await websocket.accept()
     register_client(websocket)
     try:
         while True:
-            # Keep connection alive, handle client messages
             data = await websocket.receive_text()
             if data == "ping":
                 await websocket.send_text('{"type":"pong"}')
