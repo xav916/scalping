@@ -1566,6 +1566,56 @@ tr.low-confidence { opacity: 0.5; font-style: italic; }
 .mistake-pnl { font-size: 13px; font-family: 'Courier New', monospace; }
 .mistake-advice { font-size: 11px; margin-top: 6px; color: var(--accent-yellow); font-style: italic; }
 
+/* ─── Sous-navigation sticky ─────────────────────────────────────── */
+.sub-nav {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    display: flex;
+    gap: 2px;
+    background: rgba(13, 17, 23, 0.85);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--border-color);
+    padding: 8px 24px;
+    font-size: 12px;
+    overflow-x: auto;
+    scrollbar-width: thin;
+}
+.sub-nav a {
+    color: var(--text-secondary);
+    text-decoration: none;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-weight: 500;
+    white-space: nowrap;
+    transition: background 0.12s, color 0.12s;
+}
+.sub-nav a:hover {
+    background: var(--bg-card);
+    color: var(--text-primary);
+}
+.sub-nav a:focus-visible {
+    outline: 2px solid var(--accent-blue);
+    outline-offset: 2px;
+}
+
+/* ─── Titres de zone (séparateurs de sections) ───────────────────── */
+.zone-title {
+    grid-column: 1 / -1;
+    font-size: 11px;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    font-weight: 700;
+    border-bottom: 1px solid var(--border-color);
+    padding: 16px 0 8px;
+    margin: 8px 0 0;
+    /* Ancre de scroll compensée par la hauteur du header + sub-nav */
+    scroll-margin-top: 100px;
+}
+.zone-title:first-of-type { margin-top: 0; }
+
 /* ─── Accessibilité : skip-link, visually-hidden ─────────────────── */
 .skip-link {
     position: absolute;
@@ -1619,30 +1669,82 @@ button.glossary-header {
     cursor: pointer;
 }
 
-/* ─── Modal en 2 étapes ──────────────────────────────────────────── */
-.modal-step-indicator {
-    display: inline-flex;
-    gap: 6px;
-    margin-left: auto;
-    margin-right: 12px;
+/* ─── Modal en 2 étapes : stepper ─────────────────────────────────── */
+.stepper {
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 0 12px 0 auto;
+    padding: 0;
 }
-.step-dot {
+.stepper-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    position: relative;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 500;
+}
+/* Trait de liaison entre les 2 items, pré-rempli quand on avance */
+.stepper-item + .stepper-item::before {
+    content: "";
+    position: absolute;
+    left: -12px;
+    top: 50%;
+    width: 12px;
+    height: 1px;
+    background: var(--border-color);
+    transition: background 0.2s;
+}
+.stepper-item.active + .stepper-item::before,
+.stepper-item.completed + .stepper-item::before {
+    background: var(--accent-blue);
+}
+.stepper-dot {
+    position: relative;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 22px;
-    height: 22px;
+    width: 24px;
+    height: 24px;
     border-radius: 50%;
     background: var(--bg-primary);
     border: 1px solid var(--border-color);
     color: var(--text-muted);
     font-size: 11px;
     font-weight: 700;
+    flex-shrink: 0;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
-.step-dot.active {
+.stepper-check {
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    opacity: 0;
+    transition: opacity 0.15s;
+}
+.stepper-item.active .stepper-dot {
     background: var(--accent-blue);
     border-color: var(--accent-blue);
     color: #0d1117;
+}
+.stepper-item.active .stepper-label { color: var(--text-primary); font-weight: 600; }
+.stepper-item.completed .stepper-dot {
+    background: transparent;
+    border-color: var(--accent-blue);
+    color: var(--accent-blue);
+}
+.stepper-item.completed .stepper-num { opacity: 0; }
+.stepper-item.completed .stepper-check { opacity: 1; }
+.stepper-item.completed .stepper-label { color: var(--text-secondary); }
+
+/* Mobile : garder dots + trait, cacher labels */
+@media (max-width: 540px) {
+    .stepper-label { display: none; }
+    .stepper { gap: 16px; }
+    .stepper-item + .stepper-item::before { left: -16px; width: 16px; }
 }
 .step-caption {
     font-size: 12px;

@@ -396,7 +396,9 @@ function _showTradeStep(step) {
         el.hidden = (el.dataset.step !== String(step));
     });
     modal.querySelectorAll('[data-step-dot]').forEach(el => {
-        el.classList.toggle('active', el.dataset.stepDot === String(step));
+        const stepNum = parseInt(el.dataset.stepDot, 10);
+        el.classList.toggle('active', stepNum === step);
+        el.classList.toggle('completed', stepNum < step);
     });
     // Rendre le récap pour l'étape 2
     if (step === 2) _renderTradeSummary();

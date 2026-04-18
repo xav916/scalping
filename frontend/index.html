@@ -40,8 +40,106 @@
     <!-- Daily status banner -->
     <div id="daily-banner" class="daily-banner" style="display:none"></div>
 
+    <!-- Sous-navigation sticky : saut rapide entre les 3 zones -->
+    <nav class="sub-nav" aria-label="Accès rapide aux zones">
+        <a href="#zone-marche">📈 Marché</a>
+        <a href="#zone-revue">📊 Revue</a>
+        <a href="#zone-glossaire">📖 Glossaire</a>
+    </nav>
+
     <!-- Dashboard -->
     <main id="main" class="dashboard" role="main">
+        <!-- ═══ ZONE MARCHÉ ═══════════════════════════════════════════════
+             Tout ce qui aide à DÉCIDER maintenant : setups, signaux, ticks,
+             patterns, volatilité, news. Placée en premier car c'est ce qu'un
+             scalper regarde en session. -->
+        <h2 class="zone-title" id="zone-marche">Marché — que faire maintenant</h2>
+
+        <!-- Trade Setups (full width, priority) -->
+        <section class="card signals-section">
+            <div class="card-header">
+                <h2>Setups de Trade — Analyse détaillée</h2>
+                <span class="card-hint">Seuls les setups haute confiance sont affichés</span>
+            </div>
+            <div class="filter-bar" id="setup-filter-bar">
+                <div class="filter-group">
+                    <span class="filter-label">Direction</span>
+                    <button class="filter-btn active" data-filter="direction" data-value="all">Tous</button>
+                    <button class="filter-btn" data-filter="direction" data-value="buy">ACHAT</button>
+                    <button class="filter-btn" data-filter="direction" data-value="sell">VENTE</button>
+                </div>
+                <div class="filter-group">
+                    <span class="filter-label">Paire</span>
+                    <select class="filter-select" name="setup-filter-pair" id="setup-filter-pair" data-filter="pair"><option value="all">Toutes</option></select>
+                </div>
+            </div>
+            <div class="card-body" id="setups-list">
+                <div class="empty-state">
+                    <p><strong>Analyse en cours…</strong></p>
+                    <p>Les recommandations d'entrée/sortie apparaîtront ici.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Signals (full width) -->
+        <section class="card signals-section">
+            <div class="card-header">
+                <h2>Signaux de Scalping</h2>
+            </div>
+            <div class="card-body" id="signals-list">
+                <div class="empty-state">
+                    <p><strong>Initialisation du radar…</strong></p>
+                    <p>Scan du marché en cours.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Live Ticks (WebSocket Twelve Data) -->
+        <section class="card signals-section" id="live-ticks-section" style="display:none">
+            <div class="card-header">
+                <h2>Prix Live (WebSocket)</h2>
+                <span class="card-hint" id="live-ticks-info">En attente de ticks…</span>
+            </div>
+            <div class="card-body" id="live-ticks-grid">
+                <div class="empty-state"><p>Aucun tick reçu pour l'instant.</p></div>
+            </div>
+        </section>
+
+        <!-- Patterns detected -->
+        <section class="card">
+            <div class="card-header">
+                <h2>Patterns détectés</h2>
+            </div>
+            <div class="card-body" id="patterns-body">
+                <div class="empty-state"><p>Recherche de patterns…</p></div>
+            </div>
+        </section>
+
+        <!-- Volatility -->
+        <section class="card">
+            <div class="card-header">
+                <h2>Moniteur de volatilité</h2>
+            </div>
+            <div class="card-body" id="volatility-body">
+                <div class="empty-state"><p>Chargement des données de volatilité…</p></div>
+            </div>
+        </section>
+
+        <!-- Economic Events (full width) -->
+        <section class="card signals-section">
+            <div class="card-header">
+                <h2>Calendrier économique</h2>
+            </div>
+            <div class="card-body" id="events-body">
+                <div class="empty-state"><p>Chargement des événements…</p></div>
+            </div>
+        </section>
+
+        <!-- ═══ ZONE REVUE ════════════════════════════════════════════════
+             Analyse post-session : positions ouvertes, équité, perf du
+             backtest, journal perso, combos gagnantes, erreurs répétées. -->
+        <h2 class="zone-title" id="zone-revue">Revue — apprendre et comprendre</h2>
+
         <!-- Risk dashboard -->
         <section class="card signals-section" id="risk-section" style="display:none">
             <div class="card-header">
@@ -102,85 +200,8 @@
             <div class="card-body" id="mistakes-body"></div>
         </section>
 
-        <!-- Live Ticks (WebSocket Twelve Data) -->
-        <section class="card signals-section" id="live-ticks-section" style="display:none">
-            <div class="card-header">
-                <h2>Prix Live (WebSocket)</h2>
-                <span class="card-hint" id="live-ticks-info">En attente de ticks…</span>
-            </div>
-            <div class="card-body" id="live-ticks-grid">
-                <div class="empty-state"><p>Aucun tick reçu pour l'instant.</p></div>
-            </div>
-        </section>
-
-        <!-- Trade Setups (full width, priority) -->
-        <section class="card signals-section">
-            <div class="card-header">
-                <h2>Setups de Trade — Analyse détaillée</h2>
-                <span class="card-hint">Seuls les setups haute confiance sont affichés</span>
-            </div>
-            <div class="filter-bar" id="setup-filter-bar">
-                <div class="filter-group">
-                    <span class="filter-label">Direction</span>
-                    <button class="filter-btn active" data-filter="direction" data-value="all">Tous</button>
-                    <button class="filter-btn" data-filter="direction" data-value="buy">ACHAT</button>
-                    <button class="filter-btn" data-filter="direction" data-value="sell">VENTE</button>
-                </div>
-                <div class="filter-group">
-                    <span class="filter-label">Paire</span>
-                    <select class="filter-select" name="setup-filter-pair" id="setup-filter-pair" data-filter="pair"><option value="all">Toutes</option></select>
-                </div>
-            </div>
-            <div class="card-body" id="setups-list">
-                <div class="empty-state">
-                    <p><strong>Analyse en cours…</strong></p>
-                    <p>Les recommandations d'entrée/sortie apparaîtront ici.</p>
-                </div>
-            </div>
-        </section>
-
-        <!-- Signals (full width) -->
-        <section class="card signals-section">
-            <div class="card-header">
-                <h2>Signaux de Scalping</h2>
-            </div>
-            <div class="card-body" id="signals-list">
-                <div class="empty-state">
-                    <p><strong>Initialisation du radar…</strong></p>
-                    <p>Scan du marché en cours.</p>
-                </div>
-            </div>
-        </section>
-
-        <!-- Patterns detected -->
-        <section class="card">
-            <div class="card-header">
-                <h2>Patterns détectés</h2>
-            </div>
-            <div class="card-body" id="patterns-body">
-                <div class="empty-state"><p>Recherche de patterns…</p></div>
-            </div>
-        </section>
-
-        <!-- Volatility -->
-        <section class="card">
-            <div class="card-header">
-                <h2>Moniteur de volatilité</h2>
-            </div>
-            <div class="card-body" id="volatility-body">
-                <div class="empty-state"><p>Chargement des données de volatilité…</p></div>
-            </div>
-        </section>
-
-        <!-- Economic Events (full width) -->
-        <section class="card signals-section">
-            <div class="card-header">
-                <h2>Calendrier économique</h2>
-            </div>
-            <div class="card-body" id="events-body">
-                <div class="empty-state"><p>Chargement des événements…</p></div>
-            </div>
-        </section>
+        <!-- ═══ ZONE GLOSSAIRE ═══════════════════════════════════════════ -->
+        <h2 class="zone-title" id="zone-glossaire">Glossaire</h2>
 
         <!-- Glossaire -->
         <section class="card signals-section" aria-labelledby="glossary-title">
@@ -208,10 +229,22 @@
         <div class="modal">
             <div class="modal-header">
                 <h3 id="trade-modal-title">Enregistrer un trade</h3>
-                <div class="modal-step-indicator" aria-hidden="true">
-                    <span class="step-dot active" data-step-dot="1">1</span>
-                    <span class="step-dot" data-step-dot="2">2</span>
-                </div>
+                <ol class="stepper" aria-label="Progression de l'enregistrement du trade">
+                    <li class="stepper-item active" data-step-dot="1">
+                        <span class="stepper-dot">
+                            <svg class="stepper-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+                            <span class="stepper-num">1</span>
+                        </span>
+                        <span class="stepper-label">Avant MT5</span>
+                    </li>
+                    <li class="stepper-item" data-step-dot="2">
+                        <span class="stepper-dot">
+                            <svg class="stepper-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+                            <span class="stepper-num">2</span>
+                        </span>
+                        <span class="stepper-label">Après MT5</span>
+                    </li>
+                </ol>
                 <button class="modal-close" type="button" data-action="close-trade-modal" aria-label="Fermer">&times;</button>
             </div>
 

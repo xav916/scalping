@@ -5,24 +5,38 @@
 (function () {
     const form = document.getElementById('login-form');
     const submitBtn = document.getElementById('submit');
+    const submitLabel = document.getElementById('submit-label');
+    const submitSpinner = document.getElementById('submit-spinner');
     const errorEl = document.getElementById('error');
+    const errorMsg = document.getElementById('error-msg');
+
+    const setLoading = (loading) => {
+        submitBtn.disabled = loading;
+        submitLabel.textContent = loading ? 'Connexion…' : 'Se connecter';
+        submitSpinner.hidden = !loading;
+    };
+
+    const showError = (text) => {
+        errorMsg.textContent = text;
+        errorEl.hidden = false;
+    };
 
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
         errorEl.hidden = true;
-        submitBtn.disabled = true;
-        const originalLabel = submitBtn.textContent;
-        submitBtn.textContent = 'Connexion…';
-
+        const username = document.getElementById('username').value.trim();
+        const password = document.getElementById('password').value;
+        if (!username || !password) {
+            showError('Veuillez remplir les deux champs.');
+            return;
+        }
+        setLoading(true);
         try {
             const res = await fetch('/api/login', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 credentials: 'same-origin',
-                body: JSON.stringify({
-                    username: document.getElementById('username').value,
-                    password: document.getElementById('password').value,
-                }),
+                body: JSON.stringify({ username, password }),
             });
             if (res.ok) {
                 const next = new URLSearchParams(window.location.search).get('next') || '/';
@@ -30,14 +44,11 @@
                 return;
             }
             const body = await res.json().catch(() => ({}));
-            errorEl.textContent = body.detail || 'Identifiants incorrects';
-            errorEl.hidden = false;
+            showError(body.detail || 'Identifiants incorrects.');
         } catch (err) {
-            errorEl.textContent = 'Erreur réseau : ' + err.message;
-            errorEl.hidden = false;
+            showError('Erreur réseau : ' + err.message);
         } finally {
-            submitBtn.disabled = false;
-            submitBtn.textContent = originalLabel;
+            setLoading(false);
         }
     });
 })();
