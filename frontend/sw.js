@@ -4,11 +4,12 @@
  * Aucun cache dynamique des données marché : elles doivent toujours être fraîches.
  */
 
-const CACHE_VERSION = 'scalping-shell-v1';
+const CACHE_VERSION = 'scalping-shell-v2';
 const SHELL_ASSETS = [
     '/',
     '/css/style.css',
     '/js/app.js',
+    '/js/vendor/lightweight-charts.standalone.production.js',
     '/manifest.json',
 ];
 
