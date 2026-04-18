@@ -84,6 +84,19 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 # Force minimum pour qu'un signal soit envoye : weak / moderate / strong
 TELEGRAM_MIN_STRENGTH = os.getenv("TELEGRAM_MIN_STRENGTH", "strong")
 
+# Mapping par utilisateur : "user1:chat_id1,user2:chat_id2"
+# Si defini, chaque user recoit les signaux sur son propre chat Telegram et
+# son mode silencieux est verifie individuellement. Si vide, fallback sur
+# TELEGRAM_CHAT_ID (ancien comportement, un seul destinataire).
+_TELEGRAM_CHATS_RAW = os.getenv("TELEGRAM_CHATS", "")
+TELEGRAM_CHATS: dict[str, str] = {}
+if _TELEGRAM_CHATS_RAW:
+    for entry in _TELEGRAM_CHATS_RAW.split(","):
+        entry = entry.strip()
+        if ":" in entry:
+            u, cid = entry.rsplit(":", 1)
+            TELEGRAM_CHATS[u.strip()] = cid.strip()
+
 # MetaTrader 5 (utilisé uniquement si PRICE_SOURCE=mt5)
 # Le terminal MT5 doit être installé et lancé sur la machine.
 MT5_LOGIN = os.getenv("MT5_LOGIN", "")  # ex: 62789843

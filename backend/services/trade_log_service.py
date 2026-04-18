@@ -177,13 +177,16 @@ def get_daily_status(user: str = "anonymous") -> dict:
     }
 
 
-def silent_mode_active_any_user() -> bool:
-    """True si AU MOINS UN user a atteint sa limite aujourd'hui.
+def silent_mode_active_for_user(user: str) -> bool:
+    """True si CE user a atteint sa limite journaliere."""
+    try:
+        return get_daily_status(user=user)["silent_mode"]
+    except Exception:
+        return False
 
-    Le telegram_service utilise ca pour decider : si un seul user est KO,
-    tout le monde passe en silencieux (alternative : passer par user en
-    stockant une preference par user, mais ca complique le broadcast).
-    """
+
+def silent_mode_active_any_user() -> bool:
+    """True si AU MOINS UN user a atteint sa limite aujourd'hui."""
     _init_schema()
     today_iso = date.today().isoformat()
     with _conn() as c:
@@ -198,6 +201,6 @@ def silent_mode_active_any_user() -> bool:
     return any((r["pnl"] or 0) <= limit_usd for r in rows)
 
 
-# Backward compat : conserve l'ancien nom pour telegram_service
+# Backward compat
 def silent_mode_active() -> bool:
     return silent_mode_active_any_user()
