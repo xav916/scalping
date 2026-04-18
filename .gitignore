@@ -14,3 +14,7 @@ build/
 *.key
 scalping-key*
 
+# Artefact de build Tailwind (généré par Docker, pas versionné)
+frontend/css/tailwind.css
+node_modules/
+

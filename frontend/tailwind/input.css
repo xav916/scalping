@@ -1,0 +1,14 @@
+/*
+ * Source Tailwind — compilée en frontend/css/tailwind.css à l'étape Docker
+ * node:20-alpine, puis copiée dans l'image Python finale.
+ *
+ * Choix :
+ * - `@tailwind utilities` SEUL (pas de preflight) pour ne pas casser
+ *   la feuille bespoke existante (style.css). Les resets de Tailwind
+ *   normaliseraient h1, button, input… et entreraient en conflit.
+ * - `@tailwind components` inclus pour que les drops 21st.dev puissent
+ *   utiliser des classes de composition si besoin.
+ */
+
+@tailwind components;
+@tailwind utilities;
