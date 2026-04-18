@@ -1765,172 +1765,51 @@ tr.low-confidence { opacity: 0.5; font-style: italic; }
 .mistake-pnl { font-size: 13px; font-family: 'Courier New', monospace; }
 .mistake-advice { font-size: 11px; margin-top: 6px; color: var(--accent-yellow); font-style: italic; }
 
-/* ─── Sidebar navigation ─────────────────────────────────────────── */
-/* Desktop : fixed sur la gauche, body décalé. Mobile : drawer off-canvas. */
-.sidebar {
-    position: fixed;
+/* ─── Sous-navigation sticky (barre horizontale Marché / Revue / Glossaire) ─── */
+.sub-nav {
+    position: sticky;
     top: 0;
-    left: 0;
-    bottom: 0;
-    width: 220px;
-    background: var(--bg-secondary);
-    border-right: 1px solid var(--border-color);
+    z-index: 20;
     display: flex;
-    flex-direction: column;
-    padding: 16px 12px 12px;
-    z-index: 40;
-    transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.sidebar-logo {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 6px 8px 20px;
-    margin-bottom: 8px;
-    border-bottom: 1px solid var(--border-color);
-}
-.sidebar-badge {
-    width: 30px;
-    height: 30px;
-    border-radius: 8px;
-    background: var(--bg-primary);
-    border: 1px solid var(--border-color);
-    color: var(--accent-blue);
-    font-family: var(--font-mono);
-    font-weight: 700;
-    font-size: 12px;
-    letter-spacing: 0.5px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-.sidebar-logo-text {
-    font-weight: 600;
-    font-size: 14px;
-    color: var(--text-primary);
-    letter-spacing: -0.2px;
-}
-
-.sidebar-nav {
-    display: flex;
-    flex-direction: column;
     gap: 2px;
-    flex: 1;
+    background: rgba(10, 14, 20, 0.85);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--border-color);
+    padding: 8px 24px;
+    font-size: 13px;
+    overflow-x: auto;
+    scrollbar-width: thin;
 }
-.sidebar-link {
-    display: flex;
+.sub-nav a {
+    display: inline-flex;
     align-items: center;
-    gap: 10px;
-    padding: 9px 10px;
+    gap: 6px;
     color: var(--text-secondary);
     text-decoration: none;
+    padding: 6px 12px;
     border-radius: 6px;
-    font-size: 13px;
     font-weight: 500;
+    white-space: nowrap;
     transition: background 0.12s, color 0.12s;
 }
-.sidebar-link svg {
-    width: 16px;
-    height: 16px;
+.sub-nav a svg {
+    width: 14px;
+    height: 14px;
     flex-shrink: 0;
-    stroke-width: 2;
 }
-.sidebar-link:hover {
+.sub-nav a:hover {
     background: var(--bg-card);
     color: var(--text-primary);
 }
-.sidebar-link.active {
-    background: rgba(88, 166, 255, 0.1);
-    color: var(--accent-blue);
-    box-shadow: inset 2px 0 0 var(--accent-blue);
+.sub-nav a:focus-visible {
+    outline: 2px solid var(--accent-blue);
+    outline-offset: 2px;
 }
-
-.sidebar-footer {
-    padding: 12px 10px 6px;
-    border-top: 1px solid var(--border-color);
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-}
-.sidebar-user {
-    font-size: 12px;
-    color: var(--text-secondary);
-    font-weight: 500;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-.sidebar-logout-form { margin: 0; }
-.sidebar-logout {
-    width: 32px;
-    height: 32px;
-    border-radius: 6px;
-    background: transparent;
-    border: 1px solid var(--border-color);
-    color: var(--text-muted);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: border-color 0.12s, color 0.12s, background 0.12s;
-}
-.sidebar-logout svg { width: 14px; height: 14px; }
-.sidebar-logout:hover {
-    border-color: var(--accent-sell);
-    color: var(--accent-sell);
-    background: rgba(255, 73, 118, 0.08);
-}
-
-/* Backdrop mobile (overlay derrière le drawer) */
-.sidebar-backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.5);
-    backdrop-filter: blur(2px);
-    z-index: 35;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 0.2s;
-}
-.sidebar-backdrop.show {
-    opacity: 1;
-    pointer-events: auto;
-}
-
-/* Burger (mobile only) */
-.header-burger {
-    display: none;
-    width: 40px;
-    height: 40px;
-    border: 1px solid var(--border-color);
-    background: transparent;
-    color: var(--text-secondary);
-    border-radius: 6px;
-    cursor: pointer;
-    align-items: center;
-    justify-content: center;
-    margin-right: 12px;
-}
-.header-burger svg { width: 18px; height: 18px; }
-.header-burger:hover { color: var(--text-primary); border-color: var(--border-strong); }
-
-/* Desktop (≥ 1025px) : body décalé à droite pour laisser la place à la sidebar fixe */
-@media (min-width: 1025px) {
-    body { padding-left: 220px; }
-}
-
-/* Mobile / tablet : sidebar en drawer */
-@media (max-width: 1024px) {
-    .sidebar {
-        transform: translateX(-100%);
-    }
-    .sidebar.open {
-        transform: translateX(0);
-        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
-    }
-    .header-burger { display: inline-flex; }
+@media (max-width: 540px) {
+    .sub-nav { padding: 6px 12px; }
+    .sub-nav a span { display: none; } /* icône seule sur mobile étroit */
+    .sub-nav a svg { width: 18px; height: 18px; }
 }
 
 /* ─── Titres de zone (séparateurs de sections) ───────────────────── */

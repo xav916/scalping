@@ -276,8 +276,6 @@ function renderDailyBanner(status) {
     if (status.display_name) {
         const greet = document.getElementById('user-greeting');
         if (greet) greet.textContent = `Bonjour ${status.display_name}`;
-        const sidebarUser = document.getElementById('sidebar-user');
-        if (sidebarUser) sidebarUser.textContent = status.display_name;
     }
     const banner = document.getElementById('daily-banner');
     if (!banner) return;
@@ -1716,19 +1714,6 @@ function _toggleNextSibling(el) {
 }
 
 function _handleDelegatedClick(e) {
-    // Backdrop sidebar : ferme au click
-    if (e.target.id === 'sidebar-backdrop') {
-        document.getElementById('sidebar')?.classList.remove('open');
-        e.target.classList.remove('show');
-        return;
-    }
-    // Sidebar link sur mobile : ferme le drawer après avoir scrollé
-    const sidebarLink = e.target.closest('.sidebar-link');
-    if (sidebarLink && window.matchMedia('(max-width: 1024px)').matches) {
-        document.getElementById('sidebar')?.classList.remove('open');
-        document.getElementById('sidebar-backdrop')?.classList.remove('show');
-        // Laisse le navigateur suivre l'ancre
-    }
     const el = e.target.closest('[data-action]');
     if (!el) return;
     switch (el.dataset.action) {
@@ -1746,24 +1731,6 @@ function _handleDelegatedClick(e) {
             break;
         case 'close-cmdk': {
             closeCommandPalette();
-            break;
-        }
-        case 'toggle-sidebar': {
-            const sidebar = document.getElementById('sidebar');
-            const backdrop = document.getElementById('sidebar-backdrop');
-            const open = sidebar.classList.toggle('open');
-            if (backdrop) backdrop.classList.toggle('show', open);
-            el.setAttribute('aria-expanded', open ? 'true' : 'false');
-            break;
-        }
-        case 'close-sidebar': {
-            document.getElementById('sidebar')?.classList.remove('open');
-            document.getElementById('sidebar-backdrop')?.classList.remove('show');
-            break;
-        }
-        case 'logout': {
-            fetch('/api/logout', { method: 'POST', credentials: 'same-origin' })
-                .finally(() => window.location.replace('/login'));
             break;
         }
         case 'dismiss-toast': {
