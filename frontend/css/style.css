@@ -2823,3 +2823,130 @@ html.cmdk-open { overflow: hidden; }
   .skeleton-card { animation: none; }
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   Micro-interactions (Phase 1)
+   Hover / focus / transitions for polished feel.
+   All guarded by prefers-reduced-motion.
+   ═══════════════════════════════════════════════════════════════ */
+
+/* Card hover elevation — applies to trade setup cards */
+.trade-setup {
+  transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1),
+              box-shadow 0.22s cubic-bezier(0.4, 0, 0.2, 1),
+              border-color 0.22s ease-out;
+}
+.trade-setup:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 12px 28px -8px rgba(0, 0, 0, 0.4),
+              0 4px 10px -4px rgba(0, 0, 0, 0.25);
+}
+
+/* Buttons — subtle scale on hover, press on active */
+button,
+.btn,
+[role="button"] {
+  transition: transform 0.15s ease-out,
+              background-color 0.2s ease-out,
+              border-color 0.2s ease-out,
+              box-shadow 0.2s ease-out,
+              filter 0.2s ease-out;
+}
+button:hover:not(:disabled),
+.btn:hover:not(:disabled),
+[role="button"]:hover {
+  filter: brightness(1.08);
+}
+button:active:not(:disabled),
+.btn:active:not(:disabled),
+[role="button"]:active {
+  transform: scale(0.97);
+  filter: brightness(0.95);
+}
+
+/* Visible keyboard focus — clean outline for a11y */
+*:focus-visible {
+  outline: 2px solid rgba(120, 170, 255, 0.75);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+/* Hide focus when mouse-driven, keep for keyboard */
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* Smooth tab / nav / badge transitions */
+.nav-link,
+.tab,
+.data-badge,
+[class*="-badge"] {
+  transition: background-color 0.2s ease-out,
+              color 0.2s ease-out,
+              border-color 0.2s ease-out,
+              transform 0.15s ease-out;
+}
+
+/* Macro badge hover — slightly brighter on hover */
+.data-badge.macro:hover {
+  filter: brightness(1.15);
+  transform: translateY(-1px);
+}
+
+/* Macro primary alignment cell hover */
+.macro-prim {
+  transition: transform 0.15s ease-out,
+              filter 0.2s ease-out;
+  cursor: default;
+}
+.macro-prim:hover {
+  transform: scale(1.08);
+  filter: brightness(1.12);
+}
+
+/* Macro banner cell hover */
+.macro-cell {
+  transition: transform 0.18s ease-out,
+              border-color 0.2s ease-out;
+}
+.macro-cell:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.1);
+}
+
+/* Input focus enrichment */
+input:focus,
+select:focus,
+textarea:focus {
+  transition: border-color 0.2s ease-out, box-shadow 0.2s ease-out;
+}
+
+/* Link-ish elements subtle underline on hover */
+a:hover,
+.link:hover {
+  filter: brightness(1.1);
+}
+
+/* Respect motion preferences */
+@media (prefers-reduced-motion: reduce) {
+  .trade-setup,
+  button,
+  .btn,
+  [role="button"],
+  .nav-link,
+  .tab,
+  .data-badge,
+  .macro-prim,
+  .macro-cell,
+  input,
+  select,
+  textarea,
+  a,
+  .link {
+    transition: none !important;
+  }
+  .trade-setup:hover,
+  button:hover,
+  .btn:hover {
+    transform: none !important;
+  }
+}
+
