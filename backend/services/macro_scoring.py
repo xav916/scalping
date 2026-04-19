@@ -3,7 +3,7 @@
 Given a trade setup (pair, direction) and a MacroContext snapshot, returns:
 - a multiplier to apply to the base confidence score (0.75 <= mult <= 1.2)
 - a boolean veto flag for extreme conditions
-- a list of human-readable reasons (for logs and UI badges)
+- a list of structured primaries (dicts) describing per-indicator alignment
 
 No state, no side effects. Fully table-driven via apply().
 """
@@ -178,23 +178,43 @@ def _check_vetoes(pair: str, direction: str, ctx: MacroContext) -> list[str]:
     return reasons
 
 
-def apply(pair: str, direction: str, ctx: MacroContext) -> tuple[float, bool, list[str]]:
+def apply(pair: str, direction: str, ctx: MacroContext) -> tuple[float, bool, list[dict]]:
+    """Return (multiplier, veto, primaries) where `primaries` is a list of
+    dicts: {"indicator": str, "alignment": int (-1|0|1), "reason": str, "is_veto": bool}.
+
+    For backward compatibility, a veto primary is appended when a veto triggers."""
     setup_sign = _setup_sign(direction)
-    primaries = _primaries_for(pair, ctx, setup_sign)
+    primaries_raw = _primaries_for(pair, ctx, setup_sign)
 
-    # Keep only primaries that actually contributed a signal (non-zero alignment)
-    active = [(name, align, reason) for name, align, reason in primaries if align != 0]
-    reasons = [r for _, _, r in active]
+    if not primaries_raw:
+        veto_reasons = _check_vetoes(pair, direction, ctx)
+        veto = len(veto_reasons) > 0
+        primaries: list[dict] = []
+        if veto:
+            for vr in veto_reasons:
+                primaries.append({"indicator": "veto", "alignment": -1, "reason": vr, "is_veto": True})
+        return 1.0, veto, primaries
 
-    if not active:
-        multiplier = 1.0
-    else:
-        avg = sum(align for _, align, _ in active) / len(active)
+    primaries = [
+        {"indicator": ind, "alignment": align, "reason": reason, "is_veto": False}
+        for ind, align, reason in primaries_raw
+    ]
+
+    # Same averaging logic as before — excluding zero-alignment primaries from denominator
+    non_zero = [p for p in primaries if p["alignment"] != 0]
+    if non_zero:
+        avg = sum(p["alignment"] for p in non_zero) / len(non_zero)
         multiplier = _multiplier_from_alignment(avg)
+    else:
+        multiplier = 1.0
+
+    # Drop zero-alignment primaries from the output to match previous UI/reason semantics
+    primaries = non_zero
 
     veto_reasons = _check_vetoes(pair, direction, ctx)
     veto = len(veto_reasons) > 0
     if veto:
-        reasons.extend(veto_reasons)
+        for vr in veto_reasons:
+            primaries.append({"indicator": "veto", "alignment": -1, "reason": vr, "is_veto": True})
 
-    return multiplier, veto, reasons
+    return multiplier, veto, primaries

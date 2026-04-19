@@ -94,6 +94,13 @@ class TestFeatureFlagOn:
         macro_factors = [f for f in enriched.confidence_factors if f.source == "macro"]
         assert len(macro_factors) == 1
         assert macro_factors[0].positive is False
+        assert macro_factors[0].metadata is not None
+        assert "primaries" in macro_factors[0].metadata
+        assert len(macro_factors[0].metadata["primaries"]) > 0
+        primary = macro_factors[0].metadata["primaries"][0]
+        assert "indicator" in primary
+        assert "alignment" in primary
+        assert "reason" in primary
 
     def test_stale_cache_falls_back_to_neutral(self):
         stale_ctx = _dxy_against_ctx()

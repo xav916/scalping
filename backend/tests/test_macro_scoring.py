@@ -47,13 +47,13 @@ def _make_ctx(
 class TestUsdMajors:
     def test_eurusd_sell_aligned_with_dxy_strong_up_gets_boost(self):
         ctx = _make_ctx(dxy=MacroDirection.STRONG_UP)
-        mult, veto, reasons = apply("EUR/USD", "sell", ctx)
+        mult, veto, primaries = apply("EUR/USD", "sell", ctx)
         assert mult == 1.2
         assert veto is False
 
     def test_eurusd_buy_against_dxy_strong_up_gets_penalty(self):
         ctx = _make_ctx(dxy=MacroDirection.STRONG_UP)
-        mult, veto, reasons = apply("EUR/USD", "buy", ctx)
+        mult, veto, primaries = apply("EUR/USD", "buy", ctx)
         assert mult == 0.75
         assert veto is False
 
@@ -64,7 +64,7 @@ class TestUsdMajors:
             vix_level=VixLevel.LOW,
             risk=RiskRegime.RISK_ON,
         )
-        mult, veto, reasons = apply("USD/JPY", "buy", ctx)
+        mult, veto, primaries = apply("USD/JPY", "buy", ctx)
         assert mult >= 1.1
 
 
@@ -75,18 +75,18 @@ class TestVetoConditions:
             vix_level=VixLevel.HIGH,
             risk=RiskRegime.RISK_OFF,
         )
-        mult, veto, reasons = apply("AUD/USD", "buy", ctx)
+        mult, veto, primaries = apply("AUD/USD", "buy", ctx)
         assert veto is True
-        assert any("vix" in r.lower() for r in reasons)
+        assert any("vix" in p["reason"].lower() for p in primaries)
 
     def test_dxy_intraday_sigma_above_2_and_setup_against_vetoes(self):
         ctx = _make_ctx(
             dxy=MacroDirection.STRONG_UP,
             dxy_intraday_sigma=2.5,
         )
-        mult, veto, reasons = apply("EUR/USD", "buy", ctx)
+        mult, veto, primaries = apply("EUR/USD", "buy", ctx)
         assert veto is True
-        assert any("dxy" in r.lower() for r in reasons)
+        assert any("dxy" in p["reason"].lower() for p in primaries)
 
 
 class TestCommodityCurrencies:
@@ -126,14 +126,17 @@ class TestEURSpread:
             dxy=MacroDirection.NEUTRAL,
             spread_trend="narrowing",
         )
-        mult, _, reasons = apply("EUR/USD", "buy", ctx)
+        mult, _, primaries = apply("EUR/USD", "buy", ctx)
         assert mult >= 1.0
-        assert any("spread" in r.lower() or "eur" in r.lower() for r in reasons)
+        assert any(
+            "spread" in p["reason"].lower() or "eur" in p["reason"].lower()
+            for p in primaries
+        )
 
 
 class TestNeutralNoEffect:
     def test_fully_neutral_context_gives_multiplier_1(self):
         ctx = _make_ctx()
-        mult, veto, reasons = apply("EUR/USD", "buy", ctx)
+        mult, veto, primaries = apply("EUR/USD", "buy", ctx)
         assert mult == 1.0
         assert veto is False

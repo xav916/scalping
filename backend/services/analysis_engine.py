@@ -559,17 +559,19 @@ def enrich_trade_setup(
         snapshot: MacroContext | None = macro_context_service.get_macro_snapshot()
         if snapshot is not None and macro_context_service.is_fresh(snapshot.fetched_at):
             try:
-                multiplier, veto, reasons = macro_scoring.apply(
+                multiplier, veto, primaries = macro_scoring.apply(
                     setup.pair, setup.direction.value, snapshot
                 )
+                reason_texts = [p["reason"] for p in primaries] if primaries else []
                 factor_score = round((multiplier - 1.0) * 100, 1)
                 factors.append(
                     ConfidenceFactor(
                         name="Contexte macro",
                         score=factor_score,
-                        detail=f"×{multiplier:.2f} — " + (" | ".join(reasons) if reasons else "neutre"),
+                        detail=f"×{multiplier:.2f} — " + (" | ".join(reason_texts) if reason_texts else "neutre"),
                         positive=multiplier >= 1.0,
                         source="macro",
+                        metadata={"primaries": primaries, "multiplier": multiplier, "veto": veto},
                     )
                 )
                 new_total = min(100, max(0, total_score * multiplier))
@@ -579,7 +581,8 @@ def enrich_trade_setup(
                 if MACRO_VETO_ENABLED and veto:
                     setup.verdict_action = "SKIP"
                     blockers = list(setup.verdict_blockers or [])
-                    blockers.extend([f"Macro veto: {r}" for r in reasons])
+                    veto_reasons = [p["reason"] for p in primaries if p["is_veto"]]
+                    blockers.extend([f"Macro veto: {r}" for r in veto_reasons])
                     setup.verdict_blockers = blockers
                 logger.info(
                     f"macro_applied pair={setup.pair} dir={setup.direction.value} "

@@ -2760,3 +2760,37 @@ html.cmdk-open { overflow: hidden; }
 .hidden {
     display: none !important;
 }
+
+/* ── Macro primaries row on setup card ────────────────────── */
+.macro-prims-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+.macro-prim {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  border: 1px solid transparent;
+  font-family: inherit;
+}
+.macro-prim-ok {
+  background: rgba(50, 160, 80, 0.18);
+  color: #9e9;
+  border-color: rgba(50, 160, 80, 0.4);
+}
+.macro-prim-bad {
+  background: rgba(200, 80, 80, 0.18);
+  color: #f99;
+  border-color: rgba(200, 80, 80, 0.4);
+}
+.macro-prim-neu {
+  background: rgba(120, 130, 160, 0.15);
+  color: #aab;
+  border-color: rgba(120, 130, 160, 0.3);
+}

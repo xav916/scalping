@@ -1181,6 +1181,22 @@ function tradeSetupHTML(s) {
         ? `<span class="data-badge macro ${macroFactor.positive ? 'macro-pos' : 'macro-neg'}" title="${escapeHtml(macroFactor.detail)}">${escapeHtml(macroFactor.detail.split(' — ')[0])}</span>`
         : '';
 
+    // Alignment bars for each macro primary
+    const primariesHtml = (() => {
+        if (!macroFactor || !macroFactor.metadata || !macroFactor.metadata.primaries) return "";
+        const prims = macroFactor.metadata.primaries.filter(p => !p.is_veto);
+        if (prims.length === 0) return "";
+        const cells = prims.map(p => {
+            const align = p.alignment;
+            const cls = align > 0 ? 'ok' : (align < 0 ? 'bad' : 'neu');
+            const symbol = align > 0 ? '\u2713' : (align < 0 ? '\u2717' : '\u2014');
+            const indLabel = (p.indicator || '').toUpperCase();
+            const safeReason = (p.reason || '').replace(/[<>"']/g, c => ({'<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+            return `<span class="macro-prim macro-prim-${cls}" title="${safeReason}">${indLabel}${symbol}</span>`;
+        }).join('');
+        return `<div class="macro-prims-row">${cells}</div>`;
+    })();
+
     // Confidence score color
     const confColor = confScore >= 85 ? 'conf-high' : confScore >= 75 ? 'conf-medium' : 'conf-low';
 
@@ -1242,6 +1258,7 @@ function tradeSetupHTML(s) {
                 </div>
                 ${confRingHTML}
             </div>
+            ${primariesHtml}
 
             <div class="setup-chart" data-chart-id="${_setupChartId(s)}"></div>
 

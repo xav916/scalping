@@ -111,6 +111,7 @@ class ConfidenceFactor(BaseModel):
     detail: str  # Explication courte
     positive: bool = True  # Facteur favorable ou défavorable
     source: str | None = None  # "pattern" | "macro" | etc. — optional tag for UI/log
+    metadata: dict | None = None  # structured extra data (e.g., macro primaries list)
 
 
 class TradeSetup(BaseModel):
