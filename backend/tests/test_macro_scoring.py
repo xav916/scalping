@@ -140,3 +140,75 @@ class TestNeutralNoEffect:
         mult, veto, primaries = apply("EUR/USD", "buy", ctx)
         assert mult == 1.0
         assert veto is False
+
+
+class TestCrypto:
+    def test_btc_buy_with_risk_on_gets_boost(self):
+        ctx = _make_ctx(
+            spx=MacroDirection.STRONG_UP,
+            vix_level=VixLevel.LOW,
+            dxy=MacroDirection.DOWN,
+            risk=RiskRegime.RISK_ON,
+        )
+        mult, veto, primaries = apply("BTC/USD", "buy", ctx)
+        assert mult >= 1.1
+        assert veto is False
+        indicators = {p["indicator"] for p in primaries}
+        assert "spx" in indicators
+        assert "vix" in indicators
+        assert "dxy" in indicators
+
+    def test_eth_buy_with_risk_off_gets_penalty(self):
+        ctx = _make_ctx(
+            spx=MacroDirection.STRONG_DOWN,
+            vix_level=VixLevel.HIGH,
+            vix_value=35.0,
+            dxy=MacroDirection.STRONG_UP,
+            risk=RiskRegime.RISK_OFF,
+        )
+        mult, _, _ = apply("ETH/USD", "buy", ctx)
+        assert mult <= 0.9
+
+
+class TestEquityIndices:
+    def test_spx_buy_with_low_vix_gets_boost(self):
+        ctx = _make_ctx(
+            vix_level=VixLevel.LOW,
+            vix_value=13.0,
+        )
+        mult, _, primaries = apply("SPX", "buy", ctx)
+        assert mult >= 1.1
+        # SPX should NOT be its own primary (self-reference filtered)
+        assert all(p["indicator"] != "spx" for p in primaries)
+
+    def test_ndx_buy_with_high_vix_gets_penalty(self):
+        ctx = _make_ctx(
+            vix_level=VixLevel.HIGH,
+            vix_value=32.0,
+            spx=MacroDirection.STRONG_DOWN,
+        )
+        mult, _, _ = apply("NDX", "buy", ctx)
+        assert mult <= 0.9
+
+
+class TestEnergy:
+    def test_wti_buy_with_weak_dxy_and_risk_on_gets_boost(self):
+        ctx = _make_ctx(
+            dxy=MacroDirection.DOWN,
+            spx=MacroDirection.UP,
+            risk=RiskRegime.RISK_ON,
+        )
+        mult, _, _ = apply("WTI/USD", "buy", ctx)
+        assert mult >= 1.1
+
+
+class TestSilver:
+    def test_xag_buy_with_risk_off_gets_boost(self):
+        ctx = _make_ctx(
+            vix_level=VixLevel.ELEVATED,
+            vix_value=25.0,
+            dxy=MacroDirection.DOWN,
+        )
+        mult, _, primaries = apply("XAG/USD", "buy", ctx)
+        assert mult >= 1.1
+        assert any("silver" in p["reason"].lower() or p["indicator"] == "vix" for p in primaries)

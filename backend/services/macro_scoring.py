@@ -25,6 +25,24 @@ _JPY_PAIR = {"USD/JPY", "EUR/JPY", "GBP/JPY"}
 _EUR_PAIR = {"EUR/USD", "EUR/GBP", "EUR/JPY", "EUR/CHF"}
 _CHF_PAIR = {"USD/CHF", "EUR/CHF"}
 _XAU = {"XAU/USD"}
+_XAG = {"XAG/USD"}
+
+# New multi-asset classes
+_CRYPTO_PREFIXES = ("BTC", "ETH", "LTC", "XRP", "SOL", "ADA", "DOGE")
+_ENERGY_PREFIXES = ("WTI", "BRENT", "XTI", "XBR", "NGAS", "NATGAS")
+_EQUITY_INDICES = {
+    "SPX", "NDX", "DJI", "RUT",
+    "DAX", "N225", "NIKKEI", "FTSE", "CAC40",
+    "UK100", "US30", "US500", "NAS100", "DE40", "EU50", "JP225",
+}
+
+
+def _is_crypto(pair_u: str) -> bool:
+    return any(pair_u.startswith(pfx) for pfx in _CRYPTO_PREFIXES)
+
+
+def _is_energy(pair_u: str) -> bool:
+    return any(pair_u.startswith(pfx) for pfx in _ENERGY_PREFIXES)
 
 
 def _dir_sign(d: MacroDirection) -> int:
@@ -49,37 +67,43 @@ def _pair_is_usd_long_on_buy(pair: str) -> int:
 
 
 def _primaries_for(pair: str, ctx: MacroContext, setup_sign: int) -> list[tuple[str, int, str]]:
+    """Return list of (indicator_name, alignment_sign, reason) tuples.
+
+    alignment_sign = +1 if macro supports setup direction, -1 if against, 0 if neutral.
+    Zero-alignment primaries are filtered out of the output list.
+    """
     result: list[tuple[str, int, str]] = []
     used: set[str] = set()
-
     pair_u = pair.upper()
 
+    # --- Forex-family mappings (unchanged) ----------------------
     if pair_u in _USD_MAJOR or pair_u in _USD_COMMODITY or pair_u in _COMMODITY_CURRENCY:
         if "dxy" not in used:
             usd_long_on_buy = _pair_is_usd_long_on_buy(pair_u)
             setup_usd_sign = setup_sign * usd_long_on_buy
             align = setup_usd_sign * _dir_sign(ctx.dxy_direction)
-            reason = f"DXY {ctx.dxy_direction.value}"
-            result.append(("dxy", align, reason))
+            if align != 0:
+                reason = f"DXY {ctx.dxy_direction.value}"
+                result.append(("dxy", align, reason))
             used.add("dxy")
 
     if pair_u in _USD_COMMODITY:
         if "oil" not in used:
             align = -setup_sign * _dir_sign(ctx.oil_direction)
-            reason = f"Oil {ctx.oil_direction.value}"
-            result.append(("oil", align, reason))
+            if align != 0:
+                result.append(("oil", align, f"Oil {ctx.oil_direction.value}"))
             used.add("oil")
 
     if pair_u in _COMMODITY_CURRENCY:
         if "spx" not in used:
             align = setup_sign * _dir_sign(ctx.spx_direction)
-            reason = f"SPX {ctx.spx_direction.value}"
-            result.append(("spx", align, reason))
+            if align != 0:
+                result.append(("spx", align, f"SPX {ctx.spx_direction.value}"))
             used.add("spx")
         if "gold" not in used:
             align = setup_sign * _dir_sign(ctx.gold_direction)
-            reason = f"Gold {ctx.gold_direction.value}"
-            result.append(("gold", align, reason))
+            if align != 0:
+                result.append(("gold", align, f"Gold {ctx.gold_direction.value}"))
             used.add("gold")
 
     if pair_u in _JPY_PAIR:
@@ -88,13 +112,13 @@ def _primaries_for(pair: str, ctx: MacroContext, setup_sign: int) -> list[tuple[
                 -1 if ctx.vix_level == VixLevel.LOW else 0
             )
             align = -setup_sign * vix_sign
-            reason = f"VIX {ctx.vix_level.value}"
-            result.append(("vix", align, reason))
+            if align != 0:
+                result.append(("vix", align, f"VIX {ctx.vix_level.value}"))
             used.add("vix")
         if "nikkei" not in used:
             align = setup_sign * _dir_sign(ctx.nikkei_direction)
-            reason = f"Nikkei {ctx.nikkei_direction.value}"
-            result.append(("nikkei", align, reason))
+            if align != 0:
+                result.append(("nikkei", align, f"Nikkei {ctx.nikkei_direction.value}"))
             used.add("nikkei")
 
     if pair_u in _EUR_PAIR:
@@ -103,8 +127,8 @@ def _primaries_for(pair: str, ctx: MacroContext, setup_sign: int) -> list[tuple[
             eur_long_on_buy = 1 if base == "EUR" else (-1 if quote == "EUR" else 0)
             spread_sign = {"narrowing": 1, "flat": 0, "widening": -1}[ctx.us_de_spread_trend]
             align = setup_sign * eur_long_on_buy * spread_sign
-            reason = f"Spread US-DE {ctx.us_de_spread_trend}"
-            result.append(("us_de_spread", align, reason))
+            if align != 0:
+                result.append(("us_de_spread", align, f"Spread US-DE {ctx.us_de_spread_trend}"))
             used.add("us_de_spread")
 
     if pair_u in _CHF_PAIR and "vix" not in used:
@@ -114,8 +138,8 @@ def _primaries_for(pair: str, ctx: MacroContext, setup_sign: int) -> list[tuple[
             -1 if ctx.vix_level == VixLevel.LOW else 0
         )
         align = setup_sign * chf_long_on_buy * vix_sign
-        reason = f"VIX {ctx.vix_level.value} (CHF refuge)"
-        result.append(("vix", align, reason))
+        if align != 0:
+            result.append(("vix", align, f"VIX {ctx.vix_level.value} (CHF refuge)"))
         used.add("vix")
 
     if pair_u in _XAU:
@@ -124,19 +148,94 @@ def _primaries_for(pair: str, ctx: MacroContext, setup_sign: int) -> list[tuple[
                 -1 if ctx.vix_level == VixLevel.LOW else 0
             )
             align = setup_sign * vix_sign
-            reason = f"VIX {ctx.vix_level.value} (refuge)"
-            result.append(("vix", align, reason))
+            if align != 0:
+                result.append(("vix", align, f"VIX {ctx.vix_level.value} (refuge)"))
             used.add("vix")
         if "dxy" not in used:
             align = -setup_sign * _dir_sign(ctx.dxy_direction)
-            reason = f"DXY {ctx.dxy_direction.value}"
-            result.append(("dxy", align, reason))
+            if align != 0:
+                result.append(("dxy", align, f"DXY {ctx.dxy_direction.value}"))
             used.add("dxy")
         if "us10y" not in used:
             align = -setup_sign * _dir_sign(ctx.us10y_trend)
-            reason = f"US10Y {ctx.us10y_trend.value}"
-            result.append(("us10y", align, reason))
+            if align != 0:
+                result.append(("us10y", align, f"US10Y {ctx.us10y_trend.value}"))
             used.add("us10y")
+
+    # --- New: XAG/USD (silver) -- treat like gold refuge --------
+    if pair_u in _XAG:
+        if "vix" not in used:
+            vix_sign = 1 if ctx.vix_level in (VixLevel.ELEVATED, VixLevel.HIGH) else (
+                -1 if ctx.vix_level == VixLevel.LOW else 0
+            )
+            align = setup_sign * vix_sign
+            if align != 0:
+                result.append(("vix", align, f"VIX {ctx.vix_level.value} (silver refuge)"))
+            used.add("vix")
+        if "dxy" not in used:
+            align = -setup_sign * _dir_sign(ctx.dxy_direction)
+            if align != 0:
+                result.append(("dxy", align, f"DXY {ctx.dxy_direction.value}"))
+            used.add("dxy")
+
+    # --- New: Crypto (BTC, ETH, ...) ----------------------------
+    # Buy crypto favored in risk-on, penalized in risk-off.
+    if _is_crypto(pair_u):
+        if "spx" not in used:
+            # SPX up = risk-on = crypto up. Aligned with buy.
+            align = setup_sign * _dir_sign(ctx.spx_direction)
+            if align != 0:
+                result.append(("spx", align, f"SPX {ctx.spx_direction.value} (crypto risk-on)"))
+            used.add("spx")
+        if "vix" not in used:
+            # VIX up = risk-off = crypto down. Inversely aligned.
+            vix_sign = 1 if ctx.vix_level in (VixLevel.ELEVATED, VixLevel.HIGH) else (
+                -1 if ctx.vix_level == VixLevel.LOW else 0
+            )
+            align = -setup_sign * vix_sign
+            if align != 0:
+                result.append(("vix", align, f"VIX {ctx.vix_level.value} (crypto)"))
+            used.add("vix")
+        if "dxy" not in used:
+            # Strong DXY hurts crypto. Inversely aligned.
+            align = -setup_sign * _dir_sign(ctx.dxy_direction)
+            if align != 0:
+                result.append(("dxy", align, f"DXY {ctx.dxy_direction.value} (crypto)"))
+            used.add("dxy")
+
+    # --- New: Equity indices (SPX, NDX, ...) --------------------
+    # Buy equity favored in low VIX + rising SPX (SPX is partly self-referential,
+    # but for non-SPX indices it still signals global risk).
+    if pair_u in _EQUITY_INDICES:
+        if "vix" not in used:
+            vix_sign = 1 if ctx.vix_level in (VixLevel.ELEVATED, VixLevel.HIGH) else (
+                -1 if ctx.vix_level == VixLevel.LOW else 0
+            )
+            align = -setup_sign * vix_sign
+            if align != 0:
+                result.append(("vix", align, f"VIX {ctx.vix_level.value} (equity)"))
+            used.add("vix")
+        # For non-SPX indices, SPX direction is a useful tell.
+        if pair_u != "SPX" and "spx" not in used:
+            align = setup_sign * _dir_sign(ctx.spx_direction)
+            if align != 0:
+                result.append(("spx", align, f"SPX {ctx.spx_direction.value} (equity benchmark)"))
+            used.add("spx")
+
+    # --- New: Energy (WTI, Brent, ...) --------------------------
+    # Oil priced in USD: strong DXY hurts. Risk-on boosts demand.
+    if _is_energy(pair_u):
+        if "dxy" not in used:
+            align = -setup_sign * _dir_sign(ctx.dxy_direction)
+            if align != 0:
+                result.append(("dxy", align, f"DXY {ctx.dxy_direction.value} (oil priced USD)"))
+            used.add("dxy")
+        if "spx" not in used:
+            # SPX up = risk-on = demand for oil (global growth). Aligned with buy.
+            align = setup_sign * _dir_sign(ctx.spx_direction)
+            if align != 0:
+                result.append(("spx", align, f"SPX {ctx.spx_direction.value} (risk-on demand)"))
+            used.add("spx")
 
     return result
 
