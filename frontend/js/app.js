@@ -1117,6 +1117,21 @@ function _renderFilteredSetups() {
         window.Animations.staggerIn(newCards, { duration: 0.35, delayStep: 0.04, yOffset: 12 });
     }
 
+    // Progressive fill des anneaux de confiance (tween stroke-dashoffset de vide → valeur finale)
+    if (window.Motion && !prefersReduced) {
+        container.querySelectorAll('.trade-setup .conf-ring-fill').forEach((circle) => {
+            const targetOffset = parseFloat(circle.getAttribute('stroke-dashoffset'));
+            const dashAttr = circle.getAttribute('stroke-dasharray') || '';
+            const circumference = parseFloat(dashAttr.split(/\s+/)[0]);
+            if (isNaN(targetOffset) || isNaN(circumference)) return;
+            window.Motion.animate(
+                circle,
+                { strokeDashoffset: [circumference, targetOffset] },
+                { duration: 0.8, easing: [0.4, 0, 0.2, 1] }
+            );
+        });
+    }
+
     // Monter les mini-charts en async
     filtered.forEach(s => _mountMiniChart(s));
 }
@@ -2134,16 +2149,28 @@ function _renderKpi() {
     const { daily, risk, backtest } = _kpiState;
     const $ = (id) => document.getElementById(id);
 
+    // Helper: animate a numeric value into an element (falls back to direct textContent
+    // if the Animations helper isn't ready yet or user prefers reduced motion).
+    const prefersReduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const setNum = (el, value, formatter) => {
+        if (!el) return;
+        if (window.Animations && !prefersReduced) {
+            window.Animations.animateNumber(el, value, { duration: 600, formatter });
+        } else {
+            el.textContent = formatter(Number(value));
+        }
+    };
+
     // ─── PnL du jour (bipolaire) ───
     if (daily) {
         const pnl = daily.pnl_today || 0;
         const pnlPct = daily.pnl_pct || 0;
         const limit = daily.daily_loss_limit_pct || 2;
-        const sign = pnl >= 0 ? '+' : '';
-        $('kpi-pnl').textContent = `${sign}${pnl.toFixed(2)} $`;
+        const nTrades = daily.n_trades_today || 0;
+        setNum($('kpi-pnl'), pnl, (v) => `${v >= 0 ? '+' : ''}${v.toFixed(2)} $`);
         $('kpi-pnl').className = 'text-[26px] leading-tight font-bold font-mono tabular-nums ' +
             (pnl > 0 ? 'text-buy' : pnl < 0 ? 'text-sell' : 'text-foreground');
-        $('kpi-pnl-delta').textContent = `${sign}${pnlPct.toFixed(2)} % · ${daily.n_trades_today || 0} trade(s)`;
+        setNum($('kpi-pnl-delta'), pnlPct, (v) => `${v >= 0 ? '+' : ''}${v.toFixed(2)} % · ${nTrades} trade(s)`);
         $('kpi-pnl-min').textContent = `−${limit}%`;
         $('kpi-pnl-max').textContent = `+${limit}%`;
 
@@ -2170,7 +2197,7 @@ function _renderKpi() {
     if (daily) {
         const n = daily.n_trades_today || 0;
         const nOpen = daily.n_open || 0;
-        $('kpi-trades').textContent = `${n}`;
+        setNum($('kpi-trades'), n, (v) => `${Math.round(v)}`);
         $('kpi-trades-delta').textContent = nOpen > 0 ? `${nOpen} ouvert(s)` : 'aucun ouvert';
         const gauge = document.querySelector('[data-gauge="trades"]');
         const fill = gauge?.querySelector('.kpi-gauge-fill');
@@ -2180,7 +2207,7 @@ function _renderKpi() {
     // ─── Win rate backtest (0 → 100%) ───
     if (backtest) {
         const wr = backtest.win_rate_pct ?? 0;
-        $('kpi-winrate').textContent = `${wr.toFixed(0)} %`;
+        setNum($('kpi-winrate'), wr, (v) => `${v.toFixed(0)} %`);
         $('kpi-winrate').className = 'text-[26px] leading-tight font-bold font-mono tabular-nums ' +
             (wr >= 60 ? 'text-buy' : wr >= 50 ? 'text-foreground' : 'text-sell');
         $('kpi-winrate-delta').textContent = `${backtest.closed_trades || 0} trades fermés`;
@@ -2197,10 +2224,11 @@ function _renderKpi() {
     if (risk) {
         const pct = risk.total_risk_pct || 0;
         const usd = risk.total_risk_usd || 0;
-        $('kpi-risk').textContent = `${pct.toFixed(2)} %`;
+        const nOpenRisk = risk.n_open || 0;
+        setNum($('kpi-risk'), pct, (v) => `${v.toFixed(2)} %`);
         $('kpi-risk').className = 'text-[26px] leading-tight font-bold font-mono tabular-nums ' +
             (pct >= 3 ? 'text-sell' : pct >= 2 ? 'text-foreground' : 'text-foreground');
-        $('kpi-risk-delta').textContent = `${usd.toFixed(0)} $ · ${risk.n_open || 0} position(s)`;
+        setNum($('kpi-risk-delta'), usd, (v) => `${v.toFixed(0)} $ · ${nOpenRisk} position(s)`);
         const gauge = document.querySelector('[data-gauge="risk"]');
         const fill = gauge?.querySelector('.kpi-gauge-fill');
         if (fill) {
