@@ -28,6 +28,7 @@ from config.settings import (
     RISK_PER_TRADE_PCT,
     TRADING_CAPITAL,
     TREND_STRENGTH_MIN,
+    asset_class_for,
 )
 
 logger = logging.getLogger(__name__)
@@ -397,6 +398,10 @@ def enrich_trade_setup(
     events: list[EconomicEvent],
 ) -> TradeSetup:
     """Enrichit un trade setup avec score de confiance, explications et money management."""
+    # Stamp asset class if missing (default "forex")
+    if not getattr(setup, "asset_class", None) or setup.asset_class == "forex":
+        setup.asset_class = asset_class_for(setup.pair)
+
     factors: list[ConfidenceFactor] = []
 
     # ── 1. Score pattern (0-30 pts) ──

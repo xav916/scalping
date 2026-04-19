@@ -22,6 +22,7 @@ from backend.models.schemas import (
     TradeDirection,
     TradeSetup,
 )
+from config.settings import asset_class_for
 
 logger = logging.getLogger(__name__)
 
@@ -294,6 +295,7 @@ def calculate_trade_setup(
         entry_time=entry_time,
         expiry_time=expiry_time,
         validity_minutes=validity_minutes,
+        asset_class=asset_class_for(pair),
     )
 
 

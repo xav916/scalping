@@ -2950,3 +2950,69 @@ a:hover,
   }
 }
 
+/* ── Asset class filter chips ─────────────────────────────── */
+.asset-class-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 12px;
+  margin: 4px auto;
+  max-width: 1400px;
+}
+.ac-chip {
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  color: #aab;
+  background: rgba(60, 70, 90, 0.35);
+  border: 1px solid rgba(100, 110, 140, 0.3);
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s, border-color 0.2s;
+}
+.ac-chip:hover {
+  color: #fff;
+  background: rgba(90, 100, 130, 0.5);
+}
+.ac-chip.active {
+  background: rgba(120, 170, 255, 0.3);
+  color: #def;
+  border-color: rgba(120, 170, 255, 0.6);
+}
+
+/* ── Asset class badge on setup card ──────────────────────── */
+.data-badge.asset-class {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  text-transform: uppercase;
+}
+.data-badge.asset-class-forex {
+  background: rgba(80, 120, 200, 0.2);
+  color: #acf;
+  border: 1px solid rgba(80, 120, 200, 0.4);
+}
+.data-badge.asset-class-metal {
+  background: rgba(200, 180, 80, 0.2);
+  color: #ed8;
+  border: 1px solid rgba(200, 180, 80, 0.4);
+}
+.data-badge.asset-class-crypto {
+  background: rgba(200, 120, 60, 0.2);
+  color: #fc9;
+  border: 1px solid rgba(200, 120, 60, 0.4);
+}
+.data-badge.asset-class-equity_index {
+  background: rgba(120, 200, 120, 0.2);
+  color: #9d9;
+  border: 1px solid rgba(120, 200, 120, 0.4);
+}
+.data-badge.asset-class-energy {
+  background: rgba(180, 80, 80, 0.2);
+  color: #f99;
+  border: 1px solid rgba(180, 80, 80, 0.4);
+}
+

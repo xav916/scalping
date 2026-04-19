@@ -1075,7 +1075,17 @@ function updateDashboard(data) {
 
 // ─── Trade Setups (entrée/SL/TP) ────────────────────────────────────
 
-const _setupFilters = { direction: 'all', pair: 'all' };
+const _setupFilters = { direction: 'all', pair: 'all', asset_class: 'all' };
+
+function classLabel(cls) {
+    return {
+        forex: "FOREX",
+        metal: "METAL",
+        crypto: "CRYPTO",
+        equity_index: "INDICE",
+        energy: "ENERGIE",
+    }[cls] || (cls || '').toUpperCase();
+}
 let _lastSetups = [];
 const _activeCharts = new Map(); // setup_id -> { chart, series }
 
@@ -1090,6 +1100,7 @@ function _renderFilteredSetups() {
     const filtered = _lastSetups.filter(s => {
         if (_setupFilters.direction !== 'all' && s.direction !== _setupFilters.direction) return false;
         if (_setupFilters.pair !== 'all' && s.pair !== _setupFilters.pair) return false;
+        if (_setupFilters.asset_class !== 'all' && s.asset_class !== _setupFilters.asset_class) return false;
         return true;
     });
 
@@ -1164,6 +1175,15 @@ function _bindFilters() {
             _renderFilteredSetups();
         });
     }
+    // Asset class chips
+    document.querySelectorAll('#asset-class-filter .ac-chip').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('#asset-class-filter .ac-chip').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            _setupFilters.asset_class = btn.dataset.class;
+            _renderFilteredSetups();
+        });
+    });
 }
 
 // ─── Mini-charts (lightweight-charts) ────────────────────────────────
@@ -1240,6 +1260,10 @@ function tradeSetupHTML(s) {
         ? `<span class="data-badge macro ${macroFactor.positive ? 'macro-pos' : 'macro-neg'}" title="${escapeHtml(macroFactor.detail)}">${escapeHtml(macroFactor.detail.split(' — ')[0])}</span>`
         : '';
 
+    const classBadge = s.asset_class
+        ? `<span class="data-badge asset-class asset-class-${s.asset_class}">${classLabel(s.asset_class)}</span>`
+        : '';
+
     // Alignment bars for each macro primary
     const primariesHtml = (() => {
         if (!macroFactor || !macroFactor.metadata || !macroFactor.metadata.primaries) return "";
@@ -1313,6 +1337,7 @@ function tradeSetupHTML(s) {
                     <span class="dir-label">${dirLabel}</span>
                     <span class="setup-pair">${escapeHtml(s.pair)}</span>
                     ${simBadge}
+                    ${classBadge}
                     ${macroBadge}
                 </div>
                 ${confRingHTML}

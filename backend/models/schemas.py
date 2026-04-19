@@ -149,6 +149,7 @@ class TradeSetup(BaseModel):
     verdict_reasons: list[str] = []  # Facteurs favorables
     verdict_warnings: list[str] = []  # Facteurs defavorables
     verdict_blockers: list[str] = []  # Facteurs bloquants
+    asset_class: str = "forex"  # "forex" | "metal" | "crypto" | "equity_index" | "energy"
 
 
 class ScalpingSignal(BaseModel):
