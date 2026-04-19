@@ -168,6 +168,109 @@ async def debug_macro(_=Depends(verify_credentials)):
     }
 
 
+@app.get("/debug/smoke-test")
+async def debug_smoke_test(_=Depends(verify_credentials)):
+    """Admin end-to-end check : bridge, broker, mapping symboles, cycles, Telegram.
+
+    Ne passe AUCUN ordre. Pur read-only. Retourne un rapport JSON par étape
+    avec statut OK/KO et détails. Utile avant ouverture des marchés pour
+    valider que toute la chaîne est opérationnelle.
+    """
+    import httpx
+    from datetime import datetime, timezone
+    from backend.services.mt5_bridge import health_check as bridge_health_check
+    from backend.services.mt5_service import _resolve_symbol
+    from config.settings import (
+        MT5_BRIDGE_URL,
+        MT5_BRIDGE_API_KEY,
+        WATCHED_PAIRS,
+        TELEGRAM_BOT_TOKEN,
+    )
+
+    report: dict = {}
+
+    # 1. Bridge health
+    health = await bridge_health_check()
+    report["bridge_health"] = health
+    bridge_ok = bool(health.get("reachable"))
+
+    # 2. Bridge /account (connexion broker réelle)
+    if bridge_ok and MT5_BRIDGE_URL and MT5_BRIDGE_API_KEY:
+        try:
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                r = await client.get(
+                    MT5_BRIDGE_URL.rstrip("/") + "/account",
+                    headers={"X-API-Key": MT5_BRIDGE_API_KEY},
+                )
+                report["broker_account"] = {
+                    "status": r.status_code,
+                    "data": r.json() if r.status_code == 200 else None,
+                }
+        except Exception as e:
+            report["broker_account"] = {"status": "error", "error": str(e)[:120]}
+    else:
+        report["broker_account"] = {"status": "skipped", "reason": "bridge down"}
+
+    # 3. Bridge /symbols + vérif mapping WATCHED_PAIRS
+    if bridge_ok and MT5_BRIDGE_URL and MT5_BRIDGE_API_KEY:
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                r = await client.get(
+                    MT5_BRIDGE_URL.rstrip("/") + "/symbols",
+                    headers={"X-API-Key": MT5_BRIDGE_API_KEY},
+                )
+                if r.status_code == 200:
+                    symbols = set(r.json().get("symbols", []))
+                    mapping = []
+                    for pair in WATCHED_PAIRS:
+                        resolved = _resolve_symbol(pair)
+                        mapping.append({
+                            "pair": pair,
+                            "resolved": resolved,
+                            "exists_at_broker": resolved in symbols,
+                        })
+                    missing = [m for m in mapping if not m["exists_at_broker"]]
+                    report["symbol_mapping"] = {
+                        "status": "ok" if not missing else "missing",
+                        "total_pairs": len(mapping),
+                        "missing_count": len(missing),
+                        "mapping": mapping,
+                    }
+                else:
+                    report["symbol_mapping"] = {"status": "error", "http": r.status_code}
+        except Exception as e:
+            report["symbol_mapping"] = {"status": "error", "error": str(e)[:120]}
+    else:
+        report["symbol_mapping"] = {"status": "skipped", "reason": "bridge down"}
+
+    # 4. Dernier cycle d'analyse
+    last = get_last_cycle_at()
+    if last is None:
+        report["analysis_cycle"] = {"status": "never_ran"}
+    else:
+        age = (datetime.now(timezone.utc) - last).total_seconds()
+        report["analysis_cycle"] = {
+            "status": "ok" if age < 600 else "stale",
+            "last_at": last.isoformat(),
+            "age_seconds": round(age, 1),
+        }
+
+    # 5. Telegram config
+    report["telegram"] = {
+        "configured": bool(TELEGRAM_BOT_TOKEN),
+    }
+
+    # Verdict global
+    report["overall"] = "ok" if (
+        bridge_ok
+        and report["broker_account"].get("status") == 200
+        and report["symbol_mapping"].get("status") == "ok"
+        and report["analysis_cycle"].get("status") == "ok"
+    ) else "issues"
+
+    return report
+
+
 @app.get("/api/risk")
 async def risk_dashboard(user: str = Depends(verify_credentials)):
     """Risque cumule sur les positions ouvertes."""
