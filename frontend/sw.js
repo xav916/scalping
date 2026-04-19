@@ -4,7 +4,7 @@
  * Aucun cache dynamique des données marché : elles doivent toujours être fraîches.
  */
 
-const CACHE_VERSION = 'scalping-shell-v13';
+const CACHE_VERSION = 'scalping-shell-v14';
 const SHELL_ASSETS = [
     '/',
     '/css/tailwind.css',

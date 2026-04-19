@@ -6,7 +6,12 @@
     <meta name="theme-color" content="#58a6ff">
     <meta name="robots" content="noindex, nofollow">
     <title>Connexion — Scalping Radar</title>
-    <link rel="icon" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' fill='%230d1117'/><text x='50%25' y='58%25' font-size='34' text-anchor='middle' fill='%2358a6ff' font-family='monospace'>SR</text></svg>">
+    <!-- Manifest PWA référencé depuis la page de login aussi, pour que Chrome
+         considère la PWA installable même quand il atterrit ici (redirection
+         depuis / sans cookie de session). -->
+    <link rel="manifest" href="/manifest.json">
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
+    <link rel="apple-touch-icon" sizes="192x192" href="/icons/icon-192.png">
     <style>
         :root {
             --bg-primary: #0d1117;
