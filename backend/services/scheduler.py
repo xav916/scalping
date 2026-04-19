@@ -255,7 +255,13 @@ _session_alerts_sent: set[str] = set()
 
 async def session_alert_cycle() -> None:
     """Tourne chaque minute : annonce les ouvertures de session importantes
-    via Telegram, 5 min avant l'evenement."""
+    via Telegram, 5 min avant l'evenement.
+
+    Sessions couvertes :
+    - Sydney : ouverture hebdo dim 22h UTC (début de semaine forex)
+    - Tokyo / London / New York : chaque jour de semaine
+    - SPX/NDX (cash) : 13:30 UTC = 15:30 Paris en été, chaque jour de semaine
+    """
     from backend.services.telegram_service import send_text
 
     now = datetime.now(timezone.utc)
@@ -265,31 +271,45 @@ async def session_alert_cycle() -> None:
     if not any(k.startswith(today) for k in _session_alerts_sent):
         _session_alerts_sent.clear()
 
-    # Sessions surveillees (heure UTC d'ouverture)
+    # (heure_UTC, minute_UTC, nom, message, règle_weekend)
+    # règle_weekend :
+    #   "weekdays"     → envoie si l'ouverture tombe lun-ven
+    #   "sunday_only"  → envoie uniquement si l'ouverture tombe un dimanche
+    #                    (cas de Sydney qui ouvre la semaine forex)
     upcoming = [
-        (8, "London", "🇬🇧 Ouverture London dans 5 min — paires EUR/GBP a surveiller"),
-        (13, "New York", "🇺🇸 Ouverture New York dans 5 min — debut de l'overlap London/NY (heure d'or scalping)"),
-        (0, "Tokyo", "🇯🇵 Ouverture Tokyo dans 5 min — paires JPY actives"),
+        (22, 0, "Sydney", "🇦🇺 Ouverture Sydney dans 5 min — début de semaine forex", "sunday_only"),
+        (0, 0, "Tokyo", "🇯🇵 Ouverture Tokyo dans 5 min — paires JPY actives", "weekdays"),
+        (8, 0, "London", "🇬🇧 Ouverture London dans 5 min — paires EUR/GBP à surveiller", "weekdays"),
+        (13, 0, "New York", "🇺🇸 Ouverture New York dans 5 min — début de l'overlap London/NY (heure d'or scalping)", "weekdays"),
+        (13, 30, "SPX/NDX", "📈 Ouverture cash SPX/NDX dans 5 min — US stocks open", "weekdays"),
     ]
-    for open_hour, session_name, msg in upcoming:
-        # Alerte 5 min avant ouverture
-        alert_minute = (open_hour * 60 - 5) % (24 * 60)
-        if now.hour * 60 + now.minute == alert_minute:
-            # Skip si la session ouvre un sam/dim (forex fermé).
-            # L'alerte peut fire la veille (Tokyo, open_hour=0 → alert à 23:55),
-            # donc on regarde le weekday de l'ouverture réelle, pas de now.
-            open_dt = now + timedelta(minutes=5)
-            if open_dt.weekday() >= 5:  # 5=sam, 6=dim
+    for open_hour, open_minute, session_name, msg, weekend_rule in upcoming:
+        alert_total = (open_hour * 60 + open_minute - 5) % (24 * 60)
+        if now.hour * 60 + now.minute != alert_total:
+            continue
+
+        # L'alerte peut fire la veille (Tokyo à 23:55 la veille du lundi,
+        # Sydney à 21:55 le dimanche), donc on regarde le weekday de
+        # l'ouverture réelle, pas de now.
+        open_dt = now + timedelta(minutes=5)
+        wd = open_dt.weekday()  # 0=lundi ... 5=samedi, 6=dimanche
+
+        if weekend_rule == "sunday_only":
+            if wd != 6:
                 continue
-            key = f"{today}-{session_name}"
-            if key in _session_alerts_sent:
+        elif weekend_rule == "weekdays":
+            if wd >= 5:
                 continue
-            _session_alerts_sent.add(key)
-            try:
-                await send_text(msg)
-                logger.info(f"Pre-session alert envoyee: {session_name}")
-            except Exception as e:
-                logger.warning(f"Erreur alert session {session_name}: {e}")
+
+        key = f"{today}-{session_name}"
+        if key in _session_alerts_sent:
+            continue
+        _session_alerts_sent.add(key)
+        try:
+            await send_text(msg)
+            logger.info(f"Pre-session alert envoyee: {session_name}")
+        except Exception as e:
+            logger.warning(f"Erreur alert session {session_name}: {e}")
 
 
 async def daily_email_summary_cycle() -> None:
