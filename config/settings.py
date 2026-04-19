@@ -98,6 +98,14 @@ MT5_BRIDGE_ENABLED = os.getenv("MT5_BRIDGE_ENABLED", "false").lower() in ("1", "
 MT5_BRIDGE_MIN_CONFIDENCE = float(os.getenv("MT5_BRIDGE_MIN_CONFIDENCE", "90"))
 # Taille de position par défaut pour l'auto-exec (en lots MT5).
 MT5_BRIDGE_LOTS = float(os.getenv("MT5_BRIDGE_LOTS", "0.01"))
+# Sync bridge → personal_trades : pull périodique des ordres LIVE depuis le
+# bridge pour que les positions auto apparaissent dans le dashboard
+# (sections Mes trades, Risque ouvert, Courbe d'équité, Détecteur d'erreurs).
+MT5_SYNC_ENABLED = os.getenv("MT5_SYNC_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+MT5_SYNC_INTERVAL_SEC = int(os.getenv("MT5_SYNC_INTERVAL_SEC", "60"))
+# Utilisateur auquel les trades auto sont attribués dans personal_trades.
+# Doit matcher une clé de AUTH_USERS (ou 'anonymous' si auth désactivée).
+AUTO_TRADE_USER = os.getenv("AUTO_TRADE_USER", "")
 # Confiance minimum (0-100) pour qu'un trade_setup soit poussé sur Telegram.
 # Filtre distinct du MIN_CONFIDENCE_SCORE (qui est juste l'affichage).
 TELEGRAM_SETUP_MIN_CONFIDENCE = float(os.getenv("TELEGRAM_SETUP_MIN_CONFIDENCE", "80"))

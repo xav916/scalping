@@ -368,9 +368,24 @@ def start_scheduler() -> AsyncIOScheduler:
         name="Email summary quotidien",
         replace_existing=True,
     )
+    # Sync bridge MT5 → personal_trades : pull incrémental depuis /audit
+    # pour que les ordres auto apparaissent dans le dashboard.
+    from backend.services.mt5_sync import sync_from_bridge
+    from config.settings import MT5_SYNC_INTERVAL_SEC
+    _scheduler.add_job(
+        sync_from_bridge,
+        "interval",
+        seconds=MT5_SYNC_INTERVAL_SEC,
+        id="mt5_sync",
+        name="Sync bridge MT5 → personal_trades",
+        replace_existing=True,
+    )
 
     _scheduler.start()
-    logger.info(f"Scheduler démarré. Analyse {MATAF_POLL_INTERVAL}s, backtest 60s, session_alert 60s, health 120s")
+    logger.info(
+        f"Scheduler démarré. Analyse {MATAF_POLL_INTERVAL}s, backtest 60s, "
+        f"session_alert 60s, health 120s, mt5_sync {MT5_SYNC_INTERVAL_SEC}s"
+    )
     return _scheduler
 
 

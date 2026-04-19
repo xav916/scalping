@@ -76,12 +76,18 @@ def _init_schema() -> None:
             c.execute("ALTER TABLE personal_trades ADD COLUMN post_entry_size INTEGER DEFAULT 0")
         if "post_entry_alarm" not in cols:
             c.execute("ALTER TABLE personal_trades ADD COLUMN post_entry_alarm INTEGER DEFAULT 0")
+        # Traçabilité auto-exec : lien vers le ticket MT5 + flag 'ordre automatique'
+        if "mt5_ticket" not in cols:
+            c.execute("ALTER TABLE personal_trades ADD COLUMN mt5_ticket INTEGER")
+        if "is_auto" not in cols:
+            c.execute("ALTER TABLE personal_trades ADD COLUMN is_auto INTEGER DEFAULT 0")
 
         # 3) Poser les INDEX une fois toutes les colonnes présentes
         c.executescript("""
             CREATE INDEX IF NOT EXISTS idx_pt_user ON personal_trades(user);
             CREATE INDEX IF NOT EXISTS idx_pt_status ON personal_trades(status);
             CREATE INDEX IF NOT EXISTS idx_pt_created ON personal_trades(created_at);
+            CREATE INDEX IF NOT EXISTS idx_pt_ticket ON personal_trades(mt5_ticket);
         """)
 
 
