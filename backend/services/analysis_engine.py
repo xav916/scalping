@@ -7,6 +7,7 @@ to detect scalping opportunities and generate signals.
 import logging
 from datetime import datetime, timezone
 
+from backend.models.macro_schemas import MacroContext
 from backend.models.schemas import (
     ConfidenceFactor,
     EconomicEvent,
@@ -19,7 +20,10 @@ from backend.models.schemas import (
     VolatilityData,
     VolatilityLevel,
 )
+from backend.services import macro_context_service, macro_scoring
 from config.settings import (
+    MACRO_SCORING_ENABLED,
+    MACRO_VETO_ENABLED,
     MIN_CONFIDENCE_SCORE,
     RISK_PER_TRADE_PCT,
     TRADING_CAPITAL,
@@ -549,6 +553,43 @@ def enrich_trade_setup(
     setup.risk_amount = round(risk_amount, 2)
     setup.estimated_gain_1 = estimated_gain_1
     setup.estimated_gain_2 = estimated_gain_2
+
+    # ── Macro context enrichment (Vague 1) ─────────────────────────────
+    if MACRO_SCORING_ENABLED:
+        snapshot: MacroContext | None = macro_context_service.get_macro_snapshot()
+        if snapshot is not None and macro_context_service.is_fresh(snapshot.fetched_at):
+            try:
+                multiplier, veto, reasons = macro_scoring.apply(
+                    setup.pair, setup.direction.value, snapshot
+                )
+                factor_score = round((multiplier - 1.0) * 100, 1)
+                factors.append(
+                    ConfidenceFactor(
+                        name="Contexte macro",
+                        score=factor_score,
+                        detail=f"×{multiplier:.2f} — " + (" | ".join(reasons) if reasons else "neutre"),
+                        positive=multiplier >= 1.0,
+                        source="macro",
+                    )
+                )
+                new_total = min(100, max(0, total_score * multiplier))
+                setup.confidence_score = round(new_total, 1)
+                setup.confidence_factors = factors
+
+                if MACRO_VETO_ENABLED and veto:
+                    setup.verdict_action = "SKIP"
+                    blockers = list(setup.verdict_blockers or [])
+                    blockers.extend([f"Macro veto: {r}" for r in reasons])
+                    setup.verdict_blockers = blockers
+                logger.info(
+                    f"macro_applied pair={setup.pair} dir={setup.direction.value} "
+                    f"base={round(total_score, 1)} mult={multiplier} "
+                    f"final={setup.confidence_score} veto={veto}"
+                )
+            except Exception as e:
+                logger.warning(f"macro scoring error: {e}")
+        else:
+            logger.debug("macro: snapshot stale or missing, neutral mode")
 
     return setup
 

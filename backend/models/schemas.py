@@ -110,6 +110,7 @@ class ConfidenceFactor(BaseModel):
     score: float  # Score 0-100
     detail: str  # Explication courte
     positive: bool = True  # Facteur favorable ou défavorable
+    source: str | None = None  # "pattern" | "macro" | etc. — optional tag for UI/log
 
 
 class TradeSetup(BaseModel):
