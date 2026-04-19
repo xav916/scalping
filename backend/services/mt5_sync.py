@@ -14,6 +14,7 @@ Si la sync rejoue (crash, re-pull), les INSERT sont UPSERT (pas de doublons).
 """
 
 import asyncio
+import json
 import logging
 import sqlite3
 from datetime import datetime, timezone
@@ -21,6 +22,8 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+
+from backend.services import macro_context_service
 
 from config.settings import (
     AUTH_USERS,
@@ -80,14 +83,27 @@ def _upsert_open_trade(row: dict[str, Any], user: str) -> None:
     ticket = row.get("ticket")
     if not ticket:
         return
+
+    ctx_json = None
+    snap = macro_context_service.get_macro_snapshot()
+    if snap is not None and macro_context_service.is_fresh(snap.fetched_at):
+        ctx_json = json.dumps({
+            "dxy": snap.dxy_direction.value,
+            "spx": snap.spx_direction.value,
+            "vix_level": snap.vix_level.value,
+            "vix_value": snap.vix_value,
+            "risk_regime": snap.risk_regime.value,
+            "fetched_at": snap.fetched_at.isoformat(),
+        })
+
     with sqlite3.connect(_db_path()) as c:
         c.execute("""
             INSERT OR IGNORE INTO personal_trades (
                 user, pair, direction, entry_price, stop_loss, take_profit,
                 size_lot, signal_pattern, signal_confidence, checklist_passed,
                 notes, status, created_at, mt5_ticket, is_auto,
-                post_entry_sl, post_entry_tp, post_entry_size
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, 1, ?, 'OPEN', ?, ?, 1, 1, 1, 1)
+                post_entry_sl, post_entry_tp, post_entry_size, context_macro
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, 1, ?, 'OPEN', ?, ?, 1, 1, 1, 1, ?)
         """, (
             user,
             row.get("pair") or row.get("symbol") or "?",
@@ -100,6 +116,7 @@ def _upsert_open_trade(row: dict[str, Any], user: str) -> None:
             f"Auto-exec via bridge MT5 (ticket #{ticket}, comment: {row.get('client_comment', '')})",
             row.get("created_at") or datetime.now(timezone.utc).isoformat(),
             ticket,
+            ctx_json,
         ))
 
 

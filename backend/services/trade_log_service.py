@@ -81,6 +81,8 @@ def _init_schema() -> None:
             c.execute("ALTER TABLE personal_trades ADD COLUMN mt5_ticket INTEGER")
         if "is_auto" not in cols:
             c.execute("ALTER TABLE personal_trades ADD COLUMN is_auto INTEGER DEFAULT 0")
+        if "context_macro" not in cols:
+            c.execute("ALTER TABLE personal_trades ADD COLUMN context_macro TEXT")
 
         # 3) Poser les INDEX une fois toutes les colonnes présentes
         c.executescript("""
@@ -125,13 +127,29 @@ def _conn():
 def record_trade(data: dict, user: str = "anonymous") -> int:
     """Enregistre un trade pris par l'utilisateur `user`."""
     _init_schema()
+    import json
+    from backend.services import macro_context_service
+
+    ctx_json = None
+    snap = macro_context_service.get_macro_snapshot()
+    if snap is not None and macro_context_service.is_fresh(snap.fetched_at):
+        ctx_json = json.dumps({
+            "dxy": snap.dxy_direction.value,
+            "spx": snap.spx_direction.value,
+            "vix_level": snap.vix_level.value,
+            "vix_value": snap.vix_value,
+            "us_de_spread_trend": snap.us_de_spread_trend,
+            "risk_regime": snap.risk_regime.value,
+            "fetched_at": snap.fetched_at.isoformat(),
+        })
+
     with _conn() as c:
         cur = c.execute(
             "INSERT INTO personal_trades "
             "(user, pair, direction, entry_price, stop_loss, take_profit, size_lot, "
             "signal_pattern, signal_confidence, checklist_passed, notes, created_at, "
-            "post_entry_sl, post_entry_tp, post_entry_size, post_entry_alarm) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "post_entry_sl, post_entry_tp, post_entry_size, post_entry_alarm, context_macro) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 user, data["pair"], data["direction"], float(data["entry_price"]),
                 float(data["stop_loss"]), float(data["take_profit"]),
@@ -145,6 +163,7 @@ def record_trade(data: dict, user: str = "anonymous") -> int:
                 1 if data.get("post_entry_tp") else 0,
                 1 if data.get("post_entry_size") else 0,
                 1 if data.get("post_entry_alarm") else 0,
+                ctx_json,
             ),
         )
         return cur.lastrowid
