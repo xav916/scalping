@@ -4,15 +4,17 @@
  * Aucun cache dynamique des données marché : elles doivent toujours être fraîches.
  */
 
-const CACHE_VERSION = 'scalping-shell-v14';
+const CACHE_VERSION = 'scalping-shell-v15';
 const SHELL_ASSETS = [
     '/',
     '/css/tailwind.css',
     '/css/style.css',
     '/js/app.js',
     '/js/login.js',
+    '/js/animations.js',
     '/js/modules/utils.js',
     '/js/vendor/lightweight-charts.standalone.production.js',
+    '/js/vendor/motion.min.js',
     '/manifest.json',
     '/icons/icon-192.png',
     '/icons/icon-512.png',
