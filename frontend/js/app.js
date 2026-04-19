@@ -1060,6 +1060,10 @@ function _renderFilteredSetups() {
         return true;
     });
 
+    // Masquer le skeleton loader dès qu'on a une donnée à afficher
+    const skel = document.getElementById('setups-skeleton');
+    if (skel) skel.style.display = 'none';
+
     if (!filtered.length) {
         const msg = _lastSetups.length
             ? `<p>Aucun setup ne correspond aux filtres actuels.</p>`
@@ -1072,6 +1076,13 @@ function _renderFilteredSetups() {
     // Nettoyer les charts existants avant re-render
     _disposeAllCharts();
     container.innerHTML = filtered.map(s => tradeSetupHTML(s)).join('');
+
+    // Animation stagger-in sur les nouvelles cartes (respecte prefers-reduced-motion)
+    const newCards = container.querySelectorAll(':scope > .trade-setup');
+    const prefersReduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (window.Animations && newCards.length && !prefersReduced) {
+        window.Animations.staggerIn(newCards, { duration: 0.35, delayStep: 0.04, yOffset: 12 });
+    }
 
     // Monter les mini-charts en async
     filtered.forEach(s => _mountMiniChart(s));
