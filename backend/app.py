@@ -394,6 +394,36 @@ async def mobile_view(_=Depends(verify_credentials)):
     return FileResponse(str(FRONTEND_DIR / "mobile.html"))
 
 
+@app.get("/api/macro")
+async def api_macro():
+    """Public endpoint: current macro snapshot for the dashboard banner."""
+    from backend.services.macro_context_service import get_macro_snapshot, is_fresh
+    from datetime import datetime, timezone
+
+    snap = get_macro_snapshot()
+    if snap is None:
+        return {"available": False}
+
+    age_sec = (datetime.now(timezone.utc) - snap.fetched_at).total_seconds()
+    return {
+        "available": True,
+        "fresh": is_fresh(snap.fetched_at),
+        "age_seconds": round(age_sec, 1),
+        "indicators": {
+            "dxy": {"direction": snap.dxy_direction.value, "value": snap.raw_values.get("dxy")},
+            "spx": {"direction": snap.spx_direction.value, "value": snap.raw_values.get("spx")},
+            "vix": {"level": snap.vix_level.value, "value": snap.vix_value},
+            "us10y": {"direction": snap.us10y_trend.value, "value": snap.raw_values.get("us10y")},
+            "de10y": {"direction": snap.de10y_trend.value, "value": snap.raw_values.get("de10y")},
+            "oil": {"direction": snap.oil_direction.value, "value": snap.raw_values.get("oil")},
+            "nikkei": {"direction": snap.nikkei_direction.value, "value": snap.raw_values.get("nikkei")},
+            "gold": {"direction": snap.gold_direction.value, "value": snap.raw_values.get("gold")},
+        },
+        "risk_regime": snap.risk_regime.value,
+        "spread_trend": snap.us_de_spread_trend,
+    }
+
+
 @app.get("/api/overview")
 async def get_overview(_=Depends(verify_credentials)):
     """Get the latest market overview data."""

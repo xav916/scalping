@@ -42,6 +42,80 @@ function isWsConnected() {
     return ws && ws.readyState === WebSocket.OPEN;
 }
 
+// ── Macro banner ───────────────────────────────────────────────
+const MACRO_INDICATORS = [
+    { key: "dxy", label: "DXY" },
+    { key: "spx", label: "SPX" },
+    { key: "vix", label: "VIX" },
+    { key: "us10y", label: "US 10Y" },
+    { key: "de10y", label: "DE 10Y" },
+    { key: "oil", label: "Oil" },
+    { key: "nikkei", label: "Nikkei" },
+    { key: "gold", label: "Gold" },
+];
+
+function dirArrow(direction) {
+    if (direction === "strong_up") return "⇈";
+    if (direction === "up") return "↑";
+    if (direction === "down") return "↓";
+    if (direction === "strong_down") return "⇊";
+    return "→";
+}
+
+function dirClass(direction) {
+    if (direction === "strong_up" || direction === "up") return "macro-up";
+    if (direction === "strong_down" || direction === "down") return "macro-down";
+    return "macro-neutral";
+}
+
+function renderMacroBanner(data) {
+    const banner = document.getElementById("macro-banner");
+    if (!banner) return;
+    if (!data || !data.available) {
+        banner.classList.add("hidden");
+        return;
+    }
+    banner.classList.remove("hidden");
+
+    const indicatorsEl = banner.querySelector(".macro-banner-indicators");
+    indicatorsEl.innerHTML = MACRO_INDICATORS.map(({ key, label }) => {
+        const ind = data.indicators[key] || {};
+        // vix uses "level" instead of "direction"
+        let dir = ind.direction;
+        if (key === "vix") {
+            dir = ({ low: "down", normal: "neutral", elevated: "up", high: "strong_up" })[ind.level] || "neutral";
+        }
+        const value = ind.value != null ? Number(ind.value).toFixed(2) : "—";
+        return `
+            <div class="macro-cell ${dirClass(dir)}">
+                <div class="macro-cell-label">${label}</div>
+                <div class="macro-cell-value">${value}</div>
+                <div class="macro-cell-arrow">${dirArrow(dir)}</div>
+            </div>
+        `;
+    }).join("");
+
+    const regimeEl = banner.querySelector("#macro-regime");
+    const regimeLabel = { risk_on: "RISK ON", neutral: "NEUTRE", risk_off: "RISK OFF" }[data.risk_regime] || data.risk_regime;
+    regimeEl.textContent = regimeLabel;
+    regimeEl.className = `macro-regime-badge macro-regime-${data.risk_regime}`;
+
+    const ageEl = banner.querySelector("#macro-age");
+    const minutes = Math.max(0, Math.round(data.age_seconds / 60));
+    ageEl.textContent = data.fresh ? `MAJ il y a ${minutes} min` : `Donnée ancienne (${minutes} min)`;
+}
+
+async function fetchMacroAndRender() {
+    try {
+        const r = await fetch("/api/macro");
+        if (!r.ok) return;
+        const data = await r.json();
+        renderMacroBanner(data);
+    } catch (_e) {
+        // silencieux
+    }
+}
+
 // ─── Intercepteur fetch : redirige vers /login si la session expire ──
 // Patch global de window.fetch pour que CHAQUE requête API détecte un 401
 // et renvoie l'utilisateur sur la page de login avec ?next=<url_actuelle>.
@@ -1792,6 +1866,8 @@ document.addEventListener('DOMContentLoaded', () => {
     fetchOverview();
     // fetchGlossary() est lazy : déclenché à la 1re ouverture du panneau (cf. _handleDelegatedClick)
     fetchTicks();
+    fetchMacroAndRender();
+    setInterval(fetchMacroAndRender, 60000);
     fetchBacktestStats();
     fetchDailyStatus();
     fetchPersonalTrades();

@@ -2666,3 +2666,97 @@ html.cmdk-open { overflow: hidden; }
     box-shadow: 0 0 20px rgba(255, 73, 118, 0.2);
 }
 
+/* ── Macro banner ─────────────────────────────────────────── */
+.macro-banner-container {
+    margin: 0 auto 12px;
+    max-width: 1400px;
+    padding: 0 12px;
+}
+.macro-banner-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    background: rgba(20, 25, 40, 0.6);
+    border: 1px solid rgba(100, 110, 140, 0.3);
+    border-radius: 10px;
+    padding: 8px 14px;
+    backdrop-filter: blur(8px);
+}
+.macro-banner-indicators {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    flex: 1;
+}
+.macro-cell {
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+    padding: 3px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid transparent;
+}
+.macro-cell.macro-up {
+    color: #9c9;
+    border-color: rgba(50, 160, 80, 0.3);
+}
+.macro-cell.macro-down {
+    color: #e99;
+    border-color: rgba(200, 80, 80, 0.3);
+}
+.macro-cell.macro-neutral {
+    color: #aab;
+    border-color: rgba(120, 130, 160, 0.2);
+}
+.macro-cell-label {
+    font-weight: 600;
+    letter-spacing: 0.3px;
+}
+.macro-cell-value {
+    opacity: 0.85;
+    font-variant-numeric: tabular-nums;
+}
+.macro-cell-arrow {
+    margin-left: 2px;
+    font-weight: 700;
+}
+.macro-banner-meta {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+}
+.macro-regime-badge {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.8px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    text-transform: uppercase;
+}
+.macro-regime-risk_on {
+    background: rgba(50, 160, 80, 0.25);
+    color: #9e9;
+    border: 1px solid rgba(50, 160, 80, 0.5);
+}
+.macro-regime-neutral {
+    background: rgba(120, 130, 160, 0.2);
+    color: #bbb;
+    border: 1px solid rgba(120, 130, 160, 0.4);
+}
+.macro-regime-risk_off {
+    background: rgba(220, 80, 80, 0.25);
+    color: #f88;
+    border: 1px solid rgba(220, 80, 80, 0.5);
+}
+.macro-age-text {
+    font-size: 11px;
+    color: #889;
+    opacity: 0.75;
+}
+.hidden {
+    display: none !important;
+}
