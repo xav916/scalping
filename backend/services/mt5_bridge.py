@@ -26,6 +26,8 @@ from config.settings import (
     MT5_BRIDGE_API_KEY,
     MT5_BRIDGE_MIN_CONFIDENCE,
     MT5_BRIDGE_LOTS,
+    TRADING_CAPITAL,
+    RISK_PER_TRADE_PCT,
 )
 
 logger = logging.getLogger(__name__)
@@ -61,6 +63,28 @@ def _cleanup_old_keys() -> None:
             _sent_setups_today.discard(key)
 
 
+def _compute_lots_dynamic(setup) -> float:
+    """Sizing basé sur le risque — même logique que le calculateur UI.
+
+    lots = (capital × risk_pct) / (SL_distance × 100000)
+
+    Clampé entre 0.01 (min lot MT5) et MT5_BRIDGE_LOTS (cap hard défini dans
+    .env pour éviter une erreur de calcul qui over-size). Pour les paires
+    JPY le calcul est approximatif (ne divise pas par la cote USD/JPY) —
+    ça over-estime le risque donc sous-sizes, ce qui est conservateur.
+    """
+    risk_money = TRADING_CAPITAL * (RISK_PER_TRADE_PCT / 100.0)
+    distance = abs(setup.entry_price - setup.stop_loss)
+    if distance <= 0:
+        # SL = entry, donnée corrompue → fallback taille minimale
+        return 0.01
+    value_per_lot = distance * 100000  # pour paires USD-quoted
+    raw_lots = risk_money / value_per_lot
+    # Round au step du broker (0.01 pour la majorité) + clamp
+    lots = max(0.01, min(MT5_BRIDGE_LOTS, round(raw_lots, 2)))
+    return lots
+
+
 def _should_push(setup) -> bool:
     if not is_configured():
         return False
@@ -84,14 +108,21 @@ async def send_setup(setup) -> None:
     _sent_setups_today.add(key)
 
     direction = _direction_value(setup)
+    lots = _compute_lots_dynamic(setup)
+    risk_money = TRADING_CAPITAL * (RISK_PER_TRADE_PCT / 100.0)
     payload = {
         "pair": setup.pair,
         "direction": direction,
         "entry": setup.entry_price,
         "sl": setup.stop_loss,
         "tp": setup.take_profit_1,
-        "lots": MT5_BRIDGE_LOTS,
+        "lots": lots,
         "comment": f"scalping-radar-{date.today().isoformat()}",
+        # Champs informatifs (le bridge peut les logger pour traçabilité)
+        "tp2": getattr(setup, "take_profit_2", None),
+        "risk_usd": round(risk_money, 2),
+        "risk_pct": RISK_PER_TRADE_PCT,
+        "confidence": getattr(setup, "confidence_score", None),
     }
 
     url = MT5_BRIDGE_URL.rstrip("/") + "/order"
