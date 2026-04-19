@@ -31,6 +31,14 @@
             <span id="user-greeting" class="user-greeting"></span>
             <span id="live-clock" class="live-clock" aria-label="Heure courante"></span>
             <span id="session-markers" class="session-markers"></span>
+            <button
+                id="market-hours-toggle"
+                class="btn btn-sm"
+                type="button"
+                data-action="toggle-market-hours"
+                aria-expanded="false"
+                aria-controls="market-hours-panel"
+                title="Afficher / masquer les horaires des marchés">▾ Horaires</button>
             <span id="trend-info" class="trend-info"></span>
             <span id="last-update" class="last-update"></span>
             <div id="status-indicator" class="status-indicator" aria-hidden="true"></div>
@@ -41,6 +49,25 @@
             <button id="refresh-btn" class="btn" type="button" aria-label="Relancer l'analyse du marché">Actualiser</button>
         </div>
     </header>
+
+    <!-- Mémo horaires des marchés — replié par défaut, affiche un tableau
+         live des sessions forex + crypto + SPX/NDX + XAU/XAG + WTI en
+         heure Paris. -->
+    <section id="market-hours-panel" class="market-hours-panel" hidden aria-labelledby="mh-title">
+        <h2 id="mh-title" class="mh-title">Horaires des marchés</h2>
+        <table class="mh-table">
+            <thead>
+                <tr>
+                    <th scope="col">Marché</th>
+                    <th scope="col">Ouvre</th>
+                    <th scope="col">Ferme</th>
+                    <th scope="col">Statut</th>
+                </tr>
+            </thead>
+            <tbody id="mh-tbody"><!-- rempli par market-hours.js --></tbody>
+        </table>
+        <p class="mh-footnote">Heures en Paris (Europe/Paris). Mise à jour toutes les 30 s.</p>
+    </section>
 
     <!-- Macro context banner -->
     <div id="macro-banner" class="hidden macro-banner-container">
