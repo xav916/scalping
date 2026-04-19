@@ -18,6 +18,10 @@ import {
     countdown as _countdown,
     relativeTime as _relativeTime,
 } from './modules/utils.js';
+import {
+    renderMarketHours,
+    toggleMarketHoursPanel,
+} from './modules/market-hours.js';
 
 const API_BASE = window.location.origin;
 const WS_PROTO = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -1935,6 +1939,10 @@ function _handleDelegatedClick(e) {
             if (open && !_glossaryLoaded) fetchGlossary();
             break;
         }
+        case 'toggle-market-hours': {
+            toggleMarketHoursPanel();
+            break;
+        }
         case 'toggle-silent': toggleSilentMode(); break;
         case 'download-csv': downloadCSV(); break;
         case 'close-trade': {
@@ -1985,6 +1993,7 @@ document.addEventListener('DOMContentLoaded', () => {
     connectWebSocket();
     _bindFilters();
     _renderSessionMarkers();
+    renderMarketHours();
     _updateSoundBtn();
     _updateVoiceBtn();
     document.getElementById('refresh-btn').addEventListener('click', refreshAnalysis);
@@ -2008,6 +2017,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Session markers : recalcul toutes les minutes
     setInterval(_renderSessionMarkers, 60000);
+
+    // Market hours panel : refresh toutes les 30s (plus réactif que sessions
+    // à cause du countdown "ouvre dans Xh Ym")
+    setInterval(renderMarketHours, 30000);
 
     // Fallback : ne poller l'overview que si le WS est tombé (sinon WS push déjà)
     setInterval(() => {
