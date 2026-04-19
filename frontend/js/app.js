@@ -1102,6 +1102,11 @@ function tradeSetupHTML(s) {
         ? '<span class="data-badge simulated">SIMULÉ</span>'
         : '<span class="data-badge live">LIVE</span>';
 
+    const macroFactor = (s.confidence_factors || []).find(f => f.source === 'macro');
+    const macroBadge = macroFactor
+        ? `<span class="data-badge macro ${macroFactor.positive ? 'macro-pos' : 'macro-neg'}" title="${escapeHtml(macroFactor.detail)}">${escapeHtml(macroFactor.detail.split(' — ')[0])}</span>`
+        : '';
+
     // Confidence score color
     const confColor = confScore >= 85 ? 'conf-high' : confScore >= 75 ? 'conf-medium' : 'conf-low';
 
@@ -1159,6 +1164,7 @@ function tradeSetupHTML(s) {
                     <span class="dir-label">${dirLabel}</span>
                     <span class="setup-pair">${escapeHtml(s.pair)}</span>
                     ${simBadge}
+                    ${macroBadge}
                 </div>
                 ${confRingHTML}
             </div>

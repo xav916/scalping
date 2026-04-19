@@ -632,6 +632,22 @@ body {
     border: 1px solid rgba(255, 170, 0, 0.4);
 }
 
+.data-badge.macro {
+    background: rgba(100, 100, 150, 0.2);
+    border: 1px solid rgba(100, 100, 150, 0.4);
+    color: #aab;
+}
+.data-badge.macro.macro-pos {
+    background: rgba(50, 160, 80, 0.2);
+    border-color: rgba(50, 160, 80, 0.4);
+    color: #9c9;
+}
+.data-badge.macro.macro-neg {
+    background: rgba(200, 80, 80, 0.2);
+    border-color: rgba(200, 80, 80, 0.4);
+    color: #e99;
+}
+
 .setup-confidence {
     display: flex;
     align-items: center;
