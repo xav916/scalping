@@ -68,6 +68,8 @@ function dirClass(direction) {
     return "macro-neutral";
 }
 
+let _previousMacro = null;
+
 function renderMacroBanner(data) {
     const banner = document.getElementById("macro-banner");
     if (!banner) return;
@@ -75,6 +77,7 @@ function renderMacroBanner(data) {
         banner.classList.add("hidden");
         return;
     }
+    const wasHidden = banner.classList.contains("hidden");
     banner.classList.remove("hidden");
 
     const indicatorsEl = banner.querySelector(".macro-banner-indicators");
@@ -87,7 +90,7 @@ function renderMacroBanner(data) {
         }
         const value = ind.value != null ? Number(ind.value).toFixed(2) : "—";
         return `
-            <div class="macro-cell ${dirClass(dir)}">
+            <div class="macro-cell ${dirClass(dir)}" data-macro-key="${key}" data-macro-dir="${dir}">
                 <div class="macro-cell-label">${label}</div>
                 <div class="macro-cell-value">${value}</div>
                 <div class="macro-cell-arrow">${dirArrow(dir)}</div>
@@ -103,6 +106,36 @@ function renderMacroBanner(data) {
     const ageEl = banner.querySelector("#macro-age");
     const minutes = Math.max(0, Math.round(data.age_seconds / 60));
     ageEl.textContent = data.fresh ? `MAJ il y a ${minutes} min` : `Donnée ancienne (${minutes} min)`;
+
+    // ─── Animations ─────────────────────────────────────────────
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (!reduced && window.Animations) {
+        // First reveal: stagger in all cells
+        if (wasHidden) {
+            const cells = indicatorsEl.querySelectorAll('.macro-cell');
+            window.Animations.staggerIn(Array.from(cells), { duration: 0.4, delayStep: 0.05, yOffset: 8 });
+        } else if (_previousMacro && _previousMacro.indicators) {
+            // Subsequent refresh: pulse arrow if direction changed
+            MACRO_INDICATORS.forEach(({ key }) => {
+                const prev = _previousMacro.indicators[key];
+                const curr = data.indicators[key];
+                if (!prev || !curr) return;
+                const prevDir = (key === 'vix') ? prev.level : prev.direction;
+                const currDir = (key === 'vix') ? curr.level : curr.direction;
+                if (prevDir !== currDir) {
+                    const arrowEl = indicatorsEl.querySelector(`[data-macro-key="${key}"] .macro-cell-arrow`);
+                    if (arrowEl) window.Animations.pulse(arrowEl, { duration: 0.5, scale: 1.4 });
+                }
+            });
+        }
+
+        // Regime change pop
+        if (_previousMacro && _previousMacro.risk_regime !== data.risk_regime) {
+            window.Animations.pulse(regimeEl, { duration: 0.6, scale: 1.15 });
+        }
+    }
+
+    _previousMacro = data;
 }
 
 async function fetchMacroAndRender() {
