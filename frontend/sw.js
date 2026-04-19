@@ -13,6 +13,7 @@ const SHELL_ASSETS = [
     '/js/login.js',
     '/js/animations.js',
     '/js/modules/utils.js',
+    '/js/modules/market-hours.js',
     '/js/vendor/lightweight-charts.standalone.production.js',
     '/js/vendor/motion.min.js',
     '/manifest.json',

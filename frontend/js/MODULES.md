@@ -6,7 +6,8 @@
 frontend/js/
 ├── app.js                   ← entrypoint, chargé en <script type="module">
 ├── modules/
-│   └── utils.js             ← helpers purs (escapeHtml, countdown, patternLabel…)
+│   ├── utils.js             ← helpers purs (escapeHtml, countdown, patternLabel…)
+│   └── market-hours.js      ← mémo horaires des marchés (data model + helpers purs + DOM)
 ├── vendor/
 │   └── lightweight-charts.standalone.production.js   ← self-hosté
 └── MODULES.md               ← ce document
@@ -15,6 +16,12 @@ frontend/js/
 **Ce qui a été fait** :
 - `app.js` est maintenant un module ES (strict mode automatique, scope isolé).
 - Les 7 helpers purs ont été extraits dans `utils.js` (testables sans DOM).
+- `market-hours.js` isole le nouveau panneau "Horaires des marchés" (8
+  marchés surveillés, heure Paris). Les helpers purs (`computeMarketStatus`,
+  `toParisHHMM`, `formatCountdown`, `isForexWeekendClosed`) sont couverts par
+  `tests/frontend/market-hours.test.mjs` (runnable via `node --test`). Les
+  fonctions DOM (`renderMarketHours`, `toggleMarketHoursPanel`) sont appelées
+  depuis `app.js` au DOMContentLoaded et toutes les 30 s.
 - Pas d'autre découpage : les 1600+ lignes restantes partagent un état mutable
   (ws, _tickState, _activeCharts, _currentSignalForModal, etc.) qui demande
   une stratégie d'exposition propre (objet partagé, live bindings, ou events)
