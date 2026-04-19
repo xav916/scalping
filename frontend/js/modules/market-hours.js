@@ -210,12 +210,10 @@ export function toggleMarketHoursPanel() {
     if (willOpen) {
         panel.removeAttribute('hidden');
         btn.setAttribute('aria-expanded', 'true');
-        btn.textContent = '▴ Horaires';
         renderMarketHours();
     } else {
         panel.setAttribute('hidden', '');
         btn.setAttribute('aria-expanded', 'false');
-        btn.textContent = '▾ Horaires';
     }
     return willOpen;
 }

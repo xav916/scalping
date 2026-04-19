@@ -1,0 +1,100 @@
+<h2>Format du contenu du panneau</h2>
+<p class="subtitle">Quelle mise en forme à l'intérieur du panneau dépliable ?</p>
+
+<div class="cards">
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:12px;background:#0d1117">
+      <div style="background:#161b22;border-radius:6px;padding:10px;font-size:10px">
+        <div style="display:grid;grid-template-columns:1.3fr 1fr 1fr 0.9fr;gap:6px 10px;color:#8b949e">
+          <div style="color:#6e7681;font-size:9px;letter-spacing:.5px">MARCHÉ</div>
+          <div style="color:#6e7681;font-size:9px;letter-spacing:.5px">OUVRE</div>
+          <div style="color:#6e7681;font-size:9px;letter-spacing:.5px">FERME</div>
+          <div style="color:#6e7681;font-size:9px;letter-spacing:.5px">STATUT</div>
+
+          <div>🇦🇺 Sydney</div><div>00:00</div><div>09:00</div><div><span style="color:#6e7681">fermé · 1h56</span></div>
+          <div>🇯🇵 Tokyo</div><div>02:00</div><div>11:00</div><div><span style="color:#6e7681">fermé</span></div>
+          <div>🇬🇧 London</div><div>10:00</div><div>19:00</div><div><span style="color:#6e7681">fermé</span></div>
+          <div>🇺🇸 New York</div><div>15:00</div><div>00:00</div><div><span style="color:#6e7681">fermé</span></div>
+          <div style="color:#d29922">⚡ BTC / ETH</div><div colspan="2">24/7</div><div></div><div><span style="color:#27ae60">● ouvert</span></div>
+          <div>🇺🇸 SPX / NDX</div><div>15:30</div><div>22:00</div><div><span style="color:#6e7681">fermé</span></div>
+          <div>🥇 XAU / XAG</div><div colspan="2">suit forex</div><div></div><div><span style="color:#6e7681">fermé</span></div>
+          <div>🛢️ WTI</div><div colspan="2">23:00→22:00</div><div></div><div><span style="color:#6e7681">fermé</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A — Tableau compact + statut live</h3>
+      <p>Ligne par marché, colonnes Ouvre / Ferme / Statut. Le statut se met à jour (ouvert vert, fermé gris, countdown sur le prochain). Scan en 2 secondes.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:12px;background:#0d1117">
+      <div style="background:#161b22;border-radius:6px;padding:10px;font-size:9px;color:#8b949e">
+        <div style="display:grid;grid-template-columns:60px 1fr;gap:3px;align-items:center">
+          <div>Sydney</div>
+          <div style="position:relative;height:14px;background:#21262d;border-radius:2px">
+            <div style="position:absolute;left:0%;width:37.5%;top:0;bottom:0;background:#8e44ad;border-radius:2px"></div>
+          </div>
+          <div>Tokyo</div>
+          <div style="position:relative;height:14px;background:#21262d;border-radius:2px">
+            <div style="position:absolute;left:8.3%;width:37.5%;top:0;bottom:0;background:#e74c3c;border-radius:2px"></div>
+          </div>
+          <div>London</div>
+          <div style="position:relative;height:14px;background:#21262d;border-radius:2px">
+            <div style="position:absolute;left:41.7%;width:37.5%;top:0;bottom:0;background:#3498db;border-radius:2px"></div>
+          </div>
+          <div>NY</div>
+          <div style="position:relative;height:14px;background:#21262d;border-radius:2px">
+            <div style="position:absolute;left:62.5%;width:37.5%;top:0;bottom:0;background:#27ae60;border-radius:2px"></div>
+            <div style="position:absolute;left:91.7%;top:-4px;bottom:-4px;width:2px;background:#fff"></div>
+          </div>
+          <div style="color:#6e7681;font-size:8px">0h</div>
+          <div style="display:flex;justify-content:space-between;font-size:8px;color:#6e7681">
+            <span>6h</span><span>12h</span><span>18h</span><span>24h</span>
+          </div>
+        </div>
+        <div style="margin-top:8px;padding-top:8px;border-top:1px solid #21262d;font-size:9px">
+          BTC/ETH 24/7 · SPX 15:30-22:00 · XAU suit forex · WTI 23:00→22:00
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B — Timeline 24h visuelle (forex) + tableau secondaire</h3>
+      <p>Barres colorées superposées pour voir les overlaps forex (le fameux London/NY). Ligne blanche = heure actuelle. Autres marchés en une ligne texte sous la timeline.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:12px;background:#0d1117">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+        <div style="background:#161b22;border-radius:6px;padding:8px;font-size:9px;color:#8b949e">
+          <div style="color:#c9d1d9;font-weight:600">🇬🇧 London</div>
+          <div>10:00 → 19:00</div>
+          <div style="color:#6e7681">Ferme dans 11h56</div>
+        </div>
+        <div style="background:#161b22;border-radius:6px;padding:8px;font-size:9px;color:#8b949e">
+          <div style="color:#c9d1d9;font-weight:600">🇺🇸 New York</div>
+          <div>15:00 → 00:00</div>
+          <div style="color:#6e7681">Ferme dans 16h56</div>
+        </div>
+        <div style="background:#161b22;border-radius:6px;padding:8px;font-size:9px;color:#8b949e">
+          <div style="color:#c9d1d9;font-weight:600">🇦🇺 Sydney</div>
+          <div>00:00 → 09:00</div>
+          <div style="color:#d29922">Ouvre dans 1h56</div>
+        </div>
+        <div style="background:#161b22;border-radius:6px;padding:8px;font-size:9px;color:#8b949e">
+          <div style="color:#c9d1d9;font-weight:600">⚡ BTC / ETH</div>
+          <div>24 / 7</div>
+          <div style="color:#27ae60">● Toujours ouvert</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C — Cartes par marché (grille)</h3>
+      <p>Une carte par marché avec ouverture, fermeture, countdown. Plus visuel, prend plus de place. 6-9 cartes = panneau plus gros.</p>
+    </div>
+  </div>
+</div>
+
+<p class="subtitle" style="margin-top:20px"><em>Mon vote : A (tableau compact). Le plus scannable, le plus dense en infos, facile à coder, facile à lire. La timeline B est sympa mais purement forex — mal adaptée à BTC/SPX/WTI.</em></p>

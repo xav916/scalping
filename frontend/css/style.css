@@ -3109,8 +3109,7 @@ a:hover,
     font-style: italic;
 }
 
-#market-hours-toggle {
-    font-size: 0.75rem;
-    padding: 3px 8px;
-    min-width: 0;
+#market-hours-toggle[aria-expanded="true"] {
+    background: var(--accent-blue, #58a6ff);
+    color: #fff;
 }

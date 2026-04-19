@@ -1,0 +1,71 @@
+<h2>Placement du mémo dans le dashboard</h2>
+<p class="subtitle">Où le mémo doit-il apparaître ? Clique pour sélectionner.</p>
+
+<div class="cards">
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:16px;background:#0d1117">
+      <div style="background:#161b22;padding:8px;border-radius:4px;margin-bottom:6px;font-size:11px;color:#c9d1d9">
+        <strong>Scalping Radar</strong> — 22:04 · <span style="color:#27ae60">Marché fermé</span> · 🌙 Son ON
+      </div>
+      <div style="background:#1f2937;padding:6px 10px;border-radius:4px;margin-bottom:4px;cursor:pointer;font-size:10px;color:#8b949e">
+        ▾ Horaires des marchés
+      </div>
+      <div style="background:#161b22;padding:8px;border-radius:4px;font-size:10px;color:#8b949e">
+        <div>🇦🇺 Sydney &nbsp;·&nbsp; 00:00 → 09:00 Paris</div>
+        <div>🇯🇵 Tokyo &nbsp;·&nbsp; 02:00 → 11:00 Paris</div>
+        <div>🇬🇧 London &nbsp;·&nbsp; 10:00 → 19:00 Paris</div>
+        <div>🇺🇸 New York · 15:00 → 00:00 Paris</div>
+        <div style="color:#6e7681">… (+ crypto, SPX, XAU, WTI)</div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A — Panneau dépliable sous le header</h3>
+      <p>Bouton <em>Horaires des marchés ▾</em> dans le bandeau du haut. Même pattern que le glossaire en bas. Visible mais replié par défaut.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:16px;background:#0d1117">
+      <div style="background:#161b22;padding:8px;border-radius:4px;font-size:11px;color:#c9d1d9">
+        <strong>Scalping Radar</strong> — 22:04 · <span style="background:#1f2937;padding:2px 6px;border-radius:4px;color:#27ae60;border:1px dashed #27ae60">Marché fermé ⓘ</span>
+      </div>
+      <div style="position:relative;margin-top:8px;margin-left:140px">
+        <div style="background:#21262d;border:1px solid #30363d;padding:8px;border-radius:6px;font-size:10px;color:#8b949e;max-width:220px;box-shadow:0 4px 12px rgba(0,0,0,0.5)">
+          <div style="color:#c9d1d9;font-weight:600;margin-bottom:4px">Prochaines ouvertures</div>
+          <div>Sydney — dans 1h56 (00:00)</div>
+          <div>Tokyo — 02:00</div>
+          <div>London — 10:00</div>
+          <div style="border-top:1px solid #30363d;margin-top:4px;padding-top:4px;color:#6e7681">BTC/ETH : 24/7</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B — Tooltip au survol du badge session</h3>
+      <p>Le badge <em>Marché fermé</em> / <em>London</em> devient survolable → affiche le mémo en flottant. Zéro UI permanente, infos à la demande.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:16px;background:#0d1117">
+      <div style="background:#161b22;padding:8px;border-radius:4px;margin-bottom:6px;font-size:11px;color:#c9d1d9">
+        <strong>Scalping Radar</strong> — 22:04 · Marché fermé
+      </div>
+      <div style="display:flex;gap:6px;margin-bottom:6px;font-size:10px">
+        <div style="background:#1f2937;padding:4px 10px;border-radius:4px;color:#8b949e">📈 Marché</div>
+        <div style="background:#1f2937;padding:4px 10px;border-radius:4px;color:#8b949e">📊 Revue</div>
+        <div style="background:#1f2937;padding:4px 10px;border-radius:4px;color:#58a6ff;border:1px solid #58a6ff">🕐 Horaires</div>
+        <div style="background:#1f2937;padding:4px 10px;border-radius:4px;color:#8b949e">📖 Glossaire</div>
+      </div>
+      <div style="background:#161b22;padding:10px;border-radius:4px;font-size:10px;color:#8b949e;min-height:60px">
+        <div style="color:#c9d1d9;margin-bottom:6px">Horaires complets — tous marchés</div>
+        <div style="opacity:0.7">Tableau détaillé avec timeline, statuts live, jours fériés…</div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C — Nouvelle section dans la sub-nav</h3>
+      <p>Ajouter une 4ᵉ ancre "Horaires" à côté de Marché/Revue/Glossaire. Espace dédié pour un mémo détaillé.</p>
+    </div>
+  </div>
+</div>
+
+<p class="subtitle" style="margin-top:20px"><em>Mon vote : A (panneau dépliable). Pattern déjà connu dans ton app (le glossaire), scannable d'un coup d'œil, replié par défaut donc ne pollue pas.</em></p>

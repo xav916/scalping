@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"from backend.models.schemas import ConfidenceFactor, TradeSetup; print\\('schemas OK'\\)\")",
+      "Bash(python -c \"from backend.services.analysis_engine import enrich_trade_setup, filter_high_confidence_setups; print\\('analysis_engine OK'\\)\")",
+      "Bash(python -c \"from backend.services.scheduler import run_analysis_cycle; print\\('scheduler OK'\\)\")",
+      "Bash(python -c ':*)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('backend/app.py'\\).read\\(\\)\\); print\\('app.py syntax OK'\\)\")",
+      "Bash(bash -n deploy/setup-ec2.sh)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('frontend/js/app.js'\\).read\\(\\) if False else ''\\); print\\('OK'\\)\")",
+      "Bash(python -c \"from backend.models.schemas import TradeSetup; t = TradeSetup.__fields__; print\\('entry_time' in t, 'expiry_time' in t\\); print\\('schemas OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('backend/services/pattern_detector.py'\\).read\\(\\)\\); print\\('pattern_detector OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('backend/app.py'\\).read\\(\\)\\); print\\('app.py OK'\\)\")",
+      "Bash(python -c \"from config.settings import AUTH_USERNAME, AUTH_PASSWORD; print\\('settings OK'\\)\")",
+      "Bash(python -c \"from config.settings import AUTH_USERS; print\\('settings OK, users:', AUTH_USERS\\)\")"
+    ]
+  }
+}
