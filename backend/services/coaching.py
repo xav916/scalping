@@ -36,7 +36,23 @@ _PATTERN_EXPLAIN = {
 }
 
 
-def _active_sessions_utc(hour: int) -> list[str]:
+def _active_sessions_utc(now) -> list[str]:
+    """Retourne les sessions forex actives a l'instant `now` (datetime UTC).
+
+    Le forex ouvre dimanche 22:00 UTC (Sydney) et ferme vendredi 22:00 UTC.
+    - Samedi : tout ferme
+    - Dimanche avant 22:00 UTC : tout ferme
+    - Dimanche 22:00+ et lundi-vendredi : sessions normales selon l'heure
+    """
+    # weekday(): 0=lundi ... 5=samedi, 6=dimanche
+    wd = now.weekday()
+    hour = now.hour
+    if wd == 5:  # samedi : marche ferme
+        return []
+    if wd == 6 and hour < 22:  # dimanche avant ouverture Sydney
+        return []
+    if wd == 4 and hour >= 22:  # vendredi apres 22h UTC : marche ferme
+        return []
     sessions = []
     if hour >= 22 or hour < 7: sessions.append("Sydney")
     if 0 <= hour < 9: sessions.append("Tokyo")
@@ -163,7 +179,7 @@ def compute_verdict(
         warnings.append(f"Score faible ({score:.0f}/100)")
 
     # Session
-    active = _active_sessions_utc(now.hour)
+    active = _active_sessions_utc(now)
     if not active:
         blockers.append("Marche ferme (pas de session active)")
     else:
