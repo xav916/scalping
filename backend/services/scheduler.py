@@ -21,6 +21,7 @@ from backend.services.telegram_service import (
     send_setups as telegram_send_setups,
     send_signals as telegram_send_signals,
 )
+from backend.services.mt5_bridge import send_setups as mt5_bridge_send_setups
 from backend.services.pattern_detector import calculate_trade_setup, detect_patterns
 from backend.services.price_service import fetch_candles
 from config.settings import (
@@ -208,6 +209,9 @@ async def run_analysis_cycle() -> None:
         # du seuil. Dedup par (date, pair, direction, entry) dans le service.
         if all_trade_setups:
             asyncio.create_task(telegram_send_setups(all_trade_setups))
+            # Push MT5 bridge : setups TAKE haute conviction → PC local via
+            # Tailscale. Le bridge reste en PAPER_MODE par défaut, zéro risque.
+            asyncio.create_task(mt5_bridge_send_setups(all_trade_setups))
 
         # Envoyer la mise à jour complète
         await broadcast_update({

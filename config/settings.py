@@ -83,6 +83,21 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 # Force minimum pour qu'un signal soit envoye : weak / moderate / strong
 TELEGRAM_MIN_STRENGTH = os.getenv("TELEGRAM_MIN_STRENGTH", "strong")
+
+# ─── Bridge MT5 (auto-exec sur MetaTrader 5 desktop local) ──────────
+# URL du bridge MT5 accessible via Tailscale (ex: http://100.122.188.8:8787).
+# Le bridge doit tourner sur le PC Windows de l'utilisateur.
+MT5_BRIDGE_URL = os.getenv("MT5_BRIDGE_URL", "")
+MT5_BRIDGE_API_KEY = os.getenv("MT5_BRIDGE_API_KEY", "")
+# Activation globale : si false, le radar détecte les setups mais NE POUSSE
+# RIEN au bridge. true = push auto (bridge en paper par défaut → sans risque
+# financier tant que le bridge est en PAPER_MODE).
+MT5_BRIDGE_ENABLED = os.getenv("MT5_BRIDGE_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+# Seuil strict — 90 par défaut. Stricter que le push Telegram (80) : on
+# n'auto-trade qu'avec haute conviction.
+MT5_BRIDGE_MIN_CONFIDENCE = float(os.getenv("MT5_BRIDGE_MIN_CONFIDENCE", "90"))
+# Taille de position par défaut pour l'auto-exec (en lots MT5).
+MT5_BRIDGE_LOTS = float(os.getenv("MT5_BRIDGE_LOTS", "0.01"))
 # Confiance minimum (0-100) pour qu'un trade_setup soit poussé sur Telegram.
 # Filtre distinct du MIN_CONFIDENCE_SCORE (qui est juste l'affichage).
 TELEGRAM_SETUP_MIN_CONFIDENCE = float(os.getenv("TELEGRAM_SETUP_MIN_CONFIDENCE", "80"))
