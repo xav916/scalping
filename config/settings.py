@@ -59,8 +59,41 @@ TREND_STRENGTH_MIN = float(os.getenv("TREND_STRENGTH_MIN", "0.6"))  # 0-1 scale
 # Currency pairs to monitor
 WATCHED_PAIRS = os.getenv(
     "WATCHED_PAIRS",
-    "XAU/USD,EUR/USD,GBP/USD,USD/JPY,EUR/GBP,USD/CHF,AUD/USD,USD/CAD,EUR/JPY,GBP/JPY"
+    "XAU/USD,EUR/USD,GBP/USD,USD/JPY,EUR/GBP,USD/CHF,AUD/USD,USD/CAD,EUR/JPY,GBP/JPY,"
+    "BTC/USD,ETH/USD,XAG/USD,WTI/USD,SPX,NDX"
 ).split(",")
+
+# Asset class per pair (used for UI filtering, scoring mapping, bridge routing).
+# "forex" = forex majors/crosses
+# "metal" = precious metals (XAU, XAG)
+# "crypto" = crypto (BTC, ETH, ...)
+# "energy" = oil, gas
+# "equity_index" = stock indices (SPX, NDX, DAX, ...)
+ASSET_CLASS_OVERRIDES_RAW = os.getenv("ASSET_CLASS_OVERRIDES", "")
+_asset_overrides: dict[str, str] = {}
+if ASSET_CLASS_OVERRIDES_RAW:
+    for entry in ASSET_CLASS_OVERRIDES_RAW.split(","):
+        entry = entry.strip()
+        if ":" in entry:
+            k, v = entry.split(":", 1)
+            _asset_overrides[k.strip().upper()] = v.strip().lower()
+
+
+def asset_class_for(pair: str) -> str:
+    """Return the asset class for a pair using known patterns + overrides."""
+    p = pair.upper()
+    if p in _asset_overrides:
+        return _asset_overrides[p]
+    if p.startswith(("BTC", "ETH", "LTC", "XRP", "SOL", "ADA", "DOGE")) or p.endswith(("/BTC", "/ETH")):
+        return "crypto"
+    if p.startswith(("XAU", "XAG", "XPT", "XPD")):
+        return "metal"
+    if p.startswith(("WTI", "BRENT", "XTI", "XBR", "NGAS", "NATGAS")):
+        return "energy"
+    if p in {"SPX", "NDX", "DJI", "RUT", "DAX", "N225", "NIKKEI", "FTSE", "CAC40", "UK100", "US30", "US500", "NAS100", "DE40", "EU50", "JP225"}:
+        return "equity_index"
+    # default = forex
+    return "forex"
 
 # Source de prix : "mt5" (MetaTrader 5 temps réel) ou "twelvedata" (polling)
 PRICE_SOURCE = os.getenv("PRICE_SOURCE", "twelvedata").lower()
