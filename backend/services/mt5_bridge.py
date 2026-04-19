@@ -26,8 +26,10 @@ from config.settings import (
     MT5_BRIDGE_API_KEY,
     MT5_BRIDGE_MIN_CONFIDENCE,
     MT5_BRIDGE_LOTS,
+    MT5_BRIDGE_ALLOWED_ASSET_CLASSES,
     TRADING_CAPITAL,
     RISK_PER_TRADE_PCT,
+    asset_class_for,
 )
 
 logger = logging.getLogger(__name__)
@@ -78,6 +80,18 @@ async def send_setup(setup) -> None:
     """Push un trade_setup vers le bridge MT5 local si toutes les conditions
     sont remplies (verdict TAKE, seuil, dedup)."""
     if not _should_push(setup):
+        return
+    # Guard : le broker courant (MetaQuotes-Demo par défaut) ne supporte
+    # qu'une partie des asset classes. Court-circuite les setups crypto /
+    # indices / énergie tant qu'on n'a pas migré vers un broker multi-asset
+    # (Pepperstone, IC Markets, ...). Évite SYMBOL_SELECT errors et la
+    # pollution de l'audit DB.
+    asset_class = asset_class_for(setup.pair)
+    if asset_class not in MT5_BRIDGE_ALLOWED_ASSET_CLASSES:
+        logger.debug(
+            f"mt5_bridge: skipping {setup.pair} ({asset_class}) — "
+            f"broker supports only {MT5_BRIDGE_ALLOWED_ASSET_CLASSES}"
+        )
         return
     _cleanup_old_keys()
     key = _dedup_key(setup)
@@ -139,6 +153,13 @@ async def send_setup(setup) -> None:
 async def send_setups(setups: list) -> None:
     """Push plusieurs setups en parallèle. No-op si bridge pas configuré."""
     if not is_configured() or not setups:
+        return
+    # Pré-filtre sur l'asset class supportée par le broker courant.
+    setups = [
+        s for s in setups
+        if asset_class_for(s.pair) in MT5_BRIDGE_ALLOWED_ASSET_CLASSES
+    ]
+    if not setups:
         return
     await asyncio.gather(*(send_setup(s) for s in setups), return_exceptions=True)
 

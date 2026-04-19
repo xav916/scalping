@@ -131,6 +131,14 @@ MT5_BRIDGE_ENABLED = os.getenv("MT5_BRIDGE_ENABLED", "false").lower() in ("1", "
 MT5_BRIDGE_MIN_CONFIDENCE = float(os.getenv("MT5_BRIDGE_MIN_CONFIDENCE", "90"))
 # Taille de position par défaut pour l'auto-exec (en lots MT5).
 MT5_BRIDGE_LOTS = float(os.getenv("MT5_BRIDGE_LOTS", "0.01"))
+# Asset classes the current broker supports for auto-execution.
+# MetaQuotes-Demo = forex + metal only. Pepperstone-Demo (migration B) = all classes.
+# Comma-separated: forex,metal,crypto,equity_index,energy
+MT5_BRIDGE_ALLOWED_ASSET_CLASSES = [
+    c.strip().lower()
+    for c in os.getenv("MT5_BRIDGE_ALLOWED_ASSET_CLASSES", "forex,metal").split(",")
+    if c.strip()
+]
 # Sync bridge → personal_trades : pull périodique des ordres LIVE depuis le
 # bridge pour que les positions auto apparaissent dans le dashboard
 # (sections Mes trades, Risque ouvert, Courbe d'équité, Détecteur d'erreurs).
