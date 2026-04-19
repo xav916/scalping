@@ -132,6 +132,42 @@ async def health(_=Depends(verify_credentials)):
     }
 
 
+@app.get("/debug/macro")
+async def debug_macro(_=Depends(verify_credentials)):
+    """Admin-only debug view of the cached macro snapshot."""
+    from datetime import datetime, timezone
+    from backend.services.macro_context_service import (
+        get_macro_snapshot,
+        is_fresh as macro_is_fresh,
+    )
+
+    snap = get_macro_snapshot()
+    if snap is None:
+        return {"status": "no_snapshot_yet", "snapshot": None}
+
+    age_sec = (datetime.now(timezone.utc) - snap.fetched_at).total_seconds()
+    return {
+        "status": "ok",
+        "fresh": macro_is_fresh(snap.fetched_at),
+        "age_seconds": round(age_sec, 1),
+        "snapshot": {
+            "fetched_at": snap.fetched_at.isoformat(),
+            "dxy": snap.dxy_direction.value,
+            "spx": snap.spx_direction.value,
+            "vix_level": snap.vix_level.value,
+            "vix_value": snap.vix_value,
+            "us10y": snap.us10y_trend.value,
+            "de10y": snap.de10y_trend.value,
+            "us_de_spread_trend": snap.us_de_spread_trend,
+            "oil": snap.oil_direction.value,
+            "nikkei": snap.nikkei_direction.value,
+            "gold": snap.gold_direction.value,
+            "risk_regime": snap.risk_regime.value,
+            "raw_values": snap.raw_values,
+        },
+    }
+
+
 @app.get("/api/risk")
 async def risk_dashboard(user: str = Depends(verify_credentials)):
     """Risque cumule sur les positions ouvertes."""
