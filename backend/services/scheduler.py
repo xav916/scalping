@@ -14,6 +14,7 @@ from backend.services.analysis_engine import (
     filter_high_confidence_setups,
 )
 from backend.services.forexfactory_service import fetch_economic_events
+from backend.services.macro_context_service import refresh_macro_context
 from backend.services.mataf_service import fetch_volatility_data
 from backend.services import backtest_service, coaching
 from backend.services.notification_service import broadcast_signals, broadcast_update
@@ -27,6 +28,8 @@ from backend.services.price_service import fetch_candles
 from config.settings import (
     CANDLE_COUNT,
     CANDLE_INTERVAL,
+    MACRO_REFRESH_INTERVAL_SEC,
+    MACRO_SCORING_ENABLED,
     MATAF_POLL_INTERVAL,
     WATCHED_PAIRS,
 )
@@ -386,6 +389,16 @@ def start_scheduler() -> AsyncIOScheduler:
         name="Sync bridge MT5 → personal_trades",
         replace_existing=True,
     )
+    if MACRO_SCORING_ENABLED:
+        _scheduler.add_job(
+            refresh_macro_context,
+            "interval",
+            seconds=MACRO_REFRESH_INTERVAL_SEC,
+            id="macro_context_refresh",
+            name="Refresh macro context snapshot",
+            replace_existing=True,
+        )
+        logger.info(f"macro: refresh job scheduled every {MACRO_REFRESH_INTERVAL_SEC}s")
 
     _scheduler.start()
     logger.info(
