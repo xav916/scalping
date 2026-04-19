@@ -22,7 +22,10 @@ from backend.services.telegram_service import (
     send_setups as telegram_send_setups,
     send_signals as telegram_send_signals,
 )
-from backend.services.mt5_bridge import send_setups as mt5_bridge_send_setups
+from backend.services.mt5_bridge import (
+    health_check as mt5_bridge_health_check,
+    send_setups as mt5_bridge_send_setups,
+)
 from backend.services.pattern_detector import calculate_trade_setup, detect_patterns
 from backend.services.price_service import fetch_candles
 from config.settings import (
@@ -328,6 +331,48 @@ async def health_check_cycle() -> None:
 _health_alerted = False
 
 
+# Surveillance du bridge MT5 côté PC : ping /health toutes les 5 min. On attend
+# 2 échecs consécutifs avant d'alerter pour éviter le spam sur un timeout
+# réseau transitoire (reconnexion Tailscale, reboot MT5, etc.).
+_bridge_fail_count = 0
+_bridge_alerted = False
+
+
+async def bridge_health_cycle() -> None:
+    """Ping périodique du bridge MT5 PC. Alerte Telegram après 2 échecs
+    consécutifs, reset quand le bridge revient."""
+    from backend.services.telegram_service import send_text
+
+    global _bridge_fail_count, _bridge_alerted
+    status = await mt5_bridge_health_check()
+    if not status.get("configured"):
+        return  # bridge non configuré : pas de surveillance
+
+    if status.get("reachable"):
+        if _bridge_alerted:
+            try:
+                await send_text("✅ *Scalping Radar*: bridge MT5 de nouveau joignable. Auto-exec réactivé.")
+            except Exception as e:
+                logger.warning(f"Bridge recovery alert echec: {e}")
+        _bridge_fail_count = 0
+        _bridge_alerted = False
+        return
+
+    _bridge_fail_count += 1
+    logger.warning(f"Bridge MT5 injoignable (#{_bridge_fail_count}): {status.get('error') or status.get('status')}")
+    if _bridge_fail_count >= 2 and not _bridge_alerted:
+        _bridge_alerted = True
+        try:
+            reason = status.get("error") or f"HTTP {status.get('status')}"
+            await send_text(
+                f"🔌 *Scalping Radar*: bridge MT5 injoignable depuis 2 cycles "
+                f"(~10 min). Auto-exec bloqué. Vérifier PC / MT5 Desktop / Tailscale.\n"
+                f"Détail : `{reason}`"
+            )
+        except Exception as e:
+            logger.warning(f"Bridge down alert echec: {e}")
+
+
 def start_scheduler() -> AsyncIOScheduler:
     """Démarre le scheduler périodique."""
     global _scheduler
@@ -366,6 +411,15 @@ def start_scheduler() -> AsyncIOScheduler:
         seconds=120,
         id="health_check",
         name="Health check radar",
+        replace_existing=True,
+    )
+    # Surveillance bridge MT5 toutes les 5 min (alerte après 2 échecs = 10 min)
+    _scheduler.add_job(
+        bridge_health_cycle,
+        "interval",
+        seconds=300,
+        id="bridge_health",
+        name="Surveillance bridge MT5",
         replace_existing=True,
     )
     # Email summary tous les jours a 22h UTC (~ 23h-00h heure FR selon DST)
