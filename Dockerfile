@@ -43,6 +43,11 @@ RUN pip install --no-cache-dir --upgrade pip \
 
 COPY . .
 
+# Bump automatique de la version du service worker à chaque build
+# pour que les navigateurs re-téléchargent le shell après un deploy
+# (sinon les users restent sur l'ancien app.js indéfiniment).
+RUN sed -i "s/scalping-shell-v[0-9]\+/scalping-shell-$(date +%s)/" frontend/sw.js
+
 # Remplacer par le CSS compilé depuis l'étape Tailwind.
 # Important : après le COPY . . pour que ce fichier ne soit pas écrasé.
 COPY --from=tailwind-build /build/frontend/css/tailwind.css ./frontend/css/tailwind.css
