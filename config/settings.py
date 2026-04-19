@@ -173,3 +173,30 @@ MATAF_VOLATILITY_URL = "https://www.mataf.net/en/forex/tools/volatility"
 
 # Forex Factory URL
 FOREXFACTORY_CALENDAR_URL = "https://www.forexfactory.com/calendar"
+
+# ─── Macro context scoring (Vague 1 enrichissement) ─────────────
+# Feature flags
+MACRO_SCORING_ENABLED = os.getenv("MACRO_SCORING_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+MACRO_VETO_ENABLED = os.getenv("MACRO_VETO_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+
+# Refresh cadence and cache tolerance
+MACRO_REFRESH_INTERVAL_SEC = int(os.getenv("MACRO_REFRESH_INTERVAL_SEC", "900"))  # 15 min
+MACRO_CACHE_MAX_AGE_SEC = int(os.getenv("MACRO_CACHE_MAX_AGE_SEC", "7200"))  # 2h fallback
+
+# Symbols mapping (logical name → Twelve Data ticker)
+MACRO_SYMBOL_DXY = os.getenv("MACRO_SYMBOL_DXY", "DXY")
+MACRO_SYMBOL_SPX = os.getenv("MACRO_SYMBOL_SPX", "SPX")
+MACRO_SYMBOL_VIX = os.getenv("MACRO_SYMBOL_VIX", "VIX")
+MACRO_SYMBOL_US10Y = os.getenv("MACRO_SYMBOL_US10Y", "TNX")
+MACRO_SYMBOL_DE10Y = os.getenv("MACRO_SYMBOL_DE10Y", "DE10Y")
+MACRO_SYMBOL_OIL = os.getenv("MACRO_SYMBOL_OIL", "WTI")
+MACRO_SYMBOL_NIKKEI = os.getenv("MACRO_SYMBOL_NIKKEI", "NKY")
+MACRO_SYMBOL_GOLD = os.getenv("MACRO_SYMBOL_GOLD", "XAU/USD")
+
+# Thresholds (overridable for tuning)
+MACRO_ZSCORE_STRONG = float(os.getenv("MACRO_ZSCORE_STRONG", "1.5"))
+MACRO_ZSCORE_WEAK = float(os.getenv("MACRO_ZSCORE_WEAK", "0.5"))
+MACRO_VIX_HIGH = float(os.getenv("MACRO_VIX_HIGH", "30.0"))
+MACRO_VIX_ELEVATED = float(os.getenv("MACRO_VIX_ELEVATED", "20.0"))
+MACRO_VIX_LOW = float(os.getenv("MACRO_VIX_LOW", "15.0"))
+MACRO_DXY_VETO_SIGMA = float(os.getenv("MACRO_DXY_VETO_SIGMA", "2.0"))
