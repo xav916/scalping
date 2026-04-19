@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -269,6 +269,12 @@ async def session_alert_cycle() -> None:
         # Alerte 5 min avant ouverture
         alert_minute = (open_hour * 60 - 5) % (24 * 60)
         if now.hour * 60 + now.minute == alert_minute:
+            # Skip si la session ouvre un sam/dim (forex fermé).
+            # L'alerte peut fire la veille (Tokyo, open_hour=0 → alert à 23:55),
+            # donc on regarde le weekday de l'ouverture réelle, pas de now.
+            open_dt = now + timedelta(minutes=5)
+            if open_dt.weekday() >= 5:  # 5=sam, 6=dim
+                continue
             key = f"{today}-{session_name}"
             if key in _session_alerts_sent:
                 continue
