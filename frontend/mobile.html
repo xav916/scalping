@@ -71,12 +71,17 @@
             } catch (e) { console.error(e); }
         }
         function loadSession() {
-            const h = new Date().getUTCHours();
+            const now = new Date();
+            const h = now.getUTCHours();
+            const wd = now.getUTCDay();
             const sessions = [];
-            if (h >= 22 || h < 7) sessions.push('Sydney');
-            if (0 <= h && h < 9) sessions.push('Tokyo');
-            if (8 <= h && h < 17) sessions.push('London');
-            if (13 <= h && h < 22) sessions.push('New York');
+            const closed = (wd === 6) || (wd === 0 && h < 22) || (wd === 5 && h >= 22);
+            if (!closed) {
+                if (h >= 22 || h < 7) sessions.push('Sydney');
+                if (0 <= h && h < 9) sessions.push('Tokyo');
+                if (8 <= h && h < 17) sessions.push('London');
+                if (13 <= h && h < 22) sessions.push('New York');
+            }
             document.getElementById('session').textContent = sessions.length ? `Sessions actives : ${sessions.join(', ')}` : 'Marché fermé';
         }
         loadSession();

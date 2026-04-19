@@ -938,7 +938,13 @@ const _SESSIONS = [
 ];
 
 function _activeSessions() {
-    const hour = new Date().getUTCHours();
+    const now = new Date();
+    const hour = now.getUTCHours();
+    const wd = now.getUTCDay(); // 0=dim, 1=lun ... 5=ven, 6=sam
+    // Forex ouvre dim 22h UTC (Sydney), ferme ven 22h UTC.
+    if (wd === 6) return []; // samedi tout ferme
+    if (wd === 0 && hour < 22) return []; // dimanche avant Sydney
+    if (wd === 5 && hour >= 22) return []; // vendredi apres cloture
     return _SESSIONS.filter(s =>
         s.start <= s.end ? (hour >= s.start && hour < s.end)
                          : (hour >= s.start || hour < s.end)
