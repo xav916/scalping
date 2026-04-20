@@ -213,6 +213,51 @@ async def test_setup_below_numeric_threshold_is_rejected():
 
 
 @pytest.mark.asyncio
+async def test_setup_rejected_when_sl_too_close():
+    """EUR/JPY avec SL à 3.8 pips (distance/entry < 0.05%) → rejeté avant envoi.
+    Reproduit le cas rc=10016 observé #105/#106 post-fix prix."""
+    setup = _mk_setup("EUR/JPY")
+    setup.entry_price = 187.15
+    setup.stop_loss = 187.11  # 4 pips JPY = 0.021% seulement
+    setup.confidence_score = 90.0
+    setup.verdict_blockers = []
+    setup.is_simulated = False
+
+    with patch.object(mt5_bridge, "MT5_BRIDGE_ALLOWED_ASSET_CLASSES", ["forex"]), \
+         patch.object(mt5_bridge, "MT5_BRIDGE_ENABLED", True), \
+         patch.object(mt5_bridge, "MT5_BRIDGE_URL", "http://test"), \
+         patch.object(mt5_bridge, "MT5_BRIDGE_API_KEY", "test"), \
+         patch.object(mt5_bridge, "MT5_BRIDGE_MIN_CONFIDENCE", 55), \
+         patch.object(mt5_bridge, "MT5_BRIDGE_MIN_SL_DISTANCE_PCT", 0.05), \
+         patch("backend.services.mt5_bridge.is_market_open_for", lambda p: True), \
+         patch("httpx.AsyncClient") as mock_client:
+        await mt5_bridge.send_setup(setup)
+        mock_client.assert_not_called()
+    assert not mt5_bridge._sent_setups_today
+
+
+@pytest.mark.asyncio
+async def test_setup_rejected_when_market_closed():
+    """XAU/USD poussé pendant le daily break 21-22h UTC → refusé avant envoi.
+    Évite les rc=10018 MARKET_CLOSED côté bridge."""
+    setup = _mk_setup("XAU/USD")
+    setup.confidence_score = 90.0
+    setup.verdict_blockers = []
+    setup.is_simulated = False
+
+    with patch.object(mt5_bridge, "MT5_BRIDGE_ALLOWED_ASSET_CLASSES", ["metal"]), \
+         patch.object(mt5_bridge, "MT5_BRIDGE_ENABLED", True), \
+         patch.object(mt5_bridge, "MT5_BRIDGE_URL", "http://test"), \
+         patch.object(mt5_bridge, "MT5_BRIDGE_API_KEY", "test"), \
+         patch.object(mt5_bridge, "MT5_BRIDGE_MIN_CONFIDENCE", 55), \
+         patch("backend.services.mt5_bridge.is_market_open_for", lambda p: False), \
+         patch("httpx.AsyncClient") as mock_client:
+        await mt5_bridge.send_setup(setup)
+        mock_client.assert_not_called()
+    assert not mt5_bridge._sent_setups_today
+
+
+@pytest.mark.asyncio
 async def test_simulated_setup_is_rejected():
     """Un setup construit sur des candles simulées (fallback price_service quand
     l'API Twelve Data ne répond pas) doit être bloqué avant envoi au bridge :

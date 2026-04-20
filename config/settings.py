@@ -139,6 +139,10 @@ MT5_BRIDGE_ALLOWED_ASSET_CLASSES = [
     for c in os.getenv("MT5_BRIDGE_ALLOWED_ASSET_CLASSES", "forex,metal").split(",")
     if c.strip()
 ]
+# Distance SL minimale en % du prix d'entrée (|entry-sl|/entry*100). Évite
+# les setups scalping trop serrés rejetés rc=10016 INVALID_STOPS par MT5.
+# Défaut 0.05% = 5.9 pips sur EUR/USD@1.18, 9.4 pips sur EUR/JPY@187.
+MT5_BRIDGE_MIN_SL_DISTANCE_PCT = float(os.getenv("MT5_BRIDGE_MIN_SL_DISTANCE_PCT", "0.05"))
 # Sync bridge → personal_trades : pull périodique des ordres LIVE depuis le
 # bridge pour que les positions auto apparaissent dans le dashboard
 # (sections Mes trades, Risque ouvert, Courbe d'équité, Détecteur d'erreurs).

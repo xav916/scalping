@@ -22,6 +22,7 @@ from datetime import date
 
 import httpx
 
+from backend.services.market_hours import is_market_open_for
 from config.settings import (
     MT5_BRIDGE_ENABLED,
     MT5_BRIDGE_URL,
@@ -29,6 +30,7 @@ from config.settings import (
     MT5_BRIDGE_MIN_CONFIDENCE,
     MT5_BRIDGE_LOTS,
     MT5_BRIDGE_ALLOWED_ASSET_CLASSES,
+    MT5_BRIDGE_MIN_SL_DISTANCE_PCT,
     TRADING_CAPITAL,
     RISK_PER_TRADE_PCT,
     asset_class_for,
@@ -82,6 +84,19 @@ def _should_push(setup) -> bool:
     # 0 auto-exec en pratique).
     if getattr(setup, "verdict_blockers", None):
         return False
+    # Skip si marché fermé pour cette pair (daily break métaux 21-22h UTC,
+    # weekends forex/metal/indices/energy, etc.). Évite de polluer l'audit
+    # bridge avec des rc=10018 MARKET_CLOSED prévisibles.
+    if not is_market_open_for(setup.pair):
+        return False
+    # Skip si SL trop proche du prix d'entrée : |entry-sl|/entry < min_pct.
+    # Rejets rc=10016 INVALID_STOPS observés sur EUR/JPY scalping 3.8 pips.
+    entry = getattr(setup, "entry_price", 0) or 0
+    sl = getattr(setup, "stop_loss", 0) or 0
+    if entry > 0 and sl > 0:
+        sl_pct = abs(entry - sl) / entry * 100
+        if sl_pct < MT5_BRIDGE_MIN_SL_DISTANCE_PCT:
+            return False
     score = getattr(setup, "confidence_score", None) or 0
     if score < MT5_BRIDGE_MIN_CONFIDENCE:
         return False
