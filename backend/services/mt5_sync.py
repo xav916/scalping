@@ -122,7 +122,13 @@ def _upsert_open_trade(row: dict[str, Any], user: str) -> None:
 
 def _update_closed_trade(row: dict[str, Any]) -> None:
     """Quand le bridge log une fermeture (status='closed'), met à jour la
-    ligne personal_trades correspondante (par mt5_ticket)."""
+    ligne personal_trades correspondante (par mt5_ticket).
+
+    Idempotent : on accepte aussi d'enrichir une ligne déjà CLOSED tant que
+    les nouvelles colonnes (exit_price, pnl) sont non-null. Utile quand le
+    status a été forcé manuellement avant que le sync ait remonté les valeurs
+    finales du broker. closed_at est protégé par COALESCE pour ne pas écraser
+    une date de fermeture déjà enregistrée."""
     ticket = row.get("ticket")
     if not ticket:
         return
@@ -132,8 +138,8 @@ def _update_closed_trade(row: dict[str, Any]) -> None:
                SET status     = 'CLOSED',
                    exit_price = COALESCE(?, exit_price),
                    pnl        = COALESCE(?, pnl),
-                   closed_at  = ?
-             WHERE mt5_ticket = ? AND status != 'CLOSED'
+                   closed_at  = COALESCE(closed_at, ?)
+             WHERE mt5_ticket = ?
         """, (
             row.get("exit_price"),
             row.get("pnl"),
