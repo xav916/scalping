@@ -19,6 +19,7 @@ def _mk_setup(pair: str) -> MagicMock:
     s.take_profit_2 = 1.04
     s.confidence_score = 95.0
     s.verdict_action = "TAKE"
+    s.verdict_blockers = []
     s.timestamp = datetime.now(timezone.utc)
     return s
 
@@ -127,6 +128,87 @@ async def test_crypto_allowed_when_in_allowed_classes():
 
     today = date.today().isoformat()
     assert any(k[0] == today and k[1] == "BTC/USD" for k in mt5_bridge._sent_setups_today)
+
+
+@pytest.mark.asyncio
+async def test_skip_verdict_without_blockers_still_pushed():
+    """A setup tagged SKIP purely because score < 75 must still reach the
+    bridge as long as verdict_blockers is empty and score ≥ threshold."""
+    setup = _mk_setup("EUR/USD")
+    setup.verdict_action = "SKIP"   # e.g. base score 60 → verdict engine picks SKIP
+    setup.verdict_blockers = []
+    setup.confidence_score = 62.0
+
+    mock_client_ctx = MagicMock()
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"ok": True, "mode": "paper"}
+
+    class _FakeClient:
+        def __init__(self, *a, **kw):
+            pass
+
+        async def __aenter__(self):
+            return mock_client_ctx
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    async def _fake_post(url, json=None, headers=None):  # noqa: A002
+        return mock_response
+
+    mock_client_ctx.post = _fake_post
+
+    with patch.object(mt5_bridge, "MT5_BRIDGE_ALLOWED_ASSET_CLASSES", ["forex"]), \
+         patch.object(mt5_bridge, "MT5_BRIDGE_ENABLED", True), \
+         patch.object(mt5_bridge, "MT5_BRIDGE_URL", "http://test"), \
+         patch.object(mt5_bridge, "MT5_BRIDGE_API_KEY", "test"), \
+         patch.object(mt5_bridge, "MT5_BRIDGE_MIN_CONFIDENCE", 60), \
+         patch("backend.services.mt5_bridge.httpx.AsyncClient", _FakeClient):
+        await mt5_bridge.send_setup(setup)
+
+    today = date.today().isoformat()
+    assert any(k[0] == today and k[1] == "EUR/USD" for k in mt5_bridge._sent_setups_today)
+
+
+@pytest.mark.asyncio
+async def test_setup_with_hard_blockers_is_rejected():
+    """A setup carrying verdict_blockers (market closed, macro veto…) must
+    be rejected even if its confidence score is high."""
+    setup = _mk_setup("EUR/USD")
+    setup.verdict_action = "SKIP"
+    setup.verdict_blockers = ["Marche ferme (pas de session active)"]
+    setup.confidence_score = 92.0
+
+    with patch.object(mt5_bridge, "MT5_BRIDGE_ALLOWED_ASSET_CLASSES", ["forex"]), \
+         patch.object(mt5_bridge, "MT5_BRIDGE_ENABLED", True), \
+         patch.object(mt5_bridge, "MT5_BRIDGE_URL", "http://test"), \
+         patch.object(mt5_bridge, "MT5_BRIDGE_API_KEY", "test"), \
+         patch.object(mt5_bridge, "MT5_BRIDGE_MIN_CONFIDENCE", 60), \
+         patch("httpx.AsyncClient") as mock_client:
+        await mt5_bridge.send_setup(setup)
+        mock_client.assert_not_called()
+    assert not mt5_bridge._sent_setups_today
+
+
+@pytest.mark.asyncio
+async def test_setup_below_numeric_threshold_is_rejected():
+    """Score numérique strict : un setup en dessous de MT5_BRIDGE_MIN_CONFIDENCE
+    doit être rejeté, même sans blocker et même en verdict TAKE."""
+    setup = _mk_setup("EUR/USD")
+    setup.verdict_action = "TAKE"
+    setup.verdict_blockers = []
+    setup.confidence_score = 55.0
+
+    with patch.object(mt5_bridge, "MT5_BRIDGE_ALLOWED_ASSET_CLASSES", ["forex"]), \
+         patch.object(mt5_bridge, "MT5_BRIDGE_ENABLED", True), \
+         patch.object(mt5_bridge, "MT5_BRIDGE_URL", "http://test"), \
+         patch.object(mt5_bridge, "MT5_BRIDGE_API_KEY", "test"), \
+         patch.object(mt5_bridge, "MT5_BRIDGE_MIN_CONFIDENCE", 60), \
+         patch("httpx.AsyncClient") as mock_client:
+        await mt5_bridge.send_setup(setup)
+        mock_client.assert_not_called()
+    assert not mt5_bridge._sent_setups_today
 
 
 @pytest.mark.asyncio

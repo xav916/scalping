@@ -6,8 +6,10 @@ PAPER_MODE, AUCUN ordre réel n'est envoyé à MT5 — cet appel sert juste
 à tracer les setups côté utilisateur.
 
 Sécurité
-- Filtre strict : verdict TAKE uniquement + confidence_score ≥ MT5_BRIDGE_MIN_CONFIDENCE
-  (90 par défaut — plus strict que le filtre Telegram)
+- Filtre strict : confidence_score ≥ MT5_BRIDGE_MIN_CONFIDENCE (barrière numérique
+  dédiée à l'auto-exec, décorrélée du verdict TAKE/WAIT/SKIP utilisé par
+  Telegram/UI). Le gate TAKE historique filtrait trop — le scoring de base
+  atteint rarement 75, ce qui produisait 0 auto-exec en pratique.
 - Dedup in-memory (date, pair, direction, entry arrondi)
 - Timeout court (5s) pour ne pas bloquer le cycle d'analyse si le bridge
   est down (PC éteint, Tailscale coupé)
@@ -68,7 +70,11 @@ def _cleanup_old_keys() -> None:
 def _should_push(setup) -> bool:
     if not is_configured():
         return False
-    if setup.verdict_action != "TAKE":
+    # Respecter uniquement les blockers durs (marché fermé, macro veto) —
+    # pas le verdict_action lui-même, qui tag aussi SKIP sur "score < 75"
+    # (le scoring de base atteint rarement 75 donc le gate TAKE produisait
+    # 0 auto-exec en pratique).
+    if getattr(setup, "verdict_blockers", None):
         return False
     score = getattr(setup, "confidence_score", None) or 0
     if score < MT5_BRIDGE_MIN_CONFIDENCE:
