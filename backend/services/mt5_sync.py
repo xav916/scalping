@@ -148,6 +148,98 @@ def _update_closed_trade(row: dict[str, Any]) -> None:
         ))
 
 
+def _select_open_auto_tickets() -> set[int]:
+    """Retourne les mt5_tickets des personal_trades auto encore OPEN."""
+    with sqlite3.connect(_db_path()) as c:
+        rows = c.execute(
+            "SELECT mt5_ticket FROM personal_trades "
+            "WHERE status='OPEN' AND is_auto=1 AND mt5_ticket IS NOT NULL"
+        ).fetchall()
+    return {int(r[0]) for r in rows}
+
+
+def _mark_ticket_closed_no_deal(ticket: int) -> None:
+    """Fallback quand le deal MT5 est introuvable (history purgée) :
+    status=CLOSED seul, sans exit_price ni pnl. closed_at est protégé
+    par COALESCE pour préserver une date déjà enregistrée."""
+    with sqlite3.connect(_db_path()) as c:
+        c.execute(
+            "UPDATE personal_trades "
+            "SET status='CLOSED', closed_at=COALESCE(closed_at, ?) "
+            "WHERE mt5_ticket=?",
+            (datetime.now(timezone.utc).isoformat(), ticket),
+        )
+
+
+async def _reconcile_open_trades() -> None:
+    """Compare les tickets DB OPEN vs /positions du bridge et réconcilie
+    les fermetures naturelles (SL/TP touchés par le marché).
+
+    Appelé à la fin de sync_from_bridge. No-op si bridge non configuré
+    ou s'il n'y a aucun ticket OPEN en DB."""
+    if not (MT5_SYNC_ENABLED and MT5_BRIDGE_URL and MT5_BRIDGE_API_KEY):
+        return
+
+    open_tickets = _select_open_auto_tickets()
+    if not open_tickets:
+        return
+
+    base = MT5_BRIDGE_URL.rstrip("/")
+    headers = {"X-API-Key": MT5_BRIDGE_API_KEY}
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(f"{base}/positions", headers=headers)
+            if r.status_code != 200:
+                logger.warning(f"mt5_sync: /positions {r.status_code}")
+                return
+            positions = r.json().get("positions", []) or []
+            live_tickets = {int(p["ticket"]) for p in positions if "ticket" in p}
+    except Exception as e:
+        logger.debug(f"mt5_sync: /positions unreachable: {e}")
+        return
+
+    closed_tickets = open_tickets - live_tickets
+    if not closed_tickets:
+        return
+
+    n_full = 0
+    n_partial = 0
+    for ticket in closed_tickets:
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                r = await client.get(
+                    f"{base}/deals", headers=headers,
+                    params={"ticket": ticket},
+                )
+                if r.status_code != 200:
+                    continue
+                data = r.json()
+        except Exception as e:
+            logger.debug(f"mt5_sync: /deals ticket={ticket} failed: {e}")
+            continue
+
+        if data.get("closed") is True:
+            _update_closed_trade({
+                "ticket": ticket,
+                "exit_price": data.get("exit_price"),
+                "pnl": data.get("pnl"),
+                "created_at": data.get("closed_at"),
+            })
+            n_full += 1
+        elif data.get("closed") is None:
+            logger.warning(
+                f"mt5_sync: ticket {ticket} history introuvable, status=CLOSED sans pnl"
+            )
+            _mark_ticket_closed_no_deal(ticket)
+            n_partial += 1
+
+    if n_full or n_partial:
+        logger.info(
+            f"mt5_sync: {n_full} closures reconciled (full), {n_partial} partial"
+        )
+
+
 async def sync_from_bridge() -> None:
     """Pull incrémental des événements audit du bridge et sync vers personal_trades.
 
@@ -177,6 +269,7 @@ async def sync_from_bridge() -> None:
         return
 
     if not orders:
+        await _reconcile_open_trades()
         return
 
     user = _resolve_auto_user()
@@ -206,3 +299,4 @@ async def sync_from_bridge() -> None:
             f"(user={user}, last_id={max_id})"
         )
     _save_last_synced_id(max_id)
+    await _reconcile_open_trades()
