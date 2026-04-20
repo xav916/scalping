@@ -20,6 +20,7 @@ def _mk_setup(pair: str) -> MagicMock:
     s.confidence_score = 95.0
     s.verdict_action = "TAKE"
     s.verdict_blockers = []
+    s.is_simulated = False
     s.timestamp = datetime.now(timezone.utc)
     return s
 
@@ -205,6 +206,30 @@ async def test_setup_below_numeric_threshold_is_rejected():
          patch.object(mt5_bridge, "MT5_BRIDGE_URL", "http://test"), \
          patch.object(mt5_bridge, "MT5_BRIDGE_API_KEY", "test"), \
          patch.object(mt5_bridge, "MT5_BRIDGE_MIN_CONFIDENCE", 60), \
+         patch("httpx.AsyncClient") as mock_client:
+        await mt5_bridge.send_setup(setup)
+        mock_client.assert_not_called()
+    assert not mt5_bridge._sent_setups_today
+
+
+@pytest.mark.asyncio
+async def test_simulated_setup_is_rejected():
+    """Un setup construit sur des candles simulées (fallback price_service quand
+    l'API Twelve Data ne répond pas) doit être bloqué avant envoi au bridge :
+    le prix simulé est hardcodé à 2650 pour la plupart des pairs, ce qui
+    produit des entry/SL/TP complètement hors du prix marché réel et cause
+    des rc=10016 INVALID_STOPS côté MT5."""
+    setup = _mk_setup("EUR/USD")
+    setup.is_simulated = True  # fallback simulated_candles s'est activé
+    setup.verdict_action = "TAKE"
+    setup.verdict_blockers = []
+    setup.confidence_score = 90.0
+
+    with patch.object(mt5_bridge, "MT5_BRIDGE_ALLOWED_ASSET_CLASSES", ["forex"]), \
+         patch.object(mt5_bridge, "MT5_BRIDGE_ENABLED", True), \
+         patch.object(mt5_bridge, "MT5_BRIDGE_URL", "http://test"), \
+         patch.object(mt5_bridge, "MT5_BRIDGE_API_KEY", "test"), \
+         patch.object(mt5_bridge, "MT5_BRIDGE_MIN_CONFIDENCE", 55), \
          patch("httpx.AsyncClient") as mock_client:
         await mt5_bridge.send_setup(setup)
         mock_client.assert_not_called()

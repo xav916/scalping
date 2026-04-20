@@ -70,6 +70,12 @@ def _cleanup_old_keys() -> None:
 def _should_push(setup) -> bool:
     if not is_configured():
         return False
+    # Jamais d'auto-exec sur candles simulées : le fallback price_service utilise
+    # un prix hardcodé (2650 pour la plupart des pairs), ce qui produit un
+    # entry/SL/TP fantôme que MT5 refuse via rc=10016 INVALID_STOPS. Le flag
+    # is_simulated remonte depuis fetch_candles jusqu'au TradeSetup.
+    if getattr(setup, "is_simulated", False):
+        return False
     # Respecter uniquement les blockers durs (marché fermé, macro veto) —
     # pas le verdict_action lui-même, qui tag aussi SKIP sur "score < 75"
     # (le scoring de base atteint rarement 75 donc le gate TAKE produisait
