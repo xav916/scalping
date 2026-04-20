@@ -168,6 +168,24 @@ async def debug_macro(_=Depends(verify_credentials)):
     }
 
 
+@app.get("/api/insights/performance")
+async def api_insights_performance(
+    since: str | None = None,
+    _=Depends(verify_credentials),
+):
+    """Agrégat de performance des trades auto (is_auto=1, CLOSED).
+
+    Query params :
+    - since : ISO date pour filtrer les trades (ex: 2026-04-20T21:14:00+00:00).
+
+    Retourne des buckets (score, asset_class, direction, risk_regime, session,
+    pair) pour éclairer les décisions de remontée de seuil et d'activation
+    du veto macro.
+    """
+    from backend.services import insights_service
+    return insights_service.get_performance(since_iso=since)
+
+
 @app.get("/debug/smoke-test")
 async def debug_smoke_test(_=Depends(verify_credentials)):
     """Admin end-to-end check : bridge, broker, mapping symboles, cycles, Telegram.

@@ -112,8 +112,11 @@ def _upsert_open_trade(row: dict[str, Any], user: str) -> None:
             row.get("sl") or 0,
             row.get("tp") or 0,
             row.get("lots") or 0.01,
-            row.get("risk_money"),
-            f"Auto-exec via bridge MT5 (ticket #{ticket}, comment: {row.get('client_comment', '')})",
+            # signal_confidence = score de confidence envoyé par le radar au moment du /order
+            # (bridge a une colonne audit dédiée depuis 2026-04-21 pour capturer la valeur).
+            # Les anciens trades auto ont NULL ici car bridge ne la persistait pas.
+            row.get("confidence"),
+            f"Auto-exec via bridge MT5 (ticket #{ticket}, risk_money={row.get('risk_money')}, comment: {row.get('client_comment', '')})",
             row.get("created_at") or datetime.now(timezone.utc).isoformat(),
             ticket,
             ctx_json,
