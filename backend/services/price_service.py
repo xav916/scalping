@@ -59,17 +59,20 @@ async def fetch_candles(
         candles, is_sim = await mt5_service.fetch_candles(pair, interval, outputsize)
         if candles:
             return candles, is_sim
-        logger.info(f"MT5 indisponible pour {pair}, fallback sur données simulées")
-        return _generate_simulated_candles(pair, outputsize), True
+        logger.warning(f"MT5 indisponible pour {pair}, pair ignorée ce cycle")
+        return [], False
 
     # Source Twelve Data (polling)
     candles = await _fetch_twelvedata(pair, interval, outputsize)
     if candles:
         return candles, False
 
-    # Fallback : données simulées
-    logger.info(f"API indisponible pour {pair}, utilisation de données simulées")
-    return _generate_simulated_candles(pair, outputsize), True
+    # API indisponible : on n'invente plus de prix. Les callers (scheduler)
+    # skippent naturellement les pairs sans candles. L'ancien fallback
+    # _generate_simulated_candles utilisait un prix hardcodé (2650) qui
+    # partait en auto-exec MT5 et se faisait rejeter rc=10016.
+    logger.warning(f"API Twelve Data indisponible pour {pair}, pair ignorée ce cycle")
+    return [], False
 
 
 async def fetch_current_price(pair: str) -> float | None:
@@ -158,49 +161,3 @@ async def _fetch_twelvedata(
         return []
 
 
-def _generate_simulated_candles(pair: str, count: int) -> list[Candle]:
-    """Génère des bougies simulées réalistes pour l'or."""
-    import random
-    from datetime import timedelta
-
-    now = datetime.now(timezone.utc)
-    candles = []
-
-    # Prix de base selon la paire
-    base_prices = {
-        "XAU/USD": 2650.0,
-        "EUR/USD": 1.0850,
-        "GBP/USD": 1.2700,
-        "USD/JPY": 149.50,
-    }
-    base = base_prices.get(pair, 2650.0)
-
-    # Volatilité typique par bougie 5min
-    tick_sizes = {
-        "XAU/USD": 2.5,   # ~$2.50 par bougie 5min
-        "EUR/USD": 0.0005,
-        "GBP/USD": 0.0007,
-        "USD/JPY": 0.05,
-    }
-    tick = tick_sizes.get(pair, 2.5)
-
-    price = base
-    for i in range(count):
-        # Mouvement aléatoire avec tendance légère
-        change = random.gauss(0, tick)
-        open_price = price
-        close_price = open_price + change
-        high_price = max(open_price, close_price) + abs(random.gauss(0, tick * 0.5))
-        low_price = min(open_price, close_price) - abs(random.gauss(0, tick * 0.5))
-
-        candles.append(Candle(
-            timestamp=now - timedelta(minutes=5 * (count - i)),
-            open=round(open_price, 2),
-            high=round(high_price, 2),
-            low=round(low_price, 2),
-            close=round(close_price, 2),
-            volume=round(random.uniform(100, 5000), 0),
-        ))
-        price = close_price
-
-    return candles
