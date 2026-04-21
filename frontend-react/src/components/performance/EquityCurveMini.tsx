@@ -39,14 +39,14 @@ export function EquityCurveMini() {
           tip={TIPS.equity.titre}
         />
         <Tooltip content={TIPS.equity.trades}>
-          <span className="text-[9px] uppercase tracking-[0.2em] text-white/40 font-mono cursor-help">
+          <span className="text-[9px] uppercase tracking-[0.2em] text-white/40 font-mono">
             {data.total_trades} {data.total_trades === 1 ? 'trade' : 'trades'}
           </span>
         </Tooltip>
       </div>
 
       <Tooltip content={TIPS.equity.titre}>
-        <div className="mb-2 cursor-help">
+        <div className="mb-2">
           <Sparkline
             values={values}
             width={260}

@@ -67,13 +67,13 @@ export function SetupCard({ setup, onClick }: Props) {
         <div className="relative flex items-start justify-between mb-4 gap-4">
           <div className="min-w-0 flex-1">
             <Tooltip content={TIPS.trade.pair}>
-              <div className="text-xl font-mono font-bold tracking-tight truncate cursor-help">{setup.pair}</div>
+              <div className="text-xl font-mono font-bold tracking-tight truncate">{setup.pair}</div>
             </Tooltip>
             <div className="flex items-center gap-2 mt-1">
               <Tooltip content={TIPS.trade.direction}>
                 <span
                   className={clsx(
-                    'text-[10px] font-semibold uppercase tracking-widest px-2 py-0.5 rounded-md cursor-help',
+                    'text-[10px] font-semibold uppercase tracking-widest px-2 py-0.5 rounded-md',
                     isBuy ? 'bg-cyan-400/10 text-cyan-300 border border-cyan-400/20' : 'bg-pink-400/10 text-pink-300 border border-pink-400/20'
                   )}
                 >
@@ -82,7 +82,7 @@ export function SetupCard({ setup, onClick }: Props) {
               </Tooltip>
               {rr && (
                 <Tooltip content={TIPS.setup.rr}>
-                  <span className="text-[10px] text-white/40 font-mono uppercase tracking-wider cursor-help">
+                  <span className="text-[10px] text-white/40 font-mono uppercase tracking-wider">
                     R:R {rr}
                   </span>
                 </Tooltip>
@@ -90,7 +90,7 @@ export function SetupCard({ setup, onClick }: Props) {
             </div>
           </div>
           <Tooltip content={TIPS.setup.confidenceGauge}>
-            <div className="cursor-help">
+            <div>
               <ConfidenceGauge score={setup.confidence_score} variant={isBuy ? 'buy' : 'sell'} size={56} />
             </div>
           </Tooltip>
@@ -136,7 +136,7 @@ export function SetupCard({ setup, onClick }: Props) {
             }>
               <span
                 className={clsx(
-                  'text-[9px] font-bold uppercase tracking-[0.2em] px-2 py-1 rounded border cursor-help',
+                  'text-[9px] font-bold uppercase tracking-[0.2em] px-2 py-1 rounded border',
                   setup.verdict_action === 'TAKE' && 'bg-emerald-400/10 text-emerald-300 border-emerald-400/30',
                   setup.verdict_action === 'WAIT' && 'bg-amber-400/10 text-amber-300 border-amber-400/30',
                   setup.verdict_action === 'SKIP' && 'bg-white/5 text-white/40 border-glass-soft'
@@ -174,8 +174,7 @@ function PriceBox({
         'rounded-lg p-2 text-center transition-colors',
         highlight
           ? 'bg-white/[0.04] border border-glass-soft'
-          : 'bg-transparent',
-        tip && 'cursor-help'
+          : 'bg-transparent'
       )}
     >
       <div className="text-[9px] uppercase tracking-wider text-white/40 mb-1">{label}</div>

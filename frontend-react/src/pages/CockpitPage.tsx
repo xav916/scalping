@@ -150,7 +150,7 @@ function KillSwitchCard({ active, reason }: { active: boolean; reason: string | 
         </div>
         <div>
           <Tooltip content={active ? TIPS.killSwitch.active : TIPS.killSwitch.okState}>
-            <div className={clsx('text-2xl font-bold tabular-nums cursor-help', active ? 'text-rose-300' : 'text-emerald-300')}>
+            <div className={clsx('text-2xl font-bold tabular-nums', active ? 'text-rose-300' : 'text-emerald-300')}>
               {active ? 'ACTIF' : 'OK'}
             </div>
           </Tooltip>
@@ -202,7 +202,7 @@ function AlertsStack({ alerts }: { alerts: CockpitAlert[] }) {
   if (alerts.length === 0) {
     return (
       <Tooltip content={TIPS.alerts.title}>
-        <GlassCard className="w-full p-4 flex items-center justify-center text-sm text-white/40 cursor-help">
+        <GlassCard className="w-full p-4 flex items-center justify-center text-sm text-white/40">
           Aucune alerte
         </GlassCard>
       </Tooltip>
@@ -234,7 +234,7 @@ function AlertsStack({ alerts }: { alerts: CockpitAlert[] }) {
               initial={{ opacity: 0, x: -6 }}
               animate={{ opacity: 1, x: 0 }}
               transition={{ delay: i * 0.03 }}
-              className={clsx('w-full text-xs px-3 py-1.5 rounded-md border leading-snug cursor-help', toneFor(a.level))}
+              className={clsx('w-full text-xs px-3 py-1.5 rounded-md border leading-snug', toneFor(a.level))}
             >
               <span className="font-mono uppercase tracking-wider mr-2 opacity-60">{a.level}</span>
               {a.msg}
@@ -273,7 +273,7 @@ function TodayStatsCard({
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-sm font-semibold tracking-tight">Aujourd'hui</h3>
         <Tooltip content={TIPS.today.capital}>
-          <span className="text-[9px] text-white/40 font-mono uppercase tracking-wider cursor-help">
+          <span className="text-[9px] text-white/40 font-mono uppercase tracking-wider">
             capital {formatPnl(capital)}
           </span>
         </Tooltip>
@@ -318,7 +318,7 @@ function Kpi({
         <div className="text-[10px] text-white/40 mt-1 font-mono">
           {subTip ? (
             <Tooltip content={subTip}>
-              <span className="cursor-help">{sub}</span>
+              <span>{sub}</span>
             </Tooltip>
           ) : (
             sub
@@ -351,7 +351,7 @@ function CapitalAtRiskCard({ trades, capital }: { trades: ActiveTrade[]; capital
           tip={TIPS.capital.titre}
         />
         <Tooltip content={TIPS.capital.aRisque}>
-          <span className="text-[9px] text-white/40 font-mono uppercase tracking-wider cursor-help">
+          <span className="text-[9px] text-white/40 font-mono uppercase tracking-wider">
             risque si tous SL touchés
           </span>
         </Tooltip>
@@ -367,7 +367,7 @@ function CapitalAtRiskCard({ trades, capital }: { trades: ActiveTrade[]; capital
             {formatPnl(totalRisk)}
           </div>
           <Tooltip content={TIPS.capital.risquePct}>
-            <div className="text-[10px] text-white/40 font-mono mt-0.5 cursor-help">
+            <div className="text-[10px] text-white/40 font-mono mt-0.5">
               {riskPct.toFixed(2)}% capital
             </div>
           </Tooltip>
@@ -382,7 +382,7 @@ function CapitalAtRiskCard({ trades, capital }: { trades: ActiveTrade[]; capital
             {formatPnl(totalNotional)}
           </div>
           <Tooltip content={TIPS.capital.expositionTotale}>
-            <div className="text-[10px] text-white/40 font-mono mt-0.5 cursor-help">
+            <div className="text-[10px] text-white/40 font-mono mt-0.5">
               exposition totale
             </div>
           </Tooltip>
@@ -491,7 +491,7 @@ function AssetClassBreakdownCard({ trades }: { trades: ActiveTrade[] }) {
               <div key={cls} className="space-y-1">
                 <div className="flex items-center justify-between text-xs">
                   <Tooltip content={classTip}>
-                    <span className="text-white/80 cursor-help">{ASSET_CLASS_LABELS[ac] ?? cls}</span>
+                    <span className="text-white/80">{ASSET_CLASS_LABELS[ac] ?? cls}</span>
                   </Tooltip>
                   <span className="font-mono tabular-nums text-white/50">
                     {v.n} trade{v.n > 1 ? 's' : ''} · {formatPnl(v.risk)}
@@ -568,10 +568,10 @@ function ActiveTradeRow({ trade }: { trade: ActiveTrade }) {
       <div className="grid grid-cols-2 sm:grid-cols-[100px_60px_1fr_90px_90px_90px] items-center gap-2 sm:gap-4">
         <div className="flex items-center gap-2 min-w-0 col-span-2 sm:col-span-1">
           <Tooltip content={TIPS.trade.pair}>
-            <span className="font-mono text-sm font-semibold truncate cursor-help">{trade.pair}</span>
+            <span className="font-mono text-sm font-semibold truncate">{trade.pair}</span>
           </Tooltip>
           <Tooltip content={TIPS.trade.assetClass}>
-            <span className="text-[9px] text-white/30 font-mono hidden sm:inline cursor-help">
+            <span className="text-[9px] text-white/30 font-mono hidden sm:inline">
               {trade.asset_class}
             </span>
           </Tooltip>
@@ -579,7 +579,7 @@ function ActiveTradeRow({ trade }: { trade: ActiveTrade }) {
         <Tooltip content={TIPS.trade.direction}>
           <span
             className={clsx(
-              'text-[9px] font-semibold uppercase tracking-widest px-1.5 py-0.5 rounded text-center w-fit cursor-help',
+              'text-[9px] font-semibold uppercase tracking-widest px-1.5 py-0.5 rounded text-center w-fit',
               isBuy ? 'bg-cyan-400/10 text-cyan-300' : 'bg-pink-400/10 text-pink-300'
             )}
           >
@@ -587,7 +587,7 @@ function ActiveTradeRow({ trade }: { trade: ActiveTrade }) {
           </span>
         </Tooltip>
         <Tooltip content={`${TIPS.trade.entryPrice} · ${TIPS.trade.currentPrice}`}>
-          <div className="text-xs text-white/60 font-mono tabular-nums truncate cursor-help">
+          <div className="text-xs text-white/60 font-mono tabular-nums truncate">
             {formatPrice(trade.entry_price)}
             {trade.current_price !== null && (
               <>
@@ -598,17 +598,17 @@ function ActiveTradeRow({ trade }: { trade: ActiveTrade }) {
           </div>
         </Tooltip>
         <Tooltip content={trade.near_sl ? TIPS.trade.nearSl : TIPS.trade.distanceSl}>
-          <div className="text-xs font-mono tabular-nums text-right text-white/50 cursor-help">
+          <div className="text-xs font-mono tabular-nums text-right text-white/50">
             {trade.distance_to_sl_pct !== null ? `SL ${trade.distance_to_sl_pct}%` : '—'}
           </div>
         </Tooltip>
         <Tooltip content={TIPS.trade.riskMoney}>
-          <div className="text-xs font-mono tabular-nums text-right text-rose-300/80 cursor-help">
+          <div className="text-xs font-mono tabular-nums text-right text-rose-300/80">
             {trade.risk_money !== null ? `-${formatPnl(trade.risk_money).replace('-', '')}` : '—'}
           </div>
         </Tooltip>
         <Tooltip content={`${TIPS.trade.pnlUnrealized}${trade.pnl_pips !== null ? ` · ${trade.pnl_pips} pips` : ''}`}>
-          <div className={clsx('text-sm font-mono font-semibold tabular-nums text-right cursor-help', pnlTone)}>
+          <div className={clsx('text-sm font-mono font-semibold tabular-nums text-right', pnlTone)}>
             {trade.pnl_unrealized !== null ? formatPnl(trade.pnl_unrealized) : '—'}
           </div>
         </Tooltip>
@@ -649,7 +649,7 @@ function FearGreedGauge({ snapshot }: { snapshot: FearGreedSnapshot | null }) {
         <span className="text-[9px] text-white/40 font-mono uppercase tracking-wider">CNN</span>
       </div>
       <Tooltip content={TIPS.fearGreed.titre}>
-        <div className="flex items-baseline gap-3 mb-2 cursor-help">
+        <div className="flex items-baseline gap-3 mb-2">
           <span className="text-4xl font-bold font-mono tabular-nums">{v}</span>
           <span className="text-[10px] text-white/40 uppercase tracking-widest">/100</span>
         </div>
@@ -664,7 +664,7 @@ function FearGreedGauge({ snapshot }: { snapshot: FearGreedSnapshot | null }) {
       </div>
       <div className="mt-2 text-xs font-semibold uppercase tracking-wider">
         <Tooltip content={classifTip}>
-          <span className={clsx('px-2 py-0.5 rounded-md border cursor-help', `bg-gradient-to-r ${cfg.tone} bg-clip-text text-transparent border-glass-soft`)}>
+          <span className={clsx('px-2 py-0.5 rounded-md border', `bg-gradient-to-r ${cfg.tone} bg-clip-text text-transparent border-glass-soft`)}>
             {cfg.label}
           </span>
         </Tooltip>
@@ -738,7 +738,7 @@ function CotExtremesCard({ items }: { items: CotExtreme[] }) {
           tip={TIPS.cot.titre}
         />
         <Tooltip content={TIPS.cot.z}>
-          <span className="text-[9px] text-white/40 font-mono uppercase tracking-wider cursor-help">
+          <span className="text-[9px] text-white/40 font-mono uppercase tracking-wider">
             z ≥ 2σ / 52s
           </span>
         </Tooltip>
@@ -754,7 +754,7 @@ function CotExtremesCard({ items }: { items: CotExtreme[] }) {
                 const actorTip = (TIPS.cot as Record<string, string>)[s.actor] ?? TIPS.cot.titre;
                 return (
                   <Tooltip key={i} content={actorTip}>
-                    <div className="text-[11px] text-white/60 leading-snug cursor-help">
+                    <div className="text-[11px] text-white/60 leading-snug">
                       <span className="font-mono tabular-nums text-cyan-300 mr-1.5">z={s.z}</span>
                       {s.interpretation}
                     </div>
@@ -793,13 +793,13 @@ function DriftCard() {
         <p className="text-xs text-rose-300/80">{data.error}</p>
       ) : top3.length === 0 ? (
         <Tooltip content={TIPS.drift.action}>
-          <p className="text-xs text-white/40 cursor-help">Aucune régression détectée.</p>
+          <p className="text-xs text-white/40">Aucune régression détectée.</p>
         </Tooltip>
       ) : (
         <div className="space-y-2">
           {top3.map((f: DriftFinding) => (
             <Tooltip key={f.key} content={`${TIPS.drift.delta} ${TIPS.drift.action}`}>
-              <div className="w-full flex items-center justify-between text-xs cursor-help">
+              <div className="w-full flex items-center justify-between text-xs">
                 <span className="font-mono text-white/85 truncate">{f.key}</span>
                 <div className="flex items-center gap-2">
                   <span className="font-mono tabular-nums text-white/50">
@@ -863,7 +863,7 @@ function NextEventsCard({
                   </span>
                   <Tooltip content={impactTip}>
                     <span className={clsx(
-                      'text-[9px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded border cursor-help',
+                      'text-[9px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded border',
                       impactTone
                     )}>
                       {e.impact || '—'}

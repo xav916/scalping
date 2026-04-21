@@ -133,7 +133,7 @@ export function InfoDot({ tip, className }: { tip: ReactNode; className?: string
         className={clsx(
           'inline-flex items-center justify-center w-3.5 h-3.5 rounded-full',
           'border border-white/20 text-white/40 hover:text-cyan-300 hover:border-cyan-300/40',
-          'text-[8px] font-semibold font-mono transition-colors cursor-help',
+          'text-[8px] font-semibold font-mono transition-colors',
           className
         )}
         aria-label="Plus d'informations"

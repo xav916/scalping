@@ -61,25 +61,25 @@ function BucketRow({ b, index }: { b: InsightsBucket; index: number }) {
       className="grid grid-cols-[minmax(80px,140px)_auto_1fr_48px_80px] sm:grid-cols-[140px_auto_1fr_56px_96px] items-center gap-2 sm:gap-4 py-3 border-b border-glass-soft last:border-none"
     >
       <Tooltip content={TIPS.perf.bucketName}>
-        <div className="font-mono text-sm text-white/85 truncate cursor-help">{b.bucket}</div>
+        <div className="font-mono text-sm text-white/85 truncate">{b.bucket}</div>
       </Tooltip>
       <Tooltip content={TIPS.perf.bucketCount}>
-        <div className="text-[10px] text-white/40 tabular-nums uppercase tracking-wider cursor-help">
+        <div className="text-[10px] text-white/40 tabular-nums uppercase tracking-wider">
           {b.count} {b.count === 1 ? 'trade' : 'trades'}
         </div>
       </Tooltip>
       <Tooltip content={TIPS.perf.bucketWinrate}>
-        <div className="cursor-help">
+        <div>
           <WinRateBar pct={winPct} />
         </div>
       </Tooltip>
       <Tooltip content={TIPS.perf.bucketWinrate}>
-        <div className={clsx('text-xs font-semibold font-mono tabular-nums text-right cursor-help', winTone)}>
+        <div className={clsx('text-xs font-semibold font-mono tabular-nums text-right', winTone)}>
           {formatPct(winPct)}
         </div>
       </Tooltip>
       <Tooltip content={TIPS.perf.bucketPnl}>
-        <div className={clsx('text-xs font-mono font-semibold tabular-nums text-right cursor-help', pnlTone)}>
+        <div className={clsx('text-xs font-mono font-semibold tabular-nums text-right', pnlTone)}>
           {formatPnl(b.total_pnl)}
         </div>
       </Tooltip>

@@ -62,7 +62,7 @@ export function SessionClock() {
         <h3 className="text-sm font-semibold tracking-tight">Sessions forex</h3>
         {weekendClosed && (
           <Tooltip content={TIPS.session.weekend}>
-            <span className="text-[9px] font-bold uppercase tracking-wider text-rose-300 bg-rose-400/10 border border-rose-400/30 px-2 py-0.5 rounded-md cursor-help">
+            <span className="text-[9px] font-bold uppercase tracking-wider text-rose-300 bg-rose-400/10 border border-rose-400/30 px-2 py-0.5 rounded-md">
               Weekend
             </span>
           </Tooltip>
@@ -74,7 +74,7 @@ export function SessionClock() {
           const isOn = !weekendClosed && isSessionActive(s, nowUtcH);
           return (
             <Tooltip key={s.name} content={SESSION_TIPS[s.shortName] ?? `${s.name} session`}>
-              <div className="w-full flex items-center gap-3 cursor-help">
+              <div className="w-full flex items-center gap-3">
                 <div className="w-12 flex items-center gap-1.5">
                   {isOn && (
                     <motion.span

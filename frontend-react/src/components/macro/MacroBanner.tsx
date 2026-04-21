@@ -43,7 +43,7 @@ function Pill({
       animate={{ opacity: 1, y: 0, scale: 1 }}
       transition={{ duration: 0.35, delay: 0.05 * index, ease: 'easeOut' }}
       className={clsx(
-        'flex items-center gap-2 px-3.5 py-2 rounded-xl border backdrop-blur-glass transition-colors cursor-help',
+        'flex items-center gap-2 px-3.5 py-2 rounded-xl border backdrop-blur-glass transition-colors',
         tone
       )}
     >

@@ -67,7 +67,7 @@ export function Header() {
           <span className="hidden xs:inline">📡 </span>Scalping Radar
         </span>
         <Tooltip content={TIPS.header.v2Badge}>
-          <span className="text-[10px] font-mono font-semibold text-cyan-300/80 px-2 py-0.5 rounded-md bg-cyan-400/10 border border-cyan-400/20 shadow-[0_0_12px_rgba(34,211,238,0.15)] cursor-help">
+          <span className="text-[10px] font-mono font-semibold text-cyan-300/80 px-2 py-0.5 rounded-md bg-cyan-400/10 border border-cyan-400/20 shadow-[0_0_12px_rgba(34,211,238,0.15)]">
             V2
           </span>
         </Tooltip>
@@ -105,7 +105,7 @@ export function Header() {
         }>
           <div
             className={clsx(
-              'flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg border cursor-help',
+              'flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg border',
               status === 'open' && 'bg-emerald-400/10 border-emerald-400/30',
               status === 'connecting' && 'bg-amber-400/10 border-amber-400/30',
               status === 'closed' && 'bg-rose-400/10 border-rose-400/30'
