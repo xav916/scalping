@@ -1,6 +1,7 @@
 import { Navigate, Outlet } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { MobileBottomNav } from '@/components/layout/MobileBottomNav';
 
 export function AuthGate() {
   const { whoami } = useAuth();
@@ -15,5 +16,14 @@ export function AuthGate() {
   if (whoami.isError || !whoami.data) {
     return <Navigate to="/login" replace />;
   }
-  return <Outlet />;
+  return (
+    <>
+      {/* Padding bottom sur mobile pour que le contenu ne soit pas masqué
+          par la bottom nav fixée (env safe-area pour iPhone X+). */}
+      <div className="pb-[72px] sm:pb-0">
+        <Outlet />
+      </div>
+      <MobileBottomNav />
+    </>
+  );
 }
