@@ -12,6 +12,8 @@ import type {
   AnalyticsReport,
   PeriodStats,
   PeriodKey,
+  MistakesReport,
+  CombosReport,
 } from '@/types/domain';
 import { POST_FIX_CUTOFF } from '@/lib/constants';
 
@@ -93,6 +95,10 @@ export const api = {
   drift: () => request<DriftReport>('/api/drift'),
 
   analytics: () => request<AnalyticsReport>('/api/analytics'),
+
+  mistakes: () => request<MistakesReport>('/api/stats/mistakes'),
+
+  combos: () => request<CombosReport>('/api/stats/combos'),
 
   periodStats: (period: PeriodKey) =>
     request<PeriodStats>(`/api/insights/period-stats?period=${period}`),

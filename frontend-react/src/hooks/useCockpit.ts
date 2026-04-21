@@ -33,6 +33,25 @@ export function usePeriodStats(period: import('@/types/domain').PeriodKey) {
   });
 }
 
+/** Détecteur d'erreurs (trades sans checklist / SL / TP + avg PnL). Fetch on
+ *  demand uniquement, pas de poll — les données évoluent lentement. */
+export function useMistakes() {
+  return useQuery({
+    queryKey: ['mistakes'],
+    queryFn: api.mistakes,
+    staleTime: 60_000,
+  });
+}
+
+/** Combos pattern × pair. Même logique que mistakes. */
+export function useCombos() {
+  return useQuery({
+    queryKey: ['combos'],
+    queryFn: api.combos,
+    staleTime: 60_000,
+  });
+}
+
 /** Snapshot cockpit. Le backend push via WebSocket (type: 'cockpit') et
  *  setQueryData dans useWebSocket alimente la cache directement. On garde
  *  un refetchInterval long (60s) comme filet de sécurité si le WS tombe. */

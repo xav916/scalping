@@ -206,6 +206,25 @@ export const TIPS = {
     closeReasons: 'Répartition des raisons de fermeture : TP1/TP2 atteints = modèle bon sur les cibles, SL dominant = filtres à serrer, TIMEOUT/MANUAL significatifs = bug ou intervention.',
   },
 
+  /* ─────────── Mistakes (discipline tracker) ─────────── */
+  mistakes: {
+    titre: 'Détecteur d\'erreurs : compare les trades disciplinés (checklist validée, SL/TP posés chez le broker) vs les trades négligés. Le delta de PnL moyen montre le coût concret de la négligence.',
+    totalTrades: 'Nombre total de trades (500 derniers max) analysés pour ce tableau de bord discipline.',
+    withoutChecklist: 'Trades pris sans que la checklist pré-trade soit validée (checklist_passed=0). En full-auto cette métrique est peu pertinente (la checklist est un concept de trading manuel), en semi-auto elle révèle les impulsions.',
+    withoutSl: 'Trades où aucun SL (Stop Loss) n\'a été posé chez le broker après l\'entrée (post_entry_sl=0). Rouge vif : c\'est le risque numéro 1 — une position sans stop est une position qui peut tout prendre.',
+    withoutTp: 'Trades où aucun TP (Take Profit) n\'a été posé chez le broker (post_entry_tp=0). Moins critique que le SL mais signifie qu\'on doit gérer les sorties manuellement.',
+    withChecklist: 'PnL moyen des trades DISCIPLINÉS (checklist validée). Comparé au sans-checklist : le delta = coût de la négligence.',
+    avgPnlImpact: 'Différence de PnL moyen entre disciplinés et négligés. Un delta négatif = la négligence coûte cher. Si c\'est l\'inverse, c\'est du bruit statistique (probablement échantillon trop petit).',
+  },
+
+  /* ─────────── Combos (heatmap pattern × pair) ─────────── */
+  combos: {
+    titre: 'Combinaisons pattern × paire. Croise les 2 dimensions pour révéler les combos gagnants (ex : "RSI divergence sur EUR/USD = 70% WR") ou toxiques. Plus granulaire que by_pair et by_pattern séparés.',
+    cell: 'Une cellule = combinaison (pattern, pair). Couleur selon win rate : vert > 60%, cyan 50-60%, orange 45-50%, rouge < 45%, grise si nombre de trades insuffisant pour être statistiquement significatif (min 5 par défaut).',
+    minSignif: 'Seuil minimum de trades pour qu\'une combinaison soit considérée statistiquement significative. En dessous, la couleur est atténuée (bruit probable).',
+    pnlCell: 'PnL cumulé de la combinaison. Même si le win rate est haut, un PnL négatif indique des pertes plus grosses que les gains (R:R défavorable sur cette combo).',
+  },
+
   /* ─────────── Analytics (breakdowns modèle) ─────────── */
   analytics: {
     titre: 'Analytics : décomposition du win rate (taux de réussite) par feature du signal. Source : table backtest.db (outcomes théoriques). Répond à "quelles dimensions prédisent le succès ?" — oriente les filtres à ajouter, instruments à retirer, heures à éviter.',

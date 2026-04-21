@@ -8,6 +8,8 @@ import { GradientText } from '@/components/ui/GradientText';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Sparkline } from '@/components/ui/Sparkline';
 import { Tooltip, LabelWithInfo } from '@/components/ui/Tooltip';
+import { MistakesCard } from '@/components/analytics/MistakesCard';
+import { CombosHeatmap } from '@/components/analytics/CombosHeatmap';
 import { useAnalytics } from '@/hooks/useCockpit';
 import { formatPnl } from '@/lib/format';
 import { TIPS } from '@/lib/metricTips';
@@ -50,6 +52,7 @@ export function AnalyticsPage() {
 
         {data && !data.error && (
           <>
+            <MistakesCard />
             <SignalVolumeCard volume={data.signal_volume} />
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -100,6 +103,8 @@ export function AnalyticsPage() {
               />
               <SlippageCard rows={data.execution_quality?.slippage_by_pair ?? []} />
             </div>
+
+            <CombosHeatmap />
           </>
         )}
       </main>

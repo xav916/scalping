@@ -249,6 +249,29 @@ export interface PeriodStats {
   n_open: number;
 }
 
+export interface MistakesReport {
+  total_trades: number;
+  without_checklist: { count: number; avg_pnl: number };
+  without_sl_set: { count: number; avg_pnl: number };
+  without_tp_set: { count: number; avg_pnl: number };
+  with_checklist_avg_pnl: number;
+}
+
+export interface ComboRow {
+  pattern: string;
+  pair: string;
+  wins: number;
+  losses: number;
+  total: number;
+  win_rate_pct: number;
+  total_pnl: number;
+}
+
+export interface CombosReport {
+  min_trades_for_significance: number;
+  combos: ComboRow[];
+}
+
 export interface AnalyticsReport {
   by_pair?: AnalyticsBreakdownRow[];
   by_hour_utc?: AnalyticsBreakdownRow[];
