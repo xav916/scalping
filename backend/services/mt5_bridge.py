@@ -72,6 +72,15 @@ def _cleanup_old_keys() -> None:
 def _should_push(setup) -> bool:
     if not is_configured():
         return False
+    # Kill switch global : coupe l'auto-exec si perte journaliere atteinte
+    # ou si un flag manuel est actif. Ne bloque PAS l'emission de signaux
+    # (UI, Telegram), seulement l'envoi au bridge.
+    try:
+        from backend.services import kill_switch
+        if kill_switch.is_active():
+            return False
+    except Exception as e:
+        logger.debug(f"mt5_bridge: kill_switch check failed: {e}")
     # Jamais d'auto-exec sur candles simulées : le fallback price_service utilise
     # un prix hardcodé (2650 pour la plupart des pairs), ce qui produit un
     # entry/SL/TP fantôme que MT5 refuse via rc=10016 INVALID_STOPS. Le flag
@@ -127,7 +136,12 @@ async def send_setup(setup) -> None:
     _sent_setups_today.add(key)
 
     direction = _direction_value(setup)
-    risk_money = TRADING_CAPITAL * (RISK_PER_TRADE_PCT / 100.0)
+    # Sizing dynamique : base = RISK_PER_TRADE_PCT du capital, module par
+    # la confiance du signal (0.5x a 1.5x) et par le PnL recent (0.5x si
+    # en drawdown sur 7j, sinon 1.0x). Voir sizing.compute_risk_money.
+    from backend.services import sizing
+    sz = sizing.compute_risk_money(setup)
+    risk_money = sz["risk_money"]
     payload = {
         "pair": setup.pair,
         "direction": direction,
@@ -138,12 +152,13 @@ async def send_setup(setup) -> None:
         # RÉELLES du symbole chez le broker (trade_tick_value, volume_step,
         # etc.). Évite les formules forex appliquées aux métaux qui
         # sous-sizent sur XAU/XAG.
-        "risk_money": round(risk_money, 2),
+        "risk_money": risk_money,
         "comment": f"scalping-radar-{date.today().isoformat()}",
         # Infos complémentaires pour les logs du bridge
         "tp2": getattr(setup, "take_profit_2", None),
         "risk_pct": RISK_PER_TRADE_PCT,
         "confidence": getattr(setup, "confidence_score", None),
+        "sizing_detail": sz,
     }
 
     url = MT5_BRIDGE_URL.rstrip("/") + "/order"
@@ -159,7 +174,8 @@ async def send_setup(setup) -> None:
                 data = r.json()
                 logger.info(
                     f"MT5 bridge → {setup.pair} {direction} "
-                    f"{MT5_BRIDGE_LOTS}L (mode={data.get('mode', '?')})"
+                    f"risk=${risk_money} (conf={sz['conf_mult']}x pnl={sz['pnl_mult']}x) "
+                    f"mode={data.get('mode', '?')}"
                 )
             else:
                 logger.warning(

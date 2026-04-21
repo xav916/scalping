@@ -322,7 +322,21 @@ async def build_cockpit(user: str) -> dict:
     health = await _system_health()
     macro = _macro_snapshot()
 
+    # Etat du kill switch (info critique pour le cockpit : l'utilisateur
+    # doit voir en un coup d'oeil si l'auto-exec est gele).
+    from backend.services import kill_switch as _ks
+    try:
+        ks_status = _ks.status()
+    except Exception:
+        ks_status = {"active": False, "reason": None}
+
     alerts = _build_alerts(active_trades, next_events)
+    if ks_status.get("active"):
+        alerts.insert(0, {
+            "level": "critical",
+            "code": "kill_switch",
+            "msg": f"Kill switch ACTIF : {ks_status.get('reason') or 'raison inconnue'}",
+        })
 
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -350,6 +364,7 @@ async def build_cockpit(user: str) -> dict:
         },
         "system_health": health,
         "macro": macro,
+        "kill_switch": ks_status,
         "next_events": next_events[:5],
         "alerts": alerts,
     }

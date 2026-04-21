@@ -18,3 +18,11 @@ scalping-key*
 frontend/css/tailwind.css
 node_modules/
 
+# Bases SQLite locales (runtime / tests) — pas de données de trade en repo
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+kill_switch.json
+mt5_sync_state.json
+
