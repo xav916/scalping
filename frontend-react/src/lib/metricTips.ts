@@ -183,6 +183,29 @@ export const TIPS = {
     trades: 'Nombre de trades clôturés dans la série.',
   },
 
+  /* ─────────── Period metrics (tabs Jour/Semaine/Mois/Année) ─────────── */
+  period: {
+    titre: 'Métriques consolidées sur une période choisie. Basé sur les trades auto clôturés (is_auto=1, status=CLOSED) dans la fenêtre.',
+    tabDay: 'Jour : depuis 00:00 UTC aujourd\'hui jusqu\'à maintenant.',
+    tabWeek: 'Semaine : depuis lundi 00:00 UTC de la semaine en cours.',
+    tabMonth: 'Mois : depuis le 1er du mois 00:00 UTC.',
+    tabYear: 'Année : depuis le 1er janvier 00:00 UTC.',
+    tabAll: 'Tout : depuis POST_FIX_CUTOFF (2026-04-20 21:14 UTC, pipeline fiabilisé).',
+    pnl: 'PnL (Profit and Loss — profits/pertes) total sur la période. Positif = profit net, négatif = perte nette.',
+    pnlPct: 'PnL en pourcentage du capital de référence (TRADING_CAPITAL). Un PnL de 2% sur un mois est honorable.',
+    capitalAtRiskNow: 'Capital à risque à l\'instant T : somme des |entry − SL| × units × size des positions encore OUVERTES. C\'est ce que tu pourrais perdre maintenant si tous les SL tombent.',
+    nTrades: 'Nombre de trades clôturés sur la période. Sous 10 trades, les stats sont peu fiables (bruit statistique).',
+    winRate: 'Win rate (taux de réussite) : ratio trades gagnants / trades totaux. 50% = équilibré, mais un win rate de 40% avec R:R 1:3 = stratégie rentable.',
+    avgPnl: 'Average PnL per trade : gain ou perte moyen par trade. Indicateur brut d\'edge du modèle.',
+    profitFactor: 'Profit factor : somme des gains absolus / somme des pertes absolues. PF > 1 = profitable, > 1.5 = solide, > 2 = excellent. PF de 3 signifie que pour 1 € perdu on gagne 3 €.',
+    expectancy: 'Expectancy (espérance mathématique) : PnL moyen par trade. C\'est ce que tu gagnes "en moyenne" à chaque trade exécuté. Positif = edge réel, négatif = stratégie perdante.',
+    maxDrawdown: 'Max drawdown (drawdown maximum) : plus grosse perte cumulée depuis un sommet de la courbe d\'équité. Mesure la "douleur max" de la période. Un DD de -100 € signifie qu\'à un moment tu étais 100 € sous ton plus haut.',
+    bestTrade: 'Best trade : le plus gros gain individuel de la période.',
+    worstTrade: 'Worst trade : la plus grosse perte individuelle de la période. À comparer au SL théorique pour détecter un slippage anormal.',
+    avgDuration: 'Average duration : durée moyenne des trades (entrée → fermeture) en minutes. Un scalping typique : 15-120 min.',
+    closeReasons: 'Répartition des raisons de fermeture : TP1/TP2 atteints = modèle bon sur les cibles, SL dominant = filtres à serrer, TIMEOUT/MANUAL significatifs = bug ou intervention.',
+  },
+
   /* ─────────── Analytics (breakdowns modèle) ─────────── */
   analytics: {
     titre: 'Analytics : décomposition du win rate (taux de réussite) par feature du signal. Source : table backtest.db (outcomes théoriques). Répond à "quelles dimensions prédisent le succès ?" — oriente les filtres à ajouter, instruments à retirer, heures à éviter.',

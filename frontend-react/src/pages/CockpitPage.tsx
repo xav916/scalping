@@ -9,6 +9,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { Tooltip, LabelWithInfo } from '@/components/ui/Tooltip';
 import { EquityCurveMini } from '@/components/performance/EquityCurveMini';
 import { KillSwitchModal } from '@/components/cockpit/KillSwitchModal';
+import { PeriodMetricsCard } from '@/components/cockpit/PeriodMetricsCard';
 import { useCockpit, useKillSwitch, useDrift } from '@/hooks/useCockpit';
 import { formatPnl, formatPct, formatPrice } from '@/lib/format';
 import { TIPS } from '@/lib/metricTips';
@@ -48,6 +49,8 @@ export function CockpitPage() {
               killSwitchReason={data.kill_switch.reason}
               alerts={data.alerts}
             />
+
+            <PeriodMetricsCard />
 
             <TodayStatsCard
               pnl={data.today_stats.pnl}

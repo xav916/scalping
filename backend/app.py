@@ -186,6 +186,23 @@ async def api_insights_performance(
     return insights_service.get_performance(since_iso=since)
 
 
+@app.get("/api/insights/period-stats")
+async def api_insights_period_stats(
+    period: str = "day",
+    _=Depends(verify_credentials),
+):
+    """Métriques consolidées par période (day/week/month/year/all) :
+    PnL, win rate, profit factor, expectancy, max drawdown, best/worst trade,
+    durée moyenne, distribution close_reason, capital à risque instantané.
+
+    Alimente le widget PeriodMetricsCard du cockpit avec tabs toggleables.
+    """
+    from backend.services import insights_service
+    if period not in {"day", "week", "month", "year", "all"}:
+        raise HTTPException(status_code=400, detail="period invalide (day|week|month|year|all)")
+    return insights_service.get_period_stats(period=period)
+
+
 @app.get("/api/insights/equity-curve")
 async def api_insights_equity_curve(
     since: str | None = None,

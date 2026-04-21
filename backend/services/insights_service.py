@@ -203,3 +203,195 @@ def get_equity_curve(since_iso: str | None = None) -> dict[str, Any]:
         "final_pnl": round(cumulative, 2),
         "since": since_iso,
     }
+
+
+def _period_window(period: str) -> tuple[str, str]:
+    """Calcule la fenêtre [since, until] en ISO UTC pour une période.
+    
+    Périodes supportées :
+    - 'day'   : depuis 00:00 UTC aujourd'hui
+    - 'week'  : depuis lundi 00:00 UTC de la semaine en cours
+    - 'month' : depuis le 1er du mois 00:00 UTC
+    - 'year'  : depuis le 1er janvier 00:00 UTC
+    - 'all'   : depuis POST_FIX_CUTOFF (pipeline fiabilisé)
+    """
+    from datetime import datetime, timezone, timedelta
+    
+    now = datetime.now(timezone.utc)
+    until = now.isoformat()
+    
+    if period == "day":
+        since_dt = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    elif period == "week":
+        days_since_monday = now.weekday()
+        since_dt = (now - timedelta(days=days_since_monday)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+    elif period == "month":
+        since_dt = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    elif period == "year":
+        since_dt = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+    else:  # 'all'
+        # POST_FIX_CUTOFF hardcodé ici pour éviter de dépendre du front
+        return ("2026-04-20T21:14:00+00:00", until)
+    
+    return (since_dt.isoformat(), until)
+
+
+def get_period_stats(period: str = "day") -> dict:
+    """Métriques consolidées pour une période : PnL, win rate, profit factor,
+    expectancy, max drawdown, best/worst trade, durée moyenne, distribution
+    close_reason.
+    
+    Source : personal_trades WHERE status='CLOSED' AND is_auto=1 AND closed_at in [since, until].
+    """
+    from config.settings import TRADING_CAPITAL
+    
+    since, until = _period_window(period)
+    
+    with sqlite3.connect(_db_path()) as c:
+        c.row_factory = sqlite3.Row
+        trades_rows = c.execute(
+            """
+            SELECT pair, direction, pnl, created_at, closed_at, close_reason, size_lot
+              FROM personal_trades
+             WHERE status = 'CLOSED'
+               AND is_auto = 1
+               AND pnl IS NOT NULL
+               AND closed_at >= ?
+               AND closed_at <= ?
+             ORDER BY closed_at ASC
+            """,
+            (since, until),
+        ).fetchall()
+        
+        # Trades encore ouverts au moment du calcul (pour afficher capital engagé)
+        open_rows = c.execute(
+            """
+            SELECT pair, entry_price, stop_loss, size_lot
+              FROM personal_trades
+             WHERE status = 'OPEN' AND is_auto = 1
+            """
+        ).fetchall()
+    
+    trades = [dict(r) for r in trades_rows]
+    opens = [dict(r) for r in open_rows]
+    
+    # Capital à risque instantané (somme de |entry - SL| * units * size)
+    def _units(pair: str) -> float:
+        base = pair.split("/")[0].upper() if "/" in pair else pair.upper()
+        if base in {"XAU", "XAG", "XPT", "XPD"}:
+            return 100.0
+        return 100_000.0
+    
+    capital_at_risk = 0.0
+    for o in opens:
+        sl = o.get("stop_loss")
+        if sl is None:
+            continue
+        units = _units(o["pair"]) * (o.get("size_lot") or 0)
+        capital_at_risk += abs(o["entry_price"] - sl) * units
+    
+    if not trades:
+        return {
+            "period": period,
+            "from": since,
+            "to": until,
+            "pnl": 0.0,
+            "pnl_pct": 0.0,
+            "capital": TRADING_CAPITAL,
+            "capital_at_risk_now": round(capital_at_risk, 2),
+            "n_trades": 0,
+            "n_wins": 0,
+            "n_losses": 0,
+            "win_rate": 0.0,
+            "avg_pnl_per_trade": 0.0,
+            "profit_factor": None,
+            "expectancy": 0.0,
+            "max_drawdown": 0.0,
+            "best_trade": None,
+            "worst_trade": None,
+            "avg_duration_min": None,
+            "close_reasons": {},
+            "n_open": len(opens),
+        }
+    
+    pnls = [float(t["pnl"] or 0) for t in trades]
+    total_pnl = sum(pnls)
+    wins = [p for p in pnls if p > 0]
+    losses = [p for p in pnls if p < 0]
+    
+    gross_win = sum(wins)
+    gross_loss = abs(sum(losses))
+    profit_factor = round(gross_win / gross_loss, 2) if gross_loss > 0 else None
+    
+    # Max drawdown : perte max cumulée depuis un sommet de la courbe d'équité
+    cumulative = 0.0
+    peak = 0.0
+    max_dd = 0.0
+    for p in pnls:
+        cumulative += p
+        if cumulative > peak:
+            peak = cumulative
+        dd = peak - cumulative
+        if dd > max_dd:
+            max_dd = dd
+    
+    # Best/worst trade
+    best = max(trades, key=lambda t: t["pnl"])
+    worst = min(trades, key=lambda t: t["pnl"])
+    
+    # Durée moyenne
+    from datetime import datetime
+    durations = []
+    for t in trades:
+        try:
+            start = datetime.fromisoformat(t["created_at"].replace("Z", "+00:00"))
+            end = datetime.fromisoformat(t["closed_at"].replace("Z", "+00:00"))
+            durations.append((end - start).total_seconds() / 60)
+        except Exception:
+            pass
+    avg_duration = round(sum(durations) / len(durations), 1) if durations else None
+    
+    # Distribution close_reason
+    reasons: dict[str, int] = {}
+    for t in trades:
+        r = t.get("close_reason") or "UNKNOWN"
+        reasons[r] = reasons.get(r, 0) + 1
+    
+    n_trades = len(trades)
+    win_rate = len(wins) / n_trades if n_trades else 0.0
+    expectancy = total_pnl / n_trades if n_trades else 0.0
+    
+    return {
+        "period": period,
+        "from": since,
+        "to": until,
+        "pnl": round(total_pnl, 2),
+        "pnl_pct": round(total_pnl / TRADING_CAPITAL * 100, 2) if TRADING_CAPITAL else 0.0,
+        "capital": TRADING_CAPITAL,
+        "capital_at_risk_now": round(capital_at_risk, 2),
+        "n_trades": n_trades,
+        "n_wins": len(wins),
+        "n_losses": len(losses),
+        "win_rate": round(win_rate, 3),
+        "avg_pnl_per_trade": round(total_pnl / n_trades, 2) if n_trades else 0.0,
+        "profit_factor": profit_factor,
+        "expectancy": round(expectancy, 2),
+        "max_drawdown": round(-max_dd, 2),  # stocké négatif pour l'affichage
+        "best_trade": {
+            "pair": best["pair"],
+            "direction": best["direction"],
+            "pnl": round(float(best["pnl"]), 2),
+            "closed_at": best["closed_at"],
+        },
+        "worst_trade": {
+            "pair": worst["pair"],
+            "direction": worst["direction"],
+            "pnl": round(float(worst["pnl"]), 2),
+            "closed_at": worst["closed_at"],
+        },
+        "avg_duration_min": avg_duration,
+        "close_reasons": reasons,
+        "n_open": len(opens),
+    }

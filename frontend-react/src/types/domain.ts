@@ -217,6 +217,38 @@ export interface SignalVolume {
   last_30_days: Array<{ day: string; count: number }>;
 }
 
+export type PeriodKey = 'day' | 'week' | 'month' | 'year' | 'all';
+
+export interface PeriodTradeRef {
+  pair: string;
+  direction: Direction;
+  pnl: number;
+  closed_at: string;
+}
+
+export interface PeriodStats {
+  period: PeriodKey;
+  from: string;
+  to: string;
+  pnl: number;
+  pnl_pct: number;
+  capital: number;
+  capital_at_risk_now: number;
+  n_trades: number;
+  n_wins: number;
+  n_losses: number;
+  win_rate: number;
+  avg_pnl_per_trade: number;
+  profit_factor: number | null;
+  expectancy: number;
+  max_drawdown: number;
+  best_trade: PeriodTradeRef | null;
+  worst_trade: PeriodTradeRef | null;
+  avg_duration_min: number | null;
+  close_reasons: Record<string, number>;
+  n_open: number;
+}
+
 export interface AnalyticsReport {
   by_pair?: AnalyticsBreakdownRow[];
   by_hour_utc?: AnalyticsBreakdownRow[];

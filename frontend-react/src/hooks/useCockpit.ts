@@ -21,6 +21,17 @@ export function useAnalytics() {
   });
 }
 
+/** Period stats (PnL/win rate/profit factor par période). Poll 30s pour que
+ *  le "Jour" se rafraîchisse pendant que des trades se ferment. */
+export function usePeriodStats(period: import('@/types/domain').PeriodKey) {
+  return useQuery({
+    queryKey: ['period-stats', period],
+    queryFn: () => api.periodStats(period),
+    refetchInterval: 30_000,
+    staleTime: 15_000,
+  });
+}
+
 /** Snapshot cockpit. Le backend push via WebSocket (type: 'cockpit') et
  *  setQueryData dans useWebSocket alimente la cache directement. On garde
  *  un refetchInterval long (60s) comme filet de sécurité si le WS tombe. */

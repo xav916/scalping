@@ -10,6 +10,8 @@ import type {
   KillSwitchStatus,
   DriftReport,
   AnalyticsReport,
+  PeriodStats,
+  PeriodKey,
 } from '@/types/domain';
 import { POST_FIX_CUTOFF } from '@/lib/constants';
 
@@ -91,6 +93,9 @@ export const api = {
   drift: () => request<DriftReport>('/api/drift'),
 
   analytics: () => request<AnalyticsReport>('/api/analytics'),
+
+  periodStats: (period: PeriodKey) =>
+    request<PeriodStats>(`/api/insights/period-stats?period=${period}`),
 
   health: () =>
     request<{
