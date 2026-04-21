@@ -12,13 +12,13 @@ export function DashboardPage() {
     <>
       <ReactiveMeshGradient />
       <Header />
-      <main className="px-6 py-6 max-w-[1500px] mx-auto space-y-6">
+      <main className="px-6 py-6 max-w-[1500px] mx-auto space-y-6 isolate">
         {/* Row 1 : bandeau macro pleine largeur */}
-        <MacroBanner />
+        <div className="relative z-10"><MacroBanner /></div>
 
         {/* Row 2 : bento — setups (gauche large) + rail droit (SessionClock + MiniKPIs) */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          <section className="lg:col-span-8">
+        <div className="relative z-0 grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <section className="relative lg:col-span-8 min-w-0">
             <div className="flex items-baseline justify-between mb-3">
               <h2 className="text-sm uppercase tracking-[0.2em] text-white/50">Setups en cours</h2>
               <span className="text-[10px] text-white/30 font-mono uppercase tracking-wider">
@@ -28,7 +28,7 @@ export function DashboardPage() {
             <SetupsGrid />
           </section>
 
-          <aside className="lg:col-span-4 space-y-6">
+          <aside className="relative lg:col-span-4 space-y-6 min-w-0">
             <SessionClock />
             <EquityCurveMini />
             <PerformanceMiniKPI />
@@ -36,7 +36,7 @@ export function DashboardPage() {
         </div>
 
         {/* Row 3 : performance détaillée pleine largeur */}
-        <PerformancePanel />
+        <div className="relative z-10"><PerformancePanel /></div>
       </main>
     </>
   );
