@@ -5,9 +5,10 @@ interface Props {
   width?: number;
   height?: number;
   variant?: 'buy' | 'sell' | 'neutral';
-  showEntry?: number;          // Si fourni, trace une ligne horizontale (entry price)
+  showEntry?: number;
   showSL?: number;
   showTP?: number;
+  responsive?: boolean;        // true = svg width 100% du parent via viewBox
 }
 
 /** Mini sparkline SVG pour afficher une série de close prices dans une carte.
@@ -20,6 +21,7 @@ export function Sparkline({
   showEntry,
   showSL,
   showTP,
+  responsive = true,
 }: Props) {
   if (values.length < 2) {
     return (
@@ -57,8 +59,12 @@ export function Sparkline({
 
   const gradientId = `spark-${variant}-${Math.random().toString(36).slice(2, 8)}`;
 
+  const svgProps = responsive
+    ? { viewBox: `0 0 ${width} ${height}`, preserveAspectRatio: 'none' as const, style: { width: '100%', height, display: 'block' as const } }
+    : { width, height, className: 'block' };
+
   return (
-    <svg width={width} height={height} className="block">
+    <svg {...svgProps}>
       <defs>
         <linearGradient id={gradientId} x1="0%" y1="0%" x2="0%" y2="100%">
           <stop offset="0%" stopColor={stops.fillTop} />

@@ -1,4 +1,4 @@
-import { type ReactNode, type MouseEvent } from 'react';
+import { type ReactNode, type MouseEvent, useEffect, useState } from 'react';
 import { motion, useMotionValue, useSpring, useTransform } from 'motion/react';
 
 interface Props {
@@ -7,11 +7,31 @@ interface Props {
   perspective?: number;  // distance de perspective
 }
 
+/** true si l'appareil n'a pas de souris fine (touch / mobile). */
+function useIsCoarsePointer(): boolean {
+  const [isCoarse, setIsCoarse] = useState(false);
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const mq = window.matchMedia('(pointer: coarse)');
+    setIsCoarse(mq.matches);
+    const handler = (e: MediaQueryListEvent) => setIsCoarse(e.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
+  return isCoarse;
+}
+
 /** Wrapper qui applique un tilt 3D subtil sur mouse move.
  *  Utilisé autour des SetupCard pour un effet tactile. */
 export function TiltWrapper({ children, maxTilt = 6, perspective = 900 }: Props) {
+  const isCoarse = useIsCoarsePointer();
   const x = useMotionValue(0);
   const y = useMotionValue(0);
+
+  if (isCoarse) {
+    // Skip le tilt sur mobile/tablette tactile — pas de souris fine dispo.
+    return <>{children}</>;
+  }
 
   const springConfig = { stiffness: 200, damping: 20, mass: 0.5 };
   const xSpring = useSpring(x, springConfig);

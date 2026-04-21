@@ -49,23 +49,25 @@ export function Header() {
   }, []);
 
   return (
-    <header className="sticky top-0 z-20 px-6 py-4 flex items-center justify-between border-b border-glass-soft backdrop-blur-glass bg-radar-deep/60">
-      <div className="flex items-center gap-3">
-        <span className="text-xl font-semibold tracking-tight">📡 Scalping Radar</span>
+    <header className="sticky top-0 z-20 px-4 sm:px-6 py-3 sm:py-4 flex items-center justify-between gap-2 border-b border-glass-soft backdrop-blur-glass bg-radar-deep/60">
+      <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+        <span className="text-base sm:text-xl font-semibold tracking-tight whitespace-nowrap">
+          <span className="hidden xs:inline">📡 </span>Scalping Radar
+        </span>
         <span className="text-[10px] font-mono font-semibold text-cyan-300/80 px-2 py-0.5 rounded-md bg-cyan-400/10 border border-cyan-400/20 shadow-[0_0_12px_rgba(34,211,238,0.15)]">
           V2
         </span>
       </div>
-      <div className="flex items-center gap-5 text-sm text-white/70">
-        {/* Heure Paris */}
-        <div className="hidden sm:flex items-baseline gap-2">
+      <div className="flex items-center gap-2 sm:gap-5 text-sm text-white/70">
+        {/* Heure Paris — masquée sur très petit écran */}
+        <div className="hidden md:flex items-baseline gap-2">
           <span className="font-mono tabular-nums text-base text-white/90">{now}</span>
           <span className="text-[9px] uppercase tracking-[0.2em] text-white/40">Paris</span>
         </div>
         {/* Status LIVE/SYNC/OFFLINE */}
         <div
           className={clsx(
-            'flex items-center gap-2 px-3 py-1.5 rounded-lg border',
+            'flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg border',
             status === 'open' && 'bg-emerald-400/10 border-emerald-400/30',
             status === 'connecting' && 'bg-amber-400/10 border-amber-400/30',
             status === 'closed' && 'bg-rose-400/10 border-rose-400/30'
@@ -74,7 +76,7 @@ export function Header() {
           <StatusDot status={status} />
           <span
             className={clsx(
-              'text-[10px] font-bold uppercase tracking-[0.2em]',
+              'text-[9px] sm:text-[10px] font-bold uppercase tracking-[0.15em] sm:tracking-[0.2em]',
               status === 'open' && 'text-emerald-300',
               status === 'connecting' && 'text-amber-300',
               status === 'closed' && 'text-rose-300'
@@ -94,11 +96,11 @@ export function Header() {
                 },
               });
             }}
-            className="text-xs px-3 py-1.5 rounded-lg border border-glass-soft hover:border-glass-strong hover:bg-white/5 transition-all"
+            className="text-xs px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg border border-glass-soft hover:border-glass-strong hover:bg-white/5 transition-all"
             title={`Logout ${whoami.data.username}`}
           >
-            <span className="opacity-60 mr-1.5">⎋</span>
-            <span className="font-mono">{whoami.data.username}</span>
+            <span className="opacity-60 sm:mr-1.5">⎋</span>
+            <span className="font-mono hidden sm:inline">{whoami.data.username}</span>
           </button>
         )}
       </div>

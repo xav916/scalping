@@ -56,7 +56,7 @@ function BucketRow({ b, index }: { b: InsightsBucket; index: number }) {
       initial={{ opacity: 0, x: -8 }}
       animate={{ opacity: 1, x: 0 }}
       transition={{ duration: 0.3, delay: index * 0.04 }}
-      className="grid grid-cols-[140px_auto_1fr_56px_96px] items-center gap-4 py-3 border-b border-glass-soft last:border-none"
+      className="grid grid-cols-[minmax(80px,140px)_auto_1fr_48px_80px] sm:grid-cols-[140px_auto_1fr_56px_96px] items-center gap-2 sm:gap-4 py-3 border-b border-glass-soft last:border-none"
     >
       <div className="font-mono text-sm text-white/85 truncate">{b.bucket}</div>
       <div className="text-[10px] text-white/40 tabular-nums uppercase tracking-wider">
@@ -114,7 +114,7 @@ export function PerformancePanel() {
             Depuis le post-fix · données agrégées
           </p>
         </div>
-        <div className="flex items-center gap-6">
+        <div className="flex items-center gap-4 sm:gap-6">
           <Kpi label="Trades" value={<span className="font-mono">{data.total_trades}</span>} />
           <Kpi label="Win rate" value={<GradientText>{formatPct(data.win_rate ?? 0)}</GradientText>} />
           <Kpi
@@ -124,14 +124,14 @@ export function PerformancePanel() {
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-1.5 mb-4 pb-4 border-b border-glass-soft">
+      <div className="flex flex-nowrap overflow-x-auto scrollbar-hide gap-1.5 mb-4 pb-4 border-b border-glass-soft -mx-1 px-1">
         {TABS.map((t) => (
           <button
             key={t.key}
             type="button"
             onClick={() => setTab(t.key)}
             className={clsx(
-              'text-xs px-3 py-1.5 rounded-lg border transition-all',
+              'text-xs px-3 py-1.5 rounded-lg border transition-all whitespace-nowrap flex-shrink-0',
               tab === t.key
                 ? 'border-glass-strong bg-white/10 text-white shadow-sm'
                 : 'border-glass-soft text-white/50 hover:text-white/90 hover:bg-white/[0.03]'

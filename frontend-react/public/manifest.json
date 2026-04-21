@@ -1,0 +1,20 @@
+{
+  "name": "Scalping Radar V2",
+  "short_name": "Radar V2",
+  "description": "Dashboard de scalping avec macro, setups live et analyse de performance",
+  "start_url": "/v2/",
+  "scope": "/v2/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0a0e14",
+  "theme_color": "#0a0e14",
+  "lang": "fr",
+  "icons": [
+    {
+      "src": "/v2/icons/radar-512.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
