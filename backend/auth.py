@@ -112,13 +112,19 @@ def login_and_set_cookie(response: Response, username: str, password: str) -> bo
     if expected is None or not secrets.compare_digest(expected, password):
         return False
     sid = create_session(username)
+    # SameSite=Lax (et non Strict) : permet d'envoyer le cookie sur les
+    # WebSocket upgrades initiés depuis la même origine. Chrome applique
+    # Strict de manière suffisamment stricte pour bloquer le cookie sur
+    # WS dans certains contextes (cross-site navigation puis same-origin
+    # WS), donnant 403 côté backend. Lax reste sécure pour notre usage
+    # (CSRF protection identique pour les GET navigations).
     response.set_cookie(
         key=SESSION_COOKIE,
         value=sid,
         max_age=int(SESSION_TTL.total_seconds()),
         httponly=True,
         secure=True,
-        samesite="strict",
+        samesite="lax",
         path="/",
     )
     return True
