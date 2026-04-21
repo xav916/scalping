@@ -36,6 +36,14 @@ _IMMINENT_WINDOW = timedelta(hours=4)
 # Seuil en % de la distance entry→SL en-dessous duquel on alerte "proche SL".
 _SL_PROXIMITY_ALERT_PCT = 30.0
 
+# Cache TTL pour le ping bridge MT5. Le cockpit peut etre appele a chaque
+# cycle d'analyse ET tous les 5s via WebSocket ; pinger le bridge a cette
+# frequence serait inutile (il y a deja un job dedie toutes les 5min). On
+# autorise donc une reutilisation du dernier resultat pendant 30s.
+_BRIDGE_HEALTH_TTL = timedelta(seconds=30)
+_bridge_health_cache: dict | None = None
+_bridge_health_cached_at: datetime | None = None
+
 
 def _current_price(pair: str) -> float | None:
     """Dernier prix connu pour `pair` : tick temps réel > close bougie."""
@@ -220,6 +228,24 @@ def _macro_snapshot() -> dict | None:
     }
 
 
+async def _cached_bridge_health() -> dict:
+    """Ping bridge MT5 au plus une fois toutes les _BRIDGE_HEALTH_TTL secondes.
+    Le job dedie `bridge_health_cycle` du scheduler garde le bridge sous
+    surveillance toutes les 5min ; ici on ne fait que l'afficher."""
+    global _bridge_health_cache, _bridge_health_cached_at
+    now = datetime.now(timezone.utc)
+    if (
+        _bridge_health_cache is not None
+        and _bridge_health_cached_at is not None
+        and now - _bridge_health_cached_at < _BRIDGE_HEALTH_TTL
+    ):
+        return _bridge_health_cache
+    result = await mt5_bridge_health_check()
+    _bridge_health_cache = result
+    _bridge_health_cached_at = now
+    return result
+
+
 async def _system_health() -> dict:
     last = get_last_cycle_at()
     seconds_since = None
@@ -228,7 +254,7 @@ async def _system_health() -> dict:
         seconds_since = (datetime.now(timezone.utc) - last).total_seconds()
         healthy_cycle = seconds_since < 600  # < 10 min
 
-    bridge = await mt5_bridge_health_check()
+    bridge = await _cached_bridge_health()
     bridge_ok = bool(bridge.get("reachable"))
 
     return {

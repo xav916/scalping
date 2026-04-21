@@ -10,21 +10,22 @@ from backend.models.schemas import ScalpingSignal, Tick
 
 logger = logging.getLogger(__name__)
 
-# Connected WebSocket clients (FastAPI WebSocket instances)
-_connected_clients: set[Any] = set()
+# Connected WebSocket clients : dict {client -> user}. Le user est stocke
+# pour pouvoir pousser des payloads personnalises (ex: cockpit par user).
+_connected_clients: dict[Any, str] = {}
 
 # Signal history (kept in memory)
 _signal_history: list[dict] = []
 MAX_HISTORY = 100
 
 
-def register_client(ws: Any) -> None:
-    _connected_clients.add(ws)
-    logger.info(f"Client connected. Total: {len(_connected_clients)}")
+def register_client(ws: Any, user: str = "anonymous") -> None:
+    _connected_clients[ws] = user
+    logger.info(f"Client connected (user={user}). Total: {len(_connected_clients)}")
 
 
 def unregister_client(ws: Any) -> None:
-    _connected_clients.discard(ws)
+    _connected_clients.pop(ws, None)
     logger.info(f"Client disconnected. Total: {len(_connected_clients)}")
 
 
@@ -88,7 +89,7 @@ async def broadcast_signals(signals: list[ScalpingSignal]) -> None:
                 disconnected.add(client)
 
         for client in disconnected:
-            _connected_clients.discard(client)
+            _connected_clients.pop(client, None)
 
 
 async def broadcast_update(data: dict) -> None:
@@ -101,7 +102,7 @@ async def broadcast_update(data: dict) -> None:
         except Exception:
             disconnected.add(client)
     for client in disconnected:
-        _connected_clients.discard(client)
+        _connected_clients.pop(client, None)
 
 
 async def broadcast_tick(tick: Tick) -> None:
@@ -126,9 +127,46 @@ async def broadcast_tick(tick: Tick) -> None:
         except Exception:
             disconnected.add(client)
     for client in disconnected:
-        _connected_clients.discard(client)
+        _connected_clients.pop(client, None)
 
 
 def get_signal_history() -> list[dict]:
     """Return recent signal history."""
     return list(reversed(_signal_history))
+
+
+async def broadcast_cockpit() -> None:
+    """Pousse le snapshot cockpit a chaque client connecte.
+
+    Le payload est construit par user (trades/PnL sont personnels), donc
+    on groupe les clients par user, on construit le snapshot une seule
+    fois par user, puis on diffuse a tous les clients de ce user.
+
+    No-op si aucun client n'est connecte.
+    """
+    if not _connected_clients:
+        return
+
+    from backend.services.cockpit_service import build_cockpit
+
+    # Groupe client -> user en user -> [clients]
+    by_user: dict[str, list[Any]] = {}
+    for client, user in _connected_clients.items():
+        by_user.setdefault(user, []).append(client)
+
+    for user, clients in by_user.items():
+        try:
+            snapshot = await build_cockpit(user=user)
+        except Exception as e:
+            logger.warning(f"cockpit build failed for user={user}: {e}")
+            continue
+
+        message = json.dumps({"type": "cockpit", "data": snapshot})
+        disconnected = set()
+        for client in clients:
+            try:
+                await client.send_text(message)
+            except Exception:
+                disconnected.add(client)
+        for client in disconnected:
+            _connected_clients.pop(client, None)

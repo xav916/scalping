@@ -17,7 +17,11 @@ from backend.services.forexfactory_service import fetch_economic_events
 from backend.services.macro_context_service import refresh_macro_context
 from backend.services.mataf_service import fetch_volatility_data
 from backend.services import backtest_service, coaching
-from backend.services.notification_service import broadcast_signals, broadcast_update
+from backend.services.notification_service import (
+    broadcast_cockpit,
+    broadcast_signals,
+    broadcast_update,
+)
 from backend.services.telegram_service import (
     send_setups as telegram_send_setups,
     send_signals as telegram_send_signals,
@@ -237,8 +241,28 @@ async def run_analysis_cycle() -> None:
             f"{len(all_trade_setups)} setup(s) de trade"
         )
 
+        # Pousse un snapshot cockpit immediat des qu'un cycle se termine :
+        # les clients connectes voient les nouveaux setups sans attendre le
+        # prochain tick du job periodique (jusqu'a 5s de latence evitee).
+        try:
+            await broadcast_cockpit()
+        except Exception as e:
+            logger.warning(f"broadcast_cockpit apres cycle a echoue: {e}")
+
     except Exception as e:
         logger.error(f"Erreur cycle d'analyse: {e}", exc_info=True)
+
+
+async def cockpit_broadcast_cycle() -> None:
+    """Push periodique du snapshot cockpit (toutes les N secondes).
+
+    Utile pour refresh les PnL unrealized des trades ouverts, meme entre
+    deux cycles d'analyse (qui tournent toutes les 180-300s).
+    No-op si aucun client connecte."""
+    try:
+        await broadcast_cockpit()
+    except Exception as e:
+        logger.warning(f"cockpit_broadcast_cycle a echoue: {e}")
 
 
 async def backtest_check_cycle() -> None:
@@ -461,6 +485,16 @@ def start_scheduler() -> AsyncIOScheduler:
         seconds=MT5_SYNC_INTERVAL_SEC,
         id="mt5_sync",
         name="Sync bridge MT5 → personal_trades",
+        replace_existing=True,
+    )
+    # Push cockpit toutes les 5s : rafraichit les PnL unrealized des trades
+    # ouverts cote frontend. No-op si aucun client WS connecte.
+    _scheduler.add_job(
+        cockpit_broadcast_cycle,
+        "interval",
+        seconds=5,
+        id="cockpit_broadcast",
+        name="Push cockpit via WebSocket",
         replace_existing=True,
     )
     if MACRO_SCORING_ENABLED:
