@@ -118,15 +118,28 @@ export function Header() {
           type="button"
           onClick={toggleAudio}
           aria-pressed={audioEnabled}
+          aria-label={audioEnabled ? 'Désactiver les alertes audio' : 'Activer les alertes audio'}
           title={audioEnabled ? 'Alertes son activées — clic pour désactiver' : 'Alertes son désactivées — clic pour activer'}
           className={clsx(
-            'text-xs px-2 py-1 sm:py-1.5 rounded-lg border transition-all font-mono',
+            'flex items-center justify-center w-8 h-8 sm:w-9 sm:h-9 rounded-lg border transition-all',
             audioEnabled
               ? 'border-cyan-400/30 bg-cyan-400/10 text-cyan-300 shadow-[0_0_12px_rgba(34,211,238,0.15)]'
               : 'border-glass-soft text-white/40 hover:text-white/70 hover:bg-white/5'
           )}
         >
-          {audioEnabled ? '♪' : '♪̸'}
+          {audioEnabled ? (
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+              <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+              <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
+            </svg>
+          ) : (
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+              <line x1="22" y1="9" x2="16" y2="15"/>
+              <line x1="16" y1="9" x2="22" y2="15"/>
+            </svg>
+          )}
         </button>
         {/* Logout */}
         {whoami.data && (
