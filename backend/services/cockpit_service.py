@@ -351,6 +351,14 @@ async def build_cockpit(user: str) -> dict:
     except Exception:
         session_info = {}
 
+    # COT extremes : positionnement des gros a >= 2 ecarts-types. Utile
+    # comme signal contrarien en toile de fond.
+    from backend.services import cot_service as _cot
+    try:
+        cot_extremes = _cot.find_extremes()
+    except Exception:
+        cot_extremes = []
+
     alerts = _build_alerts(active_trades, next_events)
     if ks_status.get("active"):
         alerts.insert(0, {
@@ -364,6 +372,14 @@ async def build_cockpit(user: str) -> dict:
             "code": "event_blackout",
             "msg": f"Blackout {bo['pair']} : {bo['reason']}",
         })
+    for cot_item in cot_extremes:
+        pair = cot_item.get("pair")
+        for signal in cot_item.get("signals", []):
+            alerts.append({
+                "level": "info",
+                "code": "cot_extreme",
+                "msg": f"COT {pair} : {signal['interpretation']} (z={signal['z']})",
+            })
 
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -394,6 +410,7 @@ async def build_cockpit(user: str) -> dict:
         "kill_switch": ks_status,
         "session": session_info,
         "blackouts": blackouts,
+        "cot_extremes": cot_extremes,
         "next_events": next_events[:5],
         "alerts": alerts,
     }

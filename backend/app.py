@@ -690,6 +690,27 @@ async def drift(_=Depends(verify_credentials)):
     return find_drifts()
 
 
+@app.get("/api/cot")
+async def cot_report(_=Depends(verify_credentials)):
+    """Derniers rapports COT (Commitments of Traders) : positionnement
+    des hedge funds (leveraged_funds) et des petits traders
+    (non_reportables) sur les futures US, avec z-score 52 semaines.
+    Permet de flagger les extremes contrariens."""
+    from backend.services import cot_service
+    return {
+        "latest": cot_service.get_latest(),
+        "extremes": cot_service.find_extremes(),
+    }
+
+
+@app.post("/api/cot/refresh")
+async def cot_refresh(_=Depends(verify_credentials)):
+    """Force le pull d'un rapport COT depuis la CFTC. Normalement tourne
+    automatiquement chaque samedi 01h UTC via le scheduler."""
+    from backend.services import cot_service
+    return await cot_service.sync_latest()
+
+
 @app.get("/api/kill-switch")
 async def kill_switch_status(_=Depends(verify_credentials)):
     """Etat du kill switch global. Voir backend/services/kill_switch.py."""

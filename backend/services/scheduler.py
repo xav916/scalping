@@ -524,6 +524,19 @@ def start_scheduler() -> AsyncIOScheduler:
         )
         logger.info(f"macro: refresh job scheduled every {MACRO_REFRESH_INTERVAL_SEC}s")
 
+    # Sync COT reports hebdo. La CFTC publie le vendredi 15h30 ET
+    # (~20h30 UTC). On tourne samedi 01h UTC pour avoir les donnees
+    # fraiches. Pas critique si ca loupe une semaine : la prochaine
+    # execution recupere tout ce qui manque.
+    from backend.services import cot_service as _cot
+    _scheduler.add_job(
+        _cot.sync_latest,
+        CronTrigger(day_of_week="sat", hour=1, minute=0),
+        id="cot_sync",
+        name="Sync CFTC COT reports (hebdo)",
+        replace_existing=True,
+    )
+
     _scheduler.start()
     logger.info(
         f"Scheduler démarré. Analyse {MATAF_POLL_INTERVAL}s, backtest 60s, "
