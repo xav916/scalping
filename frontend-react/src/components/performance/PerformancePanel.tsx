@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import clsx from 'clsx';
+import { motion } from 'motion/react';
 import { usePerformance } from '@/hooks/usePerformance';
 import { GlassCard } from '@/components/ui/GlassCard';
 import { GradientText } from '@/components/ui/GradientText';
@@ -24,16 +25,59 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: 'by_pair', label: 'Pair' },
 ];
 
-function BucketRow({ b }: { b: InsightsBucket }) {
+function WinRateBar({ pct }: { pct: number }) {
+  const clamped = Math.max(0, Math.min(1, pct));
+  const color =
+    clamped >= 0.6
+      ? 'from-emerald-400 to-cyan-400'
+      : clamped >= 0.45
+      ? 'from-amber-400 to-cyan-400'
+      : 'from-rose-400 to-pink-400';
+  return (
+    <div className="w-full h-1.5 rounded-full bg-white/5 overflow-hidden relative">
+      <motion.div
+        className={clsx('h-full rounded-full bg-gradient-to-r', color)}
+        initial={{ width: 0 }}
+        animate={{ width: `${clamped * 100}%` }}
+        transition={{ duration: 0.7, ease: 'easeOut' }}
+      />
+    </div>
+  );
+}
+
+function BucketRow({ b, index }: { b: InsightsBucket; index: number }) {
   const winPct = b.win_rate;
   const winTone =
     winPct >= 0.6 ? 'text-emerald-300' : winPct >= 0.45 ? 'text-amber-300' : 'text-rose-300';
+  const pnlTone =
+    b.total_pnl > 0 ? 'text-emerald-300' : b.total_pnl < 0 ? 'text-rose-300' : 'text-white/70';
   return (
-    <div className="grid grid-cols-[1fr_auto_auto_auto] items-center gap-4 py-2 border-b border-glass-soft last:border-none text-sm">
-      <div className="font-mono text-white/80">{b.bucket}</div>
-      <div className="text-xs text-white/50 tabular-nums">{b.count} trades</div>
-      <div className={clsx('text-xs font-semibold tabular-nums', winTone)}>{formatPct(winPct)}</div>
-      <div className="text-xs font-mono tabular-nums text-white/80 w-24 text-right">{formatPnl(b.total_pnl)}</div>
+    <motion.div
+      initial={{ opacity: 0, x: -8 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={{ duration: 0.3, delay: index * 0.04 }}
+      className="grid grid-cols-[140px_auto_1fr_56px_96px] items-center gap-4 py-3 border-b border-glass-soft last:border-none"
+    >
+      <div className="font-mono text-sm text-white/85 truncate">{b.bucket}</div>
+      <div className="text-[10px] text-white/40 tabular-nums uppercase tracking-wider">
+        {b.count} {b.count === 1 ? 'trade' : 'trades'}
+      </div>
+      <WinRateBar pct={winPct} />
+      <div className={clsx('text-xs font-semibold font-mono tabular-nums text-right', winTone)}>
+        {formatPct(winPct)}
+      </div>
+      <div className={clsx('text-xs font-mono font-semibold tabular-nums text-right', pnlTone)}>
+        {formatPnl(b.total_pnl)}
+      </div>
+    </motion.div>
+  );
+}
+
+function Kpi({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="text-right">
+      <div className="text-[9px] uppercase tracking-[0.2em] text-white/40 mb-0.5">{label}</div>
+      <div className="text-lg font-bold tabular-nums leading-none">{value}</div>
     </div>
   );
 }
@@ -43,7 +87,7 @@ export function PerformancePanel() {
   const { data, isLoading } = usePerformance();
 
   if (isLoading) {
-    return <Skeleton className="h-64" />;
+    return <Skeleton className="h-72" />;
   }
   if (!data || data.total_trades === 0) {
     return (
@@ -54,40 +98,57 @@ export function PerformancePanel() {
   }
 
   const buckets = data[tab] ?? [];
+  const pnlTone =
+    (data.total_pnl ?? 0) > 0
+      ? 'text-emerald-300'
+      : (data.total_pnl ?? 0) < 0
+      ? 'text-rose-300'
+      : 'text-white/80';
 
   return (
     <GlassCard variant="elevated" className="p-6">
-      <div className="flex items-end justify-between mb-4">
+      <div className="flex items-start justify-between mb-5 gap-4 flex-wrap">
         <div>
-          <h2 className="text-lg font-semibold">Performance</h2>
-          <p className="text-xs text-white/50 mt-1">
-            {data.total_trades} trades ·{' '}
-            <GradientText>{formatPct(data.win_rate ?? 0)}</GradientText> win rate · {formatPnl(data.total_pnl ?? 0)}
+          <h2 className="text-lg font-semibold tracking-tight">Performance</h2>
+          <p className="text-[10px] text-white/40 mt-1 uppercase tracking-[0.2em]">
+            Depuis le post-fix · données agrégées
           </p>
         </div>
-        <div className="flex flex-wrap gap-1">
-          {TABS.map((t) => (
-            <button
-              key={t.key}
-              type="button"
-              onClick={() => setTab(t.key)}
-              className={clsx(
-                'text-xs px-3 py-1.5 rounded-lg border transition-colors',
-                tab === t.key
-                  ? 'border-glass-strong bg-white/10 text-white'
-                  : 'border-glass-soft text-white/60 hover:text-white/90'
-              )}
-            >
-              {t.label}
-            </button>
-          ))}
+        <div className="flex items-center gap-6">
+          <Kpi label="Trades" value={<span className="font-mono">{data.total_trades}</span>} />
+          <Kpi label="Win rate" value={<GradientText>{formatPct(data.win_rate ?? 0)}</GradientText>} />
+          <Kpi
+            label="PnL"
+            value={<span className={clsx('font-mono', pnlTone)}>{formatPnl(data.total_pnl ?? 0)}</span>}
+          />
         </div>
       </div>
+
+      <div className="flex flex-wrap gap-1.5 mb-4 pb-4 border-b border-glass-soft">
+        {TABS.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            onClick={() => setTab(t.key)}
+            className={clsx(
+              'text-xs px-3 py-1.5 rounded-lg border transition-all',
+              tab === t.key
+                ? 'border-glass-strong bg-white/10 text-white shadow-sm'
+                : 'border-glass-soft text-white/50 hover:text-white/90 hover:bg-white/[0.03]'
+            )}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
       <div>
         {buckets.length === 0 ? (
-          <p className="text-sm text-white/40 py-6 text-center">Pas de données pour cette dimension.</p>
+          <p className="text-sm text-white/40 py-8 text-center">
+            Pas de données pour cette dimension.
+          </p>
         ) : (
-          buckets.map((b) => <BucketRow key={b.bucket} b={b} />)
+          buckets.map((b, i) => <BucketRow key={b.bucket} b={b} index={i} />)
         )}
       </div>
     </GlassCard>

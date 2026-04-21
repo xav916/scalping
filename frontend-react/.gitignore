@@ -6,3 +6,15 @@ dist-ssr
 !.vscode/extensions.json
 .DS_Store
 *.log
+
+# TypeScript build artifacts (noEmit is set but tsc -b still emits .tsbuildinfo)
+*.tsbuildinfo
+
+# Ancient emit leftovers from pre-noEmit runs (config files shouldn't be .js/.d.ts)
+tailwind.config.js
+tailwind.config.d.ts
+vite.config.js
+vite.config.d.ts
+postcss.config.d.ts
+src/**/*.js
+src/**/*.d.ts
