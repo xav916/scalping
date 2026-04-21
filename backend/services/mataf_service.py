@@ -4,13 +4,13 @@ Mataf.net is JS-rendered and blocks basic HTTP requests.
 Strategy:
 1. Try direct HTTP request with browser headers (may work for some pages)
 2. Try known Mataf internal API endpoints
-3. Fall back to simulated volatility data based on typical pair ranges
+3. Si indisponible : retourner [] (pas de données fabriquées, sinon les
+   warnings volatility du compute_verdict seraient mensongers).
 
 For production use, consider using Playwright for full browser rendering.
 """
 
 import logging
-import random
 from datetime import datetime, timezone
 
 import httpx
@@ -62,21 +62,20 @@ def _classify_volatility(ratio: float) -> VolatilityLevel:
 
 
 async def fetch_volatility_data() -> list[VolatilityData]:
-    """Fetch volatility data for watched currency pairs.
+    """Fetch volatility data for watched currency pairs via Mataf scraping.
 
-    Attempts to scrape Mataf.net first, falls back to simulated data
-    based on typical volatility ranges.
+    En cas d'échec, retourne une liste vide plutôt que de fabriquer de la
+    fausse volatilité. Les callers (analysis_engine, coaching) gèrent le
+    cas vide et produisent simplement des setups sans warning volatility.
     """
     now = datetime.now(timezone.utc)
 
-    # Try scraping Mataf
     results = await _try_scrape_mataf(now)
     if results:
         return results
 
-    # Fall back to simulated data based on typical ranges
-    logger.info("Mataf scraping unavailable, using simulated volatility data")
-    return _generate_simulated_data(now)
+    logger.warning("Mataf scraping indisponible, pas de volatility data ce cycle")
+    return []
 
 
 async def _try_scrape_mataf(now: datetime) -> list[VolatilityData]:
@@ -133,35 +132,6 @@ async def _try_scrape_mataf(now: datetime) -> list[VolatilityData]:
 
     except Exception as e:
         logger.warning(f"Mataf scraping failed: {e}")
-
-    return results
-
-
-def _generate_simulated_data(now: datetime) -> list[VolatilityData]:
-    """Generate simulated volatility data based on typical pair ranges.
-
-    Uses random variation around known average volatility to simulate
-    realistic market conditions. This allows the tool to function
-    even when Mataf scraping is unavailable.
-    """
-    results: list[VolatilityData] = []
-
-    for pair in WATCHED_PAIRS:
-        avg_vol = TYPICAL_VOLATILITY.get(pair, 8.0)
-
-        # Simulate current volatility with random variation
-        # Normal market: 0.7x to 1.8x of average
-        ratio = random.uniform(0.7, 1.8)
-        current_vol = round(avg_vol * ratio, 1)
-
-        results.append(VolatilityData(
-            pair=pair,
-            current_volatility=current_vol,
-            average_volatility=avg_vol,
-            volatility_ratio=round(ratio, 3),
-            level=_classify_volatility(ratio),
-            updated_at=now,
-        ))
 
     return results
 

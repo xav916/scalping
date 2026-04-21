@@ -45,21 +45,21 @@ async def fetch_economic_events() -> list[EconomicEvent]:
     Strategy:
     1. Try the free JSON feed (easiest, most reliable)
     2. Fall back to HTML scraping
-    3. Fall back to sample data
+    3. Si tout échoue : retourne [] plutôt que des events fictifs qui
+       pollueraient les warnings de verdict ('News high-impact à surveiller'
+       alors qu'il n'y a rien de réel).
     """
-    # Try JSON feed first
     events = await _fetch_from_json_feed()
     if events:
         return events
 
-    # Fall back to HTML scraping
     logger.info("JSON feed unavailable, falling back to HTML scraping")
     events = await _fetch_from_html()
     if events:
         return events
 
-    logger.info("All sources failed, returning sample data")
-    return _generate_sample_events()
+    logger.warning("ForexFactory indisponible (JSON + HTML), pas de calendrier ce cycle")
+    return []
 
 
 async def _fetch_from_json_feed() -> list[EconomicEvent]:
@@ -193,29 +193,3 @@ def _get_cell_text(cell) -> str | None:
     return text if text else None
 
 
-def _generate_sample_events() -> list[EconomicEvent]:
-    """Generate sample events as fallback when all sources fail."""
-    return [
-        EconomicEvent(
-            time="08:30",
-            currency="USD",
-            impact=EventImpact.HIGH,
-            event_name="Non-Farm Payrolls",
-            forecast="180K",
-            previous="175K",
-        ),
-        EconomicEvent(
-            time="10:00",
-            currency="EUR",
-            impact=EventImpact.MEDIUM,
-            event_name="ECB Press Conference",
-        ),
-        EconomicEvent(
-            time="14:00",
-            currency="GBP",
-            impact=EventImpact.HIGH,
-            event_name="BOE Interest Rate Decision",
-            forecast="5.25%",
-            previous="5.25%",
-        ),
-    ]
