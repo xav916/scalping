@@ -1,3 +1,12 @@
+export interface Candle {
+  timestamp: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume?: number;
+}
+
 export type Direction = 'buy' | 'sell';
 export type VerdictAction = 'TAKE' | 'WAIT' | 'SKIP';
 export type RiskRegime = 'risk_on' | 'risk_off' | 'neutral';

@@ -3,6 +3,7 @@ import type {
   MacroSnapshot,
   InsightsPerformance,
   User,
+  Candle,
 } from '@/types/domain';
 import { POST_FIX_CUTOFF } from '@/lib/constants';
 
@@ -56,6 +57,8 @@ export const api = {
     request<InsightsPerformance>(
       `/api/insights/performance?since=${encodeURIComponent(since)}`
     ),
+
+  allCandles: () => request<Record<string, Candle[]>>('/api/candles'),
 };
 
 export { ApiError };

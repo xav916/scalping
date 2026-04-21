@@ -3,6 +3,8 @@ import { motion } from 'motion/react';
 import type { TradeSetup } from '@/types/domain';
 import { GlassCard } from '@/components/ui/GlassCard';
 import { ConfidenceGauge } from '@/components/ui/ConfidenceGauge';
+import { Sparkline } from '@/components/ui/Sparkline';
+import { useAllCandles } from '@/hooks/useCandles';
 import { formatPrice } from '@/lib/format';
 
 interface Props {
@@ -23,6 +25,9 @@ function rrRatio(s: TradeSetup): string | null {
 export function SetupCard({ setup }: Props) {
   const isBuy = setup.direction === 'buy';
   const rr = rrRatio(setup);
+  const { data: allCandles } = useAllCandles();
+  const pairCandles = allCandles?.[setup.pair];
+  const closes = pairCandles ? pairCandles.slice(-30).map((c) => c.close) : [];
 
   return (
     <motion.div
@@ -74,6 +79,21 @@ export function SetupCard({ setup }: Props) {
           </div>
           <ConfidenceGauge score={setup.confidence_score} variant={isBuy ? 'buy' : 'sell'} size={56} />
         </div>
+
+        {/* Sparkline sur les 30 dernières candles 5min, overlay SL/Entry/TP */}
+        {closes.length >= 2 && (
+          <div className="relative mt-3 px-1 -mx-1 rounded-md overflow-hidden">
+            <Sparkline
+              values={closes}
+              width={260}
+              height={44}
+              variant={isBuy ? 'buy' : 'sell'}
+              showEntry={setup.entry_price}
+              showSL={setup.stop_loss}
+              showTP={setup.take_profit_1}
+            />
+          </div>
+        )}
 
         {/* Prix : entry centré, SL/TP flanquant */}
         <div className="relative mt-4">
