@@ -4,6 +4,7 @@ import type { TradeSetup } from '@/types/domain';
 import { GlassCard } from '@/components/ui/GlassCard';
 import { ConfidenceGauge } from '@/components/ui/ConfidenceGauge';
 import { Sparkline } from '@/components/ui/Sparkline';
+import { TiltWrapper } from '@/components/ui/TiltWrapper';
 import { useAllCandles } from '@/hooks/useCandles';
 import { formatPrice } from '@/lib/format';
 
@@ -36,8 +37,8 @@ export function SetupCard({ setup }: Props) {
       animate={{ opacity: 1, y: 0, scale: 1 }}
       exit={{ opacity: 0, scale: 0.96, transition: { duration: 0.2 } }}
       transition={{ duration: 0.35, ease: 'easeOut' }}
-      whileHover={{ y: -2, transition: { duration: 0.2 } }}
     >
+      <TiltWrapper maxTilt={5}>
       <GlassCard
         variant="elevated"
         className={clsx(
@@ -126,6 +127,7 @@ export function SetupCard({ setup }: Props) {
           </div>
         )}
       </GlassCard>
+      </TiltWrapper>
     </motion.div>
   );
 }

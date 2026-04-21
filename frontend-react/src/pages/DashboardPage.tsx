@@ -4,12 +4,12 @@ import { SetupsGrid } from '@/components/setups/SetupsGrid';
 import { PerformancePanel } from '@/components/performance/PerformancePanel';
 import { PerformanceMiniKPI } from '@/components/performance/PerformanceMiniKPI';
 import { SessionClock } from '@/components/sessions/SessionClock';
-import { MeshGradient } from '@/components/ui/MeshGradient';
+import { ReactiveMeshGradient } from '@/components/ui/ReactiveMeshGradient';
 
 export function DashboardPage() {
   return (
     <>
-      <MeshGradient />
+      <ReactiveMeshGradient />
       <Header />
       <main className="px-6 py-6 max-w-[1500px] mx-auto space-y-6">
         {/* Row 1 : bandeau macro pleine largeur */}
