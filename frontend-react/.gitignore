@@ -18,3 +18,5 @@ vite.config.d.ts
 postcss.config.d.ts
 src/**/*.js
 src/**/*.d.ts
+# Exception : vite-env.d.ts est nécessaire pour les types import.meta.env
+!src/vite-env.d.ts
