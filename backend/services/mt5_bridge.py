@@ -79,6 +79,19 @@ def _should_push(setup) -> bool:
             return False
     except Exception as e:
         logger.debug(f"mt5_bridge: kill_switch check failed: {e}")
+    # Event blackout : ne pas executer dans la fenetre +/-15min autour
+    # d'un event HIGH-impact sur une devise de la paire. Le signal reste
+    # visible cote UI / Telegram — seul l'auto-exec est coupe.
+    try:
+        from backend.services import event_blackout
+        bo = event_blackout.is_blackout_for(setup.pair)
+        if bo["active"]:
+            logger.info(
+                f"mt5_bridge: blackout event pour {setup.pair} — {bo['reason']}"
+            )
+            return False
+    except Exception as e:
+        logger.debug(f"mt5_bridge: event_blackout check failed: {e}")
     # Jamais d'auto-exec sur candles simulées : le fallback price_service utilise
     # un prix hardcodé (2650 pour la plupart des pairs), ce qui produit un
     # entry/SL/TP fantôme que MT5 refuse via rc=10016 INVALID_STOPS. Le flag
@@ -159,7 +172,9 @@ async def send_setup(setup) -> None:
                 data = r.json()
                 logger.info(
                     f"MT5 bridge → {setup.pair} {direction} "
-                    f"risk=${risk_money} (conf={sz['conf_mult']}x pnl={sz['pnl_mult']}x) "
+                    f"risk=${risk_money} "
+                    f"(conf={sz['conf_mult']}x pnl={sz['pnl_mult']}x "
+                    f"session={sz['session']}:{sz['session_mult']}x) "
                     f"mode={data.get('mode', '?')}"
                 )
             else:
