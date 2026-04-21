@@ -421,6 +421,26 @@ async def stats_mistakes(user: str = Depends(verify_credentials)):
 app.mount("/css", StaticFiles(directory=str(FRONTEND_DIR / "css")), name="css")
 app.mount("/js", StaticFiles(directory=str(FRONTEND_DIR / "js")), name="js")
 
+# SPA React V2 (coexiste avec l'ancien frontend servi sur /)
+from pathlib import Path as _PathV2
+from fastapi.responses import FileResponse as _FileResponseV2
+_V2_DIST = _PathV2(__file__).parent.parent / "frontend-react" / "dist"
+if _V2_DIST.exists():
+    app.mount(
+        "/v2/assets",
+        StaticFiles(directory=str(_V2_DIST / "assets")),
+        name="v2-assets",
+    )
+
+    @app.get("/v2/{path:path}", include_in_schema=False)
+    async def serve_v2(path: str):
+        """SPA fallback : tout ce qui n'est pas un asset tombe sur index.html,
+        React Router se charge du routing côté client."""
+        candidate = _V2_DIST / path
+        if candidate.is_file():
+            return _FileResponseV2(str(candidate))
+        return _FileResponseV2(str(_V2_DIST / "index.html"))
+
 
 @app.get("/")
 async def index(request: Request):
