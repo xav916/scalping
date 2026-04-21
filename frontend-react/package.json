@@ -10,6 +10,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@fontsource-variable/jetbrains-mono": "^5.2.8",
+    "@fontsource/inter": "^5.2.8",
     "@tanstack/react-query": "^5.56.2",
     "clsx": "^2.1.1",
     "lightweight-charts": "^5.1.0",

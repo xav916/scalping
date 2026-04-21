@@ -2,7 +2,6 @@ import { Header } from '@/components/layout/Header';
 import { MacroBanner } from '@/components/macro/MacroBanner';
 import { SetupsGrid } from '@/components/setups/SetupsGrid';
 import { PerformancePanel } from '@/components/performance/PerformancePanel';
-import { PerformanceMiniKPI } from '@/components/performance/PerformanceMiniKPI';
 import { EquityCurveMini } from '@/components/performance/EquityCurveMini';
 import { SessionClock } from '@/components/sessions/SessionClock';
 import { ReactiveMeshGradient } from '@/components/ui/ReactiveMeshGradient';
@@ -31,7 +30,6 @@ export function DashboardPage() {
           <aside className="relative lg:col-span-4 space-y-6 min-w-0">
             <SessionClock />
             <EquityCurveMini />
-            <PerformanceMiniKPI />
           </aside>
         </div>
 
