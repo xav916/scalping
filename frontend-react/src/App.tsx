@@ -5,6 +5,7 @@ import { queryClient } from '@/lib/queryClient';
 import { AuthGate } from '@/components/auth/AuthGate';
 import { DashboardPage } from '@/pages/DashboardPage';
 import { LoginPage } from '@/pages/LoginPage';
+import { TradesPage } from '@/pages/TradesPage';
 
 function AnimatedRoutes() {
   const location = useLocation();
@@ -21,6 +22,7 @@ function AnimatedRoutes() {
           <Route path="/login" element={<LoginPage />} />
           <Route element={<AuthGate />}>
             <Route path="/" element={<DashboardPage />} />
+            <Route path="/trades" element={<TradesPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

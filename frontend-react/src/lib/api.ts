@@ -5,6 +5,7 @@ import type {
   User,
   Candle,
   EquityCurve,
+  PersonalTrade,
 } from '@/types/domain';
 import { POST_FIX_CUTOFF } from '@/lib/constants';
 
@@ -65,6 +66,14 @@ export const api = {
     request<EquityCurve>(
       `/api/insights/equity-curve?since=${encodeURIComponent(since)}`
     ),
+
+  trades: (params: { status?: string; limit?: number } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.status) qs.set('status', params.status);
+    if (params.limit) qs.set('limit', String(params.limit));
+    const q = qs.toString();
+    return request<PersonalTrade[]>(`/api/trades${q ? `?${q}` : ''}`);
+  },
 };
 
 export { ApiError };

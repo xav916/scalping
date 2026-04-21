@@ -99,6 +99,29 @@ export interface User {
   email?: string;
 }
 
+export interface PersonalTrade {
+  id: number;
+  user: string;
+  pair: string;
+  direction: Direction;
+  entry_price: number;
+  stop_loss: number;
+  take_profit: number;
+  size_lot: number;
+  signal_pattern?: string | null;
+  signal_confidence?: number | null;
+  checklist_passed?: number;
+  notes?: string | null;
+  status: 'OPEN' | 'CLOSED';
+  exit_price?: number | null;
+  pnl?: number | null;
+  created_at: string;
+  closed_at?: string | null;
+  mt5_ticket?: number | null;
+  is_auto?: number;
+  context_macro?: string | null;
+}
+
 export type WSMessage =
   | { type: 'setups_update'; payload: TradeSetup[] }
   | { type: 'signal'; payload: unknown }

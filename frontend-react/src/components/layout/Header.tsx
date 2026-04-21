@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import clsx from 'clsx';
 import { motion } from 'motion/react';
+import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useWebSocket, type WSStatus } from '@/hooks/useWebSocket';
 import { formatParisTime } from '@/lib/format';
@@ -38,9 +39,15 @@ function statusLabel(s: WSStatus): string {
   return 'OFFLINE';
 }
 
+const NAV_LINKS = [
+  { to: '/', label: 'Dashboard' },
+  { to: '/trades', label: 'Trades' },
+];
+
 export function Header() {
   const { whoami, logout } = useAuth();
   const { status } = useWebSocket();
+  const location = useLocation();
   const [now, setNow] = useState(() => formatParisTime());
 
   useEffect(() => {
@@ -50,13 +57,32 @@ export function Header() {
 
   return (
     <header className="sticky top-0 z-20 px-4 sm:px-6 py-3 sm:py-4 flex items-center justify-between gap-2 border-b border-glass-soft backdrop-blur-glass bg-radar-deep/60">
-      <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+      <div className="flex items-center gap-2 sm:gap-4 min-w-0">
         <span className="text-base sm:text-xl font-semibold tracking-tight whitespace-nowrap">
           <span className="hidden xs:inline">📡 </span>Scalping Radar
         </span>
         <span className="text-[10px] font-mono font-semibold text-cyan-300/80 px-2 py-0.5 rounded-md bg-cyan-400/10 border border-cyan-400/20 shadow-[0_0_12px_rgba(34,211,238,0.15)]">
           V2
         </span>
+        <nav className="hidden sm:flex items-center gap-1 ml-2">
+          {NAV_LINKS.map((l) => {
+            const active = location.pathname === l.to;
+            return (
+              <Link
+                key={l.to}
+                to={l.to}
+                className={clsx(
+                  'text-xs px-2.5 py-1 rounded-md transition-colors',
+                  active
+                    ? 'bg-white/10 text-white'
+                    : 'text-white/50 hover:text-white/90 hover:bg-white/5'
+                )}
+              >
+                {l.label}
+              </Link>
+            );
+          })}
+        </nav>
       </div>
       <div className="flex items-center gap-2 sm:gap-5 text-sm text-white/70">
         {/* Heure Paris — masquée sur très petit écran */}
