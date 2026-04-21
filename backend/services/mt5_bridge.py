@@ -189,7 +189,10 @@ async def send_setup(setup) -> None:
                     f"MT5 bridge → {setup.pair} {direction} "
                     f"risk=${risk_money} "
                     f"(conf={sz['conf_mult']}x pnl={sz['pnl_mult']}x "
-                    f"session={sz['session']}:{sz['session_mult']}x) "
+                    f"session={sz['session']}:{sz['session_mult']}x "
+                    f"macro={sz['macro_mult']}x"
+                    + (f" {sz['macro_reasons']}" if sz.get('macro_reasons') else "")
+                    + ") "
                     f"mode={data.get('mode', '?')}"
                 )
             else:
