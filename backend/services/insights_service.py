@@ -156,3 +156,50 @@ def get_performance(since_iso: str | None = None) -> dict[str, Any]:
         "by_session": _aggregate(rows, lambda r: r.get("session")),
         "by_pair": _aggregate(rows, lambda r: r.get("pair")),
     }
+
+
+def get_equity_curve(since_iso: str | None = None) -> dict[str, Any]:
+    """Série temporelle du PnL cumulé, trade par trade (chronologique).
+
+    Format retourné : liste de points {closed_at, pnl, cumulative_pnl, trade_num}.
+    Permet de tracer une equity curve côté UI (sparkline ou chart complet).
+    """
+    sql = (
+        "SELECT closed_at, pnl, pair, direction "
+        "FROM personal_trades "
+        "WHERE is_auto=1 AND status='CLOSED' AND pnl IS NOT NULL "
+        "AND closed_at IS NOT NULL"
+    )
+    params: list[Any] = []
+    if since_iso:
+        sql += " AND closed_at >= ?"
+        params.append(since_iso)
+    sql += " ORDER BY closed_at ASC"
+
+    with sqlite3.connect(_db_path()) as c:
+        c.row_factory = sqlite3.Row
+        rows = [dict(r) for r in c.execute(sql, params).fetchall()]
+
+    if not rows:
+        return {"points": [], "total_trades": 0, "final_pnl": 0, "since": since_iso}
+
+    points = []
+    cumulative = 0.0
+    for i, r in enumerate(rows):
+        pnl = float(r.get("pnl") or 0)
+        cumulative += pnl
+        points.append({
+            "closed_at": r.get("closed_at"),
+            "pnl": round(pnl, 2),
+            "cumulative_pnl": round(cumulative, 2),
+            "trade_num": i + 1,
+            "pair": r.get("pair"),
+            "direction": r.get("direction"),
+        })
+
+    return {
+        "points": points,
+        "total_trades": len(points),
+        "final_pnl": round(cumulative, 2),
+        "since": since_iso,
+    }

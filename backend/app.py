@@ -186,6 +186,23 @@ async def api_insights_performance(
     return insights_service.get_performance(since_iso=since)
 
 
+@app.get("/api/insights/equity-curve")
+async def api_insights_equity_curve(
+    since: str | None = None,
+    _=Depends(verify_credentials),
+):
+    """Série temporelle du PnL cumulé (auto trades CLOSED, ordre chronologique).
+
+    Query params :
+    - since : ISO date pour filtrer (typiquement POST_FIX_CUTOFF).
+
+    Retourne {points: [{closed_at, pnl, cumulative_pnl, trade_num, pair, direction}],
+              total_trades, final_pnl, since}.
+    """
+    from backend.services import insights_service
+    return insights_service.get_equity_curve(since_iso=since)
+
+
 @app.get("/debug/smoke-test")
 async def debug_smoke_test(_=Depends(verify_credentials)):
     """Admin end-to-end check : bridge, broker, mapping symboles, cycles, Telegram.

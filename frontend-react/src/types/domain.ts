@@ -7,6 +7,22 @@ export interface Candle {
   volume?: number;
 }
 
+export interface EquityPoint {
+  closed_at: string;
+  pnl: number;
+  cumulative_pnl: number;
+  trade_num: number;
+  pair?: string;
+  direction?: Direction;
+}
+
+export interface EquityCurve {
+  points: EquityPoint[];
+  total_trades: number;
+  final_pnl: number;
+  since?: string;
+}
+
 export type Direction = 'buy' | 'sell';
 export type VerdictAction = 'TAKE' | 'WAIT' | 'SKIP';
 export type RiskRegime = 'risk_on' | 'risk_off' | 'neutral';

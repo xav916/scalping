@@ -4,6 +4,7 @@ import type {
   InsightsPerformance,
   User,
   Candle,
+  EquityCurve,
 } from '@/types/domain';
 import { POST_FIX_CUTOFF } from '@/lib/constants';
 
@@ -59,6 +60,11 @@ export const api = {
     ),
 
   allCandles: () => request<Record<string, Candle[]>>('/api/candles'),
+
+  equityCurve: (since: string = POST_FIX_CUTOFF) =>
+    request<EquityCurve>(
+      `/api/insights/equity-curve?since=${encodeURIComponent(since)}`
+    ),
 };
 
 export { ApiError };
