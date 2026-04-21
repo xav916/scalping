@@ -9,6 +9,7 @@ import type {
   CockpitSnapshot,
   KillSwitchStatus,
   DriftReport,
+  AnalyticsReport,
 } from '@/types/domain';
 import { POST_FIX_CUTOFF } from '@/lib/constants';
 
@@ -88,6 +89,8 @@ export const api = {
     }),
 
   drift: () => request<DriftReport>('/api/drift'),
+
+  analytics: () => request<AnalyticsReport>('/api/analytics'),
 };
 
 export { ApiError };

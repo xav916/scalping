@@ -7,6 +7,7 @@ import { DashboardPage } from '@/pages/DashboardPage';
 import { LoginPage } from '@/pages/LoginPage';
 import { TradesPage } from '@/pages/TradesPage';
 import { CockpitPage } from '@/pages/CockpitPage';
+import { AnalyticsPage } from '@/pages/AnalyticsPage';
 
 function AnimatedRoutes() {
   const location = useLocation();
@@ -24,6 +25,7 @@ function AnimatedRoutes() {
           <Route element={<AuthGate />}>
             <Route path="/" element={<DashboardPage />} />
             <Route path="/cockpit" element={<CockpitPage />} />
+            <Route path="/analytics" element={<AnalyticsPage />} />
             <Route path="/trades" element={<TradesPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />

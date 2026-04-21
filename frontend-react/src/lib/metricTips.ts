@@ -180,4 +180,22 @@ export const TIPS = {
     final: 'Final : gain ou perte cumulé à la fin de la série. Positif = stratégie rentable sur la période.',
     trades: 'Nombre de trades clôturés dans la série.',
   },
+
+  /* ─────────── Analytics (breakdowns modèle) ─────────── */
+  analytics: {
+    titre: 'Analytics : décomposition du win rate (taux de réussite) par feature du signal. Source : table backtest.db (outcomes théoriques). Répond à "quelles dimensions prédisent le succès ?" — oriente les filtres à ajouter, instruments à retirer, heures à éviter.',
+    byHour: 'Win rate par heure UTC (Coordinated Universal Time). Détecte les creux intraday (sessions asiatiques calmes, rollover 22h, etc.).',
+    byPair: 'Win rate par paire. Un écart net entre paires = candidat au retrait des perdantes dans WATCHED_PAIRS.',
+    byPattern: 'Win rate par pattern détecté (breakout, engulfing, etc.). Un pattern systématiquement en dessous de 45% = candidat à désactivation.',
+    byConfidence: 'Win rate par bucket de confidence_score (score de confiance 0-100). Si la courbe est plate, le scoring n\'a pas de signal. Si elle monte avec le score, le modèle est calibré.',
+    byAssetClass: 'Win rate par classe d\'actif (forex / metal / crypto / equity_index / energy). Aide à décider quelle classe activer en auto-exec (MT5_BRIDGE_ALLOWED_ASSET_CLASSES).',
+    byRiskRegime: 'Win rate par régime macro (risk_on / risk_off / neutral). Si le modèle sous-performe fort en risk_off, activer MACRO_VETO_ENABLED.',
+    executionQuality: 'Qualité d\'exécution : différence entre prix théorique du signal et fill réel au broker (slippage en pips) + répartition des raisons de fermeture (TP1 / TP2 / SL / MANUAL / TIMEOUT).',
+    slippage: 'Slippage (glissement) : écart en pips entre le prix d\'entrée théorique du signal et le prix d\'exécution réel chez le broker. Positif = en notre faveur, négatif = contre nous. Moyenne haute = liquidité insuffisante sur l\'instrument.',
+    closeReason: 'Close reason (raison de fermeture) : TP1/TP2 = take profit atteint, SL = stop loss touché, MANUAL = fermeture manuelle, TIMEOUT = maximum duration atteint, UNKNOWN = raison non remontée par le broker.',
+    signalVolume: 'Signal volume : combien de signaux le radar génère par jour. Une baisse brutale = bug ou data source down. La répartition TAKE vs SKIP indique à quel point les filtres aval éliminent les signaux.',
+    takeRatio: 'Take ratio : pourcentage de signaux qui passent tous les filtres et atteignent verdict TAKE. Typiquement 10-30% sain, < 5% = filtres trop stricts, > 50% = pas assez sélectif.',
+    winRatePct: 'Win rate en pourcentage. Au-dessus de 50% = plus de trades gagnants que perdants. Mais le PnL dépend aussi du R:R : 40% de wins avec R:R 1:3 = stratégie rentable.',
+    totalTrades: 'Nombre total de trades dans ce bucket (wins + losses). Plus c\'est élevé, plus la stat est fiable. < 10 trades = bruit statistique, à prendre avec des pincettes.',
+  },
 } as const;

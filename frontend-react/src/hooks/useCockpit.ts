@@ -11,6 +11,16 @@ export function useDrift() {
   });
 }
 
+/** Analytics (breakdowns complet) : fetch-on-demand, pas de poll (données
+ *  qui bougent lentement, la page /v2/analytics n'est pas une surface live). */
+export function useAnalytics() {
+  return useQuery({
+    queryKey: ['analytics'],
+    queryFn: api.analytics,
+    staleTime: 60_000,
+  });
+}
+
 /** Snapshot cockpit. Le backend push via WebSocket (type: 'cockpit') et
  *  setQueryData dans useWebSocket alimente la cache directement. On garde
  *  un refetchInterval long (60s) comme filet de sécurité si le WS tombe. */

@@ -180,6 +180,55 @@ export interface DriftReport {
   error?: string;
 }
 
+export interface AnalyticsBreakdownRow {
+  key: string;
+  wins: number;
+  losses: number;
+  total: number;
+  win_rate_pct: number;
+}
+
+export interface SlippageByPair {
+  pair: string;
+  n: number;
+  avg_pips: number;
+  min_pips: number;
+  max_pips: number;
+}
+
+export interface CloseReasonRow {
+  reason: string;
+  count: number;
+  pct: number;
+  avg_pnl: number;
+}
+
+export interface ExecutionQuality {
+  total_closed_trades: number;
+  slippage_by_pair: SlippageByPair[];
+  close_reason_distribution: CloseReasonRow[];
+}
+
+export interface SignalVolume {
+  total_signals: number;
+  verdict_take: number;
+  verdict_skip: number;
+  take_ratio_pct: number;
+  last_30_days: Array<{ day: string; count: number }>;
+}
+
+export interface AnalyticsReport {
+  by_pair?: AnalyticsBreakdownRow[];
+  by_hour_utc?: AnalyticsBreakdownRow[];
+  by_pattern?: AnalyticsBreakdownRow[];
+  by_confidence_bucket?: AnalyticsBreakdownRow[];
+  by_asset_class?: AnalyticsBreakdownRow[];
+  by_risk_regime?: AnalyticsBreakdownRow[];
+  execution_quality?: ExecutionQuality;
+  signal_volume?: SignalVolume;
+  error?: string;
+}
+
 export interface CockpitAlert {
   level: 'critical' | 'warning' | 'info';
   code: string;
