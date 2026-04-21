@@ -25,8 +25,16 @@ RUN tailwindcss -c tailwind.config.js \
     -o ./frontend/css/tailwind.css \
     --minify
 
-# ─── Étape 2 : runtime Python ──────────────────────────────────────
-FROM python:3.11-slim
+# ─── Étape 2 : build React ──────────────────────────────────────────
+FROM node:20-alpine AS react-builder
+WORKDIR /build
+COPY frontend-react/package.json frontend-react/package-lock.json ./
+RUN npm ci
+COPY frontend-react/ ./
+RUN npm run build
+
+# ─── Étape 3 : runtime Python ──────────────────────────────────────
+FROM python:3.11-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
@@ -51,6 +59,10 @@ RUN sed -i "s/scalping-shell-v[0-9]\+/scalping-shell-$(date +%s)/" frontend/sw.j
 # Remplacer par le CSS compilé depuis l'étape Tailwind.
 # Important : après le COPY . . pour que ce fichier ne soit pas écrasé.
 COPY --from=tailwind-build /build/frontend/css/tailwind.css ./frontend/css/tailwind.css
+
+# Injecter le dist React compilé depuis l'étape react-builder.
+# Après COPY . . pour ne pas être écrasé par le projet source.
+COPY --from=react-builder /build/dist /app/frontend-react/dist
 
 EXPOSE 8000
 
