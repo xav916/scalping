@@ -42,6 +42,7 @@ function statusLabel(s: WSStatus): string {
 
 const NAV_LINKS = [
   { to: '/', label: 'Dashboard' },
+  { to: '/cockpit', label: 'Cockpit' },
   { to: '/trades', label: 'Trades' },
 ];
 

@@ -5,6 +5,7 @@ import hashlib
 import logging
 import secrets
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
@@ -757,6 +758,71 @@ async def drift(_=Depends(verify_credentials)):
     Utile pour desactiver proactivement un signal qui perd son edge."""
     from backend.services.drift_detection import find_drifts
     return find_drifts()
+
+
+@app.get("/api/status")
+async def system_status(_=Depends(verify_credentials)):
+    """Observabilité : dernier cycle d'analyse, dernières syncs COT / Fear & Greed,
+    prochains jobs APScheduler, état du kill switch. Utile pour diagnostiquer
+    un pipeline qui a l'air figé sans avoir à SSH."""
+    from backend.services.scheduler import get_last_cycle_at, _scheduler
+    from backend.services import fear_greed_service, cot_service, kill_switch
+    import sqlite3
+
+    last_cycle = get_last_cycle_at()
+    cycle_age = None
+    if last_cycle:
+        cycle_age = (datetime.now(timezone.utc) - last_cycle).total_seconds()
+
+    fg_snap = fear_greed_service.get_current()
+    cot_latest = cot_service.get_latest()
+    cot_last_date = max((c.get("report_date") or "" for c in cot_latest), default=None)
+
+    # Jobs APScheduler : prochaine exécution + état
+    jobs: list[dict] = []
+    try:
+        for job in _scheduler.get_jobs():
+            jobs.append({
+                "id": job.id,
+                "name": job.name,
+                "next_run_time": job.next_run_time.isoformat() if job.next_run_time else None,
+            })
+    except Exception:
+        pass
+
+    # Count trades dans la DB pour contexte "progression observation"
+    trade_counts: dict = {}
+    try:
+        from backend.services.trade_log_service import _DB_PATH
+        with sqlite3.connect(_DB_PATH) as c:
+            row = c.execute(
+                "SELECT status, COUNT(*) FROM personal_trades GROUP BY status"
+            ).fetchall()
+            for status_key, n in row:
+                trade_counts[status_key] = n
+    except Exception:
+        pass
+
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "analysis_cycle": {
+            "last_cycle_at": last_cycle.isoformat() if last_cycle else None,
+            "age_seconds": round(cycle_age, 1) if cycle_age is not None else None,
+            "healthy": cycle_age is not None and cycle_age < 600,
+        },
+        "fear_greed": {
+            "last_sync": fg_snap.get("recorded_at") if fg_snap else None,
+            "value": fg_snap.get("value") if fg_snap else None,
+            "classification": fg_snap.get("classification") if fg_snap else None,
+        },
+        "cot": {
+            "last_report_date": cot_last_date,
+            "contracts_tracked": len(cot_latest),
+        },
+        "kill_switch": kill_switch.status(),
+        "trade_counts": trade_counts,
+        "scheduler_jobs": jobs,
+    }
 
 
 @app.get("/api/cot")

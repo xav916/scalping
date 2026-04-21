@@ -6,6 +6,8 @@ import type {
   Candle,
   EquityCurve,
   PersonalTrade,
+  CockpitSnapshot,
+  KillSwitchStatus,
 } from '@/types/domain';
 import { POST_FIX_CUTOFF } from '@/lib/constants';
 
@@ -74,6 +76,15 @@ export const api = {
     const q = qs.toString();
     return request<PersonalTrade[]>(`/api/trades${q ? `?${q}` : ''}`);
   },
+
+  cockpit: () => request<CockpitSnapshot>('/api/cockpit'),
+
+  killSwitchStatus: () => request<KillSwitchStatus>('/api/kill-switch'),
+  killSwitchSet: (enabled: boolean, reason?: string) =>
+    request<KillSwitchStatus>('/api/kill-switch', {
+      method: 'POST',
+      body: JSON.stringify({ enabled, reason: reason ?? null }),
+    }),
 };
 
 export { ApiError };

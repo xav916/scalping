@@ -125,4 +125,98 @@ export interface PersonalTrade {
 export type WSMessage =
   | { type: 'setups_update'; payload: TradeSetup[] }
   | { type: 'signal'; payload: unknown }
+  | { type: 'cockpit'; payload: CockpitSnapshot }
   | { type: 'ping' | 'pong' };
+
+export interface KillSwitchStatus {
+  active: boolean;
+  reason: string | null;
+  manual_enabled: boolean;
+  manual_reason: string | null;
+  manual_set_at: string | null;
+  auto_triggered_by_daily_loss: boolean;
+  daily_loss_limit_pct: number | null;
+}
+
+export interface ActiveTrade {
+  id: number;
+  pair: string;
+  direction: Direction;
+  entry_price: number;
+  current_price: number | null;
+  stop_loss: number | null;
+  take_profit: number | null;
+  size_lot: number;
+  pnl_unrealized: number | null;
+  pnl_pips: number | null;
+  distance_to_sl_pct: number | null;
+  distance_to_tp_pct: number | null;
+  near_sl: boolean;
+  duration_min: number | null;
+  is_auto: boolean;
+  mt5_ticket: number | null;
+}
+
+export interface CockpitAlert {
+  level: 'critical' | 'warning' | 'info';
+  code: string;
+  msg: string;
+}
+
+export interface FearGreedSnapshot {
+  recorded_at: string;
+  value: number;
+  classification: 'extreme_fear' | 'fear' | 'neutral' | 'greed' | 'extreme_greed';
+}
+
+export interface CotExtreme {
+  pair: string;
+  report_date: string;
+  signals: Array<{
+    actor: 'leveraged_funds' | 'non_reportables';
+    z: number;
+    interpretation: string;
+  }>;
+}
+
+export interface CockpitSnapshot {
+  generated_at: string;
+  active_trades: {
+    count: number;
+    total_exposure_lots: number;
+    unrealized_pnl: number;
+    items: ActiveTrade[];
+  };
+  pending_setups: {
+    count: number;
+    total_count: number;
+    items: unknown[];
+  };
+  today_stats: {
+    date: string;
+    pnl: number;
+    pnl_pct: number;
+    n_trades: number;
+    n_open: number;
+    n_closed: number;
+    silent_mode: boolean;
+    loss_alert: boolean;
+    capital: number;
+  };
+  system_health: {
+    healthy: boolean;
+    last_cycle_at: string | null;
+    seconds_since_last_cycle: number | null;
+    bridge: { configured: boolean; reachable: boolean; mode: string | null };
+    ws_clients: number;
+    watched_pairs: number;
+  };
+  macro: MacroSnapshot | null;
+  kill_switch: KillSwitchStatus;
+  session: { label?: string; activity_multiplier?: number; is_weekend?: boolean };
+  blackouts: Array<{ pair: string; reason: string }>;
+  cot_extremes: CotExtreme[];
+  fear_greed: FearGreedSnapshot | null;
+  next_events: Array<{ time: string; currency: string; impact: string; event_name: string }>;
+  alerts: CockpitAlert[];
+}

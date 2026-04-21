@@ -18,6 +18,7 @@ scalping-key*
 frontend/css/tailwind.css
 node_modules/
 
+<<<<<<< Updated upstream
 # Bases SQLite locales (runtime / tests) — pas de données de trade en repo
 *.db
 *.db-journal
@@ -26,3 +27,8 @@ node_modules/
 kill_switch.json
 mt5_sync_state.json
 
+=======
+
+# Visual Companion mockups (brainstorming skill)
+.superpowers/
+>>>>>>> Stashed changes
