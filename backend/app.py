@@ -21,7 +21,6 @@ from config.settings import AUTH_USERS, display_name_for
 
 from backend.services import (
     backtest_service,
-    correlation,
     indicators,
     trade_log_service,
     twelvedata_ws,
@@ -722,30 +721,6 @@ async def get_all_candles(_=Depends(verify_credentials)):
     }
 
 
-@app.post("/api/trades")
-async def create_trade(payload: dict, user: str = Depends(verify_credentials)):
-    """Enregistre un trade que l'utilisateur vient de prendre."""
-    required = {"pair", "direction", "entry_price", "stop_loss", "take_profit", "size_lot"}
-    missing = required - set(payload.keys())
-    if missing:
-        raise HTTPException(status_code=400, detail=f"Champs manquants: {sorted(missing)}")
-    trade_id = trade_log_service.record_trade(payload, user=user)
-    return {"id": trade_id, **trade_log_service.get_trade(trade_id, user=user)}
-
-
-@app.patch("/api/trades/{trade_id}")
-async def close_trade(trade_id: int, payload: dict, user: str = Depends(verify_credentials)):
-    """Cloture un trade avec le prix de sortie reel."""
-    if "exit_price" not in payload:
-        raise HTTPException(status_code=400, detail="exit_price requis")
-    ok = trade_log_service.close_trade(
-        trade_id, float(payload["exit_price"]), payload.get("notes"), user=user
-    )
-    if not ok:
-        raise HTTPException(status_code=404, detail="Trade introuvable ou deja ferme")
-    return trade_log_service.get_trade(trade_id, user=user)
-
-
 @app.get("/api/trades")
 async def list_trades(status: str | None = None, limit: int = 100, user: str = Depends(verify_credentials)):
     return trade_log_service.list_trades(status=status, limit=limit, user=user)
@@ -768,21 +743,6 @@ async def toggle_silent_mode(payload: dict, user: str = Depends(verify_credentia
     enabled = bool(payload.get("enabled", False))
     trade_log_service.set_manual_silent(user, enabled)
     return {"silent_mode": enabled, "user": user}
-
-
-@app.post("/api/correlation-check")
-async def correlation_check(payload: dict, user: str = Depends(verify_credentials)):
-    """Retourne les trades ouverts correles au signal propose."""
-    pair = payload.get("pair", "")
-    direction = payload.get("direction", "")
-    open_trades = trade_log_service.list_trades(status="OPEN", user=user)
-    conflicts = correlation.has_open_correlation(pair, direction, open_trades)
-    return {
-        "pair": pair,
-        "direction": direction,
-        "correlated_open_trades": conflicts,
-        "warning": bool(conflicts),
-    }
 
 
 @app.get("/api/backtest/stats")
