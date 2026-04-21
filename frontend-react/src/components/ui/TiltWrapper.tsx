@@ -22,16 +22,14 @@ function useIsCoarsePointer(): boolean {
 }
 
 /** Wrapper qui applique un tilt 3D subtil sur mouse move.
- *  Utilisé autour des SetupCard pour un effet tactile. */
+ *  Utilisé autour des SetupCard pour un effet tactile.
+ *  IMPORTANT : tous les hooks sont appelés AVANT le early return pour
+ *  respecter les Rules of Hooks — sinon crash React sur mobile quand
+ *  isCoarse passe de false à true après mount. */
 export function TiltWrapper({ children, maxTilt = 6, perspective = 900 }: Props) {
   const isCoarse = useIsCoarsePointer();
   const x = useMotionValue(0);
   const y = useMotionValue(0);
-
-  if (isCoarse) {
-    // Skip le tilt sur mobile/tablette tactile — pas de souris fine dispo.
-    return <>{children}</>;
-  }
 
   const springConfig = { stiffness: 200, damping: 20, mass: 0.5 };
   const xSpring = useSpring(x, springConfig);
@@ -41,6 +39,7 @@ export function TiltWrapper({ children, maxTilt = 6, perspective = 900 }: Props)
   const rotateY = useTransform(xSpring, [-0.5, 0.5], [-maxTilt, maxTilt]);
 
   const handleMove = (e: MouseEvent<HTMLDivElement>) => {
+    if (isCoarse) return;
     const rect = e.currentTarget.getBoundingClientRect();
     x.set((e.clientX - rect.left) / rect.width - 0.5);
     y.set((e.clientY - rect.top) / rect.height - 0.5);
@@ -50,6 +49,13 @@ export function TiltWrapper({ children, maxTilt = 6, perspective = 900 }: Props)
     x.set(0);
     y.set(0);
   };
+
+  if (isCoarse) {
+    // Rendu sans tilt sur mobile/tablette tactile — tous les hooks ci-dessus
+    // sont quand même exécutés (ordre stable = OK React), mais on n'attache
+    // pas les handlers et on ne wrap pas en motion.div 3D.
+    return <>{children}</>;
+  }
 
   return (
     <div
