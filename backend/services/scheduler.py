@@ -536,6 +536,17 @@ def start_scheduler() -> AsyncIOScheduler:
         name="Sync CFTC COT reports (hebdo)",
         replace_existing=True,
     )
+    # CNN Fear & Greed Index : 1 fetch par jour a 22h UTC (apres la
+    # fermeture des marches US). Best-effort : si CNN est indispo, on
+    # retente le lendemain.
+    from backend.services import fear_greed_service as _fg
+    _scheduler.add_job(
+        _fg.fetch_latest,
+        CronTrigger(hour=22, minute=30),
+        id="fear_greed_sync",
+        name="Sync CNN Fear & Greed Index (quotidien)",
+        replace_existing=True,
+    )
 
     _scheduler.start()
     logger.info(
