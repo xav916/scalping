@@ -780,6 +780,21 @@ async def cot_refresh(_=Depends(verify_credentials)):
     return await cot_service.sync_latest()
 
 
+@app.get("/api/fear-greed")
+async def fear_greed(_=Depends(verify_credentials)):
+    """Indicateur CNN Fear & Greed : valeur 0-100 + classification."""
+    from backend.services import fear_greed_service
+    return fear_greed_service.get_current() or {"available": False}
+
+
+@app.post("/api/fear-greed/refresh")
+async def fear_greed_refresh(_=Depends(verify_credentials)):
+    """Force un fetch CNN. Normalement tourne quotidien a 22h30 UTC."""
+    from backend.services import fear_greed_service
+    snap = await fear_greed_service.fetch_latest()
+    return snap or {"available": False}
+
+
 @app.get("/api/kill-switch")
 async def kill_switch_status(_=Depends(verify_credentials)):
     """Etat du kill switch global. Voir backend/services/kill_switch.py."""

@@ -359,6 +359,14 @@ async def build_cockpit(user: str) -> dict:
     except Exception:
         cot_extremes = []
 
+    # CNN Fear & Greed : sentiment agrege equity US. Utile comme toile
+    # de fond risk-on / risk-off complementaire au VIX et au regime macro.
+    from backend.services import fear_greed_service as _fg
+    try:
+        fear_greed = _fg.get_current()
+    except Exception:
+        fear_greed = None
+
     alerts = _build_alerts(active_trades, next_events)
     if ks_status.get("active"):
         alerts.insert(0, {
@@ -380,6 +388,15 @@ async def build_cockpit(user: str) -> dict:
                 "code": "cot_extreme",
                 "msg": f"COT {pair} : {signal['interpretation']} (z={signal['z']})",
             })
+    if fear_greed and fear_greed.get("classification") in ("extreme_fear", "extreme_greed"):
+        alerts.append({
+            "level": "info",
+            "code": "fear_greed_extreme",
+            "msg": (
+                f"Fear & Greed : {fear_greed['classification']} "
+                f"({fear_greed['value']}/100) — signal contrarien potentiel"
+            ),
+        })
 
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -411,6 +428,7 @@ async def build_cockpit(user: str) -> dict:
         "session": session_info,
         "blackouts": blackouts,
         "cot_extremes": cot_extremes,
+        "fear_greed": fear_greed,
         "next_events": next_events[:5],
         "alerts": alerts,
     }
