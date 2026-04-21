@@ -732,16 +732,18 @@ async def websocket_endpoint(websocket: WebSocket):
     Auth : cookie de session > Basic Auth. Si aucun utilisateur n'est
     configuré (AUTH_USERS vide), la WS reste ouverte comme avant.
     """
+    user: str = "anonymous"
     if AUTH_USERS:
         from backend.auth import _basic_auth_user, validate_session
-        user = validate_session(websocket.cookies.get(SESSION_COOKIE))
-        if not user:
-            user = _basic_auth_user(websocket.headers.get("authorization"))
-        if not user:
+        validated = validate_session(websocket.cookies.get(SESSION_COOKIE))
+        if not validated:
+            validated = _basic_auth_user(websocket.headers.get("authorization"))
+        if not validated:
             await websocket.close(code=1008)  # Policy Violation
             return
+        user = validated
     await websocket.accept()
-    register_client(websocket)
+    register_client(websocket, user=user)
     try:
         while True:
             data = await websocket.receive_text()
