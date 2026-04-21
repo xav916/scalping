@@ -40,11 +40,27 @@ def _bt_db():
 
 
 def _fetch_outcomes(key_col: str):
-    """Retourne la liste (key, outcome, emitted_at) pour les trades fermes."""
+    """Retourne la liste (key, outcome, emitted_at) pour les trades fermes.
+
+    Exclut les trades dont le signal source avait is_simulated=1
+    (bug prix fantome d'avant 2026-04-20). LEFT JOIN tolerant : on garde
+    les trades sans signal matche (rare), on exclut ceux clairement flagues.
+    """
+    # Si `key_col` ne prefixe pas 'signals.', on prefixe 't.' pour clarifier
+    # l'origine (sinon strftime('%H', emitted_at) est ambigu entre t et s).
+    resolved_key = key_col if "." in key_col else f"t.{key_col}"
     query = f"""
-        SELECT {key_col} AS k, outcome, emitted_at
-          FROM trades
-         WHERE outcome IN ('WIN_TP1','WIN_TP2','LOSS')
+        SELECT {resolved_key} AS k,
+               t.outcome AS outcome,
+               t.emitted_at AS emitted_at
+          FROM trades t
+          LEFT JOIN signals s_simfilter
+            ON s_simfilter.pair = t.pair
+            AND s_simfilter.direction = t.direction
+            AND ABS(s_simfilter.entry_price - t.entry_price) < 0.0001 * t.entry_price
+            AND ABS(strftime('%s', s_simfilter.emitted_at) - strftime('%s', t.emitted_at)) < 300
+         WHERE t.outcome IN ('WIN_TP1','WIN_TP2','LOSS')
+           AND (s_simfilter.is_simulated IS NULL OR s_simfilter.is_simulated = 0)
     """
     with sqlite3.connect(_bt_db()) as c:
         c.row_factory = sqlite3.Row

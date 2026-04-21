@@ -75,20 +75,40 @@ def _is_loss(outcome: str) -> bool:
     return outcome == "LOSS"
 
 
+# Exclusion systématique des trades dont le signal source était marqué
+# is_simulated=1 (bug prix fantôme d'avant 2026-04-20, cf. commit 69df7f1).
+# LEFT JOIN tolérant : on garde les trades qui n'ont pas de signal matché
+# (rare edge case), on exclut uniquement ceux explicitement flagués.
+_SIMULATED_FILTER_JOIN = """
+    LEFT JOIN signals s_simfilter
+      ON s_simfilter.pair = t.pair
+      AND s_simfilter.direction = t.direction
+      AND ABS(s_simfilter.entry_price - t.entry_price) < 0.0001 * t.entry_price
+      AND ABS(strftime('%s', s_simfilter.emitted_at) - strftime('%s', t.emitted_at)) < 300
+"""
+_SIMULATED_FILTER_WHERE = (
+    " AND (s_simfilter.is_simulated IS NULL OR s_simfilter.is_simulated = 0)"
+)
+
+
 def _theoretical_breakdown_by(column_expr: str, extra_join: str = "") -> list[dict]:
     """Breakdown du win rate theorique (issue du backtest `trades` table).
 
     `column_expr` est l'expression SQL qui donne la cle (ex: 'pair',
     "strftime('%H', emitted_at)", etc.). `extra_join` est un LEFT JOIN
     optionnel si on veut enrichir avec les features de `signals`.
+
+    Exclut systematiquement les trades fantomes (signal is_simulated=1).
     """
     query = f"""
         SELECT {column_expr} AS k,
                SUM(CASE WHEN outcome IN ('WIN_TP1','WIN_TP2') THEN 1 ELSE 0 END) AS wins,
                SUM(CASE WHEN outcome = 'LOSS' THEN 1 ELSE 0 END) AS losses
           FROM trades t
+          {_SIMULATED_FILTER_JOIN}
           {extra_join}
          WHERE outcome IN ('WIN_TP1','WIN_TP2','LOSS')
+         {_SIMULATED_FILTER_WHERE}
          GROUP BY {column_expr}
          HAVING wins + losses > 0
          ORDER BY wins + losses DESC
@@ -110,7 +130,7 @@ def _theoretical_breakdown_by(column_expr: str, extra_join: str = "") -> list[di
 
 def _by_hour() -> list[dict]:
     """Win rate par heure UTC (0-23). Detecte les creux intraday."""
-    return _theoretical_breakdown_by("strftime('%H', emitted_at)")
+    return _theoretical_breakdown_by("strftime('%H', t.emitted_at)")
 
 
 def _by_pair() -> list[dict]:
@@ -124,14 +144,20 @@ def _by_pattern() -> list[dict]:
 def _by_confidence_bucket() -> list[dict]:
     """Win rate par tranche de confiance_score. Repond a :
     'la confiance est-elle calibree ?' (un score eleve devrait = un win
-    rate eleve). Si c'est plat, le scoring n'a pas de signal."""
+    rate eleve). Si c'est plat, le scoring n'a pas de signal.
+
+    Exclut les trades fantomes via JOIN signals.is_simulated = 0.
+    """
     with sqlite3.connect(_bt_db()) as c:
         _row_factory(c)
         rows = c.execute(
-            """
-            SELECT confidence_score, outcome FROM trades
-             WHERE outcome IN ('WIN_TP1','WIN_TP2','LOSS')
-               AND confidence_score IS NOT NULL
+            f"""
+            SELECT t.confidence_score AS confidence_score, t.outcome AS outcome
+              FROM trades t
+              {_SIMULATED_FILTER_JOIN}
+             WHERE t.outcome IN ('WIN_TP1','WIN_TP2','LOSS')
+               AND t.confidence_score IS NOT NULL
+               {_SIMULATED_FILTER_WHERE}
             """
         ).fetchall()
 
@@ -156,15 +182,11 @@ def _by_confidence_bucket() -> list[dict]:
 
 def _by_asset_class() -> list[dict]:
     """Breakdown par asset_class (forex/metal/crypto/index/energy).
-    Necessite un JOIN sur signals (trades n'a pas ce champ)."""
+    Necessite un JOIN sur signals (trades n'a pas ce champ). Reutilise
+    l'alias s_simfilter pose par _SIMULATED_FILTER_JOIN — meme ligne signal,
+    pas de JOIN supplementaire."""
     return _theoretical_breakdown_by(
-        "COALESCE(s.asset_class, 'unknown')",
-        extra_join=(
-            "LEFT JOIN signals s ON s.pair = t.pair "
-            "AND s.direction = t.direction "
-            "AND ABS(s.entry_price - t.entry_price) < 0.0001 * t.entry_price "
-            "AND ABS(strftime('%s', s.emitted_at) - strftime('%s', t.emitted_at)) < 300"
-        ),
+        "COALESCE(s_simfilter.asset_class, 'unknown')",
     )
 
 
@@ -173,17 +195,18 @@ def _by_risk_regime() -> list[dict]:
     Le regime est stocke en JSON dans signals.macro_context ; on lit
     toutes les lignes et on regroupe en Python (nb modeste de trades →
     pas de pression perf)."""
+    # Note : on réutilise le JOIN de _SIMULATED_FILTER_JOIN (alias s_simfilter)
+    # pour lire AUSSI is_simulated et macro_context depuis la même ligne signal
+    # — évite un deuxième JOIN redondant.
     with sqlite3.connect(_bt_db()) as c:
         _row_factory(c)
         rows = c.execute(
-            """
-            SELECT s.macro_context, t.outcome
+            f"""
+            SELECT s_simfilter.macro_context AS macro_context, t.outcome AS outcome
               FROM trades t
-              LEFT JOIN signals s ON s.pair = t.pair
-                                 AND s.direction = t.direction
-                                 AND ABS(s.entry_price - t.entry_price) < 0.0001 * t.entry_price
-                                 AND ABS(strftime('%s', s.emitted_at) - strftime('%s', t.emitted_at)) < 300
+              {_SIMULATED_FILTER_JOIN}
              WHERE t.outcome IN ('WIN_TP1','WIN_TP2','LOSS')
+               {_SIMULATED_FILTER_WHERE}
             """
         ).fetchall()
 
