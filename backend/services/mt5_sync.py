@@ -77,6 +77,18 @@ def _db_path():
     return _DB_PATH
 
 
+def _pip_size(pair: str) -> float:
+    """Approx cohérente avec le reste du code (XAU/XAG = 0.01, JPY = 0.01,
+    forex standard = 0.0001). Utilisé uniquement pour afficher le slippage."""
+    base = pair.split("/")[0].upper() if "/" in pair else pair.upper()
+    quote = pair.split("/")[1].upper() if "/" in pair else ""
+    if base in {"XAU", "XAG", "XPT", "XPD"}:
+        return 0.01
+    if quote == "JPY":
+        return 0.01
+    return 0.0001
+
+
 def _upsert_open_trade(row: dict[str, Any], user: str) -> None:
     """INSERT un ordre auto comme personal_trade. Silencieusement ignoré si
     le mt5_ticket existe déjà (dedup rejouable)."""
@@ -96,19 +108,53 @@ def _upsert_open_trade(row: dict[str, Any], user: str) -> None:
             "fetched_at": snap.fetched_at.isoformat(),
         })
 
+    # Prix planifié (entry) vs prix réellement exécuté (fill). Le bridge
+    # peut remonter plusieurs conventions selon sa version — on regarde
+    # les noms habituels.
+    pair = row.get("pair") or row.get("symbol") or "?"
+    direction = (row.get("direction") or "").lower()
+    entry_price = row.get("entry") or 0
+    fill_price = (
+        row.get("fill_price")
+        or row.get("price_open")
+        or row.get("open_price")
+    )
+
+    slippage_pips = None
+    if fill_price and entry_price:
+        pip = _pip_size(pair)
+        # Slippage signe : positif = en faveur du trade, négatif = défavorable.
+        if direction == "buy":
+            raw = entry_price - fill_price  # on a acheté plus bas = favorable
+        else:
+            raw = fill_price - entry_price  # on a vendu plus haut = favorable
+        if pip:
+            slippage_pips = round(raw / pip, 1)
+
+    # Matching signal_id : on cherche un signal recent qui correspond a ce
+    # fill (pair + direction + entry a +/-0.1% pres, dans les 30 dernieres
+    # minutes). Best-effort : si aucun match, reste NULL.
+    signal_id = None
+    try:
+        from backend.services.backtest_service import find_signal_for_order
+        signal_id = find_signal_for_order(pair, direction, float(entry_price or 0))
+    except Exception as e:
+        logger.debug(f"mt5_sync: find_signal_for_order failed: {e}")
+
     with sqlite3.connect(_db_path()) as c:
         c.execute("""
             INSERT OR IGNORE INTO personal_trades (
                 user, pair, direction, entry_price, stop_loss, take_profit,
                 size_lot, signal_pattern, signal_confidence, checklist_passed,
                 notes, status, created_at, mt5_ticket, is_auto,
-                post_entry_sl, post_entry_tp, post_entry_size, context_macro
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, 1, ?, 'OPEN', ?, ?, 1, 1, 1, 1, ?)
+                post_entry_sl, post_entry_tp, post_entry_size, context_macro,
+                signal_id, fill_price, slippage_pips
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, 1, ?, 'OPEN', ?, ?, 1, 1, 1, 1, ?, ?, ?, ?)
         """, (
             user,
-            row.get("pair") or row.get("symbol") or "?",
-            (row.get("direction") or "").lower(),
-            row.get("entry") or 0,
+            pair,
+            direction,
+            entry_price,
             row.get("sl") or 0,
             row.get("tp") or 0,
             row.get("lots") or 0.01,
@@ -117,7 +163,30 @@ def _upsert_open_trade(row: dict[str, Any], user: str) -> None:
             row.get("created_at") or datetime.now(timezone.utc).isoformat(),
             ticket,
             ctx_json,
+            signal_id,
+            fill_price,
+            slippage_pips,
         ))
+
+
+def _normalize_close_reason(raw: str | None) -> str | None:
+    """Le bridge peut remonter des libelles variables selon la version MT5
+    (deal.reason, position.close_reason, etc.). On normalise en un set
+    reduit et stable pour l'analyse ML downstream."""
+    if not raw:
+        return None
+    r = str(raw).strip().lower()
+    if "tp2" in r or "take_profit_2" in r:
+        return "TP2"
+    if "tp" in r or "take_profit" in r:
+        return "TP1"
+    if "sl" in r or "stop" in r:
+        return "SL"
+    if "manual" in r or "client" in r:
+        return "MANUAL"
+    if "timeout" in r or "expiry" in r:
+        return "TIMEOUT"
+    return raw.upper()[:16]
 
 
 def _update_closed_trade(row: dict[str, Any]) -> None:
@@ -132,18 +201,23 @@ def _update_closed_trade(row: dict[str, Any]) -> None:
     ticket = row.get("ticket")
     if not ticket:
         return
+    close_reason = _normalize_close_reason(
+        row.get("close_reason") or row.get("reason") or row.get("deal_reason")
+    )
     with sqlite3.connect(_db_path()) as c:
         c.execute("""
             UPDATE personal_trades
-               SET status     = 'CLOSED',
-                   exit_price = COALESCE(?, exit_price),
-                   pnl        = COALESCE(?, pnl),
-                   closed_at  = COALESCE(closed_at, ?)
+               SET status       = 'CLOSED',
+                   exit_price   = COALESCE(?, exit_price),
+                   pnl          = COALESCE(?, pnl),
+                   closed_at    = COALESCE(closed_at, ?),
+                   close_reason = COALESCE(close_reason, ?)
              WHERE mt5_ticket = ?
         """, (
             row.get("exit_price"),
             row.get("pnl"),
             row.get("created_at") or datetime.now(timezone.utc).isoformat(),
+            close_reason,
             ticket,
         ))
 

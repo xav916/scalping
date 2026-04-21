@@ -178,10 +178,26 @@ async def run_analysis_cycle() -> None:
                         setup.verdict_blockers = verdict["blockers"]
                         all_trade_setups.append(setup)
 
+        # Archive ML-ready : on persiste TOUS les signaux (y compris ceux
+        # qui seront rejetes par le filtre de confiance) pour pouvoir
+        # entrainer plus tard un classifieur sur les faux negatifs.
+        try:
+            events_by_ccy: dict[str, list] = {}
+            for ev in economic_events:
+                events_by_ccy.setdefault(ev.currency.upper(), []).append(ev)
+            backtest_service.record_signals(
+                all_trade_setups,
+                volatility_by_pair=vol_map,
+                trend_by_pair=trend_map,
+                events_by_currency=events_by_ccy,
+            )
+        except Exception as e:
+            logger.warning(f"Backtest record_signals a echoue: {e}")
+
         # Filtrer pour ne garder que les setups haute confiance
         all_trade_setups = filter_high_confidence_setups(all_trade_setups)
 
-        # Enregistrer les setups pour le backtest (dedup par pair+entry)
+        # Enregistrer les setups haute-conf pour le backtest outcome (dedup par pair+entry)
         try:
             backtest_service.record_setups(all_trade_setups)
         except Exception as e:

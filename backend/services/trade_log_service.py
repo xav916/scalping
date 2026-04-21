@@ -83,6 +83,19 @@ def _init_schema() -> None:
             c.execute("ALTER TABLE personal_trades ADD COLUMN is_auto INTEGER DEFAULT 0")
         if "context_macro" not in cols:
             c.execute("ALTER TABLE personal_trades ADD COLUMN context_macro TEXT")
+        # Traçabilité ML-ready : lien vers le signal d'origine, prix
+        # d'exécution réel (vs entry théorique), slippage calculé, raison
+        # de fermeture. Ces colonnes alimenteront le futur dataset ML.
+        if "signal_id" not in cols:
+            c.execute("ALTER TABLE personal_trades ADD COLUMN signal_id INTEGER")
+        if "fill_price" not in cols:
+            c.execute("ALTER TABLE personal_trades ADD COLUMN fill_price REAL")
+        if "slippage_pips" not in cols:
+            c.execute("ALTER TABLE personal_trades ADD COLUMN slippage_pips REAL")
+        if "close_reason" not in cols:
+            # TP1 | TP2 | SL | MANUAL | TIMEOUT | UNKNOWN — remonte depuis
+            # le bridge si disponible, sinon reste NULL.
+            c.execute("ALTER TABLE personal_trades ADD COLUMN close_reason TEXT")
 
         # 3) Poser les INDEX une fois toutes les colonnes présentes
         c.executescript("""
@@ -90,6 +103,7 @@ def _init_schema() -> None:
             CREATE INDEX IF NOT EXISTS idx_pt_status ON personal_trades(status);
             CREATE INDEX IF NOT EXISTS idx_pt_created ON personal_trades(created_at);
             CREATE INDEX IF NOT EXISTS idx_pt_ticket ON personal_trades(mt5_ticket);
+            CREATE INDEX IF NOT EXISTS idx_pt_signal ON personal_trades(signal_id);
         """)
 
 
