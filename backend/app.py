@@ -669,6 +669,46 @@ async def cockpit(user: str = Depends(verify_credentials)):
     return await build_cockpit(user)
 
 
+@app.get("/api/analytics")
+async def analytics(_=Depends(verify_credentials)):
+    """Breakdowns du win rate par features : pair, hour, pattern, confidence,
+    asset_class, risk_regime. Inclut la qualité d'exécution (slippage,
+    close_reason). Voir backend/services/analytics_service.py.
+
+    Utile pour piloter le modèle : quels instruments retirer, quelles
+    heures éviter, si le confidence_score est calibré."""
+    from backend.services.analytics_service import build_analytics
+    return build_analytics()
+
+
+@app.get("/api/drift")
+async def drift(_=Depends(verify_credentials)):
+    """Detection des drifts : paires et patterns dont le win rate des 7
+    derniers jours chute de plus de 15 points vs la baseline historique.
+    Utile pour desactiver proactivement un signal qui perd son edge."""
+    from backend.services.drift_detection import find_drifts
+    return find_drifts()
+
+
+@app.get("/api/kill-switch")
+async def kill_switch_status(_=Depends(verify_credentials)):
+    """Etat du kill switch global. Voir backend/services/kill_switch.py."""
+    from backend.services import kill_switch
+    return kill_switch.status()
+
+
+@app.post("/api/kill-switch")
+async def kill_switch_set(payload: dict, _=Depends(verify_credentials)):
+    """Active/désactive manuellement le kill switch. Payload :
+    `{"enabled": true, "reason": "maintenance broker"}` pour bloquer,
+    `{"enabled": false}` pour débloquer."""
+    from backend.services import kill_switch
+    enabled = bool(payload.get("enabled", False))
+    reason = payload.get("reason") if enabled else None
+    kill_switch.set_manual(enabled=enabled, reason=reason)
+    return kill_switch.status()
+
+
 @app.get("/api/daily-status")
 async def daily_status(user: str = Depends(verify_credentials)):
     """Statut journalier : PnL, nb trades, mode silencieux."""
