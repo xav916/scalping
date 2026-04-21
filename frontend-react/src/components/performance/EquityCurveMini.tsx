@@ -14,7 +14,7 @@ export function EquityCurveMini() {
   }
   if (!data || data.points.length === 0) {
     return (
-      <GlassCard className="p-5 h-full">
+      <GlassCard className="p-5">
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-sm font-semibold tracking-tight">Équité cumulée</h3>
         </div>
@@ -30,7 +30,7 @@ export function EquityCurveMini() {
     data.final_pnl > 0 ? 'text-emerald-300' : data.final_pnl < 0 ? 'text-rose-300' : 'text-white/70';
 
   return (
-    <GlassCard className="p-5 h-full">
+    <GlassCard className="p-5">
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-sm font-semibold tracking-tight">Équité cumulée</h3>
         <span className="text-[9px] uppercase tracking-[0.2em] text-white/40 font-mono">

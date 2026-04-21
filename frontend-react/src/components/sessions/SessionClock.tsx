@@ -48,7 +48,7 @@ export function SessionClock() {
   const active = SESSIONS.filter((s) => !weekendClosed && isSessionActive(s, nowUtcH));
 
   return (
-    <GlassCard className="p-5 h-full">
+    <GlassCard className="p-5">
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-sm font-semibold tracking-tight">Sessions forex</h3>
         {weekendClosed && (
