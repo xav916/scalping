@@ -452,11 +452,25 @@ if _V2_DIST.exists():
     @app.get("/v2/{path:path}", include_in_schema=False)
     async def serve_v2(path: str):
         """SPA fallback : tout ce qui n'est pas un asset tombe sur index.html,
-        React Router se charge du routing côté client."""
+        React Router se charge du routing côté client.
+
+        index.html et sw.js DOIVENT être revalidés à chaque fois : sinon le
+        navigateur peut servir un vieux HTML pointant vers un bundle JS qui
+        n'existe plus → écran cassé ou composants manquants."""
         candidate = _V2_DIST / path
         if candidate.is_file():
+            # sw.js : no-cache obligatoire (sinon le SW ne se met jamais à jour)
+            if path == "sw.js":
+                return _FileResponseV2(
+                    str(candidate),
+                    headers={"Cache-Control": "no-cache, must-revalidate"},
+                )
             return _FileResponseV2(str(candidate))
-        return _FileResponseV2(str(_V2_DIST / "index.html"))
+        # Fallback SPA → index.html, no-cache pour garantir bundle à jour
+        return _FileResponseV2(
+            str(_V2_DIST / "index.html"),
+            headers={"Cache-Control": "no-cache, must-revalidate"},
+        )
 
 
 @app.get("/")

@@ -12,7 +12,7 @@
  * strict : scope limité aux assets hashés, jamais le HTML racine.
  */
 
-const SW_VERSION = '2026-04-21-passthrough-v3';
+const SW_VERSION = '2026-04-21-passthrough-v4';
 
 self.addEventListener('install', (event) => {
   event.waitUntil(self.skipWaiting());
