@@ -657,6 +657,18 @@ async def list_trades(status: str | None = None, limit: int = 100, user: str = D
     return trade_log_service.list_trades(status=status, limit=limit, user=user)
 
 
+@app.get("/api/cockpit")
+async def cockpit(user: str = Depends(verify_credentials)):
+    """Snapshot consolidé pour la homepage "tour de contrôle".
+
+    Regroupe en un seul appel : trades actifs (PnL temps réel), setups en
+    attente, stats du jour, santé système, contexte macro, events imminents
+    et alertes. Voir backend/services/cockpit_service.py.
+    """
+    from backend.services.cockpit_service import build_cockpit
+    return await build_cockpit(user)
+
+
 @app.get("/api/daily-status")
 async def daily_status(user: str = Depends(verify_credentials)):
     """Statut journalier : PnL, nb trades, mode silencieux."""
