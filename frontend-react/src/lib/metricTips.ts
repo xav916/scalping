@@ -7,9 +7,11 @@ export const TIPS = {
   /* ─────────── Header / status global ─────────── */
   header: {
     v2Badge: 'V2 (Version 2) : nouveau dashboard React + Vite. Coexiste avec la version legacy sur /.',
-    statusLive: 'LIVE : WebSocket (canal bidirectionnel temps réel) connecté. Les setups, prix et cockpit sont poussés par le serveur sans avoir à rafraîchir.',
-    statusSync: 'SYNC (synchronisation) : connexion WebSocket en cours d\'établissement. Mode dégradé (poll périodique) le temps que le socket rétablisse.',
-    statusOffline: 'OFFLINE (hors-ligne) : le WebSocket (/ws) entre ton navigateur et le backend est fermé. Le dashboard retombe sur du polling React Query (latence 10-60s). Causes fréquentes : (1) cookie session expiré → relogin ; (2) backend qui redémarre → passe à SYNC puis LIVE tout seul ; (3) VPN/proxy qui bloque l\'upgrade WS ; (4) nginx qui a perdu les headers Upgrade. Les données restent à jour, juste moins vite.',
+    statusLive: 'LIVE : pipeline de données en pleine santé. Le scheduler backend tourne (dernier cycle d\'analyse < 10 min) ET le WebSocket (canal bidirectionnel temps réel) est connecté → les setups/prix/cockpit sont poussés par le serveur instantanément. C\'est l\'état nominal.',
+    statusPoll: 'POLL (polling) : pipeline de données en bonne santé (scheduler backend vivant, cycles < 10 min) MAIS le WebSocket push est fermé. Le dashboard continue via polling React Query (latence 10-60s). Causes WS down possibles : cookie session expiré (relogin), redémarrage backend (revient seul à LIVE), VPN/proxy bloquant l\'upgrade WS. Les données restent à jour, juste moins vite.',
+    statusSync: 'SYNC (synchronisation) : connexion WebSocket en cours d\'établissement. État transitoire au chargement de la page ou après une reconnexion. Passe à LIVE ou POLL en quelques secondes.',
+    statusDown: 'DOWN (pipeline arrêté) : le dernier cycle d\'analyse du radar date de plus de 10 minutes. Le scheduler backend ne tourne pas ou une source de données (Twelve Data, macro) est KO. Vraie alerte : le radar ne collecte plus de setups, rien à analyser. Vérifier : backend en vie (/api/health), Twelve Data rate limit, logs docker sur EC2.',
+    statusUnknown: 'UNKNOWN : on n\'a pas encore la réponse du /api/health backend. État initial fugace, disparaît au premier fetch (< 2s).',
     soundOn: 'Alertes audio activées : un bip court est joué sur chaque nouveau setup TAKE (signal d\'exécution conseillé). Un seul bip même si plusieurs arrivent ensemble.',
     soundOff: 'Alertes audio désactivées. Telegram reste la source principale des notifications.',
   },

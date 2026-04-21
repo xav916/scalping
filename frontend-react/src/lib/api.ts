@@ -91,6 +91,13 @@ export const api = {
   drift: () => request<DriftReport>('/api/drift'),
 
   analytics: () => request<AnalyticsReport>('/api/analytics'),
+
+  health: () =>
+    request<{
+      healthy: boolean;
+      last_cycle_at: string | null;
+      seconds_since_last_cycle: number | null;
+    }>('/api/health'),
 };
 
 export { ApiError };

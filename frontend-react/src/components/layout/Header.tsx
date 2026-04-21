@@ -3,18 +3,17 @@ import clsx from 'clsx';
 import { motion } from 'motion/react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
-import { useWebSocket, type WSStatus } from '@/hooks/useWebSocket';
 import { useAudioAlerts } from '@/hooks/useAudioAlerts';
+import { useSystemStatus, type SystemStatus } from '@/hooks/useSystemStatus';
 import { Tooltip } from '@/components/ui/Tooltip';
 import { formatParisTime } from '@/lib/format';
 import { TIPS } from '@/lib/metricTips';
 
-function StatusDot({ status }: { status: WSStatus }) {
+function StatusDot({ status }: { status: SystemStatus }) {
   const base = 'relative inline-block w-2 h-2 rounded-full';
-  if (status === 'open') {
+  if (status === 'LIVE') {
     return (
       <span className={clsx(base, 'bg-emerald-400')}>
-        {/* Pulse ring animé pour signaler la connexion vivante */}
         <motion.span
           aria-hidden
           className="absolute inset-0 rounded-full bg-emerald-400"
@@ -24,7 +23,11 @@ function StatusDot({ status }: { status: WSStatus }) {
       </span>
     );
   }
-  if (status === 'connecting') {
+  if (status === 'POLL') {
+    // Cyan : données fraîches, juste pas en push temps réel
+    return <span className={clsx(base, 'bg-cyan-400')} />;
+  }
+  if (status === 'SYNC' || status === 'UNKNOWN') {
     return (
       <motion.span
         className={clsx(base, 'bg-amber-400')}
@@ -33,13 +36,23 @@ function StatusDot({ status }: { status: WSStatus }) {
       />
     );
   }
+  // DOWN
   return <span className={clsx(base, 'bg-rose-400')} />;
 }
 
-function statusLabel(s: WSStatus): string {
-  if (s === 'open') return 'LIVE';
-  if (s === 'connecting') return 'SYNC';
-  return 'OFFLINE';
+function statusTone(s: SystemStatus): string {
+  if (s === 'LIVE') return 'bg-emerald-400/10 border-emerald-400/30 text-emerald-300';
+  if (s === 'POLL') return 'bg-cyan-400/10 border-cyan-400/30 text-cyan-300';
+  if (s === 'SYNC' || s === 'UNKNOWN') return 'bg-amber-400/10 border-amber-400/30 text-amber-300';
+  return 'bg-rose-400/10 border-rose-400/30 text-rose-300';
+}
+
+function statusTip(s: SystemStatus): React.ReactNode {
+  if (s === 'LIVE') return TIPS.header.statusLive;
+  if (s === 'POLL') return TIPS.header.statusPoll;
+  if (s === 'SYNC') return TIPS.header.statusSync;
+  if (s === 'DOWN') return TIPS.header.statusDown;
+  return TIPS.header.statusUnknown;
 }
 
 const NAV_LINKS = [
@@ -51,7 +64,7 @@ const NAV_LINKS = [
 
 export function Header() {
   const { whoami, logout } = useAuth();
-  const { status } = useWebSocket();
+  const { status, secondsSinceLastCycle, wsOpen } = useSystemStatus();
   const { enabled: audioEnabled, toggle: toggleAudio } = useAudioAlerts();
   const location = useLocation();
   const [now, setNow] = useState(() => formatParisTime());
@@ -98,30 +111,26 @@ export function Header() {
           <span className="font-mono tabular-nums text-base text-white/90">{now}</span>
           <span className="text-[9px] uppercase tracking-[0.2em] text-white/40">Paris</span>
         </div>
-        {/* Status LIVE/SYNC/OFFLINE */}
+        {/* Statut pipeline : LIVE (push) / POLL (poll actif) / SYNC / DOWN */}
         <Tooltip content={
-          status === 'open' ? TIPS.header.statusLive
-          : status === 'connecting' ? TIPS.header.statusSync
-          : TIPS.header.statusOffline
+          <div className="space-y-1">
+            <div>{statusTip(status)}</div>
+            {secondsSinceLastCycle !== null && (
+              <div className="text-[10px] text-white/50 font-mono">
+                Dernier cycle : {Math.round(secondsSinceLastCycle)}s · WS {wsOpen ? 'connecté' : 'fermé'}
+              </div>
+            )}
+          </div>
         }>
           <div
             className={clsx(
               'flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg border',
-              status === 'open' && 'bg-emerald-400/10 border-emerald-400/30',
-              status === 'connecting' && 'bg-amber-400/10 border-amber-400/30',
-              status === 'closed' && 'bg-rose-400/10 border-rose-400/30'
+              statusTone(status)
             )}
           >
             <StatusDot status={status} />
-            <span
-              className={clsx(
-                'text-[9px] sm:text-[10px] font-bold uppercase tracking-[0.15em] sm:tracking-[0.2em]',
-                status === 'open' && 'text-emerald-300',
-                status === 'connecting' && 'text-amber-300',
-                status === 'closed' && 'text-rose-300'
-              )}
-            >
-              {statusLabel(status)}
+            <span className="text-[9px] sm:text-[10px] font-bold uppercase tracking-[0.15em] sm:tracking-[0.2em]">
+              {status}
             </span>
           </div>
         </Tooltip>
