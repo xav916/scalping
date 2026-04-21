@@ -9,7 +9,7 @@ export const TIPS = {
     v2Badge: 'V2 (Version 2) : nouveau dashboard React + Vite. Coexiste avec la version legacy sur /.',
     statusLive: 'LIVE : WebSocket (canal bidirectionnel temps réel) connecté. Les setups, prix et cockpit sont poussés par le serveur sans avoir à rafraîchir.',
     statusSync: 'SYNC (synchronisation) : connexion WebSocket en cours d\'établissement. Mode dégradé (poll périodique) le temps que le socket rétablisse.',
-    statusOffline: 'OFFLINE (hors-ligne) : WebSocket indisponible. On continue avec du polling périodique, avec latence.',
+    statusOffline: 'OFFLINE (hors-ligne) : le WebSocket (/ws) entre ton navigateur et le backend est fermé. Le dashboard retombe sur du polling React Query (latence 10-60s). Causes fréquentes : (1) cookie session expiré → relogin ; (2) backend qui redémarre → passe à SYNC puis LIVE tout seul ; (3) VPN/proxy qui bloque l\'upgrade WS ; (4) nginx qui a perdu les headers Upgrade. Les données restent à jour, juste moins vite.',
     soundOn: 'Alertes audio activées : un bip court est joué sur chaque nouveau setup TAKE (signal d\'exécution conseillé). Un seul bip même si plusieurs arrivent ensemble.',
     soundOff: 'Alertes audio désactivées. Telegram reste la source principale des notifications.',
   },
