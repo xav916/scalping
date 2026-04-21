@@ -1,0 +1,27 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    font-feature-settings: "ss01", "cv11";
+  }
+}
+
+@layer components {
+  .panel {
+    @apply bg-panel border border-border/60 rounded-lg;
+  }
+  .panel-alt {
+    @apply bg-panel-alt border border-border/60 rounded-lg;
+  }
+  .stat-label {
+    @apply text-[11px] uppercase tracking-wider text-slate-400;
+  }
+  .stat-value {
+    @apply font-mono text-lg;
+  }
+  .pill {
+    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium;
+  }
+}

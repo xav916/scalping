@@ -48,6 +48,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
+# Build React (Vite dist/). Cree par `npm run build` dans frontend-react/
+# + copie en stage Docker. Si present, prend le pas sur le vanilla HTML.
+REACT_DIST = Path(__file__).parent.parent / "frontend-react" / "dist"
+REACT_ENABLED = REACT_DIST.exists() and (REACT_DIST / "index.html").exists()
 
 
 @asynccontextmanager
@@ -99,12 +103,15 @@ async def api_logout(request: Request, response: Response):
 
 @app.get("/login", include_in_schema=False)
 async def login_page(request: Request):
-    """Sert la page de login. Si déjà authentifié, redirige vers /."""
+    """Sert la page de login. Si déjà authentifié, redirige vers /.
+    React SPA : on sert le meme index.html, le router client gere /login."""
     sid = request.cookies.get(SESSION_COOKIE)
     if sid:
         from backend.auth import validate_session
         if validate_session(sid):
             return RedirectResponse("/", status_code=303)
+    if REACT_ENABLED:
+        return FileResponse(str(REACT_DIST / "index.html"))
     return FileResponse(str(FRONTEND_DIR / "login.html"))
 
 
@@ -401,16 +408,31 @@ async def stats_mistakes(user: str = Depends(verify_credentials)):
 # Serve static files
 app.mount("/css", StaticFiles(directory=str(FRONTEND_DIR / "css")), name="css")
 app.mount("/js", StaticFiles(directory=str(FRONTEND_DIR / "js")), name="js")
+# Assets Vite (hashes donc cacheables indefiniment). Mount seulement si
+# le build React est present — sinon on reste sur le vanilla HTML.
+if REACT_ENABLED:
+    app.mount(
+        "/assets",
+        StaticFiles(directory=str(REACT_DIST / "assets")),
+        name="react-assets",
+    )
+    logger.info(f"React build detected: serving SPA from {REACT_DIST}")
 
 
 @app.get("/")
 async def index(request: Request):
     """Serve the main dashboard page. Redirige vers /login si pas authentifié
-    (plus agréable qu'un prompt Basic Auth sur la route principale)."""
+    (plus agréable qu'un prompt Basic Auth sur la route principale).
+
+    Si le build React est present, on sert son index.html (le client-side
+    router prend la suite). Sinon on retombe sur le dashboard vanilla.
+    """
     try:
         authenticate(request)
     except HTTPException:
         return RedirectResponse("/login", status_code=303)
+    if REACT_ENABLED:
+        return FileResponse(str(REACT_DIST / "index.html"))
     return FileResponse(str(FRONTEND_DIR / "index.html"))
 
 
@@ -829,3 +851,40 @@ async def websocket_endpoint(websocket: WebSocket):
         unregister_client(websocket)
     except Exception:
         unregister_client(websocket)
+
+
+# ─── SPA fallback (a garder en DERNIER) ─────────────────────────────
+# Quand le build React est servi, le router client gere /trades,
+# /analytics, etc. FastAPI doit donc renvoyer index.html pour tout chemin
+# non-API qui ne matche aucune route explicite precedente — sinon le
+# refresh sur /analytics retourne un 404.
+#
+# Garde-fous :
+#  - Seulement si REACT_ENABLED (pas d'interference avec le vanilla)
+#  - Exclut /api, /ws, /css, /js, /assets (deja gerees par les mounts)
+#  - Renvoie 404 pour les chemins avec une extension connue (images,
+#    fichiers statiques manquants) → evite de servir du HTML en JS/CSS
+#    si un asset hashé est absent.
+
+if REACT_ENABLED:
+    _SPA_EXCLUDED_PREFIXES = (
+        "api/", "ws", "css/", "js/", "assets/", "icons/",
+        "login", "logout", "manifest.json", "sw.js", "robots.txt",
+        "debug/", "docs", "openapi.json", "redoc",
+    )
+    _STATIC_EXTENSIONS = (
+        ".js", ".css", ".png", ".jpg", ".jpeg", ".svg", ".ico",
+        ".webp", ".woff", ".woff2", ".map", ".json",
+    )
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa_fallback(full_path: str, request: Request):
+        if full_path.startswith(_SPA_EXCLUDED_PREFIXES):
+            raise HTTPException(status_code=404)
+        if any(full_path.endswith(ext) for ext in _STATIC_EXTENSIONS):
+            raise HTTPException(status_code=404)
+        try:
+            authenticate(request)
+        except HTTPException:
+            return RedirectResponse("/login", status_code=303)
+        return FileResponse(str(REACT_DIST / "index.html"))
