@@ -90,8 +90,31 @@ def _pip_size(pair: str) -> float:
     return 0.0001
 
 
+def _risk_money(trade: dict) -> float | None:
+    """Max loss approximée en USD si le SL est touché.
+    abs(entry - SL) * taille * units_per_lot, même approximation que PnL
+    unrealized (ignore les conversions cross-currency)."""
+    sl = trade.get("stop_loss")
+    if sl is None:
+        return None
+    entry = trade["entry_price"]
+    size = trade["size_lot"]
+    units = _units_per_lot(trade["pair"]) * size
+    return round(abs(entry - sl) * units, 2)
+
+
+def _notional(trade: dict) -> float:
+    """Exposition notionnelle en USD (entry * units * size). Représente
+    l'enveloppe sous-jacente, pas la marge bloquée."""
+    entry = trade["entry_price"]
+    size = trade["size_lot"]
+    units = _units_per_lot(trade["pair"]) * size
+    return round(entry * units, 2)
+
+
 def _enrich_open_trade(trade: dict) -> dict:
-    """Ajoute PnL unrealized, distances SL/TP, durée."""
+    """Ajoute PnL unrealized, distances SL/TP, durée, risk/notional, asset_class."""
+    from config.settings import asset_class_for
     price = _current_price(trade["pair"])
     pip = _pip_size(trade["pair"])
 
@@ -140,12 +163,15 @@ def _enrich_open_trade(trade: dict) -> dict:
     return {
         "id": trade.get("id"),
         "pair": trade["pair"],
+        "asset_class": asset_class_for(trade["pair"]),
         "direction": trade["direction"],
         "entry_price": trade["entry_price"],
         "current_price": price,
         "stop_loss": trade.get("stop_loss"),
         "take_profit": trade.get("take_profit"),
         "size_lot": trade["size_lot"],
+        "risk_money": _risk_money(trade),
+        "notional": _notional(trade),
         "pnl_unrealized": pnl_unrealized,
         "pnl_pips": pnl_pips,
         "distance_to_sl_pct": distance_to_sl_pct,

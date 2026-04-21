@@ -30,6 +30,9 @@ export function useWebSocket(path = '/ws') {
           const msg: WSMessage = JSON.parse(ev.data);
           if (msg.type === 'setups_update') {
             qc.invalidateQueries({ queryKey: ['setups'] });
+          } else if (msg.type === 'cockpit') {
+            // Push direct du snapshot cockpit via WS — évite le poll 10s.
+            qc.setQueryData(['cockpit'], msg.payload);
           }
         } catch {
           /* ignore malformed */

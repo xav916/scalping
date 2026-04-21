@@ -8,6 +8,7 @@ import type {
   PersonalTrade,
   CockpitSnapshot,
   KillSwitchStatus,
+  DriftReport,
 } from '@/types/domain';
 import { POST_FIX_CUTOFF } from '@/lib/constants';
 
@@ -85,6 +86,8 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ enabled, reason: reason ?? null }),
     }),
+
+  drift: () => request<DriftReport>('/api/drift'),
 };
 
 export { ApiError };

@@ -138,15 +138,20 @@ export interface KillSwitchStatus {
   daily_loss_limit_pct: number | null;
 }
 
+export type AssetClass = 'forex' | 'metal' | 'crypto' | 'equity_index' | 'energy' | 'unknown';
+
 export interface ActiveTrade {
   id: number;
   pair: string;
+  asset_class: AssetClass;
   direction: Direction;
   entry_price: number;
   current_price: number | null;
   stop_loss: number | null;
   take_profit: number | null;
   size_lot: number;
+  risk_money: number | null;
+  notional: number;
   pnl_unrealized: number | null;
   pnl_pips: number | null;
   distance_to_sl_pct: number | null;
@@ -155,6 +160,24 @@ export interface ActiveTrade {
   duration_min: number | null;
   is_auto: boolean;
   mt5_ticket: number | null;
+}
+
+export interface DriftFinding {
+  key: string;
+  recent_n: number;
+  baseline_n: number;
+  recent_win_rate_pct: number;
+  baseline_win_rate_pct: number;
+  delta_pct: number;
+}
+
+export interface DriftReport {
+  window_days?: number;
+  threshold_pct?: number;
+  min_recent_trades?: number;
+  by_pair?: DriftFinding[];
+  by_pattern?: DriftFinding[];
+  error?: string;
 }
 
 export interface CockpitAlert {

@@ -1,15 +1,25 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 
-/** Snapshot cockpit : poll toutes les 10s + invalidé par WS setups_update.
- *  Reste simple : pas de WS dédié cockpit (le push WS existe mais on peut
- *  l'intégrer dans une session future). */
+/** Drift scan (poll toutes les 5 min, endpoint plus lourd). */
+export function useDrift() {
+  return useQuery({
+    queryKey: ['drift'],
+    queryFn: api.drift,
+    refetchInterval: 300_000,
+    staleTime: 120_000,
+  });
+}
+
+/** Snapshot cockpit. Le backend push via WebSocket (type: 'cockpit') et
+ *  setQueryData dans useWebSocket alimente la cache directement. On garde
+ *  un refetchInterval long (60s) comme filet de sécurité si le WS tombe. */
 export function useCockpit() {
   return useQuery({
     queryKey: ['cockpit'],
     queryFn: api.cockpit,
-    refetchInterval: 10_000,
-    staleTime: 5_000,
+    refetchInterval: 60_000,
+    staleTime: 30_000,
   });
 }
 
