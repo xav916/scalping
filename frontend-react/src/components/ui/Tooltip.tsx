@@ -1,4 +1,5 @@
 import { type ReactNode, useRef, useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import clsx from 'clsx';
 
@@ -46,8 +47,19 @@ export function Tooltip({
     if (!wrapperRef.current) return;
     const rect = wrapperRef.current.getBoundingClientRect();
     const wantFlip = placement === 'top' && rect.top < 80;
-    const top = wantFlip ? rect.bottom + offset : rect.top - offset;
-    const left = rect.left + rect.width / 2;
+    let top = wantFlip ? rect.bottom + offset : rect.top - offset;
+    let left = rect.left + rect.width / 2;
+    // Clamp horizontal : ne jamais déborder du viewport, en tenant compte
+    // du maxWidth (le tooltip est centré sur left).
+    const half = maxWidth / 2;
+    const minLeft = half + 8;
+    const maxLeft = window.innerWidth - half - 8;
+    if (left < minLeft) left = minLeft;
+    if (left > maxLeft) left = maxLeft;
+    // Clamp vertical : si le tooltip dépasse en bas (flip), le bloquer
+    if (wantFlip && top + 60 > window.innerHeight) {
+      top = window.innerHeight - 60;
+    }
     setCoords({ top, left, flip: wantFlip });
   };
 
@@ -65,6 +77,35 @@ export function Tooltip({
     setVisible(false);
   };
 
+  const tooltipNode =
+    visible && coords && content ? (
+      <AnimatePresence>
+        <motion.div
+          role="tooltip"
+          initial={{ opacity: 0, y: coords.flip ? -4 : 4, scale: 0.97 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ opacity: 0, y: coords.flip ? -4 : 4, scale: 0.97 }}
+          transition={{ duration: 0.15, ease: 'easeOut' }}
+          style={{
+            position: 'fixed',
+            top: coords.top,
+            left: coords.left,
+            transform: coords.flip
+              ? 'translate(-50%, 0%)'
+              : 'translate(-50%, -100%)',
+            maxWidth,
+            zIndex: 9999,
+            pointerEvents: 'none',
+          }}
+          // Pas de backdrop-blur ici — aucun filter sur le tooltip pour
+          // éviter qu'un parent transformed/filtered puisse le trapper.
+          className="rounded-lg border border-cyan-400/30 bg-[#0d111a] px-3 py-2 shadow-[0_8px_24px_rgba(0,0,0,0.6)]"
+        >
+          <div className="text-[11px] leading-relaxed text-white/85">{content}</div>
+        </motion.div>
+      </AnimatePresence>
+    ) : null;
+
   return (
     <>
       <span
@@ -77,31 +118,9 @@ export function Tooltip({
       >
         {children}
       </span>
-      <AnimatePresence>
-        {visible && coords && content && (
-          <motion.div
-            role="tooltip"
-            initial={{ opacity: 0, y: coords.flip ? -4 : 4, scale: 0.97 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: coords.flip ? -4 : 4, scale: 0.97 }}
-            transition={{ duration: 0.15, ease: 'easeOut' }}
-            style={{
-              position: 'fixed',
-              top: coords.top,
-              left: coords.left,
-              transform: coords.flip
-                ? 'translate(-50%, 0%)'
-                : 'translate(-50%, -100%)',
-              maxWidth,
-              zIndex: 100,
-              pointerEvents: 'none',
-            }}
-            className="rounded-lg border border-cyan-400/20 bg-radar-deep/95 backdrop-blur-glass px-3 py-2 shadow-[0_8px_24px_rgba(0,0,0,0.4)]"
-          >
-            <div className="text-[11px] leading-relaxed text-white/85">{content}</div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {typeof document !== 'undefined' && tooltipNode
+        ? createPortal(tooltipNode, document.body)
+        : null}
     </>
   );
 }
