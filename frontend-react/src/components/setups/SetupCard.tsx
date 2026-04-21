@@ -10,6 +10,7 @@ import { formatPrice } from '@/lib/format';
 
 interface Props {
   setup: TradeSetup;
+  onClick?: () => void;
 }
 
 /** Calcule le ratio R:R affichable à partir du setup. */
@@ -23,7 +24,7 @@ function rrRatio(s: TradeSetup): string | null {
   return `1:${(reward / risk).toFixed(1)}`;
 }
 
-export function SetupCard({ setup }: Props) {
+export function SetupCard({ setup, onClick }: Props) {
   const isBuy = setup.direction === 'buy';
   const rr = rrRatio(setup);
   const { data: allCandles } = useAllCandles();
@@ -41,8 +42,10 @@ export function SetupCard({ setup }: Props) {
       <TiltWrapper maxTilt={5}>
       <GlassCard
         variant="elevated"
+        onClick={onClick}
         className={clsx(
           'relative p-5 overflow-hidden group transition-shadow duration-300',
+          onClick && 'cursor-pointer',
           isBuy ? 'hover:shadow-[0_8px_40px_rgba(34,211,238,0.25)]' : 'hover:shadow-[0_8px_40px_rgba(236,72,153,0.25)]',
           'before:absolute before:inset-y-0 before:left-0 before:w-0.5',
           isBuy ? 'before:bg-neon-buy' : 'before:bg-neon-sell'

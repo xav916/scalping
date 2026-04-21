@@ -1,8 +1,16 @@
+import { useState, lazy, Suspense } from 'react';
 import { AnimatePresence } from 'motion/react';
 import { useSetups } from '@/hooks/useSetups';
 import { SetupCard } from './SetupCard';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { UI_MIN_CONFIDENCE } from '@/lib/constants';
+import type { TradeSetup } from '@/types/domain';
+
+// Lazy-load du modal — lightweight-charts pèse lourd, on ne le charge
+// que quand l'utilisateur clique sur une carte.
+const SetupChartModal = lazy(() =>
+  import('./SetupChartModal').then((m) => ({ default: m.SetupChartModal }))
+);
 
 function setupKey(s: { pair: string; direction: string; entry_price: number }) {
   return `${s.pair}-${s.direction}-${s.entry_price.toFixed(5)}`;
@@ -10,6 +18,7 @@ function setupKey(s: { pair: string; direction: string; entry_price: number }) {
 
 export function SetupsGrid() {
   const { data, isLoading } = useSetups();
+  const [selected, setSelected] = useState<TradeSetup | null>(null);
 
   if (isLoading) {
     return (
@@ -34,12 +43,21 @@ export function SetupsGrid() {
   }
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-4">
-      <AnimatePresence>
-        {setups.map((s) => (
-          <SetupCard key={setupKey(s)} setup={s} />
-        ))}
-      </AnimatePresence>
-    </div>
+    <>
+      <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-4">
+        <AnimatePresence>
+          {setups.map((s) => (
+            <SetupCard
+              key={setupKey(s)}
+              setup={s}
+              onClick={() => setSelected(s)}
+            />
+          ))}
+        </AnimatePresence>
+      </div>
+      <Suspense fallback={null}>
+        <SetupChartModal setup={selected} onClose={() => setSelected(null)} />
+      </Suspense>
+    </>
   );
 }
