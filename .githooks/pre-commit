@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# Rappelle de mettre à jour CLAUDE.md quand un commit touche des fichiers
+# architecturalement sensibles (nouveau service, app.py, Dockerfile...).
+#
+# Ne BLOQUE PAS le commit — c'est un simple rappel. Pour bypass explicite,
+# le commit passe normalement si l'auteur confirme que CLAUDE.md est à jour.
+#
+# Activation : `git config core.hooksPath .githooks` (une fois par clone).
+
+set -e
+
+staged="$(git diff --cached --name-only)"
+
+# Fichiers dont une modification DEVRAIT idéalement être reflétée dans CLAUDE.md
+sensitive_patterns=(
+    '^backend/services/.*\.py$'
+    '^backend/app\.py$'
+    '^backend/models/.*\.py$'
+    '^frontend-react/src/'
+    '^Dockerfile$'
+    '^config/settings\.py$'
+    '^deploy/'
+)
+
+touched_sensitive=0
+for pattern in "${sensitive_patterns[@]}"; do
+    if echo "$staged" | grep -Eq "$pattern"; then
+        touched_sensitive=1
+        break
+    fi
+done
+
+touched_claudemd=0
+if echo "$staged" | grep -Fxq 'CLAUDE.md'; then
+    touched_claudemd=1
+fi
+
+if [[ "$touched_sensitive" == "1" && "$touched_claudemd" == "0" ]]; then
+    echo ""
+    echo "  ┌─────────────────────────────────────────────────────────────┐"
+    echo "  │  Rappel : ce commit modifie du code architectural           │"
+    echo "  │  (services / app.py / Dockerfile / React / config).         │"
+    echo "  │                                                             │"
+    echo "  │  Réfléchis 10s : CLAUDE.md doit-il être mis à jour ?        │"
+    echo "  │   - Nouveau service ou table ?                              │"
+    echo "  │   - Décision de design non évidente ?                       │"
+    echo "  │   - Nouvelle convention / principe directeur ?              │"
+    echo "  │                                                             │"
+    echo "  │  Si oui : git add CLAUDE.md puis git commit --amend.        │"
+    echo "  │  Si non : ignore ce message et continue.                    │"
+    echo "  └─────────────────────────────────────────────────────────────┘"
+    echo ""
+fi
+
+exit 0
