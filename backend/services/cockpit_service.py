@@ -330,12 +330,39 @@ async def build_cockpit(user: str) -> dict:
     except Exception:
         ks_status = {"active": False, "reason": None}
 
+    # Blackouts actifs autour des events HIGH-impact. Visible dans l'UI
+    # pour que l'utilisateur sache pourquoi un setup n'est pas execute.
+    from backend.services import event_blackout as _ebo
+    try:
+        blackouts = _ebo.active_blackouts(
+            events=overview.economic_events if overview else None
+        )
+    except Exception:
+        blackouts = []
+
+    # Session de marche en cours (contexte utile pour le sizing et l'UI).
+    from backend.services import session_service as _session
+    try:
+        session_info = {
+            "label": _session.label(),
+            "activity_multiplier": _session.activity_multiplier(),
+            "is_weekend": _session.is_weekend(),
+        }
+    except Exception:
+        session_info = {}
+
     alerts = _build_alerts(active_trades, next_events)
     if ks_status.get("active"):
         alerts.insert(0, {
             "level": "critical",
             "code": "kill_switch",
             "msg": f"Kill switch ACTIF : {ks_status.get('reason') or 'raison inconnue'}",
+        })
+    for bo in blackouts:
+        alerts.append({
+            "level": "warning",
+            "code": "event_blackout",
+            "msg": f"Blackout {bo['pair']} : {bo['reason']}",
         })
 
     return {
@@ -365,6 +392,8 @@ async def build_cockpit(user: str) -> dict:
         "system_health": health,
         "macro": macro,
         "kill_switch": ks_status,
+        "session": session_info,
+        "blackouts": blackouts,
         "next_events": next_events[:5],
         "alerts": alerts,
     }

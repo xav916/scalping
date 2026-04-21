@@ -12,6 +12,9 @@ ce `risk_money` en le modulant selon :
 4. Drawdown-aware reducer : si le PnL realise sur les 7 derniers jours
    est negatif, on divise le risque par 2. Evite les "revenge trades"
    amplifies quand le modele sous-performe.
+5. Session multiplier : l'overlap London/NY a un edge historique (60%
+   du volume daily forex), la session asian est plus calme. On pondere
+   0.7x-1.2x selon la fenetre, 0.0x le weekend.
 
 Le but : faire travailler le capital plus fort quand le signal est fort
 et le contexte favorable, et freiner quand on encaisse des pertes.
@@ -72,20 +75,25 @@ def recent_pnl_multiplier(days: int = 7) -> float:
 
 
 def compute_risk_money(setup) -> dict:
-    """Retourne un dict `{risk_money, base, conf_mult, pnl_mult, final_mult}`
-    pour l'envoi au bridge et le logging."""
+    """Retourne un dict `{risk_money, base, conf_mult, pnl_mult, session_mult,
+    final_mult}` pour l'envoi au bridge et le logging."""
+    from backend.services import session_service
     from config.settings import RISK_PER_TRADE_PCT, TRADING_CAPITAL
 
     base = TRADING_CAPITAL * (RISK_PER_TRADE_PCT / 100.0)
     conf_mult = confidence_multiplier(getattr(setup, "confidence_score", None))
     pnl_mult = recent_pnl_multiplier()
-    final_mult = conf_mult * pnl_mult
+    session_mult = session_service.activity_multiplier()
+    session_label = session_service.label()
+    final_mult = conf_mult * pnl_mult * session_mult
     risk_money = round(base * final_mult, 2)
     return {
         "risk_money": risk_money,
         "base": round(base, 2),
         "conf_mult": round(conf_mult, 2),
         "pnl_mult": round(pnl_mult, 2),
+        "session_mult": round(session_mult, 2),
+        "session": session_label,
         "final_mult": round(final_mult, 2),
         "capital": TRADING_CAPITAL,
         "risk_pct": RISK_PER_TRADE_PCT,
