@@ -6,10 +6,12 @@ import { ReactiveMeshGradient } from '@/components/ui/ReactiveMeshGradient';
 import { GlassCard } from '@/components/ui/GlassCard';
 import { GradientText } from '@/components/ui/GradientText';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { Tooltip, LabelWithInfo } from '@/components/ui/Tooltip';
 import { EquityCurveMini } from '@/components/performance/EquityCurveMini';
 import { KillSwitchModal } from '@/components/cockpit/KillSwitchModal';
 import { useCockpit, useKillSwitch, useDrift } from '@/hooks/useCockpit';
 import { formatPnl, formatPct, formatPrice } from '@/lib/format';
+import { TIPS } from '@/lib/metricTips';
 import type {
   ActiveTrade,
   AssetClass,
@@ -138,29 +140,38 @@ function KillSwitchCard({ active, reason }: { active: boolean; reason: string | 
         )}
       >
         <div className="flex items-center justify-between">
-          <h3 className="text-xs font-bold uppercase tracking-[0.2em] text-white/60">Kill switch</h3>
-          <StatusDot active={active} />
+          <LabelWithInfo
+            label={<h3 className="text-xs font-bold uppercase tracking-[0.2em] text-white/60">Kill switch</h3>}
+            tip={TIPS.killSwitch.title}
+          />
+          <Tooltip content={active ? TIPS.killSwitch.active : TIPS.killSwitch.okState}>
+            <StatusDot active={active} />
+          </Tooltip>
         </div>
         <div>
-          <div className={clsx('text-2xl font-bold tabular-nums', active ? 'text-rose-300' : 'text-emerald-300')}>
-            {active ? 'ACTIF' : 'OK'}
-          </div>
+          <Tooltip content={active ? TIPS.killSwitch.active : TIPS.killSwitch.okState}>
+            <div className={clsx('text-2xl font-bold tabular-nums cursor-help', active ? 'text-rose-300' : 'text-emerald-300')}>
+              {active ? 'ACTIF' : 'OK'}
+            </div>
+          </Tooltip>
           {reason && <p className="text-[11px] text-white/50 mt-1 leading-snug">{reason}</p>}
         </div>
-        <button
-          type="button"
-          onClick={handleClick}
-          disabled={mutation.isPending}
-          className={clsx(
-            'text-xs px-3 py-2 rounded-lg border transition-all font-semibold uppercase tracking-wider',
-            manualEnabled
-              ? 'border-emerald-400/40 bg-emerald-400/10 text-emerald-300 hover:bg-emerald-400/20'
-              : 'border-rose-400/40 bg-rose-400/10 text-rose-300 hover:bg-rose-400/20',
-            mutation.isPending && 'opacity-40 cursor-wait'
-          )}
-        >
-          {manualEnabled ? 'Réactiver auto-exec' : 'Geler auto-exec'}
-        </button>
+        <Tooltip content={TIPS.killSwitch.manualToggle}>
+          <button
+            type="button"
+            onClick={handleClick}
+            disabled={mutation.isPending}
+            className={clsx(
+              'w-full text-xs px-3 py-2 rounded-lg border transition-all font-semibold uppercase tracking-wider',
+              manualEnabled
+                ? 'border-emerald-400/40 bg-emerald-400/10 text-emerald-300 hover:bg-emerald-400/20'
+                : 'border-rose-400/40 bg-rose-400/10 text-rose-300 hover:bg-rose-400/20',
+              mutation.isPending && 'opacity-40 cursor-wait'
+            )}
+          >
+            {manualEnabled ? 'Réactiver auto-exec' : 'Geler auto-exec'}
+          </button>
+        </Tooltip>
       </GlassCard>
       <KillSwitchModal
         open={modalOpen}
@@ -190,9 +201,11 @@ function StatusDot({ active }: { active: boolean }) {
 function AlertsStack({ alerts }: { alerts: CockpitAlert[] }) {
   if (alerts.length === 0) {
     return (
-      <GlassCard className="p-4 flex items-center justify-center text-sm text-white/40">
-        Aucune alerte
-      </GlassCard>
+      <Tooltip content={TIPS.alerts.title}>
+        <GlassCard className="w-full p-4 flex items-center justify-center text-sm text-white/40 cursor-help">
+          Aucune alerte
+        </GlassCard>
+      </Tooltip>
     );
   }
   const toneFor = (lvl: CockpitAlert['level']) =>
@@ -201,20 +214,32 @@ function AlertsStack({ alerts }: { alerts: CockpitAlert[] }) {
       : lvl === 'warning'
       ? 'border-amber-400/40 bg-amber-400/10 text-amber-300'
       : 'border-cyan-400/30 bg-cyan-400/5 text-cyan-300';
+  const tipForCode = (code: string): string => {
+    const map = TIPS.alerts as Record<string, string>;
+    return map[code] ?? TIPS.alerts.title;
+  };
   return (
     <GlassCard className="p-3">
-      <div className="flex flex-col gap-1.5 max-h-[160px] overflow-y-auto pr-1">
+      <div className="flex items-center justify-between mb-2 px-1">
+        <LabelWithInfo
+          label={<span className="text-[9px] uppercase tracking-[0.2em] text-white/40">Alertes</span>}
+          tip={TIPS.alerts.title}
+        />
+        <span className="text-[9px] font-mono text-white/40">{alerts.length}</span>
+      </div>
+      <div className="flex flex-col gap-1.5 max-h-[140px] overflow-y-auto pr-1">
         {alerts.map((a, i) => (
-          <motion.div
-            key={`${a.code}-${i}`}
-            initial={{ opacity: 0, x: -6 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ delay: i * 0.03 }}
-            className={clsx('text-xs px-3 py-1.5 rounded-md border leading-snug', toneFor(a.level))}
-          >
-            <span className="font-mono uppercase tracking-wider mr-2 opacity-60">{a.level}</span>
-            {a.msg}
-          </motion.div>
+          <Tooltip key={`${a.code}-${i}`} content={tipForCode(a.code)}>
+            <motion.div
+              initial={{ opacity: 0, x: -6 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ delay: i * 0.03 }}
+              className={clsx('w-full text-xs px-3 py-1.5 rounded-md border leading-snug cursor-help', toneFor(a.level))}
+            >
+              <span className="font-mono uppercase tracking-wider mr-2 opacity-60">{a.level}</span>
+              {a.msg}
+            </motion.div>
+          </Tooltip>
         ))}
       </div>
     </GlassCard>
@@ -247,26 +272,59 @@ function TodayStatsCard({
     <GlassCard variant="elevated" className="p-5">
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-sm font-semibold tracking-tight">Aujourd'hui</h3>
-        <span className="text-[9px] text-white/40 font-mono uppercase tracking-wider">
-          capital {formatPnl(capital)}
-        </span>
+        <Tooltip content={TIPS.today.capital}>
+          <span className="text-[9px] text-white/40 font-mono uppercase tracking-wider cursor-help">
+            capital {formatPnl(capital)}
+          </span>
+        </Tooltip>
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <Kpi label="PnL jour" value={<span className={clsx('font-mono', pnlTone)}>{formatPnl(pnl)}</span>} sub={formatPct(pnlPct / 100)} />
-        <Kpi label="Non réalisé" value={<span className={clsx('font-mono', unrealTone)}>{formatPnl(unrealizedPnl)}</span>} sub="trades ouverts" />
-        <Kpi label="Trades" value={<GradientText>{String(nTrades)}</GradientText>} sub={`${nClosed} clôturés`} />
-        <Kpi label="Ouverts" value={<span className="font-mono">{String(nOpen)}</span>} sub="en cours" />
+        <Kpi label="PnL jour" tip={TIPS.today.pnlJour} value={<span className={clsx('font-mono', pnlTone)}>{formatPnl(pnl)}</span>} sub={formatPct(pnlPct / 100)} subTip={TIPS.today.pnlPct} />
+        <Kpi label="Non réalisé" tip={TIPS.today.nonRealise} value={<span className={clsx('font-mono', unrealTone)}>{formatPnl(unrealizedPnl)}</span>} sub="trades ouverts" />
+        <Kpi label="Trades" tip={TIPS.today.trades} value={<GradientText>{String(nTrades)}</GradientText>} sub={`${nClosed} clôturés`} subTip={TIPS.today.closurés} />
+        <Kpi label="Ouverts" tip={TIPS.today.ouverts} value={<span className="font-mono">{String(nOpen)}</span>} sub="en cours" />
       </div>
     </GlassCard>
   );
 }
 
-function Kpi({ label, value, sub }: { label: string; value: React.ReactNode; sub?: string }) {
+function Kpi({
+  label,
+  value,
+  sub,
+  tip,
+  subTip,
+}: {
+  label: string;
+  value: React.ReactNode;
+  sub?: string;
+  tip?: React.ReactNode;
+  subTip?: React.ReactNode;
+}) {
   return (
     <div>
-      <div className="text-[9px] uppercase tracking-[0.2em] text-white/40 mb-1">{label}</div>
+      <div className="mb-1">
+        {tip ? (
+          <LabelWithInfo
+            label={<span className="text-[9px] uppercase tracking-[0.2em] text-white/40">{label}</span>}
+            tip={tip}
+          />
+        ) : (
+          <span className="text-[9px] uppercase tracking-[0.2em] text-white/40">{label}</span>
+        )}
+      </div>
       <div className="text-xl font-bold leading-tight">{value}</div>
-      {sub && <div className="text-[10px] text-white/40 mt-1 font-mono">{sub}</div>}
+      {sub && (
+        <div className="text-[10px] text-white/40 mt-1 font-mono">
+          {subTip ? (
+            <Tooltip content={subTip}>
+              <span className="cursor-help">{sub}</span>
+            </Tooltip>
+          ) : (
+            sub
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -288,37 +346,55 @@ function CapitalAtRiskCard({ trades, capital }: { trades: ActiveTrade[]; capital
   return (
     <GlassCard variant="elevated" className="p-5 h-full">
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-semibold tracking-tight">Capital en jeu</h3>
-        <span className="text-[9px] text-white/40 font-mono uppercase tracking-wider">
-          risque si tous SL touchés
-        </span>
+        <LabelWithInfo
+          label={<h3 className="text-sm font-semibold tracking-tight">Capital en jeu</h3>}
+          tip={TIPS.capital.titre}
+        />
+        <Tooltip content={TIPS.capital.aRisque}>
+          <span className="text-[9px] text-white/40 font-mono uppercase tracking-wider cursor-help">
+            risque si tous SL touchés
+          </span>
+        </Tooltip>
       </div>
       <div className="grid grid-cols-2 gap-3 mb-4">
         <div>
-          <div className="text-[9px] uppercase tracking-[0.2em] text-white/40 mb-1">À risque</div>
+          <LabelWithInfo
+            label={<span className="text-[9px] uppercase tracking-[0.2em] text-white/40">À risque</span>}
+            tip={TIPS.capital.aRisque}
+            className="mb-1"
+          />
           <div className="text-2xl font-bold font-mono tabular-nums text-rose-300">
             {formatPnl(totalRisk)}
           </div>
-          <div className="text-[10px] text-white/40 font-mono mt-0.5">
-            {riskPct.toFixed(2)}% capital
-          </div>
+          <Tooltip content={TIPS.capital.risquePct}>
+            <div className="text-[10px] text-white/40 font-mono mt-0.5 cursor-help">
+              {riskPct.toFixed(2)}% capital
+            </div>
+          </Tooltip>
         </div>
         <div>
-          <div className="text-[9px] uppercase tracking-[0.2em] text-white/40 mb-1">Notionnel</div>
+          <LabelWithInfo
+            label={<span className="text-[9px] uppercase tracking-[0.2em] text-white/40">Notionnel</span>}
+            tip={TIPS.capital.notionnel}
+            className="mb-1"
+          />
           <div className="text-2xl font-bold font-mono tabular-nums text-white/80">
             {formatPnl(totalNotional)}
           </div>
-          <div className="text-[10px] text-white/40 font-mono mt-0.5">
-            exposition totale
-          </div>
+          <Tooltip content={TIPS.capital.expositionTotale}>
+            <div className="text-[10px] text-white/40 font-mono mt-0.5 cursor-help">
+              exposition totale
+            </div>
+          </Tooltip>
         </div>
       </div>
 
       {byPair.length > 0 ? (
         <div className="space-y-2 pt-3 border-t border-glass-soft">
-          <div className="text-[9px] uppercase tracking-[0.2em] text-white/40">
-            Top 5 par risque
-          </div>
+          <LabelWithInfo
+            label={<span className="text-[9px] uppercase tracking-[0.2em] text-white/40">Top 5 par risque</span>}
+            tip={TIPS.capital.top5}
+          />
           {byPair.map((t) => {
             const pct = maxRiskPerTrade > 0 ? ((t.risk_money ?? 0) / maxRiskPerTrade) * 100 : 0;
             const isBuy = t.direction === 'buy';
@@ -395,7 +471,10 @@ function AssetClassBreakdownCard({ trades }: { trades: ActiveTrade[] }) {
   return (
     <GlassCard className="p-5 h-full">
       <div className="flex items-center justify-between mb-4">
-        <h3 className="text-sm font-semibold tracking-tight">Répartition</h3>
+        <LabelWithInfo
+          label={<h3 className="text-sm font-semibold tracking-tight">Répartition</h3>}
+          tip={TIPS.repartition.titre}
+        />
         <span className="text-[9px] text-white/40 font-mono uppercase tracking-wider">
           par classe d'actif
         </span>
@@ -407,10 +486,13 @@ function AssetClassBreakdownCard({ trades }: { trades: ActiveTrade[] }) {
           {entries.map(([cls, v]) => {
             const ac = cls as AssetClass;
             const pct = totalRisk > 0 ? (v.risk / totalRisk) * 100 : 0;
+            const classTip = (TIPS.repartition as Record<string, string>)[cls] ?? TIPS.repartition.unknown;
             return (
               <div key={cls} className="space-y-1">
                 <div className="flex items-center justify-between text-xs">
-                  <span className="text-white/80">{ASSET_CLASS_LABELS[ac] ?? cls}</span>
+                  <Tooltip content={classTip}>
+                    <span className="text-white/80 cursor-help">{ASSET_CLASS_LABELS[ac] ?? cls}</span>
+                  </Tooltip>
                   <span className="font-mono tabular-nums text-white/50">
                     {v.n} trade{v.n > 1 ? 's' : ''} · {formatPnl(v.risk)}
                   </span>
@@ -450,6 +532,15 @@ function ActiveTradesPanel({ trades }: { trades: ActiveTrade[] }) {
           {trades.length} ouvert{trades.length > 1 ? 's' : ''}
         </span>
       </div>
+      {/* Légende colonnes — uniquement desktop */}
+      <div className="hidden sm:grid grid-cols-[100px_60px_1fr_90px_90px_90px] items-center gap-4 pb-2 mb-2 px-3 text-[9px] uppercase tracking-[0.2em] text-white/30 font-mono">
+        <LabelWithInfo label="Paire" tip={TIPS.trade.pair} />
+        <LabelWithInfo label="Sens" tip={TIPS.trade.direction} />
+        <LabelWithInfo label="Entry → Now" tip={`${TIPS.trade.entryPrice} · ${TIPS.trade.currentPrice}`} />
+        <span className="text-right"><LabelWithInfo label="Dist. SL" tip={TIPS.trade.distanceSl} /></span>
+        <span className="text-right"><LabelWithInfo label="Risque" tip={TIPS.trade.riskMoney} /></span>
+        <span className="text-right"><LabelWithInfo label="PnL latent" tip={TIPS.trade.pnlUnrealized} /></span>
+      </div>
       <div className="space-y-2">
         {trades.map((t) => (
           <ActiveTradeRow key={t.id} trade={t} />
@@ -476,37 +567,51 @@ function ActiveTradeRow({ trade }: { trade: ActiveTrade }) {
       {/* Desktop : grille horizontale, mobile : stack */}
       <div className="grid grid-cols-2 sm:grid-cols-[100px_60px_1fr_90px_90px_90px] items-center gap-2 sm:gap-4">
         <div className="flex items-center gap-2 min-w-0 col-span-2 sm:col-span-1">
-          <span className="font-mono text-sm font-semibold truncate">{trade.pair}</span>
-          <span className="text-[9px] text-white/30 font-mono hidden sm:inline">
-            {trade.asset_class}
+          <Tooltip content={TIPS.trade.pair}>
+            <span className="font-mono text-sm font-semibold truncate cursor-help">{trade.pair}</span>
+          </Tooltip>
+          <Tooltip content={TIPS.trade.assetClass}>
+            <span className="text-[9px] text-white/30 font-mono hidden sm:inline cursor-help">
+              {trade.asset_class}
+            </span>
+          </Tooltip>
+        </div>
+        <Tooltip content={TIPS.trade.direction}>
+          <span
+            className={clsx(
+              'text-[9px] font-semibold uppercase tracking-widest px-1.5 py-0.5 rounded text-center w-fit cursor-help',
+              isBuy ? 'bg-cyan-400/10 text-cyan-300' : 'bg-pink-400/10 text-pink-300'
+            )}
+          >
+            {trade.direction}
           </span>
-        </div>
-        <span
-          className={clsx(
-            'text-[9px] font-semibold uppercase tracking-widest px-1.5 py-0.5 rounded text-center w-fit',
-            isBuy ? 'bg-cyan-400/10 text-cyan-300' : 'bg-pink-400/10 text-pink-300'
-          )}
-        >
-          {trade.direction}
-        </span>
-        <div className="text-xs text-white/60 font-mono tabular-nums truncate">
-          {formatPrice(trade.entry_price)}
-          {trade.current_price !== null && (
-            <>
-              <span className="mx-1 opacity-40">→</span>
-              <span className="text-white/80">{formatPrice(trade.current_price)}</span>
-            </>
-          )}
-        </div>
-        <div className="text-xs font-mono tabular-nums text-right text-white/50">
-          {trade.distance_to_sl_pct !== null ? `SL ${trade.distance_to_sl_pct}%` : '—'}
-        </div>
-        <div className="text-xs font-mono tabular-nums text-right text-rose-300/80">
-          {trade.risk_money !== null ? `-${formatPnl(trade.risk_money).replace('-', '')}` : '—'}
-        </div>
-        <div className={clsx('text-sm font-mono font-semibold tabular-nums text-right', pnlTone)}>
-          {trade.pnl_unrealized !== null ? formatPnl(trade.pnl_unrealized) : '—'}
-        </div>
+        </Tooltip>
+        <Tooltip content={`${TIPS.trade.entryPrice} · ${TIPS.trade.currentPrice}`}>
+          <div className="text-xs text-white/60 font-mono tabular-nums truncate cursor-help">
+            {formatPrice(trade.entry_price)}
+            {trade.current_price !== null && (
+              <>
+                <span className="mx-1 opacity-40">→</span>
+                <span className="text-white/80">{formatPrice(trade.current_price)}</span>
+              </>
+            )}
+          </div>
+        </Tooltip>
+        <Tooltip content={trade.near_sl ? TIPS.trade.nearSl : TIPS.trade.distanceSl}>
+          <div className="text-xs font-mono tabular-nums text-right text-white/50 cursor-help">
+            {trade.distance_to_sl_pct !== null ? `SL ${trade.distance_to_sl_pct}%` : '—'}
+          </div>
+        </Tooltip>
+        <Tooltip content={TIPS.trade.riskMoney}>
+          <div className="text-xs font-mono tabular-nums text-right text-rose-300/80 cursor-help">
+            {trade.risk_money !== null ? `-${formatPnl(trade.risk_money).replace('-', '')}` : '—'}
+          </div>
+        </Tooltip>
+        <Tooltip content={`${TIPS.trade.pnlUnrealized}${trade.pnl_pips !== null ? ` · ${trade.pnl_pips} pips` : ''}`}>
+          <div className={clsx('text-sm font-mono font-semibold tabular-nums text-right cursor-help', pnlTone)}>
+            {trade.pnl_unrealized !== null ? formatPnl(trade.pnl_unrealized) : '—'}
+          </div>
+        </Tooltip>
       </div>
     </motion.div>
   );
@@ -533,16 +638,22 @@ function FearGreedGauge({ snapshot }: { snapshot: FearGreedSnapshot | null }) {
     extreme_greed: { label: 'Extreme Greed', tone: 'from-emerald-400 to-lime-300' },
   };
   const cfg = labelMap[classif];
+  const classifTip = (TIPS.fearGreed as Record<string, string>)[classif] ?? TIPS.fearGreed.titre;
   return (
     <GlassCard className="p-5 h-full">
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-semibold tracking-tight">Fear &amp; Greed</h3>
+        <LabelWithInfo
+          label={<h3 className="text-sm font-semibold tracking-tight">Fear &amp; Greed</h3>}
+          tip={TIPS.fearGreed.titre}
+        />
         <span className="text-[9px] text-white/40 font-mono uppercase tracking-wider">CNN</span>
       </div>
-      <div className="flex items-baseline gap-3 mb-2">
-        <span className="text-4xl font-bold font-mono tabular-nums">{v}</span>
-        <span className="text-[10px] text-white/40 uppercase tracking-widest">/100</span>
-      </div>
+      <Tooltip content={TIPS.fearGreed.titre}>
+        <div className="flex items-baseline gap-3 mb-2 cursor-help">
+          <span className="text-4xl font-bold font-mono tabular-nums">{v}</span>
+          <span className="text-[10px] text-white/40 uppercase tracking-widest">/100</span>
+        </div>
+      </Tooltip>
       <div className="w-full h-2 rounded-full bg-white/5 overflow-hidden relative">
         <motion.div
           className={clsx('h-full rounded-full bg-gradient-to-r', cfg.tone)}
@@ -552,9 +663,11 @@ function FearGreedGauge({ snapshot }: { snapshot: FearGreedSnapshot | null }) {
         />
       </div>
       <div className="mt-2 text-xs font-semibold uppercase tracking-wider">
-        <span className={clsx('px-2 py-0.5 rounded-md border', `bg-gradient-to-r ${cfg.tone} bg-clip-text text-transparent border-glass-soft`)}>
-          {cfg.label}
-        </span>
+        <Tooltip content={classifTip}>
+          <span className={clsx('px-2 py-0.5 rounded-md border cursor-help', `bg-gradient-to-r ${cfg.tone} bg-clip-text text-transparent border-glass-soft`)}>
+            {cfg.label}
+          </span>
+        </Tooltip>
       </div>
     </GlassCard>
   );
@@ -580,29 +693,32 @@ function SystemHealthCard({
   return (
     <GlassCard className="p-5 h-full">
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-semibold tracking-tight">Santé système</h3>
+        <LabelWithInfo
+          label={<h3 className="text-sm font-semibold tracking-tight">Santé système</h3>}
+          tip={TIPS.sante.titre}
+        />
         <StatusDot active={!healthy} />
       </div>
       <ul className="space-y-1.5 text-xs text-white/70">
         <li className="flex justify-between">
-          <span>Cycle d'analyse</span>
+          <LabelWithInfo label="Cycle d'analyse" tip={TIPS.sante.cycle} />
           <span className={clsx('font-mono', healthy ? 'text-emerald-300' : 'text-rose-300')}>
             {secondsSince !== null ? `${Math.round(secondsSince)}s` : '—'}
           </span>
         </li>
         <li className="flex justify-between">
-          <span>Bridge MT5</span>
+          <LabelWithInfo label="Bridge MT5" tip={TIPS.sante.bridge} />
           <span className={clsx('font-mono', bridgeReachable ? 'text-emerald-300' : bridgeConfigured ? 'text-rose-300' : 'text-white/30')}>
             {bridgeConfigured ? (bridgeReachable ? 'UP' : 'DOWN') : 'N/A'}
           </span>
         </li>
         <li className="flex justify-between">
-          <span>Clients WS</span>
+          <LabelWithInfo label="Clients WS" tip={TIPS.sante.clientsWs} />
           <span className="font-mono">{wsClients}</span>
         </li>
         {sessionLabel && (
           <li className="flex justify-between">
-            <span>Session</span>
+            <LabelWithInfo label="Session" tip={TIPS.sante.session} />
             <span className="font-mono text-cyan-300">{sessionLabel}</span>
           </li>
         )}
@@ -617,10 +733,15 @@ function CotExtremesCard({ items }: { items: CotExtreme[] }) {
   return (
     <GlassCard className="p-5">
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-semibold tracking-tight">COT extremes</h3>
-        <span className="text-[9px] text-white/40 font-mono uppercase tracking-wider">
-          z ≥ 2σ / 52s
-        </span>
+        <LabelWithInfo
+          label={<h3 className="text-sm font-semibold tracking-tight">COT extremes</h3>}
+          tip={TIPS.cot.titre}
+        />
+        <Tooltip content={TIPS.cot.z}>
+          <span className="text-[9px] text-white/40 font-mono uppercase tracking-wider cursor-help">
+            z ≥ 2σ / 52s
+          </span>
+        </Tooltip>
       </div>
       {items.length === 0 ? (
         <p className="text-xs text-white/40">Aucun extrême cette semaine.</p>
@@ -629,12 +750,17 @@ function CotExtremesCard({ items }: { items: CotExtreme[] }) {
           {items.map((it) => (
             <div key={it.pair} className="border-l-2 border-cyan-400/30 pl-3">
               <div className="text-sm font-mono font-semibold">{it.pair}</div>
-              {it.signals.map((s, i) => (
-                <div key={i} className="text-[11px] text-white/60 leading-snug">
-                  <span className="font-mono tabular-nums text-cyan-300 mr-1.5">z={s.z}</span>
-                  {s.interpretation}
-                </div>
-              ))}
+              {it.signals.map((s, i) => {
+                const actorTip = (TIPS.cot as Record<string, string>)[s.actor] ?? TIPS.cot.titre;
+                return (
+                  <Tooltip key={i} content={actorTip}>
+                    <div className="text-[11px] text-white/60 leading-snug cursor-help">
+                      <span className="font-mono tabular-nums text-cyan-300 mr-1.5">z={s.z}</span>
+                      {s.interpretation}
+                    </div>
+                  </Tooltip>
+                );
+              })}
             </div>
           ))}
         </div>
@@ -655,7 +781,10 @@ function DriftCard() {
   return (
     <GlassCard className="p-5 h-full">
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-semibold tracking-tight">Drift détection</h3>
+        <LabelWithInfo
+          label={<h3 className="text-sm font-semibold tracking-tight">Drift détection</h3>}
+          tip={TIPS.drift.titre}
+        />
         <span className="text-[9px] text-white/40 font-mono uppercase tracking-wider">
           {data?.window_days ?? 7}j vs baseline
         </span>
@@ -663,21 +792,25 @@ function DriftCard() {
       {data?.error ? (
         <p className="text-xs text-rose-300/80">{data.error}</p>
       ) : top3.length === 0 ? (
-        <p className="text-xs text-white/40">Aucune régression détectée.</p>
+        <Tooltip content={TIPS.drift.action}>
+          <p className="text-xs text-white/40 cursor-help">Aucune régression détectée.</p>
+        </Tooltip>
       ) : (
         <div className="space-y-2">
           {top3.map((f: DriftFinding) => (
-            <div key={f.key} className="flex items-center justify-between text-xs">
-              <span className="font-mono text-white/85 truncate">{f.key}</span>
-              <div className="flex items-center gap-2">
-                <span className="font-mono tabular-nums text-white/50">
-                  {f.recent_win_rate_pct}% ← {f.baseline_win_rate_pct}%
-                </span>
-                <span className="font-mono font-semibold tabular-nums text-rose-300">
-                  {f.delta_pct}pts
-                </span>
+            <Tooltip key={f.key} content={`${TIPS.drift.delta} ${TIPS.drift.action}`}>
+              <div className="w-full flex items-center justify-between text-xs cursor-help">
+                <span className="font-mono text-white/85 truncate">{f.key}</span>
+                <div className="flex items-center gap-2">
+                  <span className="font-mono tabular-nums text-white/50">
+                    {f.recent_win_rate_pct}% ← {f.baseline_win_rate_pct}%
+                  </span>
+                  <span className="font-mono font-semibold tabular-nums text-rose-300">
+                    {f.delta_pct}pts
+                  </span>
+                </div>
               </div>
-            </div>
+            </Tooltip>
           ))}
         </div>
       )}
@@ -695,7 +828,10 @@ function NextEventsCard({
   return (
     <GlassCard className="p-5">
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-semibold tracking-tight">Events macro imminents</h3>
+        <LabelWithInfo
+          label={<h3 className="text-sm font-semibold tracking-tight">Events macro imminents</h3>}
+          tip={TIPS.events.titre}
+        />
         <span className="text-[9px] text-white/40 font-mono uppercase tracking-wider">
           ≤ 4h
         </span>
@@ -708,22 +844,31 @@ function NextEventsCard({
             const when = e.time?.includes('T')
               ? new Date(e.time).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
               : e.time;
+            const impact = (e.impact || '').toUpperCase();
             const impactTone =
-              (e.impact || '').toUpperCase() === 'HIGH'
+              impact === 'HIGH'
                 ? 'text-rose-300 border-rose-400/30 bg-rose-400/5'
                 : 'text-amber-300 border-amber-400/30 bg-amber-400/5';
+            const impactTip =
+              impact === 'HIGH'
+                ? TIPS.events.impactHigh
+                : impact === 'MEDIUM'
+                ? TIPS.events.impactMedium
+                : TIPS.events.impactLow;
             return (
               <div key={i} className="flex items-center justify-between text-xs">
                 <div className="flex items-center gap-2 min-w-0">
                   <span className="font-mono tabular-nums text-white/70 w-14 flex-shrink-0">
                     {when}
                   </span>
-                  <span className={clsx(
-                    'text-[9px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded border',
-                    impactTone
-                  )}>
-                    {e.impact || '—'}
-                  </span>
+                  <Tooltip content={impactTip}>
+                    <span className={clsx(
+                      'text-[9px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded border cursor-help',
+                      impactTone
+                    )}>
+                      {e.impact || '—'}
+                    </span>
+                  </Tooltip>
                   <span className="font-mono text-white/60 text-[11px] flex-shrink-0">
                     {e.currency}
                   </span>

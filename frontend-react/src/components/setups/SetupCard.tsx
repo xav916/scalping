@@ -5,8 +5,10 @@ import { GlassCard } from '@/components/ui/GlassCard';
 import { ConfidenceGauge } from '@/components/ui/ConfidenceGauge';
 import { Sparkline } from '@/components/ui/Sparkline';
 import { TiltWrapper } from '@/components/ui/TiltWrapper';
+import { Tooltip } from '@/components/ui/Tooltip';
 import { useAllCandles } from '@/hooks/useCandles';
 import { formatPrice } from '@/lib/format';
+import { TIPS } from '@/lib/metricTips';
 
 interface Props {
   setup: TradeSetup;
@@ -64,24 +66,34 @@ export function SetupCard({ setup, onClick }: Props) {
 
         <div className="relative flex items-start justify-between mb-4 gap-4">
           <div className="min-w-0 flex-1">
-            <div className="text-xl font-mono font-bold tracking-tight truncate">{setup.pair}</div>
+            <Tooltip content={TIPS.trade.pair}>
+              <div className="text-xl font-mono font-bold tracking-tight truncate cursor-help">{setup.pair}</div>
+            </Tooltip>
             <div className="flex items-center gap-2 mt-1">
-              <span
-                className={clsx(
-                  'text-[10px] font-semibold uppercase tracking-widest px-2 py-0.5 rounded-md',
-                  isBuy ? 'bg-cyan-400/10 text-cyan-300 border border-cyan-400/20' : 'bg-pink-400/10 text-pink-300 border border-pink-400/20'
-                )}
-              >
-                {setup.direction}
-              </span>
-              {rr && (
-                <span className="text-[10px] text-white/40 font-mono uppercase tracking-wider">
-                  R:R {rr}
+              <Tooltip content={TIPS.trade.direction}>
+                <span
+                  className={clsx(
+                    'text-[10px] font-semibold uppercase tracking-widest px-2 py-0.5 rounded-md cursor-help',
+                    isBuy ? 'bg-cyan-400/10 text-cyan-300 border border-cyan-400/20' : 'bg-pink-400/10 text-pink-300 border border-pink-400/20'
+                  )}
+                >
+                  {setup.direction}
                 </span>
+              </Tooltip>
+              {rr && (
+                <Tooltip content={TIPS.setup.rr}>
+                  <span className="text-[10px] text-white/40 font-mono uppercase tracking-wider cursor-help">
+                    R:R {rr}
+                  </span>
+                </Tooltip>
               )}
             </div>
           </div>
-          <ConfidenceGauge score={setup.confidence_score} variant={isBuy ? 'buy' : 'sell'} size={56} />
+          <Tooltip content={TIPS.setup.confidenceGauge}>
+            <div className="cursor-help">
+              <ConfidenceGauge score={setup.confidence_score} variant={isBuy ? 'buy' : 'sell'} size={56} />
+            </div>
+          </Tooltip>
         </div>
 
         {/* Sparkline sur les 30 dernières candles 5min, overlay SL/Entry/TP */}
@@ -102,9 +114,9 @@ export function SetupCard({ setup, onClick }: Props) {
         {/* Prix : entry centré, SL/TP flanquant */}
         <div className="relative mt-4">
           <div className="grid grid-cols-3 gap-2">
-            <PriceBox label="SL" value={formatPrice(setup.stop_loss)} tone="rose" />
-            <PriceBox label="Entry" value={formatPrice(setup.entry_price)} tone="neutral" highlight />
-            <PriceBox label="TP1" value={formatPrice(setup.take_profit_1)} tone="emerald" />
+            <PriceBox label="SL" value={formatPrice(setup.stop_loss)} tone="rose" tip={TIPS.trade.stopLoss} />
+            <PriceBox label="Entry" value={formatPrice(setup.entry_price)} tone="neutral" highlight tip={TIPS.trade.entryPrice} />
+            <PriceBox label="TP1" value={formatPrice(setup.take_profit_1)} tone="emerald" tip={TIPS.trade.takeProfit} />
           </div>
         </div>
 
@@ -117,16 +129,22 @@ export function SetupCard({ setup, onClick }: Props) {
         {/* Badge TAKE/WAIT/SKIP si présent */}
         {setup.verdict_action && (
           <div className="relative mt-3 flex items-center gap-2">
-            <span
-              className={clsx(
-                'text-[9px] font-bold uppercase tracking-[0.2em] px-2 py-1 rounded border',
-                setup.verdict_action === 'TAKE' && 'bg-emerald-400/10 text-emerald-300 border-emerald-400/30',
-                setup.verdict_action === 'WAIT' && 'bg-amber-400/10 text-amber-300 border-amber-400/30',
-                setup.verdict_action === 'SKIP' && 'bg-white/5 text-white/40 border-glass-soft'
-              )}
-            >
-              {setup.verdict_action}
-            </span>
+            <Tooltip content={
+              setup.verdict_action === 'TAKE' ? TIPS.setup.verdictTake
+              : setup.verdict_action === 'WAIT' ? TIPS.setup.verdictWait
+              : TIPS.setup.verdictSkip
+            }>
+              <span
+                className={clsx(
+                  'text-[9px] font-bold uppercase tracking-[0.2em] px-2 py-1 rounded border cursor-help',
+                  setup.verdict_action === 'TAKE' && 'bg-emerald-400/10 text-emerald-300 border-emerald-400/30',
+                  setup.verdict_action === 'WAIT' && 'bg-amber-400/10 text-amber-300 border-amber-400/30',
+                  setup.verdict_action === 'SKIP' && 'bg-white/5 text-white/40 border-glass-soft'
+                )}
+              >
+                {setup.verdict_action}
+              </span>
+            </Tooltip>
           </div>
         )}
       </GlassCard>
@@ -140,25 +158,29 @@ function PriceBox({
   value,
   tone,
   highlight = false,
+  tip,
 }: {
   label: string;
   value: string;
   tone: 'rose' | 'emerald' | 'neutral';
   highlight?: boolean;
+  tip?: React.ReactNode;
 }) {
   const toneCls =
     tone === 'rose' ? 'text-rose-300' : tone === 'emerald' ? 'text-emerald-300' : 'text-white/90';
-  return (
+  const content = (
     <div
       className={clsx(
         'rounded-lg p-2 text-center transition-colors',
         highlight
           ? 'bg-white/[0.04] border border-glass-soft'
-          : 'bg-transparent'
+          : 'bg-transparent',
+        tip && 'cursor-help'
       )}
     >
       <div className="text-[9px] uppercase tracking-wider text-white/40 mb-1">{label}</div>
       <div className={clsx('font-mono text-sm font-semibold tabular-nums', toneCls)}>{value}</div>
     </div>
   );
+  return tip ? <Tooltip content={tip}>{content}</Tooltip> : content;
 }

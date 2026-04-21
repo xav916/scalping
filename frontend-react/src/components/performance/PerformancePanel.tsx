@@ -5,7 +5,9 @@ import { usePerformance } from '@/hooks/usePerformance';
 import { GlassCard } from '@/components/ui/GlassCard';
 import { GradientText } from '@/components/ui/GradientText';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { Tooltip, LabelWithInfo } from '@/components/ui/Tooltip';
 import { formatPct, formatPnl } from '@/lib/format';
+import { TIPS } from '@/lib/metricTips';
 import type { InsightsBucket } from '@/types/domain';
 
 type TabKey =
@@ -58,25 +60,43 @@ function BucketRow({ b, index }: { b: InsightsBucket; index: number }) {
       transition={{ duration: 0.3, delay: index * 0.04 }}
       className="grid grid-cols-[minmax(80px,140px)_auto_1fr_48px_80px] sm:grid-cols-[140px_auto_1fr_56px_96px] items-center gap-2 sm:gap-4 py-3 border-b border-glass-soft last:border-none"
     >
-      <div className="font-mono text-sm text-white/85 truncate">{b.bucket}</div>
-      <div className="text-[10px] text-white/40 tabular-nums uppercase tracking-wider">
-        {b.count} {b.count === 1 ? 'trade' : 'trades'}
-      </div>
-      <WinRateBar pct={winPct} />
-      <div className={clsx('text-xs font-semibold font-mono tabular-nums text-right', winTone)}>
-        {formatPct(winPct)}
-      </div>
-      <div className={clsx('text-xs font-mono font-semibold tabular-nums text-right', pnlTone)}>
-        {formatPnl(b.total_pnl)}
-      </div>
+      <Tooltip content={TIPS.perf.bucketName}>
+        <div className="font-mono text-sm text-white/85 truncate cursor-help">{b.bucket}</div>
+      </Tooltip>
+      <Tooltip content={TIPS.perf.bucketCount}>
+        <div className="text-[10px] text-white/40 tabular-nums uppercase tracking-wider cursor-help">
+          {b.count} {b.count === 1 ? 'trade' : 'trades'}
+        </div>
+      </Tooltip>
+      <Tooltip content={TIPS.perf.bucketWinrate}>
+        <div className="cursor-help">
+          <WinRateBar pct={winPct} />
+        </div>
+      </Tooltip>
+      <Tooltip content={TIPS.perf.bucketWinrate}>
+        <div className={clsx('text-xs font-semibold font-mono tabular-nums text-right cursor-help', winTone)}>
+          {formatPct(winPct)}
+        </div>
+      </Tooltip>
+      <Tooltip content={TIPS.perf.bucketPnl}>
+        <div className={clsx('text-xs font-mono font-semibold tabular-nums text-right cursor-help', pnlTone)}>
+          {formatPnl(b.total_pnl)}
+        </div>
+      </Tooltip>
     </motion.div>
   );
 }
 
-function Kpi({ label, value }: { label: string; value: React.ReactNode }) {
+function Kpi({ label, value, tip }: { label: string; value: React.ReactNode; tip?: React.ReactNode }) {
   return (
     <div className="text-right">
-      <div className="text-[9px] uppercase tracking-[0.2em] text-white/40 mb-0.5">{label}</div>
+      <div className="text-[9px] uppercase tracking-[0.2em] text-white/40 mb-0.5 flex items-center justify-end gap-1.5">
+        {tip ? (
+          <LabelWithInfo label={<span>{label}</span>} tip={tip} />
+        ) : (
+          <span>{label}</span>
+        )}
+      </div>
       <div className="text-lg font-bold tabular-nums leading-none">{value}</div>
     </div>
   );
@@ -109,16 +129,20 @@ export function PerformancePanel() {
     <GlassCard variant="elevated" className="p-6">
       <div className="flex items-start justify-between mb-5 gap-4 flex-wrap">
         <div>
-          <h2 className="text-lg font-semibold tracking-tight">Performance</h2>
+          <LabelWithInfo
+            label={<h2 className="text-lg font-semibold tracking-tight">Performance</h2>}
+            tip={TIPS.perf.titreBucket}
+          />
           <p className="text-[10px] text-white/40 mt-1 uppercase tracking-[0.2em]">
             Depuis le post-fix · données agrégées
           </p>
         </div>
         <div className="flex items-center gap-4 sm:gap-6">
-          <Kpi label="Trades" value={<span className="font-mono">{data.total_trades}</span>} />
-          <Kpi label="Win rate" value={<GradientText>{formatPct(data.win_rate ?? 0)}</GradientText>} />
+          <Kpi label="Trades" tip={TIPS.perf.tradesTotal} value={<span className="font-mono">{data.total_trades}</span>} />
+          <Kpi label="Win rate" tip={TIPS.perf.winRateGlobal} value={<GradientText>{formatPct(data.win_rate ?? 0)}</GradientText>} />
           <Kpi
             label="PnL"
+            tip={TIPS.perf.pnlTotal}
             value={<span className={clsx('font-mono', pnlTone)}>{formatPnl(data.total_pnl ?? 0)}</span>}
           />
         </div>

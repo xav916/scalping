@@ -3,6 +3,8 @@ import { motion } from 'motion/react';
 import { useMacro } from '@/hooks/useMacro';
 import { GlassCard } from '@/components/ui/GlassCard';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { Tooltip } from '@/components/ui/Tooltip';
+import { TIPS } from '@/lib/metricTips';
 import type { MacroDirection, MacroSnapshot, VixLevel } from '@/types/domain';
 
 function DirectionArrow({ d }: { d: MacroDirection }) {
@@ -27,19 +29,21 @@ function Pill({
   children,
   tone,
   index = 0,
+  tip,
 }: {
   label: string;
   children: React.ReactNode;
   tone: string;
   index?: number;
+  tip?: React.ReactNode;
 }) {
-  return (
+  const content = (
     <motion.div
       initial={{ opacity: 0, y: -6, scale: 0.95 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
       transition={{ duration: 0.35, delay: 0.05 * index, ease: 'easeOut' }}
       className={clsx(
-        'flex items-center gap-2 px-3.5 py-2 rounded-xl border backdrop-blur-glass transition-colors',
+        'flex items-center gap-2 px-3.5 py-2 rounded-xl border backdrop-blur-glass transition-colors cursor-help',
         tone
       )}
     >
@@ -47,6 +51,7 @@ function Pill({
       <span className="flex items-center gap-1 text-sm font-mono font-semibold">{children}</span>
     </motion.div>
   );
+  return tip ? <Tooltip content={tip}>{content}</Tooltip> : content;
 }
 
 function toneForRegime(regime: MacroSnapshot['risk_regime']): string {
@@ -96,29 +101,29 @@ export function MacroBanner() {
     >
       <GlassCard className="p-4">
         <div className="flex flex-wrap items-center gap-2.5">
-          <Pill label="Régime" tone={toneForRegime(data.risk_regime)} index={0}>
+          <Pill label="Régime" tone={toneForRegime(data.risk_regime)} index={0} tip={TIPS.macro.risk_regime}>
             <span className="tracking-[0.15em] text-xs">{regimeLabel(data.risk_regime)}</span>
           </Pill>
-          <Pill label="DXY" tone={toneForDirection(data.dxy)} index={1}>
+          <Pill label="DXY" tone={toneForDirection(data.dxy)} index={1} tip={TIPS.macro.dxy}>
             <DirectionArrow d={data.dxy} />
           </Pill>
-          <Pill label="SPX" tone={toneForDirection(data.spx)} index={2}>
+          <Pill label="SPX" tone={toneForDirection(data.spx)} index={2} tip={TIPS.macro.spx}>
             <DirectionArrow d={data.spx} />
           </Pill>
-          <Pill label="VIX" tone={toneForVix(data.vix_level)} index={3}>
+          <Pill label="VIX" tone={toneForVix(data.vix_level)} index={3} tip={TIPS.macro.vix}>
             <span className="text-xs uppercase tracking-wider opacity-70">{data.vix_level}</span>
             <span className="tabular-nums">{data.vix_value.toFixed(1)}</span>
           </Pill>
-          <Pill label="US10Y" tone={toneForDirection(data.us10y)} index={4}>
+          <Pill label="US10Y" tone={toneForDirection(data.us10y)} index={4} tip={TIPS.macro.us10y}>
             <DirectionArrow d={data.us10y} />
           </Pill>
-          <Pill label="Gold" tone={toneForDirection(data.gold)} index={5}>
+          <Pill label="Gold" tone={toneForDirection(data.gold)} index={5} tip={TIPS.macro.gold}>
             <DirectionArrow d={data.gold} />
           </Pill>
-          <Pill label="Oil" tone={toneForDirection(data.oil)} index={6}>
+          <Pill label="Oil" tone={toneForDirection(data.oil)} index={6} tip={TIPS.macro.oil}>
             <DirectionArrow d={data.oil} />
           </Pill>
-          <Pill label="Nikkei" tone={toneForDirection(data.nikkei)} index={7}>
+          <Pill label="Nikkei" tone={toneForDirection(data.nikkei)} index={7} tip={TIPS.macro.nikkei}>
             <DirectionArrow d={data.nikkei} />
           </Pill>
         </div>

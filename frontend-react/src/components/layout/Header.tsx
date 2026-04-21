@@ -5,7 +5,9 @@ import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useWebSocket, type WSStatus } from '@/hooks/useWebSocket';
 import { useAudioAlerts } from '@/hooks/useAudioAlerts';
+import { Tooltip } from '@/components/ui/Tooltip';
 import { formatParisTime } from '@/lib/format';
+import { TIPS } from '@/lib/metricTips';
 
 function StatusDot({ status }: { status: WSStatus }) {
   const base = 'relative inline-block w-2 h-2 rounded-full';
@@ -64,9 +66,11 @@ export function Header() {
         <span className="text-base sm:text-xl font-semibold tracking-tight whitespace-nowrap">
           <span className="hidden xs:inline">📡 </span>Scalping Radar
         </span>
-        <span className="text-[10px] font-mono font-semibold text-cyan-300/80 px-2 py-0.5 rounded-md bg-cyan-400/10 border border-cyan-400/20 shadow-[0_0_12px_rgba(34,211,238,0.15)]">
-          V2
-        </span>
+        <Tooltip content={TIPS.header.v2Badge}>
+          <span className="text-[10px] font-mono font-semibold text-cyan-300/80 px-2 py-0.5 rounded-md bg-cyan-400/10 border border-cyan-400/20 shadow-[0_0_12px_rgba(34,211,238,0.15)] cursor-help">
+            V2
+          </span>
+        </Tooltip>
         <nav className="hidden sm:flex items-center gap-1 ml-2">
           {NAV_LINKS.map((l) => {
             const active = location.pathname === l.to;
@@ -94,33 +98,39 @@ export function Header() {
           <span className="text-[9px] uppercase tracking-[0.2em] text-white/40">Paris</span>
         </div>
         {/* Status LIVE/SYNC/OFFLINE */}
-        <div
-          className={clsx(
-            'flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg border',
-            status === 'open' && 'bg-emerald-400/10 border-emerald-400/30',
-            status === 'connecting' && 'bg-amber-400/10 border-amber-400/30',
-            status === 'closed' && 'bg-rose-400/10 border-rose-400/30'
-          )}
-        >
-          <StatusDot status={status} />
-          <span
+        <Tooltip content={
+          status === 'open' ? TIPS.header.statusLive
+          : status === 'connecting' ? TIPS.header.statusSync
+          : TIPS.header.statusOffline
+        }>
+          <div
             className={clsx(
-              'text-[9px] sm:text-[10px] font-bold uppercase tracking-[0.15em] sm:tracking-[0.2em]',
-              status === 'open' && 'text-emerald-300',
-              status === 'connecting' && 'text-amber-300',
-              status === 'closed' && 'text-rose-300'
+              'flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg border cursor-help',
+              status === 'open' && 'bg-emerald-400/10 border-emerald-400/30',
+              status === 'connecting' && 'bg-amber-400/10 border-amber-400/30',
+              status === 'closed' && 'bg-rose-400/10 border-rose-400/30'
             )}
           >
-            {statusLabel(status)}
-          </span>
-        </div>
+            <StatusDot status={status} />
+            <span
+              className={clsx(
+                'text-[9px] sm:text-[10px] font-bold uppercase tracking-[0.15em] sm:tracking-[0.2em]',
+                status === 'open' && 'text-emerald-300',
+                status === 'connecting' && 'text-amber-300',
+                status === 'closed' && 'text-rose-300'
+              )}
+            >
+              {statusLabel(status)}
+            </span>
+          </div>
+        </Tooltip>
         {/* Son ON/OFF — bip discret sur nouveau setup TAKE */}
+        <Tooltip content={audioEnabled ? TIPS.header.soundOn : TIPS.header.soundOff}>
         <button
           type="button"
           onClick={toggleAudio}
           aria-pressed={audioEnabled}
           aria-label={audioEnabled ? 'Désactiver les alertes audio' : 'Activer les alertes audio'}
-          title={audioEnabled ? 'Alertes son activées — clic pour désactiver' : 'Alertes son désactivées — clic pour activer'}
           className={clsx(
             'flex items-center justify-center w-8 h-8 sm:w-9 sm:h-9 rounded-lg border transition-all',
             audioEnabled
@@ -142,6 +152,7 @@ export function Header() {
             </svg>
           )}
         </button>
+        </Tooltip>
         {/* Logout */}
         {whoami.data && (
           <button
