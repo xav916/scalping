@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useSetups } from '@/hooks/useSetups';
 import { playTakeAlert, unlockAudio } from '@/lib/audioAlerts';
+import { useToast } from '@/components/ui/Toast';
 import type { TradeSetup } from '@/types/domain';
 
 const STORAGE_KEY = 'scalping:audio-alerts';
@@ -28,6 +29,7 @@ function takeKey(s: TradeSetup): string {
 export function useAudioAlerts(): { enabled: boolean; toggle: () => void } {
   const [enabled, setEnabled] = useState<boolean>(() => readPref());
   const { data } = useSetups();
+  const toast = useToast();
   const previousKeysRef = useRef<Set<string> | null>(null);
 
   useEffect(() => {
@@ -35,21 +37,35 @@ export function useAudioAlerts(): { enabled: boolean; toggle: () => void } {
     const takeSetups = data.filter((s) => s.verdict_action === 'TAKE');
     const currentKeys = new Set(takeSetups.map(takeKey));
     const previous = previousKeysRef.current;
-    // Premier render : on enregistre l'état initial sans bip.
+    // Premier render : on enregistre l'état initial sans bip ni toast.
     if (previous === null) {
       previousKeysRef.current = currentKeys;
       return;
     }
-    if (enabled) {
-      for (const key of currentKeys) {
-        if (!previous.has(key)) {
-          playTakeAlert();
-          break; // un seul bip même si plusieurs nouveaux TAKE arrivent en même temps
-        }
+    // Détecte les nouveaux TAKE et notifie (toast + audio si activé)
+    const newTakes: TradeSetup[] = [];
+    for (const s of takeSetups) {
+      if (!previous.has(takeKey(s))) {
+        newTakes.push(s);
       }
     }
+    if (newTakes.length > 0) {
+      // Toast toujours affiché, même si audio off (le toast est moins intrusif)
+      const first = newTakes[0];
+      const title =
+        newTakes.length === 1
+          ? `Setup TAKE · ${first.pair}`
+          : `${newTakes.length} nouveaux setups TAKE`;
+      const message =
+        newTakes.length === 1
+          ? `${first.direction.toUpperCase()} · confidence ${first.confidence_score}`
+          : newTakes.map((s) => s.pair).slice(0, 3).join(', ') + (newTakes.length > 3 ? '…' : '');
+      toast.success(title, message);
+      // Audio uniquement si activé (le toggle du Header)
+      if (enabled) playTakeAlert();
+    }
     previousKeysRef.current = currentKeys;
-  }, [data, enabled]);
+  }, [data, enabled, toast]);
 
   const toggle = useCallback(() => {
     setEnabled((prev) => {

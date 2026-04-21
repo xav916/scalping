@@ -2,6 +2,7 @@ import { Navigate, Outlet } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { MobileBottomNav } from '@/components/layout/MobileBottomNav';
+import { CommandPalette } from '@/components/ui/CommandPalette';
 
 export function AuthGate() {
   const { whoami } = useAuth();
@@ -24,6 +25,7 @@ export function AuthGate() {
         <Outlet />
       </div>
       <MobileBottomNav />
+      <CommandPalette />
     </>
   );
 }

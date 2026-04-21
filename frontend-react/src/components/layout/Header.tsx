@@ -106,6 +106,16 @@ export function Header() {
         </nav>
       </div>
       <div className="flex items-center gap-2 sm:gap-5 text-sm text-white/70">
+        {/* Indice palette ⌘K (desktop uniquement, discret) */}
+        <Tooltip content="Palette de commandes — navigation rapide et actions système. Raccourci : Ctrl+K (ou ⌘K sur Mac).">
+          <span
+            className="hidden md:inline-flex items-center gap-1 text-[10px] font-mono text-white/40 border border-glass-soft rounded-md px-1.5 py-0.5 hover:text-white/70 hover:border-glass-strong transition-colors"
+            aria-hidden
+          >
+            <span>⌘</span>
+            <span>K</span>
+          </span>
+        </Tooltip>
         {/* Heure Paris — masquée sur très petit écran */}
         <div className="hidden md:flex items-baseline gap-2">
           <span className="font-mono tabular-nums text-base text-white/90">{now}</span>

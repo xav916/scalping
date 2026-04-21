@@ -4,6 +4,7 @@ import { SetupsGrid } from '@/components/setups/SetupsGrid';
 import { PerformancePanel } from '@/components/performance/PerformancePanel';
 import { EquityCurveMini } from '@/components/performance/EquityCurveMini';
 import { SessionClock } from '@/components/sessions/SessionClock';
+import { LiveChartsGrid } from '@/components/market/LiveChartsGrid';
 import { ReactiveMeshGradient } from '@/components/ui/ReactiveMeshGradient';
 
 export function DashboardPage() {
@@ -14,6 +15,9 @@ export function DashboardPage() {
       <main className="px-6 py-6 max-w-[1500px] mx-auto space-y-6">
         {/* Row 1 : bandeau macro pleine largeur */}
         <MacroBanner />
+
+        {/* Row 1 bis : prix live des paires principales (heartbeat marché) */}
+        <LiveChartsGrid />
 
         {/* Row 2 : bento — setups (gauche large) + rail droit (SessionClock + EquityCurveMini) */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">

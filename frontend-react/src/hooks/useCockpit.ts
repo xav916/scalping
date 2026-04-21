@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import { useToast } from '@/components/ui/Toast';
 
 /** Drift scan (poll toutes les 5 min, endpoint plus lourd). */
 export function useDrift() {
@@ -46,6 +47,7 @@ export function useCockpit() {
 
 export function useKillSwitch() {
   const qc = useQueryClient();
+  const toast = useToast();
   const query = useQuery({
     queryKey: ['kill-switch'],
     queryFn: api.killSwitchStatus,
@@ -54,9 +56,20 @@ export function useKillSwitch() {
   const mutation = useMutation({
     mutationFn: ({ enabled, reason }: { enabled: boolean; reason?: string }) =>
       api.killSwitchSet(enabled, reason),
-    onSuccess: () => {
+    onSuccess: (_, variables) => {
       qc.invalidateQueries({ queryKey: ['kill-switch'] });
       qc.invalidateQueries({ queryKey: ['cockpit'] });
+      if (variables.enabled) {
+        toast.warning(
+          'Kill switch activé',
+          `Auto-exec gelé${variables.reason ? ` · ${variables.reason}` : ''}`
+        );
+      } else {
+        toast.success('Kill switch désactivé', 'Auto-exec opérationnel');
+      }
+    },
+    onError: (err) => {
+      toast.error('Kill switch — erreur', String(err).slice(0, 120));
     },
   });
   return { query, mutation };
