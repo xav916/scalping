@@ -4,6 +4,7 @@ import { motion } from 'motion/react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useWebSocket, type WSStatus } from '@/hooks/useWebSocket';
+import { useAudioAlerts } from '@/hooks/useAudioAlerts';
 import { formatParisTime } from '@/lib/format';
 
 function StatusDot({ status }: { status: WSStatus }) {
@@ -47,6 +48,7 @@ const NAV_LINKS = [
 export function Header() {
   const { whoami, logout } = useAuth();
   const { status } = useWebSocket();
+  const { enabled: audioEnabled, toggle: toggleAudio } = useAudioAlerts();
   const location = useLocation();
   const [now, setNow] = useState(() => formatParisTime());
 
@@ -111,6 +113,21 @@ export function Header() {
             {statusLabel(status)}
           </span>
         </div>
+        {/* Son ON/OFF — bip discret sur nouveau setup TAKE */}
+        <button
+          type="button"
+          onClick={toggleAudio}
+          aria-pressed={audioEnabled}
+          title={audioEnabled ? 'Alertes son activées — clic pour désactiver' : 'Alertes son désactivées — clic pour activer'}
+          className={clsx(
+            'text-xs px-2 py-1 sm:py-1.5 rounded-lg border transition-all font-mono',
+            audioEnabled
+              ? 'border-cyan-400/30 bg-cyan-400/10 text-cyan-300 shadow-[0_0_12px_rgba(34,211,238,0.15)]'
+              : 'border-glass-soft text-white/40 hover:text-white/70 hover:bg-white/5'
+          )}
+        >
+          {audioEnabled ? '♪' : '♪̸'}
+        </button>
         {/* Logout */}
         {whoami.data && (
           <button
