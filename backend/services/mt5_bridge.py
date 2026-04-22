@@ -32,6 +32,7 @@ from config.settings import (
     MT5_BRIDGE_ALLOWED_ASSET_CLASSES,
     MT5_BRIDGE_MIN_SL_DISTANCE_PCT,
     MT5_BRIDGE_MIN_SL_DISTANCE_PCT_PER_CLASS,
+    MT5_BRIDGE_MAX_POSITIONS_PER_PAIR,
     TRADING_CAPITAL,
     RISK_PER_TRADE_PCT,
     asset_class_for,
@@ -98,6 +99,35 @@ def _min_sl_distance_pct_for(pair: str) -> float:
     return MT5_BRIDGE_MIN_SL_DISTANCE_PCT
 
 
+def _max_positions_for_pair(pair: str) -> int:
+    """Cap de positions simultanées pour cette pair, via asset class."""
+    cfg = MT5_BRIDGE_MAX_POSITIONS_PER_PAIR or {}
+    asset_class = asset_class_for(pair)
+    if asset_class in cfg:
+        return int(cfg[asset_class])
+    return 2  # défaut générique
+
+
+def _count_open_trades_for_pair(pair: str) -> int:
+    """Compte les trades auto encore OPEN pour cette pair (source : DB
+    locale personal_trades). Évite un round-trip bridge."""
+    try:
+        import sqlite3
+        from backend.services.trade_log_service import _DB_PATH
+        with sqlite3.connect(_DB_PATH) as c:
+            row = c.execute(
+                """
+                SELECT COUNT(*) FROM personal_trades
+                 WHERE is_auto = 1 AND status = 'OPEN' AND pair = ?
+                """,
+                (pair,),
+            ).fetchone()
+        return int(row[0]) if row else 0
+    except Exception as e:
+        logger.debug(f"mt5_bridge: count_open_trades_for_pair({pair}) failed: {e}")
+        return 0
+
+
 def _check_rejection(setup) -> str | None:
     """Retourne None si le setup peut être pushé, sinon un reason_code parmi
     ceux définis dans `rejection_service.REASON_LABELS_FR`. Seuls les cas qui
@@ -138,6 +168,14 @@ def _check_rejection(setup) -> str | None:
     score = getattr(setup, "confidence_score", None) or 0
     if score < MT5_BRIDGE_MIN_CONFIDENCE:
         return "below_confidence"
+    # Cap par pair : forcer la diversification. Le backtest a montré qu'on
+    # peut avoir jusqu'à 5-7 trades XAU simultanés sur un même régime, ce
+    # qui transforme 1 pari macro en 5-7 pertes corrélées si le régime
+    # tourne. Limite configurable par asset class.
+    open_count = _count_open_trades_for_pair(setup.pair)
+    max_allowed = _max_positions_for_pair(setup.pair)
+    if open_count >= max_allowed:
+        return "max_positions_per_pair"
     return None
 
 

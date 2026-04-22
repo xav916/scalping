@@ -38,6 +38,7 @@ REASON_LABELS_FR = {
     "sl_too_close": "SL trop serré",
     "below_confidence": "Confiance < seuil",
     "asset_class_blocked": "Classe d'actif bloquée",
+    "max_positions_per_pair": "Cap positions par pair",
     "bridge_max_positions": "Cap positions bridge",
     "bridge_invalid_stops": "Bridge : stops invalides",
     "bridge_error": "Bridge : erreur autre",
