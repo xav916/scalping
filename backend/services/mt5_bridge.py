@@ -69,21 +69,20 @@ def _cleanup_old_keys() -> None:
             _sent_setups_today.discard(key)
 
 
-def _should_push(setup) -> bool:
+def _check_rejection(setup) -> str | None:
+    """Retourne None si le setup peut être pushé, sinon un reason_code parmi
+    ceux définis dans `rejection_service.REASON_LABELS_FR`. Seuls les cas qui
+    représentent un "ordre perdu" sont loggés — pas les early-returns purement
+    techniques (bridge non configuré, dedup, etc.).
+    """
     if not is_configured():
-        return False
-    # Kill switch global : coupe l'auto-exec si perte journaliere atteinte
-    # ou si un flag manuel est actif. Ne bloque PAS l'emission de signaux
-    # (UI, Telegram), seulement l'envoi au bridge.
+        return "_not_configured"  # privé, non enregistré
     try:
         from backend.services import kill_switch
         if kill_switch.is_active():
-            return False
+            return "kill_switch"
     except Exception as e:
         logger.debug(f"mt5_bridge: kill_switch check failed: {e}")
-    # Event blackout : ne pas executer dans la fenetre +/-15min autour
-    # d'un event HIGH-impact sur une devise de la paire. Le signal reste
-    # visible cote UI / Telegram — seul l'auto-exec est coupe.
     try:
         from backend.services import event_blackout
         bo = event_blackout.is_blackout_for(setup.pair)
@@ -91,55 +90,61 @@ def _should_push(setup) -> bool:
             logger.info(
                 f"mt5_bridge: blackout event pour {setup.pair} — {bo['reason']}"
             )
-            return False
+            return "event_blackout"
     except Exception as e:
         logger.debug(f"mt5_bridge: event_blackout check failed: {e}")
-    # Jamais d'auto-exec sur candles simulées : le fallback price_service utilise
-    # un prix hardcodé (2650 pour la plupart des pairs), ce qui produit un
-    # entry/SL/TP fantôme que MT5 refuse via rc=10016 INVALID_STOPS. Le flag
-    # is_simulated remonte depuis fetch_candles jusqu'au TradeSetup.
     if getattr(setup, "is_simulated", False):
-        return False
-    # Respecter uniquement les blockers durs (marché fermé, macro veto) —
-    # pas le verdict_action lui-même, qui tag aussi SKIP sur "score < 75"
-    # (le scoring de base atteint rarement 75 donc le gate TAKE produisait
-    # 0 auto-exec en pratique).
+        return "simulated_data"
     if getattr(setup, "verdict_blockers", None):
-        return False
-    # Skip si marché fermé pour cette pair (daily break métaux 21-22h UTC,
-    # weekends forex/metal/indices/energy, etc.). Évite de polluer l'audit
-    # bridge avec des rc=10018 MARKET_CLOSED prévisibles.
+        return "verdict_blocker"
     if not is_market_open_for(setup.pair):
-        return False
-    # Skip si SL trop proche du prix d'entrée : |entry-sl|/entry < min_pct.
-    # Rejets rc=10016 INVALID_STOPS observés sur EUR/JPY scalping 3.8 pips.
+        return "market_closed"
     entry = getattr(setup, "entry_price", 0) or 0
     sl = getattr(setup, "stop_loss", 0) or 0
     if entry > 0 and sl > 0:
         sl_pct = abs(entry - sl) / entry * 100
         if sl_pct < MT5_BRIDGE_MIN_SL_DISTANCE_PCT:
-            return False
+            return "sl_too_close"
     score = getattr(setup, "confidence_score", None) or 0
     if score < MT5_BRIDGE_MIN_CONFIDENCE:
-        return False
-    return True
+        return "below_confidence"
+    return None
+
+
+def _should_push(setup) -> bool:
+    """Backward-compat : True si OK, False si rejeté."""
+    return _check_rejection(setup) is None
 
 
 async def send_setup(setup) -> None:
     """Push un trade_setup vers le bridge MT5 local si toutes les conditions
     sont remplies (verdict TAKE, seuil, dedup)."""
-    if not _should_push(setup):
+    from backend.services.rejection_service import record_rejection
+
+    rejection = _check_rejection(setup)
+    if rejection is not None:
+        # Les reason codes privés (commencent par "_") ne sont pas loggés
+        if not rejection.startswith("_"):
+            record_rejection(
+                pair=setup.pair,
+                direction=_direction_value(setup),
+                confidence=getattr(setup, "confidence_score", None),
+                reason_code=rejection,
+            )
         return
-    # Guard : le broker courant (MetaQuotes-Demo par défaut) ne supporte
-    # qu'une partie des asset classes. Court-circuite les setups crypto /
-    # indices / énergie tant qu'on n'a pas migré vers un broker multi-asset
-    # (Pepperstone, IC Markets, ...). Évite SYMBOL_SELECT errors et la
-    # pollution de l'audit DB.
+    # Guard asset class : broker actuel ne supporte pas toutes les classes
     asset_class = asset_class_for(setup.pair)
     if asset_class not in MT5_BRIDGE_ALLOWED_ASSET_CLASSES:
         logger.debug(
             f"mt5_bridge: skipping {setup.pair} ({asset_class}) — "
             f"broker supports only {MT5_BRIDGE_ALLOWED_ASSET_CLASSES}"
+        )
+        record_rejection(
+            pair=setup.pair,
+            direction=_direction_value(setup),
+            confidence=getattr(setup, "confidence_score", None),
+            reason_code="asset_class_blocked",
+            details={"asset_class": asset_class, "allowed": list(MT5_BRIDGE_ALLOWED_ASSET_CLASSES)},
         )
         return
     _cleanup_old_keys()
@@ -200,14 +205,42 @@ async def send_setup(setup) -> None:
                     f"MT5 bridge a répondu {r.status_code} pour {setup.pair}: "
                     f"{r.text[:200]}"
                 )
+                # Catégorise la rejection bridge pour la viz dédiée
+                body_text = r.text or ""
+                if r.status_code == 429 or "Max open positions" in body_text:
+                    reason = "bridge_max_positions"
+                elif "10016" in body_text or "INVALID_STOPS" in body_text:
+                    reason = "bridge_invalid_stops"
+                else:
+                    reason = "bridge_error"
+                record_rejection(
+                    pair=setup.pair,
+                    direction=direction,
+                    confidence=getattr(setup, "confidence_score", None),
+                    reason_code=reason,
+                    details={"status": r.status_code, "body": body_text[:200]},
+                )
                 # Si l'ordre a été rejeté par le bridge, on retire de la dedup
                 # pour qu'un cycle suivant puisse retenter.
                 _sent_setups_today.discard(key)
     except httpx.TimeoutException:
         logger.info(f"MT5 bridge timeout (PC éteint ?) — skip {setup.pair}")
+        record_rejection(
+            pair=setup.pair,
+            direction=direction,
+            confidence=getattr(setup, "confidence_score", None),
+            reason_code="bridge_timeout",
+        )
         _sent_setups_today.discard(key)  # retente au cycle suivant
     except Exception as e:
         logger.warning(f"MT5 bridge exception pour {setup.pair}: {e}")
+        record_rejection(
+            pair=setup.pair,
+            direction=direction,
+            confidence=getattr(setup, "confidence_score", None),
+            reason_code="bridge_error",
+            details={"exception": str(e)[:200]},
+        )
         _sent_setups_today.discard(key)
 
 

@@ -14,6 +14,7 @@ import type {
   PeriodKey,
   Granularity,
   PnlBucketsResponse,
+  RejectionsReport,
   MistakesReport,
   CombosReport,
 } from '@/types/domain';
@@ -113,6 +114,11 @@ export const api = {
   pnlBuckets: (since: string, until: string, granularity: Granularity | 'auto' = 'auto') => {
     const qs = new URLSearchParams({ since, until, granularity });
     return request<PnlBucketsResponse>(`/api/insights/pnl-buckets?${qs.toString()}`);
+  },
+
+  rejections: (since: string, until: string) => {
+    const qs = new URLSearchParams({ since, until });
+    return request<RejectionsReport>(`/api/insights/rejections?${qs.toString()}`);
   },
 
   health: () =>
