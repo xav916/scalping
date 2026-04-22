@@ -1,7 +1,7 @@
 /** Tests unitaires des calculs purs de useDateRange. Les fonctions exposées
  *  (boundsForPreset, granularityForPreset, resolveAutoGranularity,
  *  shiftPresetRange) n'ont pas de dépendance React → testables sans renderer. */
-import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
   boundsForPreset,
   granularityForPreset,
