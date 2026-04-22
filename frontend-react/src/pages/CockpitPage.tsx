@@ -3,6 +3,7 @@ import { ReactiveMeshGradient } from '@/components/ui/ReactiveMeshGradient';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { EquityCurveMini } from '@/components/performance/EquityCurveMini';
 import { PeriodMetricsCard } from '@/components/cockpit/PeriodMetricsCard';
+import { PnlCalendarCard } from '@/components/cockpit/PnlCalendarCard';
 import { KillSwitchCard } from '@/components/cockpit/KillSwitchCard';
 import { AlertsStack } from '@/components/cockpit/AlertsStack';
 import { TodayStatsCard } from '@/components/cockpit/TodayStatsCard';
@@ -53,6 +54,8 @@ export function CockpitPage() {
             </div>
 
             <PeriodMetricsCard />
+
+            <PnlCalendarCard />
 
             <TodayStatsCard
               pnl={data.today_stats.pnl}
