@@ -172,7 +172,7 @@ def main():
     report["best_test_auc"] = round(best_auc, 4)
 
     # Seuil de significance : AUC >= 0.55 = modèle utile
-    has_edge = best_auc >= 0.55
+    has_edge = bool(best_auc >= 0.55)  # bool() pour sérialisation JSON (np.bool_ non compatible)
     report["has_edge"] = has_edge
     log.info(f"Edge détecté : {has_edge} (AUC {best_auc:.3f} {'≥' if has_edge else '<'} 0.55)")
 
