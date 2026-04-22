@@ -15,3 +15,10 @@ Pillow==11.0.0
 
 pytest==8.3.4
 pytest-asyncio==0.25.0
+
+# ML stack pour training offline (ml_train.py). scikit-learn a ~80 MB
+# de deps transitifs. Non chargé au runtime prod (scoring live reste en
+# Python pur), seulement utilisé pour training et chargement modèle joblib.
+scikit-learn==1.5.2
+pandas==2.2.3
+joblib==1.4.2
