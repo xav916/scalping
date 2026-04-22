@@ -72,8 +72,8 @@ export function PeriodMetricsCard() {
 
       <DrillBreadcrumb drillPath={range.drillPath} onDrillBack={range.drillBack} />
 
-      {/* Graph */}
-      <div className="my-4">
+      {/* Graph — min-height fixe pour éviter le CLS pendant le chargement */}
+      <div className="my-4" style={{ minHeight: 200 }}>
         {bucketsLoading && !buckets ? (
           <Skeleton className="h-[200px] w-full" />
         ) : buckets && buckets.buckets.length > 0 ? (
@@ -90,13 +90,20 @@ export function PeriodMetricsCard() {
         )}
       </div>
 
+      {/* KPIs : min-height réserve la place pour stats réels (~380px en mode
+          plein) OU pour le message "aucun trade" (~100px). On prend 380 pour
+          stabiliser quand la range se vide puis se remplit. */}
+      <div style={{ minHeight: 380 }}>
+
       {/* KPIs existants */}
       {statsLoading && !stats ? (
         <Skeleton className="h-40" />
       ) : stats ? (
         <AnimatePresence mode="wait">
           <motion.div
-            key={`${range.start}-${effectiveEnd}`}
+            // Key stable : ne change qu'en cas de VRAI changement de range
+            // (pas à chaque heartbeat 30s qui met à jour effectiveEnd).
+            key={`${range.preset}-${range.start}`}
             initial={{ opacity: 0, y: 4 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -4 }}
@@ -106,6 +113,7 @@ export function PeriodMetricsCard() {
           </motion.div>
         </AnimatePresence>
       ) : null}
+      </div>
     </GlassCard>
   );
 }

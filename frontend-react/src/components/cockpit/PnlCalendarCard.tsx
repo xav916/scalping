@@ -80,8 +80,10 @@ export function PnlCalendarCard() {
         </div>
       </div>
 
+      {/* Reservation ~200px : heatmap (~120) + KPIs (~60) + gap + bordure */}
+      <div style={{ minHeight: 200 }}>
       {isLoading && !data ? (
-        <Skeleton className="h-32" />
+        <Skeleton className="h-[200px] w-full" />
       ) : data ? (
         <>
           <CalendarHeatmap buckets={data.buckets} />
@@ -126,6 +128,7 @@ export function PnlCalendarCard() {
           )}
         </>
       ) : null}
+      </div>
     </GlassCard>
   );
 }

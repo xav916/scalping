@@ -100,8 +100,11 @@ export function RejectionsCard() {
         </div>
       </div>
 
+      {/* Reservation ~260px : 30px total KPI + ~230px pour viz (12 reasons
+          max × 18px + axis + padding). Stable même quand on toggle view. */}
+      <div style={{ minHeight: 260 }}>
       {isLoading && !data ? (
-        <Skeleton className="h-40" />
+        <Skeleton className="h-[240px] w-full" />
       ) : data ? (
         <>
           <div className="mb-3">
@@ -126,6 +129,7 @@ export function RejectionsCard() {
           )}
         </>
       ) : null}
+      </div>
     </GlassCard>
   );
 }
