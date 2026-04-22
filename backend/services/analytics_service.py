@@ -314,19 +314,59 @@ def _signal_volume() -> dict:
     }
 
 
+import time as _time
+from concurrent.futures import ThreadPoolExecutor as _Executor
+
+# Cache TTL global : les stats ne changent qu'au rythme des closures auto
+# (1-2/h post-fix). 60s de staleness est acceptable pour une page analytics
+# consultative (pas pour de l'auto-exec).
+_ANALYTICS_CACHE: dict[str, object] = {"data": None, "ts": 0.0}
+_ANALYTICS_CACHE_TTL_SEC = 60.0
+
+
+def _build_analytics_uncached() -> dict:
+    """Exécute les 8 breakdowns en parallèle (ThreadPool de 4). Les queries
+    SQL sqlite3 libèrent le GIL → vraie parallélisation. Wall time réduit
+    du sum des durées (2150ms) au max individuel (750ms, by_pair)."""
+    tasks = {
+        "by_pair": _by_pair,
+        "by_hour_utc": _by_hour,
+        "by_pattern": _by_pattern,
+        "by_confidence_bucket": _by_confidence_bucket,
+        "by_asset_class": _by_asset_class,
+        "by_risk_regime": _by_risk_regime,
+        "execution_quality": _execution_quality,
+        "signal_volume": _signal_volume,
+    }
+    out: dict[str, object] = {}
+    with _Executor(max_workers=4) as pool:
+        futures = {key: pool.submit(fn) for key, fn in tasks.items()}
+        for key, fut in futures.items():
+            out[key] = fut.result()
+    return out
+
+
 def build_analytics() -> dict:
-    """Point d'entree unique : retourne toutes les breakdowns en un payload."""
+    """Point d'entree unique : retourne toutes les breakdowns en un payload.
+    Cache in-memory 60s — les 8 queries coûtent ~1.4s avec 2500+ trades."""
+    now = _time.time()
+    cached = _ANALYTICS_CACHE["data"]
+    cached_ts = float(_ANALYTICS_CACHE["ts"])
+    if cached is not None and (now - cached_ts) < _ANALYTICS_CACHE_TTL_SEC:
+        return cached  # type: ignore[return-value]
     try:
-        return {
-            "by_pair": _by_pair(),
-            "by_hour_utc": _by_hour(),
-            "by_pattern": _by_pattern(),
-            "by_confidence_bucket": _by_confidence_bucket(),
-            "by_asset_class": _by_asset_class(),
-            "by_risk_regime": _by_risk_regime(),
-            "execution_quality": _execution_quality(),
-            "signal_volume": _signal_volume(),
-        }
+        result = _build_analytics_uncached()
+        _ANALYTICS_CACHE["data"] = result
+        _ANALYTICS_CACHE["ts"] = now
+        return result
     except Exception as e:
         logger.warning(f"analytics: build_analytics a echoue: {e}", exc_info=True)
         return {"error": str(e)[:200]}
+
+
+def invalidate_analytics_cache() -> None:
+    """Vide le cache. À appeler explicitement si une mutation critique
+    (ex: backfill trade) doit forcer un refresh. Non utilisé en auto :
+    le TTL suffit pour l'usage actuel (read-only consultation)."""
+    _ANALYTICS_CACHE["data"] = None
+    _ANALYTICS_CACHE["ts"] = 0.0
