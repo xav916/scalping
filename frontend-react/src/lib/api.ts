@@ -14,6 +14,7 @@ import type {
   PeriodKey,
   Granularity,
   PnlBucketsResponse,
+  BrokerAccount,
   RejectionsReport,
   MistakesReport,
   CombosReport,
@@ -120,6 +121,8 @@ export const api = {
     const qs = new URLSearchParams({ since, until });
     return request<RejectionsReport>(`/api/insights/rejections?${qs.toString()}`);
   },
+
+  brokerAccount: () => request<BrokerAccount>('/api/broker/account'),
 
   health: () =>
     request<{

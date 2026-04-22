@@ -234,6 +234,16 @@ async def api_insights_equity_curve(
     return insights_service.get_equity_curve(since_iso=since)
 
 
+@app.get("/api/broker/account")
+async def api_broker_account(_=Depends(verify_credentials)):
+    """État du compte broker (équité, marge utilisée/libre, margin level).
+
+    Proxy du bridge `/account` enrichi du `margin_level_pct` dérivé.
+    """
+    from backend.services.mt5_bridge import get_account
+    return await get_account()
+
+
 @app.get("/api/insights/rejections")
 async def api_insights_rejections(
     since: str,

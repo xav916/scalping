@@ -258,6 +258,45 @@ async def send_setups(setups: list) -> None:
     await asyncio.gather(*(send_setup(s) for s in setups), return_exceptions=True)
 
 
+async def get_account() -> dict:
+    """Récupère l'état du compte broker via bridge /account.
+
+    Retourne un dict enrichi avec `margin_level_pct` (équity / margin × 100).
+    Si bridge pas configuré ou injoignable, retourne
+    `{configured: bool, reachable: False, error: str}`.
+    """
+    if not is_configured():
+        return {"configured": False, "reachable": False}
+    url = MT5_BRIDGE_URL.rstrip("/") + "/account"
+    headers = {"X-API-Key": MT5_BRIDGE_API_KEY}
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(url, headers=headers)
+            if r.status_code != 200:
+                return {
+                    "configured": True,
+                    "reachable": False,
+                    "status": r.status_code,
+                }
+            data = r.json()
+            margin = float(data.get("margin") or 0)
+            equity = float(data.get("equity") or 0)
+            # Margin level = equity / margin × 100. Indéfini si margin=0
+            # (aucune position ouverte) → convention broker: "Infinity",
+            # on renvoie None pour que l'UI affiche "—".
+            margin_level_pct = (equity / margin * 100) if margin > 0 else None
+            return {
+                "configured": True,
+                "reachable": True,
+                **data,
+                "margin_level_pct": margin_level_pct,
+            }
+    except httpx.TimeoutException:
+        return {"configured": True, "reachable": False, "error": "timeout"}
+    except Exception as e:
+        return {"configured": True, "reachable": False, "error": str(e)[:120]}
+
+
 async def health_check() -> dict:
     """Retourne l'état du bridge depuis le point de vue du backend.
     Utile pour un endpoint de debug ou un indicateur UI côté site."""

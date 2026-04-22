@@ -294,6 +294,24 @@ export interface RejectionByReasonHour {
   count: number;
 }
 
+export interface BrokerAccount {
+  configured: boolean;
+  reachable: boolean;
+  /** Champs bas seulement si reachable=true */
+  login?: number;
+  currency?: string;
+  balance?: number;
+  equity?: number;
+  margin?: number;
+  margin_free?: number;
+  margin_level_pct?: number | null;
+  leverage?: number;
+  positions_count?: number;
+  profit?: number;
+  status?: number;
+  error?: string;
+}
+
 export interface RejectionsReport {
   total: number;
   by_reason: RejectionByReason[];
