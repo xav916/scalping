@@ -16,15 +16,16 @@ Usage typique (EC2) :
 """
 from __future__ import annotations
 import argparse
+import json
 import logging
 import os
 import sqlite3
 import sys
 import time
+import urllib.parse
+import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-
-import httpx
 
 # Chemin par défaut (EC2). Override possible via --db
 DEFAULT_DB = "/opt/scalping/data/backtest_candles.db"
@@ -170,12 +171,27 @@ def fetch_window(
         "timezone": "UTC",
         "apikey": api_key,
     }
-    with httpx.Client(timeout=timeout) as client:
-        r = client.get(f"{TWELVEDATA_BASE}/time_series", params=params)
-    if r.status_code != 200:
-        log.warning(f"{pair} {interval} {start}→{end}: HTTP {r.status_code} {r.text[:120]}")
+    url = f"{TWELVEDATA_BASE}/time_series?" + urllib.parse.urlencode(params)
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "scalping-radar-backtest/1.0"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            status = resp.status
+            body = resp.read().decode("utf-8")
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        log.warning(f"{pair} {interval} {start}→{end}: HTTP {e.code} {body[:120]}")
         return []
-    data = r.json()
+    except Exception as e:
+        log.warning(f"{pair} {interval} {start}→{end}: {e}")
+        return []
+    if status != 200:
+        log.warning(f"{pair} {interval} {start}→{end}: HTTP {status} {body[:120]}")
+        return []
+    try:
+        data = json.loads(body)
+    except json.JSONDecodeError as e:
+        log.warning(f"{pair} {interval} {start}→{end}: JSON parse {e}")
+        return []
     if "values" not in data:
         code = data.get("code") or data.get("status")
         msg = data.get("message", "")
