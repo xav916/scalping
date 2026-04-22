@@ -20,6 +20,12 @@ echo "=== git pull ==="
 sudo git pull
 echo "=== docker build ==="
 sudo docker build -t scalping-radar:latest .
+echo "=== prune dangling ==="
+# Supprime les images orphelines créées par ce build (anciennes layers
+# remplacées par les nouvelles). Sans ce prune, chaque deploy laisse
+# ~509MB d'image <none>:<none> → remplit les 8GB d'EBS en ~15 deploys.
+sudo docker image prune -f
+sudo docker builder prune -f --filter "until=24h"
 echo "=== systemd restart ==="
 sudo systemctl restart scalping
 sleep 3
