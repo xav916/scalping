@@ -172,6 +172,59 @@ def _upsert_open_trade(row: dict[str, Any], user: str) -> None:
         ))
 
 
+def _derive_close_reason_from_exit(
+    ticket: int, exit_price: float | None
+) -> str | None:
+    """Heuristique : le bridge ne remonte pas `close_reason` dans /deals.
+    On compare `exit_price` aux SL/TP stockés en DB :
+    - exit ≈ SL → SL
+    - exit ≈ TP1 → TP1
+    - exit ≈ TP2 (si présent) → TP2
+    - sinon → MANUAL
+
+    Tolérance par asset class pour absorber le slippage (~2 pips forex,
+    0.3$ sur XAU, etc.).
+    """
+    if exit_price is None:
+        return None
+    with sqlite3.connect(_db_path()) as c:
+        row = c.execute(
+            """
+            SELECT stop_loss, take_profit, pair
+              FROM personal_trades
+             WHERE mt5_ticket = ?
+            """,
+            (ticket,),
+        ).fetchone()
+    if not row:
+        return None
+    sl, tp, pair = row
+    if sl is None and tp is None:
+        return None
+
+    base = pair.split("/")[0].upper() if pair and "/" in pair else (pair or "").upper()
+    # Tolérances de fermeture (en unités de prix) — couvrent le slippage
+    # broker et les approximations de rounding côté MT5.
+    if base == "XAU":
+        tol = 0.3   # ~3 pips or
+    elif base == "XAG":
+        tol = 0.02
+    elif base in {"BTC", "ETH"}:
+        tol = 15.0
+    elif base in {"SPX", "NDX"}:
+        tol = 2.0
+    elif base == "WTI":
+        tol = 0.05
+    else:
+        tol = 0.0002  # 2 pips sur 5-dp forex
+
+    if sl is not None and abs(exit_price - sl) <= tol:
+        return "SL"
+    if tp is not None and abs(exit_price - tp) <= tol:
+        return "TP1"
+    return "MANUAL"
+
+
 def _normalize_close_reason(raw: str | None) -> str | None:
     """Le bridge peut remonter des libelles variables selon la version MT5
     (deal.reason, position.close_reason, etc.). On normalise en un set
@@ -207,6 +260,10 @@ def _update_closed_trade(row: dict[str, Any]) -> None:
     close_reason = _normalize_close_reason(
         row.get("close_reason") or row.get("reason") or row.get("deal_reason")
     )
+    # Fallback : bridge `/deals` ne remonte pas le reason → heuristique
+    # par proximité de l'exit price aux SL/TP stockés en DB.
+    if not close_reason:
+        close_reason = _derive_close_reason_from_exit(ticket, row.get("exit_price"))
     with sqlite3.connect(_db_path()) as c:
         c.execute("""
             UPDATE personal_trades
