@@ -6,6 +6,7 @@ import { PeriodMetricsCard } from '@/components/cockpit/PeriodMetricsCard';
 import { PnlCalendarCard } from '@/components/cockpit/PnlCalendarCard';
 import { RejectionsCard } from '@/components/cockpit/RejectionsCard';
 import { BrokerMarginCard } from '@/components/cockpit/BrokerMarginCard';
+import { ExposureTimelineCard } from '@/components/cockpit/ExposureTimelineCard';
 import { KillSwitchCard } from '@/components/cockpit/KillSwitchCard';
 import { AlertsStack } from '@/components/cockpit/AlertsStack';
 import { TodayStatsCard } from '@/components/cockpit/TodayStatsCard';
@@ -72,6 +73,8 @@ export function CockpitPage() {
             />
 
             <BrokerMarginCard />
+
+            <ExposureTimelineCard />
 
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
               <div className="lg:col-span-5 min-w-0">

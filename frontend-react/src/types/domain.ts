@@ -294,6 +294,22 @@ export interface RejectionByReasonHour {
   count: number;
 }
 
+export interface ExposurePoint {
+  bucket_time: string;
+  capital_at_risk: number;
+  n_open: number;
+}
+
+export interface ExposureTimeseries {
+  points: ExposurePoint[];
+  granularity_used: Granularity;
+  peak_at_risk: number;
+  avg_at_risk: number;
+  max_open: number;
+  since: string;
+  until: string;
+}
+
 export interface BrokerAccount {
   configured: boolean;
   reachable: boolean;

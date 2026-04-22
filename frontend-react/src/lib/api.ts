@@ -15,6 +15,7 @@ import type {
   Granularity,
   PnlBucketsResponse,
   BrokerAccount,
+  ExposureTimeseries,
   RejectionsReport,
   MistakesReport,
   CombosReport,
@@ -123,6 +124,11 @@ export const api = {
   },
 
   brokerAccount: () => request<BrokerAccount>('/api/broker/account'),
+
+  exposureTimeseries: (since: string, until: string, granularity: Granularity | 'auto' = 'auto') => {
+    const qs = new URLSearchParams({ since, until, granularity });
+    return request<ExposureTimeseries>(`/api/insights/exposure-timeseries?${qs.toString()}`);
+  },
 
   health: () =>
     request<{
