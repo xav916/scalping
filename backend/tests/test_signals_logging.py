@@ -213,3 +213,59 @@ def test_normalize_close_reason_maps_variants():
     assert mt5_sync._normalize_close_reason("stoploss") == "SL"
     assert mt5_sync._normalize_close_reason("Manual close") == "MANUAL"
     assert mt5_sync._normalize_close_reason(None) is None
+
+
+def _setup_db_with_trade(tmp_path: Path, ticket: int, pair: str,
+                         sl: float, tp: float, entry: float = 1.1000,
+                         direction: str = "sell") -> Path:
+    """Initialise une DB test avec un trade CLOSED. Retourne le path DB."""
+    trades_db = tmp_path / "trades.db"
+    with patch.object(trade_log_service, "_DB_PATH", trades_db):
+        trade_log_service._init_schema()
+    with sqlite3.connect(trades_db) as c:
+        c.execute("""
+            INSERT INTO personal_trades (user, pair, direction, entry_price,
+              stop_loss, take_profit, size_lot, status, is_auto, mt5_ticket, created_at)
+            VALUES ('u', ?, ?, ?, ?, ?, 0.1, 'CLOSED', 1, ?,
+                    '2026-04-22T10:00:00+00:00')
+        """, (pair, direction, entry, sl, tp, ticket))
+    return trades_db
+
+
+def test_derive_close_reason_from_exit_sl_hit(tmp_path: Path):
+    """Forex SL hit → reason = SL (tolerance 2 pips)."""
+    db = _setup_db_with_trade(tmp_path, 123, "EUR/USD", sl=1.1050, tp=1.0900)
+    with patch.object(trade_log_service, "_DB_PATH", db):
+        assert mt5_sync._derive_close_reason_from_exit(123, 1.1050) == "SL"
+        assert mt5_sync._derive_close_reason_from_exit(123, 1.1051) == "SL"
+
+
+def test_derive_close_reason_from_exit_tp_hit(tmp_path: Path):
+    """Forex TP hit → reason = TP1."""
+    db = _setup_db_with_trade(tmp_path, 124, "EUR/USD", sl=1.1050, tp=1.0900)
+    with patch.object(trade_log_service, "_DB_PATH", db):
+        assert mt5_sync._derive_close_reason_from_exit(124, 1.0900) == "TP1"
+
+
+def test_derive_close_reason_from_exit_manual(tmp_path: Path):
+    """Exit entre SL et TP loin des deux → MANUAL."""
+    db = _setup_db_with_trade(tmp_path, 125, "EUR/USD", sl=1.1050, tp=1.0900)
+    with patch.object(trade_log_service, "_DB_PATH", db):
+        # Exit à 1.0980 — ni SL ni TP dans tolerance 2 pips
+        assert mt5_sync._derive_close_reason_from_exit(125, 1.0980) == "MANUAL"
+
+
+def test_derive_close_reason_from_exit_xau_tolerance(tmp_path: Path):
+    """Métaux ont une tolérance plus large (0.3$ sur XAU)."""
+    db = _setup_db_with_trade(tmp_path, 126, "XAU/USD", entry=2600.0,
+                              sl=2590.0, tp=2620.0, direction="buy")
+    with patch.object(trade_log_service, "_DB_PATH", db):
+        assert mt5_sync._derive_close_reason_from_exit(126, 2589.8) == "SL"
+        assert mt5_sync._derive_close_reason_from_exit(126, 2589.5) == "MANUAL"
+
+
+def test_derive_close_reason_from_exit_unknown_ticket(tmp_path: Path):
+    """Ticket inconnu → None."""
+    db = _setup_db_with_trade(tmp_path, 1, "EUR/USD", sl=1.1050, tp=1.0900)
+    with patch.object(trade_log_service, "_DB_PATH", db):
+        assert mt5_sync._derive_close_reason_from_exit(99999, 1.0) is None
