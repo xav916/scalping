@@ -213,12 +213,11 @@ async def test_setup_below_numeric_threshold_is_rejected():
 
 
 @pytest.mark.asyncio
-async def test_setup_rejected_when_sl_too_close():
-    """EUR/JPY avec SL à 3.8 pips (distance/entry < 0.05%) → rejeté avant envoi.
-    Reproduit le cas rc=10016 observé #105/#106 post-fix prix."""
+async def test_setup_rejected_when_sl_too_close_jpy():
+    """EUR/JPY avec SL à 1 pip (0.005%) → rejeté par seuil forex_jpy 0.02%."""
     setup = _mk_setup("EUR/JPY")
     setup.entry_price = 187.15
-    setup.stop_loss = 187.11  # 4 pips JPY = 0.021% seulement
+    setup.stop_loss = 187.14  # 1 pip JPY = 0.005%
     setup.confidence_score = 90.0
     setup.verdict_blockers = []
     setup.is_simulated = False
@@ -228,12 +227,57 @@ async def test_setup_rejected_when_sl_too_close():
          patch.object(mt5_bridge, "MT5_BRIDGE_URL", "http://test"), \
          patch.object(mt5_bridge, "MT5_BRIDGE_API_KEY", "test"), \
          patch.object(mt5_bridge, "MT5_BRIDGE_MIN_CONFIDENCE", 55), \
-         patch.object(mt5_bridge, "MT5_BRIDGE_MIN_SL_DISTANCE_PCT", 0.05), \
          patch("backend.services.mt5_bridge.is_market_open_for", lambda p: True), \
          patch("httpx.AsyncClient") as mock_client:
         await mt5_bridge.send_setup(setup)
         mock_client.assert_not_called()
     assert not mt5_bridge._sent_setups_today
+
+
+@pytest.mark.asyncio
+async def test_setup_accepted_when_jpy_sl_reasonable_after_per_class_fix():
+    """EUR/JPY avec SL à 4 pips (0.021%) passe désormais — avec seuil
+    forex_jpy=0.02% (vs ancien global 0.05% = 9 pips min, infaisable sur JPY)."""
+    setup = _mk_setup("EUR/JPY")
+    setup.entry_price = 187.15
+    setup.stop_loss = 187.11  # 4 pips JPY = 0.021%
+    setup.take_profit_1 = 187.30
+    setup.confidence_score = 90.0
+    setup.verdict_blockers = []
+    setup.is_simulated = False
+
+    with patch.object(mt5_bridge, "MT5_BRIDGE_ALLOWED_ASSET_CLASSES", ["forex"]), \
+         patch.object(mt5_bridge, "MT5_BRIDGE_ENABLED", True), \
+         patch.object(mt5_bridge, "MT5_BRIDGE_URL", "http://test"), \
+         patch.object(mt5_bridge, "MT5_BRIDGE_API_KEY", "test"), \
+         patch.object(mt5_bridge, "MT5_BRIDGE_MIN_CONFIDENCE", 55), \
+         patch("backend.services.mt5_bridge.is_market_open_for", lambda p: True):
+        rejection = mt5_bridge._check_rejection(setup)
+    assert rejection is None, f"Expected acceptance, got rejection: {rejection}"
+
+
+def test_min_sl_distance_pct_for_jpy_pair():
+    """Pairs avec JPY utilisent le seuil forex_jpy, pas forex_major."""
+    assert mt5_bridge._min_sl_distance_pct_for("USD/JPY") == 0.02
+    assert mt5_bridge._min_sl_distance_pct_for("EUR/JPY") == 0.02
+    assert mt5_bridge._min_sl_distance_pct_for("GBP/JPY") == 0.02
+
+
+def test_min_sl_distance_pct_for_major_forex():
+    assert mt5_bridge._min_sl_distance_pct_for("EUR/USD") == 0.04
+    assert mt5_bridge._min_sl_distance_pct_for("USD/CHF") == 0.04
+
+
+def test_min_sl_distance_pct_for_metal_and_crypto():
+    assert mt5_bridge._min_sl_distance_pct_for("XAU/USD") == 0.05
+    assert mt5_bridge._min_sl_distance_pct_for("BTC/USD") == 0.15
+
+
+def test_min_sl_distance_pct_falls_back_when_class_missing():
+    """Si la pair donne un asset class non mappé, on tombe sur le legacy."""
+    with patch.object(mt5_bridge, "MT5_BRIDGE_MIN_SL_DISTANCE_PCT_PER_CLASS", {}):
+        # dict vide → tombe sur le legacy
+        assert mt5_bridge._min_sl_distance_pct_for("EUR/USD") == mt5_bridge.MT5_BRIDGE_MIN_SL_DISTANCE_PCT
 
 
 @pytest.mark.asyncio

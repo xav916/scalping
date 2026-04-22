@@ -31,6 +31,7 @@ from config.settings import (
     MT5_BRIDGE_LOTS,
     MT5_BRIDGE_ALLOWED_ASSET_CLASSES,
     MT5_BRIDGE_MIN_SL_DISTANCE_PCT,
+    MT5_BRIDGE_MIN_SL_DISTANCE_PCT_PER_CLASS,
     TRADING_CAPITAL,
     RISK_PER_TRADE_PCT,
     asset_class_for,
@@ -69,6 +70,34 @@ def _cleanup_old_keys() -> None:
             _sent_setups_today.discard(key)
 
 
+def _min_sl_distance_pct_for(pair: str) -> float:
+    """Retourne le seuil min SL distance % applicable à cette pair.
+
+    Priorité : dict per-class (avec cas spécial `forex_jpy` pour les pairs
+    avec JPY comme quote/base) > fallback legacy MT5_BRIDGE_MIN_SL_DISTANCE_PCT.
+    """
+    cfg = MT5_BRIDGE_MIN_SL_DISTANCE_PCT_PER_CLASS or {}
+    upper = (pair or "").upper()
+    # Pairs JPY ont un pip size 10x plus grand → seuil dédié
+    if "JPY" in upper:
+        if "forex_jpy" in cfg:
+            return float(cfg["forex_jpy"])
+    asset_class = asset_class_for(pair)
+    # Mapping asset_class → clé du dict. 'forex' → 'forex_major' pour
+    # différencier des JPY pairs déjà traitées au-dessus.
+    key_map = {
+        "forex": "forex_major",
+        "metal": "metal",
+        "equity_index": "equity_index",
+        "crypto": "crypto",
+        "energy": "energy",
+    }
+    key = key_map.get(asset_class)
+    if key and key in cfg:
+        return float(cfg[key])
+    return MT5_BRIDGE_MIN_SL_DISTANCE_PCT
+
+
 def _check_rejection(setup) -> str | None:
     """Retourne None si le setup peut être pushé, sinon un reason_code parmi
     ceux définis dans `rejection_service.REASON_LABELS_FR`. Seuls les cas qui
@@ -103,7 +132,8 @@ def _check_rejection(setup) -> str | None:
     sl = getattr(setup, "stop_loss", 0) or 0
     if entry > 0 and sl > 0:
         sl_pct = abs(entry - sl) / entry * 100
-        if sl_pct < MT5_BRIDGE_MIN_SL_DISTANCE_PCT:
+        min_pct = _min_sl_distance_pct_for(setup.pair)
+        if sl_pct < min_pct:
             return "sl_too_close"
     score = getattr(setup, "confidence_score", None) or 0
     if score < MT5_BRIDGE_MIN_CONFIDENCE:
