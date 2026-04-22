@@ -159,7 +159,7 @@ function ReasonsView({ data }: { data: RejectionsReport }) {
             }
             delay={100}
           >
-            <div className="grid grid-cols-[180px_1fr_60px] items-center gap-3 group cursor-default">
+            <div className="grid grid-cols-[110px_1fr_48px] sm:grid-cols-[180px_1fr_60px] items-center gap-3 group cursor-default">
               <div className="text-xs text-white/70 font-mono truncate">
                 {r.label_fr}
               </div>

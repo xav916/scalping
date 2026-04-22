@@ -1,10 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import clsx from 'clsx';
 import { useQuery } from '@tanstack/react-query';
 import { GlassCard } from '@/components/ui/GlassCard';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Tooltip, LabelWithInfo } from '@/components/ui/Tooltip';
 import { api } from '@/lib/api';
+import { useDateRange } from '@/hooks/useDateRange';
 import { CalendarHeatmap } from './CalendarHeatmap';
 
 type RangeKey = '3m' | '6m' | 'year';
@@ -29,6 +30,31 @@ function monthsAgoIso(monthsBack: number): string {
  *  session / clusters de drawdown sur 3 à 12 mois. */
 export function PnlCalendarCard() {
   const [rangeKey, setRangeKey] = useState<RangeKey>('3m');
+  const dateRange = useDateRange();
+
+  /** Clic sur une case → drill la PeriodMetricsCard partagée sur ce jour
+   *  (niveau "hour" du drill ladder), puis scroll to la section Performance. */
+  const handleDayClick = useCallback(
+    (iso: string, label: string) => {
+      const d = new Date(iso);
+      const dayStart = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 0, 0));
+      const dayEnd = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 23, 59, 59));
+      dateRange.drillInto({
+        label,
+        start: dayStart.toISOString(),
+        end: dayEnd.toISOString(),
+        granularity: 'hour',
+      });
+      // Scroll smooth vers la PeriodMetricsCard (section #performance)
+      const section = document.getElementById('performance');
+      if (section) {
+        const top = section.getBoundingClientRect().top + window.pageYOffset - 110;
+        window.scrollTo({ top, behavior: 'smooth' });
+      }
+    },
+    [dateRange]
+  );
+
   const { since, until } = useMemo(() => {
     const tab = TABS.find((t) => t.key === rangeKey)!;
     return {
@@ -86,7 +112,7 @@ export function PnlCalendarCard() {
         <Skeleton className="h-[200px] w-full" />
       ) : data ? (
         <>
-          <CalendarHeatmap buckets={data.buckets} />
+          <CalendarHeatmap buckets={data.buckets} onDayClick={handleDayClick} />
 
           {summary && (
             <div className="mt-4 pt-3 border-t border-glass-soft grid grid-cols-4 gap-4">
