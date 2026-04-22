@@ -414,6 +414,111 @@ def _compute_stats_for_range(since: str, until: str, period_label: str) -> dict:
     }
 
 
+# ─── Capital à risque au cours du temps (ExposureTimelineCard) ────────────
+
+
+def _pair_units(pair: str) -> float:
+    """Unités par lot pour calculer le capital à risque en monnaie.
+
+    Forex standard = 100k unités de devise base. Métaux XAU/XAG = 100 oz.
+    Valeurs approximatives pour la conversion en € (suffit pour une viz).
+    """
+    base = pair.split("/")[0].upper() if "/" in pair else pair.upper()
+    if base in {"XAU", "XAG", "XPT", "XPD"}:
+        return 100.0
+    return 100_000.0
+
+
+def get_exposure_timeseries(since: str, until: str, granularity: str = "auto") -> dict[str, Any]:
+    """Capital à risque et nombre de positions ouvertes snapshotés à la fin
+    de chaque bucket temporel.
+
+    Calcul dérivé de `personal_trades` (is_auto=1) : une position est
+    considérée ouverte au temps t si `created_at <= t` ET
+    `(closed_at IS NULL OR closed_at > t)`. Le capital à risque à t est
+    la somme des |entry - stop_loss| × size_lot × units(pair).
+
+    Retourne :
+        {
+          "points": [{bucket_time, capital_at_risk, n_open}, ...],
+          "granularity_used": str,
+          "since": ..., "until": ...,
+        }
+    """
+    if granularity == "auto":
+        granularity = _resolve_auto_granularity(since, until)
+    if granularity not in _GRANULARITIES:
+        raise ValueError(f"granularity invalide: {granularity}")
+    # Même garde-fou 5min que pnl-buckets
+    if granularity == "5min":
+        span_hours = (_parse_iso(until) - _parse_iso(since)).total_seconds() / 3600
+        if span_hours > 24:
+            raise ValueError("5min granularity limitée à une plage de 24h maximum")
+
+    # Charge tous les trades qui pouvaient être ouverts à un moment dans [since, until]
+    with sqlite3.connect(_db_path()) as c:
+        c.row_factory = sqlite3.Row
+        rows = c.execute(
+            """
+            SELECT pair, entry_price, stop_loss, size_lot, created_at, closed_at
+              FROM personal_trades
+             WHERE is_auto = 1
+               AND created_at <= ?
+               AND (closed_at IS NULL OR closed_at >= ?)
+            """,
+            (until, since),
+        ).fetchall()
+    trades = [dict(r) for r in rows]
+
+    # Pré-calcule le capital à risque par trade (indépendant du temps)
+    for t in trades:
+        entry = t.get("entry_price") or 0
+        sl = t.get("stop_loss") or 0
+        lot = t.get("size_lot") or 0
+        t["_risk_money"] = abs(entry - sl) * lot * _pair_units(t.get("pair") or "")
+
+    # Itère les buckets
+    start_key = _bucket_key(since, granularity)
+    end_key = _bucket_key(until, granularity)
+
+    points: list[dict[str, Any]] = []
+    current = start_key
+    for _ in range(5001):
+        _, bucket_end_iso = _bucket_bounds(current, granularity)
+        open_at_risk = 0.0
+        n_open = 0
+        for t in trades:
+            created = t.get("created_at") or ""
+            closed = t.get("closed_at")
+            if created and created <= bucket_end_iso and (not closed or closed > bucket_end_iso):
+                open_at_risk += t["_risk_money"]
+                n_open += 1
+        points.append({
+            "bucket_time": bucket_end_iso,
+            "capital_at_risk": round(open_at_risk, 2),
+            "n_open": n_open,
+        })
+        if current == end_key:
+            break
+        current = _next_bucket_key(current, granularity)
+    else:
+        raise ValueError(f"Trop de buckets (> 5000) pour granularity={granularity}")
+
+    peak = max((p["capital_at_risk"] for p in points), default=0.0)
+    avg = sum(p["capital_at_risk"] for p in points) / len(points) if points else 0.0
+    max_open = max((p["n_open"] for p in points), default=0)
+
+    return {
+        "points": points,
+        "granularity_used": granularity,
+        "peak_at_risk": round(peak, 2),
+        "avg_at_risk": round(avg, 2),
+        "max_open": max_open,
+        "since": since,
+        "until": until,
+    }
+
+
 # ─── PnL buckets (graph carte Performance) ────────────────────────────────
 
 _GRANULARITIES = ("5min", "hour", "day", "month")

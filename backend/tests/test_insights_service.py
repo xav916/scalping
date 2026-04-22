@@ -343,6 +343,90 @@ def test_pnl_buckets_invalid_granularity_raises(db):
         )
 
 
+def test_exposure_timeseries_no_trades_returns_zero_points(db):
+    out = insights_service.get_exposure_timeseries(
+        since="2026-04-22T00:00:00+00:00",
+        until="2026-04-22T23:59:59+00:00",
+        granularity="hour",
+    )
+    assert len(out["points"]) == 24
+    assert all(p["capital_at_risk"] == 0.0 and p["n_open"] == 0 for p in out["points"])
+    assert out["peak_at_risk"] == 0.0
+    assert out["max_open"] == 0
+
+
+def test_exposure_timeseries_counts_position_within_its_lifetime(db):
+    # Trade ouvert à 10:00 UTC, fermé à 14:00 UTC. Entry 1.10, SL 1.08,
+    # lot 0.1, EUR/USD → risk = 0.02 × 0.1 × 100_000 = 200 €
+    _insert(db,
+        pair="EUR/USD",
+        entry_price=1.10,
+        stop_loss=1.08,
+        size_lot=0.1,
+        created_at="2026-04-22T10:00:00+00:00",
+        closed_at="2026-04-22T14:00:00+00:00",
+        mt5_ticket=1,
+        pnl=5.0,
+    )
+    out = insights_service.get_exposure_timeseries(
+        since="2026-04-22T00:00:00+00:00",
+        until="2026-04-22T23:59:59+00:00",
+        granularity="hour",
+    )
+    # La granularité hour → chaque bucket se termine à HH:59:59.
+    # Trade open [10:00, 14:00) → buckets 10, 11, 12, 13 doivent avoir n_open=1.
+    # Bucket 14 se termine à 14:59:59 ; closed_at=14:00:00 < 14:59:59 → fermé.
+    hours_with_open = [
+        int(p["bucket_time"][11:13]) for p in out["points"] if p["n_open"] > 0
+    ]
+    assert hours_with_open == [10, 11, 12, 13]
+    for p in out["points"]:
+        if p["n_open"] > 0:
+            assert p["capital_at_risk"] == 200.0
+    assert out["peak_at_risk"] == 200.0
+    assert out["max_open"] == 1
+
+
+def test_exposure_timeseries_stacks_overlapping_trades(db):
+    _insert(db, pair="EUR/USD", entry_price=1.10, stop_loss=1.08, size_lot=0.1,
+            created_at="2026-04-22T10:00:00+00:00", closed_at="2026-04-22T15:00:00+00:00",
+            mt5_ticket=1, pnl=1.0)  # risk = 200
+    _insert(db, pair="XAU/USD", entry_price=2000.0, stop_loss=1990.0, size_lot=0.01,
+            created_at="2026-04-22T11:00:00+00:00", closed_at="2026-04-22T13:00:00+00:00",
+            mt5_ticket=2, pnl=2.0)  # risk = 10 × 0.01 × 100 = 10
+    out = insights_service.get_exposure_timeseries(
+        since="2026-04-22T00:00:00+00:00",
+        until="2026-04-22T23:59:59+00:00",
+        granularity="hour",
+    )
+    by_hour = {int(p["bucket_time"][11:13]): p for p in out["points"]}
+    # Heures 11, 12 : les 2 trades ouverts
+    assert by_hour[11]["n_open"] == 2
+    assert by_hour[11]["capital_at_risk"] == 210.0
+    # Heure 14 : seulement EUR/USD ouvert
+    assert by_hour[14]["n_open"] == 1
+    assert by_hour[14]["capital_at_risk"] == 200.0
+
+
+def test_exposure_timeseries_open_trade_no_closed_at(db):
+    _insert(db, pair="EUR/USD", entry_price=1.10, stop_loss=1.08, size_lot=0.1,
+            status="OPEN", closed_at=None,
+            created_at="2026-04-22T08:00:00+00:00",
+            mt5_ticket=1, pnl=None)
+    out = insights_service.get_exposure_timeseries(
+        since="2026-04-22T00:00:00+00:00",
+        until="2026-04-22T12:59:59+00:00",
+        granularity="hour",
+    )
+    by_hour = {int(p["bucket_time"][11:13]): p for p in out["points"]}
+    # Heures 8-12 : trade toujours ouvert
+    for h in range(8, 13):
+        assert by_hour[h]["n_open"] == 1
+    # Avant 8h : pas encore créé
+    for h in range(0, 8):
+        assert by_hour[h]["n_open"] == 0
+
+
 def test_pnl_buckets_sum_matches_period_stats_pnl(db):
     """Cohérence croisée : somme des pnl des buckets === period_stats.pnl sur
     le même range."""

@@ -234,6 +234,42 @@ async def api_insights_equity_curve(
     return insights_service.get_equity_curve(since_iso=since)
 
 
+@app.get("/api/insights/exposure-timeseries")
+async def api_insights_exposure_timeseries(
+    since: str,
+    until: str,
+    granularity: str = "auto",
+    _=Depends(verify_credentials),
+):
+    """Capital à risque (€) et nb de positions ouvertes dans le temps.
+
+    Dérivé de personal_trades : une position est comptée OPEN à t si
+    created_at ≤ t et (closed_at IS NULL OR closed_at > t). Agrégé par
+    granularity (5min|hour|day|month|auto, same rules as pnl-buckets).
+
+    Alimente ExposureTimelineCard du cockpit.
+    """
+    from backend.services import insights_service
+    if granularity not in {"5min", "hour", "day", "month", "auto"}:
+        raise HTTPException(status_code=400, detail="granularity invalide")
+    try:
+        return insights_service.get_exposure_timeseries(
+            since=since, until=until, granularity=granularity
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/broker/account")
+async def api_broker_account(_=Depends(verify_credentials)):
+    """État du compte broker (équité, marge utilisée/libre, margin level).
+
+    Proxy du bridge `/account` enrichi du `margin_level_pct` dérivé.
+    """
+    from backend.services.mt5_bridge import get_account
+    return await get_account()
+
+
 @app.get("/api/insights/rejections")
 async def api_insights_rejections(
     since: str,
