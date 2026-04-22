@@ -141,8 +141,34 @@ MT5_BRIDGE_ALLOWED_ASSET_CLASSES = [
 ]
 # Distance SL minimale en % du prix d'entrée (|entry-sl|/entry*100). Évite
 # les setups scalping trop serrés rejetés rc=10016 INVALID_STOPS par MT5.
-# Défaut 0.05% = 5.9 pips sur EUR/USD@1.18, 9.4 pips sur EUR/JPY@187.
+# Défaut legacy 0.05% = 5.9 pips sur EUR/USD@1.18, 9.4 pips sur EUR/JPY@187.
+#
+# Problème observé 2026-04-22 : les pairs JPY concentrent 90% des rejections
+# sl_too_close (86/96), car leur pip size étant 10× plus grand en valeur
+# absolue, leur % de SL équivalent est plus faible. 0.05% sur EUR/JPY = 9.4
+# pips, infaisable en scalping ; cible 4-5 pips → rejet systématique.
+#
+# Seuils par asset class (surchargeable via MT5_BRIDGE_MIN_SL_DISTANCE_PCT_PER_CLASS
+# en JSON). MT5_BRIDGE_MIN_SL_DISTANCE_PCT reste le fallback.
 MT5_BRIDGE_MIN_SL_DISTANCE_PCT = float(os.getenv("MT5_BRIDGE_MIN_SL_DISTANCE_PCT", "0.05"))
+
+import json as _json_min_sl
+
+_DEFAULT_MIN_SL_DISTANCE_PCT_PER_CLASS = {
+    "forex_major": 0.04,    # EUR/USD, GBP/USD, USD/CHF, etc. (5-dp)
+    "forex_jpy": 0.02,      # USD/JPY, EUR/JPY, GBP/JPY (3-dp, pip 10x)
+    "metal": 0.05,          # XAU/USD, XAG/USD
+    "equity_index": 0.03,   # SPX, NDX
+    "crypto": 0.15,         # BTC/USD, ETH/USD (volatilité plus large)
+    "energy": 0.05,         # WTI, BRENT
+}
+try:
+    _raw = os.getenv("MT5_BRIDGE_MIN_SL_DISTANCE_PCT_PER_CLASS", "")
+    MT5_BRIDGE_MIN_SL_DISTANCE_PCT_PER_CLASS = (
+        _json_min_sl.loads(_raw) if _raw else _DEFAULT_MIN_SL_DISTANCE_PCT_PER_CLASS
+    )
+except (ValueError, _json_min_sl.JSONDecodeError):
+    MT5_BRIDGE_MIN_SL_DISTANCE_PCT_PER_CLASS = _DEFAULT_MIN_SL_DISTANCE_PCT_PER_CLASS
 # Sync bridge → personal_trades : pull périodique des ordres LIVE depuis le
 # bridge pour que les positions auto apparaissent dans le dashboard
 # (sections Mes trades, Risque ouvert, Courbe d'équité, Détecteur d'erreurs).
