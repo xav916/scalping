@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode, createElement } from 'react';
 import type { Granularity, Preset, DrillSegment } from '@/types/domain';
 
 export interface DateRangeState {
@@ -157,7 +157,10 @@ function loadInitialState(): DateRangeState {
   return initialFromPreset(DEFAULT_PRESET);
 }
 
-export function useDateRange(): UseDateRangeApi {
+/** Hook "standalone" qui gère l'état en local. Utilisé directement si la
+ *  carte n'est pas wrappée dans un `DateRangeProvider` ; sinon, le provider
+ *  l'utilise une fois au niveau supérieur et partage via contexte. */
+function useDateRangeStandalone(): UseDateRangeApi {
   const [state, setState] = useState<DateRangeState>(loadInitialState);
 
   // Persist dans localStorage à chaque changement (hors drill)
@@ -236,4 +239,22 @@ export function useDateRange(): UseDateRangeApi {
     () => ({ ...state, setPreset, setCustomRange, shiftRange, drillInto, drillBack, reset }),
     [state, setPreset, setCustomRange, shiftRange, drillInto, drillBack, reset]
   );
+}
+
+// ─── Contexte pour partager l'état entre cartes du Cockpit ────────────────
+
+const DateRangeContext = createContext<UseDateRangeApi | null>(null);
+
+export function DateRangeProvider({ children }: { children: ReactNode }) {
+  const api = useDateRangeStandalone();
+  return createElement(DateRangeContext.Provider, { value: api }, children);
+}
+
+/** Lit l'état partagé depuis `DateRangeProvider`. Fallback sur une instance
+ *  locale si aucun provider n'est détecté (backward compat avec les pages
+ *  qui n'ont pas encore adopté le provider). */
+export function useDateRange(): UseDateRangeApi {
+  const ctx = useContext(DateRangeContext);
+  const standalone = useDateRangeStandalone();
+  return ctx ?? standalone;
 }

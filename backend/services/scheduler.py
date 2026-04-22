@@ -524,6 +524,19 @@ def start_scheduler() -> AsyncIOScheduler:
         )
         logger.info(f"macro: refresh job scheduled every {MACRO_REFRESH_INTERVAL_SEC}s")
 
+    # Alertes rafales de rejections : toutes les 5 min, surveille les
+    # rejections de la derniere heure. Envoie Telegram si > 10 d'affilee
+    # sur un meme reason_code (cooldown 60 min par code).
+    from backend.services import rejection_alerts as _rej_alerts
+    _scheduler.add_job(
+        _rej_alerts.check_and_alert,
+        "interval",
+        minutes=5,
+        id="rejection_alerts_check",
+        name="Check rafales rejections + Telegram",
+        replace_existing=True,
+    )
+
     # Sync COT reports hebdo. La CFTC publie le vendredi 15h30 ET
     # (~20h30 UTC). On tourne samedi 01h UTC pour avoir les donnees
     # fraiches. Pas critique si ca loupe une semaine : la prochaine
