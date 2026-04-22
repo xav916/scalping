@@ -209,21 +209,59 @@ def detect_patterns(candles: list[Candle], pair: str = "XAU/USD") -> list[Patter
     return patterns
 
 
+def _decimals_for_pair(pair: str) -> int:
+    """Nombre de décimales appropriées pour arrondir les SL/TP.
+
+    Fix 2026-04-22 : l'ancien `round(x, 2)` écrasait les forex 5-dp
+    (EUR/USD 1.10155 → 1.10), cassant totalement les setups car SL=entry
+    après arrondi. Le backtest 3 ans a montré un R:R réalisé 0.52 vs 1.5
+    théorique directement dû à ce bug.
+    """
+    upper = (pair or "").upper()
+    if "JPY" in upper:
+        return 3                       # USD/JPY : 150.123
+    base = upper.split("/")[0] if "/" in upper else upper
+    if base == "XAU":
+        return 2                       # 2000.00
+    if base == "XAG":
+        return 3                       # 25.000
+    if base in {"BTC", "ETH"}:
+        return 1                       # 60000.5
+    if base in {"SPX", "NDX"}:
+        return 2
+    if base == "WTI":
+        return 2
+    return 5                           # forex major 5-dp par défaut
+
+
 def calculate_trade_setup(
     pair: str,
     pattern: PatternDetection,
     candles: list[Candle],
     is_simulated: bool = False,
 ) -> TradeSetup | None:
-    """Calcule un setup de trade complet à partir d'un pattern détecté."""
+    """Calcule un setup de trade complet à partir d'un pattern détecté.
+
+    Refactor 2026-04-22 :
+    - SL calibré sur ATR seul (±1.0 × ATR) au lieu de recent_low/high qui
+      captait les mèches et creusait le SL de manière imprévisible.
+      Résultat attendu : R:R réalisé proche du théorique 1.5.
+    - TP1 = 1.5 × ATR, TP2 = 2.5 × ATR (au lieu de × risk, pour stabilité).
+    - Rounding adaptatif par pair (5-dp forex, 3-dp JPY, etc.) via
+      `_decimals_for_pair`. Fix du bug round(x, 2) qui écrasait SL=entry
+      sur forex 5-dp.
+    """
     if len(candles) < 5:
         return None
 
     now = datetime.now(timezone.utc)
     last = candles[-1]
     atr = _calculate_atr(candles, period=14)
+    if atr <= 0:
+        return None
+    decimals = _decimals_for_pair(pair)
 
-    # Déterminer la direction
+    # Direction
     is_buy = pattern.pattern in (
         PatternType.BREAKOUT_UP,
         PatternType.MOMENTUM_UP,
@@ -232,27 +270,24 @@ def calculate_trade_setup(
         PatternType.ENGULFING_BULLISH,
         PatternType.PIN_BAR_UP,
     )
-
     direction = TradeDirection.BUY if is_buy else TradeDirection.SELL
-    entry = last.close
+    entry = round(last.close, decimals)
+
+    # SL à ±1.0 × ATR de l'entry (prévisible, indépendant des mèches)
+    sl_distance = atr * 1.0
+    tp1_distance = atr * 1.5   # R:R 1.5 stable
+    tp2_distance = atr * 2.5
 
     if is_buy:
-        # Achat : SL sous le dernier plus bas, TP au-dessus
-        recent_low = min(c.low for c in candles[-5:])
-        stop_loss = round(recent_low - atr * 0.3, 2)
+        stop_loss = round(entry - sl_distance, decimals)
+        take_profit_1 = round(entry + tp1_distance, decimals)
+        take_profit_2 = round(entry + tp2_distance, decimals)
         risk = entry - stop_loss
-
-        # TP1 = 1.5x le risque (conservateur), TP2 = 2.5x le risque (agressif)
-        take_profit_1 = round(entry + risk * 1.5, 2)
-        take_profit_2 = round(entry + risk * 2.5, 2)
     else:
-        # Vente : SL au-dessus du dernier plus haut, TP en-dessous
-        recent_high = max(c.high for c in candles[-5:])
-        stop_loss = round(recent_high + atr * 0.3, 2)
+        stop_loss = round(entry + sl_distance, decimals)
+        take_profit_1 = round(entry - tp1_distance, decimals)
+        take_profit_2 = round(entry - tp2_distance, decimals)
         risk = stop_loss - entry
-
-        take_profit_1 = round(entry - risk * 1.5, 2)
-        take_profit_2 = round(entry - risk * 2.5, 2)
 
     if risk <= 0:
         return None
@@ -260,15 +295,16 @@ def calculate_trade_setup(
     reward_1 = abs(take_profit_1 - entry)
     reward_2 = abs(take_profit_2 - entry)
 
-    # Construire le message en français
+    # Message en français — format adaptatif aux décimales
     dir_label = "ACHAT" if is_buy else "VENTE"
     pattern_label = _pattern_french_name(pattern.pattern)
+    fmt = f".{decimals}f"
 
     message = (
-        f"{dir_label} {pair} @ {entry:.2f} | "
+        f"{dir_label} {pair} @ {entry:{fmt}} | "
         f"Pattern: {pattern_label} (confiance: {pattern.confidence:.0%}) | "
-        f"SL: {stop_loss:.2f} | TP1: {take_profit_1:.2f} (R:R {reward_1/risk:.1f}) | "
-        f"TP2: {take_profit_2:.2f} (R:R {reward_2/risk:.1f})"
+        f"SL: {stop_loss:{fmt}} | TP1: {take_profit_1:{fmt}} (R:R {reward_1/risk:.1f}) | "
+        f"TP2: {take_profit_2:{fmt}} (R:R {reward_2/risk:.1f})"
     )
 
     # Durée de validité : 15 min pour scalping 5min
