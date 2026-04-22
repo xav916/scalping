@@ -280,6 +280,66 @@ def test_min_sl_distance_pct_falls_back_when_class_missing():
         assert mt5_bridge._min_sl_distance_pct_for("EUR/USD") == mt5_bridge.MT5_BRIDGE_MIN_SL_DISTANCE_PCT
 
 
+def test_max_positions_per_pair_respects_asset_class_cap():
+    """forex=2, crypto=1 par défaut."""
+    assert mt5_bridge._max_positions_for_pair("EUR/USD") == 2
+    assert mt5_bridge._max_positions_for_pair("XAU/USD") == 2
+    assert mt5_bridge._max_positions_for_pair("BTC/USD") == 1
+    assert mt5_bridge._max_positions_for_pair("SPX") == 1
+
+
+def test_max_positions_per_pair_override_via_config():
+    """Surcharge via MT5_BRIDGE_MAX_POSITIONS_PER_PAIR."""
+    with patch.object(mt5_bridge, "MT5_BRIDGE_MAX_POSITIONS_PER_PAIR",
+                      {"forex": 3, "metal": 1}):
+        assert mt5_bridge._max_positions_for_pair("EUR/USD") == 3
+        assert mt5_bridge._max_positions_for_pair("XAU/USD") == 1
+
+
+@pytest.mark.asyncio
+async def test_setup_rejected_when_max_positions_per_pair_reached():
+    """Si 2 XAU/USD OPEN et un 3e setup arrive → rejeté."""
+    setup = _mk_setup("XAU/USD")
+    setup.entry_price = 2600.0
+    setup.stop_loss = 2595.0
+    setup.take_profit_1 = 2610.0
+    setup.confidence_score = 90.0
+    setup.verdict_blockers = []
+    setup.is_simulated = False
+
+    with patch.object(mt5_bridge, "MT5_BRIDGE_ALLOWED_ASSET_CLASSES", ["metal"]), \
+         patch.object(mt5_bridge, "MT5_BRIDGE_ENABLED", True), \
+         patch.object(mt5_bridge, "MT5_BRIDGE_URL", "http://test"), \
+         patch.object(mt5_bridge, "MT5_BRIDGE_API_KEY", "test"), \
+         patch.object(mt5_bridge, "MT5_BRIDGE_MIN_CONFIDENCE", 55), \
+         patch("backend.services.mt5_bridge.is_market_open_for", lambda p: True), \
+         patch("backend.services.mt5_bridge._count_open_trades_for_pair", return_value=2):
+        rejection = mt5_bridge._check_rejection(setup)
+    assert rejection == "max_positions_per_pair"
+
+
+@pytest.mark.asyncio
+async def test_setup_accepted_when_below_max_positions():
+    """Si 1 XAU/USD OPEN et cap forex=2 → accepté."""
+    setup = _mk_setup("XAU/USD")
+    setup.entry_price = 2600.0
+    setup.stop_loss = 2595.0
+    setup.take_profit_1 = 2610.0
+    setup.confidence_score = 90.0
+    setup.verdict_blockers = []
+    setup.is_simulated = False
+
+    with patch.object(mt5_bridge, "MT5_BRIDGE_ALLOWED_ASSET_CLASSES", ["metal"]), \
+         patch.object(mt5_bridge, "MT5_BRIDGE_ENABLED", True), \
+         patch.object(mt5_bridge, "MT5_BRIDGE_URL", "http://test"), \
+         patch.object(mt5_bridge, "MT5_BRIDGE_API_KEY", "test"), \
+         patch.object(mt5_bridge, "MT5_BRIDGE_MIN_CONFIDENCE", 55), \
+         patch("backend.services.mt5_bridge.is_market_open_for", lambda p: True), \
+         patch("backend.services.mt5_bridge._count_open_trades_for_pair", return_value=1):
+        rejection = mt5_bridge._check_rejection(setup)
+    assert rejection is None
+
+
 @pytest.mark.asyncio
 async def test_setup_rejected_when_market_closed():
     """XAU/USD poussé pendant le daily break 21-22h UTC → refusé avant envoi.

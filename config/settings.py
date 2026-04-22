@@ -139,6 +139,27 @@ MT5_BRIDGE_ALLOWED_ASSET_CLASSES = [
     for c in os.getenv("MT5_BRIDGE_ALLOWED_ASSET_CLASSES", "forex,metal").split(",")
     if c.strip()
 ]
+# Cap par pair : N positions max SIMULTANÉMENT sur la même paire. Forcé
+# de diversifier, évite la concentration aveugle (ex: 4 XAU/USD ouverts
+# qui tombent ensemble sur un mouvement défavorable).
+#
+# Dict JSON par asset class. Surchargeable via env MT5_BRIDGE_MAX_POSITIONS_PER_PAIR.
+MT5_BRIDGE_MAX_POSITIONS_PER_PAIR_DEFAULT = {
+    "forex": 2,
+    "metal": 2,
+    "equity_index": 1,
+    "crypto": 1,
+    "energy": 1,
+}
+try:
+    import json as _json_maxpp
+    _raw_mpp = os.getenv("MT5_BRIDGE_MAX_POSITIONS_PER_PAIR", "")
+    MT5_BRIDGE_MAX_POSITIONS_PER_PAIR = (
+        _json_maxpp.loads(_raw_mpp) if _raw_mpp else MT5_BRIDGE_MAX_POSITIONS_PER_PAIR_DEFAULT
+    )
+except (ValueError, _json_maxpp.JSONDecodeError):
+    MT5_BRIDGE_MAX_POSITIONS_PER_PAIR = MT5_BRIDGE_MAX_POSITIONS_PER_PAIR_DEFAULT
+
 # Distance SL minimale en % du prix d'entrée (|entry-sl|/entry*100). Évite
 # les setups scalping trop serrés rejetés rc=10016 INVALID_STOPS par MT5.
 # Défaut legacy 0.05% = 5.9 pips sur EUR/USD@1.18, 9.4 pips sur EUR/JPY@187.
