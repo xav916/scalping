@@ -188,16 +188,30 @@ async def api_insights_performance(
 
 @app.get("/api/insights/period-stats")
 async def api_insights_period_stats(
-    period: str = "day",
+    period: str | None = None,
+    since: str | None = None,
+    until: str | None = None,
     _=Depends(verify_credentials),
 ):
-    """Métriques consolidées par période (day/week/month/year/all) :
-    PnL, win rate, profit factor, expectancy, max drawdown, best/worst trade,
-    durée moyenne, distribution close_reason, capital à risque instantané.
+    """Métriques consolidées par période.
 
-    Alimente le widget PeriodMetricsCard du cockpit avec tabs toggleables.
+    Deux modes mutuellement exclusifs :
+    - Legacy : `?period=day|week|month|year|all` (backward compat)
+    - Custom range : `?since=ISO&until=ISO` (les deux requis)
+
+    Même schéma de réponse dans les deux cas. `period` dans la réponse vaut
+    le preset ou 'custom'.
+
+    Alimente le widget PeriodMetricsCard du cockpit.
     """
     from backend.services import insights_service
+
+    if since or until:
+        if not (since and until):
+            raise HTTPException(status_code=400, detail="since et until requis ensemble")
+        return insights_service.get_period_stats_range(since=since, until=until)
+
+    period = period or "day"
     if period not in {"day", "week", "month", "year", "all"}:
         raise HTTPException(status_code=400, detail="period invalide (day|week|month|year|all)")
     return insights_service.get_period_stats(period=period)
@@ -218,6 +232,35 @@ async def api_insights_equity_curve(
     """
     from backend.services import insights_service
     return insights_service.get_equity_curve(since_iso=since)
+
+
+@app.get("/api/insights/pnl-buckets")
+async def api_insights_pnl_buckets(
+    since: str,
+    until: str,
+    granularity: str = "auto",
+    _=Depends(verify_credentials),
+):
+    """Série temporelle bucketisée du PnL pour le graph de la carte Performance.
+
+    Query params :
+    - since, until : bornes ISO UTC (requis).
+    - granularity : '5min'|'hour'|'day'|'month'|'auto' (défaut 'auto').
+      Si 'auto', résolu côté backend par span (≤36h→hour, ≤93j→day, >93j→month).
+
+    Retourne {buckets: [{bucket_start, bucket_end, pnl, cumulative_pnl, n_trades}, ...],
+              granularity_used, total_trades, final_pnl, since, until}.
+    """
+    from backend.services import insights_service
+    if granularity not in {"5min", "hour", "day", "month", "auto"}:
+        raise HTTPException(
+            status_code=400,
+            detail="granularity invalide (5min|hour|day|month|auto)",
+        )
+    try:
+        return insights_service.get_pnl_buckets(since=since, until=until, granularity=granularity)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.get("/debug/smoke-test")

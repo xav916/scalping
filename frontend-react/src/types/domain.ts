@@ -218,6 +218,8 @@ export interface SignalVolume {
 }
 
 export type PeriodKey = 'day' | 'week' | 'month' | 'year' | 'all';
+export type Preset = PeriodKey | 'custom';
+export type Granularity = '5min' | 'hour' | 'day' | 'month';
 
 export interface PeriodTradeRef {
   pair: string;
@@ -227,7 +229,7 @@ export interface PeriodTradeRef {
 }
 
 export interface PeriodStats {
-  period: PeriodKey;
+  period: Preset;
   from: string;
   to: string;
   pnl: number;
@@ -247,6 +249,30 @@ export interface PeriodStats {
   avg_duration_min: number | null;
   close_reasons: Record<string, number>;
   n_open: number;
+}
+
+export interface PnlBucket {
+  bucket_start: string;
+  bucket_end: string;
+  pnl: number;
+  cumulative_pnl: number;
+  n_trades: number;
+}
+
+export interface PnlBucketsResponse {
+  buckets: PnlBucket[];
+  granularity_used: Granularity;
+  total_trades: number;
+  final_pnl: number;
+  since: string;
+  until: string;
+}
+
+export interface DrillSegment {
+  label: string;
+  start: string;
+  end: string;
+  granularity: Granularity;
 }
 
 export interface MistakesReport {

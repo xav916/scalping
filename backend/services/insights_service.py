@@ -239,16 +239,33 @@ def _period_window(period: str) -> tuple[str, str]:
 
 
 def get_period_stats(period: str = "day") -> dict:
-    """Métriques consolidées pour une période : PnL, win rate, profit factor,
-    expectancy, max drawdown, best/worst trade, durée moyenne, distribution
-    close_reason.
-    
-    Source : personal_trades WHERE status='CLOSED' AND is_auto=1 AND closed_at in [since, until].
+    """Métriques consolidées pour une période preset : PnL, win rate, profit
+    factor, expectancy, max drawdown, best/worst trade, durée moyenne,
+    distribution close_reason.
+
+    Wrapper : calcule (since, until) depuis le preset, délègue à
+    `_compute_stats_for_range`. Backward compat : même schéma de réponse.
+
+    Source : personal_trades WHERE status='CLOSED' AND is_auto=1 AND
+    closed_at in [since, until].
+    """
+    since, until = _period_window(period)
+    return _compute_stats_for_range(since, until, period_label=period)
+
+
+def get_period_stats_range(since: str, until: str) -> dict:
+    """Même chose que `get_period_stats` mais avec un range custom arbitraire
+    passé par l'API. `period` dans la réponse = 'custom'."""
+    return _compute_stats_for_range(since, until, period_label="custom")
+
+
+def _compute_stats_for_range(since: str, until: str, period_label: str) -> dict:
+    """Fonction pure : calcule tous les KPIs pour le range `[since, until]`.
+
+    Ne dépend ni du wall-clock ni d'un preset — juste des bornes ISO UTC.
     """
     from config.settings import TRADING_CAPITAL
-    
-    since, until = _period_window(period)
-    
+
     with sqlite3.connect(_db_path()) as c:
         c.row_factory = sqlite3.Row
         trades_rows = c.execute(
@@ -294,7 +311,7 @@ def get_period_stats(period: str = "day") -> dict:
     
     if not trades:
         return {
-            "period": period,
+            "period": period_label,
             "from": since,
             "to": until,
             "pnl": 0.0,
@@ -364,7 +381,7 @@ def get_period_stats(period: str = "day") -> dict:
     expectancy = total_pnl / n_trades if n_trades else 0.0
     
     return {
-        "period": period,
+        "period": period_label,
         "from": since,
         "to": until,
         "pnl": round(total_pnl, 2),
@@ -394,4 +411,203 @@ def get_period_stats(period: str = "day") -> dict:
         "avg_duration_min": avg_duration,
         "close_reasons": reasons,
         "n_open": len(opens),
+    }
+
+
+# ─── PnL buckets (graph carte Performance) ────────────────────────────────
+
+_GRANULARITIES = ("5min", "hour", "day", "month")
+
+
+def _parse_iso(s: str):
+    """Parse une ISO 8601 UTC tolérante (accepte 'Z' ou '+00:00')."""
+    from datetime import datetime
+    return datetime.fromisoformat(s.replace("Z", "+00:00"))
+
+
+def _resolve_auto_granularity(since_iso: str, until_iso: str) -> str:
+    """Règles span-based identiques au frontend.
+    - span ≤ 36h → hour
+    - 36h < span ≤ 93j → day
+    - span > 93j → month
+    """
+    since_dt = _parse_iso(since_iso)
+    until_dt = _parse_iso(until_iso)
+    span_hours = (until_dt - since_dt).total_seconds() / 3600
+    if span_hours <= 36:
+        return "hour"
+    span_days = span_hours / 24
+    if span_days <= 93:
+        return "day"
+    return "month"
+
+
+def _bucket_key(iso_dt: str, granularity: str) -> str:
+    """Clé canonique d'un bucket pour une date ISO."""
+    dt = _parse_iso(iso_dt)
+    if granularity == "month":
+        return dt.strftime("%Y-%m")
+    if granularity == "day":
+        return dt.strftime("%Y-%m-%d")
+    if granularity == "hour":
+        return dt.strftime("%Y-%m-%dT%H")
+    if granularity == "5min":
+        floored = (dt.minute // 5) * 5
+        return dt.strftime("%Y-%m-%dT%H:") + f"{floored:02d}"
+    raise ValueError(f"granularity inconnue: {granularity}")
+
+
+def _bucket_bounds(key: str, granularity: str) -> tuple[str, str]:
+    """Retourne (start_iso, end_iso) pour un bucket key."""
+    from datetime import datetime, timezone, timedelta
+
+    if granularity == "month":
+        year, month = int(key[:4]), int(key[5:7])
+        start = datetime(year, month, 1, 0, 0, 0, tzinfo=timezone.utc)
+        # Premier du mois suivant − 1 seconde
+        if month == 12:
+            next_month = datetime(year + 1, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+        else:
+            next_month = datetime(year, month + 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+        end = next_month - timedelta(seconds=1)
+    elif granularity == "day":
+        dt = datetime.fromisoformat(key).replace(tzinfo=timezone.utc)
+        start = dt
+        end = dt + timedelta(days=1) - timedelta(seconds=1)
+    elif granularity == "hour":
+        dt = datetime.fromisoformat(key + ":00:00").replace(tzinfo=timezone.utc)
+        start = dt
+        end = dt + timedelta(hours=1) - timedelta(seconds=1)
+    elif granularity == "5min":
+        dt = datetime.fromisoformat(key + ":00").replace(tzinfo=timezone.utc)
+        start = dt
+        end = dt + timedelta(minutes=5) - timedelta(seconds=1)
+    else:
+        raise ValueError(f"granularity inconnue: {granularity}")
+
+    return (start.isoformat(), end.isoformat())
+
+
+def _next_bucket_key(key: str, granularity: str) -> str:
+    """Clé du bucket suivant (pour itérer et remplir les trous)."""
+    from datetime import datetime, timezone, timedelta
+
+    if granularity == "month":
+        year, month = int(key[:4]), int(key[5:7])
+        if month == 12:
+            return f"{year + 1}-01"
+        return f"{year}-{month + 1:02d}"
+    if granularity == "day":
+        dt = datetime.fromisoformat(key)
+        nxt = dt + timedelta(days=1)
+        return nxt.strftime("%Y-%m-%d")
+    if granularity == "hour":
+        dt = datetime.fromisoformat(key + ":00:00")
+        nxt = dt + timedelta(hours=1)
+        return nxt.strftime("%Y-%m-%dT%H")
+    if granularity == "5min":
+        dt = datetime.fromisoformat(key + ":00")
+        nxt = dt + timedelta(minutes=5)
+        floored = (nxt.minute // 5) * 5
+        return nxt.strftime("%Y-%m-%dT%H:") + f"{floored:02d}"
+    raise ValueError(f"granularity inconnue: {granularity}")
+
+
+def get_pnl_buckets(since: str, until: str, granularity: str = "auto") -> dict:
+    """Série temporelle du PnL bucketisée pour le graph de la carte Performance.
+
+    Args:
+        since: borne inférieure ISO UTC (incluse).
+        until: borne supérieure ISO UTC (incluse).
+        granularity: '5min'|'hour'|'day'|'month'|'auto'. Si 'auto', résolu par
+            span (règles identiques au frontend).
+
+    Garde-fous :
+        - '5min' avec span > 24h → ValueError('span trop large pour 5min').
+
+    Retourne :
+        {
+          "buckets": [{bucket_start, bucket_end, pnl, cumulative_pnl, n_trades}, ...],
+          "granularity_used": "day",
+          "total_trades": 22,
+          "final_pnl": 187.42,
+          "since": "...",
+          "until": "...",
+        }
+    """
+    if granularity == "auto":
+        granularity = _resolve_auto_granularity(since, until)
+    if granularity not in _GRANULARITIES:
+        raise ValueError(f"granularity invalide: {granularity}")
+
+    # Garde-fou 5min : trop de buckets si plage > 24h (288 buckets/jour × N jours)
+    if granularity == "5min":
+        span_hours = (_parse_iso(until) - _parse_iso(since)).total_seconds() / 3600
+        if span_hours > 24:
+            raise ValueError("5min granularity limitée à une plage de 24h maximum")
+
+    # Récupère tous les trades CLOSED dans le range
+    with sqlite3.connect(_db_path()) as c:
+        c.row_factory = sqlite3.Row
+        rows = c.execute(
+            """
+            SELECT closed_at, pnl
+              FROM personal_trades
+             WHERE is_auto = 1
+               AND status = 'CLOSED'
+               AND pnl IS NOT NULL
+               AND closed_at IS NOT NULL
+               AND closed_at >= ?
+               AND closed_at <= ?
+             ORDER BY closed_at ASC
+            """,
+            (since, until),
+        ).fetchall()
+
+    trades = [dict(r) for r in rows]
+
+    # Agrège par bucket key
+    per_bucket: dict[str, dict] = {}
+    for t in trades:
+        key = _bucket_key(t["closed_at"], granularity)
+        entry = per_bucket.setdefault(key, {"pnl": 0.0, "n_trades": 0})
+        entry["pnl"] += float(t["pnl"] or 0)
+        entry["n_trades"] += 1
+
+    # Itère de since à until par pas de granularité pour remplir les trous
+    start_key = _bucket_key(since, granularity)
+    end_key = _bucket_key(until, granularity)
+
+    buckets: list[dict] = []
+    cumulative = 0.0
+    current = start_key
+    # Safety cap : max 5000 buckets pour éviter runaway
+    for _ in range(5001):
+        bucket_start, bucket_end = _bucket_bounds(current, granularity)
+        entry = per_bucket.get(current, {"pnl": 0.0, "n_trades": 0})
+        cumulative += entry["pnl"]
+        buckets.append({
+            "bucket_start": bucket_start,
+            "bucket_end": bucket_end,
+            "pnl": round(entry["pnl"], 2),
+            "cumulative_pnl": round(cumulative, 2),
+            "n_trades": entry["n_trades"],
+        })
+        if current == end_key:
+            break
+        current = _next_bucket_key(current, granularity)
+    else:
+        # Boucle terminée sans break — safety cap dépassé
+        raise ValueError(f"Trop de buckets générés (> 5000) pour granularity={granularity}")
+
+    total_trades = sum(b["n_trades"] for b in buckets)
+    final_pnl = buckets[-1]["cumulative_pnl"] if buckets else 0.0
+
+    return {
+        "buckets": buckets,
+        "granularity_used": granularity,
+        "total_trades": total_trades,
+        "final_pnl": final_pnl,
+        "since": since,
+        "until": until,
     }

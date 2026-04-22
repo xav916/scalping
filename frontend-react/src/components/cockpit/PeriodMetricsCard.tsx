@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import clsx from 'clsx';
 import { motion, AnimatePresence } from 'motion/react';
 import { GlassCard } from '@/components/ui/GlassCard';
@@ -6,23 +6,48 @@ import { GradientText } from '@/components/ui/GradientText';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Tooltip, LabelWithInfo } from '@/components/ui/Tooltip';
 import { usePeriodStats } from '@/hooks/useCockpit';
+import { useDateRange } from '@/hooks/useDateRange';
+import { usePnlBuckets } from '@/hooks/usePnlBuckets';
 import { formatPnl, formatPct } from '@/lib/format';
 import { TIPS } from '@/lib/metricTips';
-import type { PeriodKey, PeriodStats } from '@/types/domain';
+import type { PeriodStats } from '@/types/domain';
+import { RangeToolbar } from './RangeToolbar';
+import { DrillBreadcrumb } from './DrillBreadcrumb';
+import { DailyPnlChart } from './DailyPnlChart';
 
-const TABS: Array<{ key: PeriodKey; label: string; tip: string }> = [
-  { key: 'day', label: 'Jour', tip: TIPS.period.tabDay },
-  { key: 'week', label: 'Semaine', tip: TIPS.period.tabWeek },
-  { key: 'month', label: 'Mois', tip: TIPS.period.tabMonth },
-  { key: 'year', label: 'Année', tip: TIPS.period.tabYear },
-  { key: 'all', label: 'Tout', tip: TIPS.period.tabAll },
-];
-
-/** Carte KPI avec tabs Jour/Semaine/Mois/Année/Tout.
- *  Source : /api/insights/period-stats?period=X (backend calcule tout). */
+/** Carte KPI avec tabs Jour/Semaine/Mois/Année/Tout + range custom + graph
+ *  PnL adaptive avec drill-down hiérarchique.
+ *  Source : /api/insights/period-stats (KPIs) + /api/insights/pnl-buckets (graph). */
 export function PeriodMetricsCard() {
-  const [period, setPeriod] = useState<PeriodKey>('day');
-  const { data, isLoading } = usePeriodStats(period);
+  const range = useDateRange();
+  const live = range.preset !== 'custom';
+
+  // Heartbeat : re-compute end every 30s pour les presets live, afin que
+  // la query cache-invalidate pick up les nouveaux trades sans staleness.
+  const [heartbeat, setHeartbeat] = useState(0);
+  useEffect(() => {
+    if (!live) return;
+    const id = setInterval(() => setHeartbeat((h) => h + 1), 30_000);
+    return () => clearInterval(id);
+  }, [live]);
+
+  const effectiveEnd = useMemo(
+    () => (live ? new Date().toISOString() : range.end),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [live, range.end, heartbeat]
+  );
+
+  const { data: stats, isLoading: statsLoading } = usePeriodStats({
+    since: range.start,
+    until: effectiveEnd,
+  });
+
+  const { data: buckets, isLoading: bucketsLoading } = usePnlBuckets({
+    since: range.start,
+    until: effectiveEnd,
+    granularity: range.granularity,
+    live,
+  });
 
   return (
     <GlassCard variant="elevated" className="p-5">
@@ -31,38 +56,53 @@ export function PeriodMetricsCard() {
           label={<h3 className="text-sm font-semibold tracking-tight">Performance par période</h3>}
           tip={TIPS.period.titre}
         />
-        <div className="flex items-center gap-1 flex-wrap">
-          {TABS.map((t) => (
-            <Tooltip key={t.key} content={t.tip}>
-              <button
-                type="button"
-                onClick={() => setPeriod(t.key)}
-                className={clsx(
-                  'text-xs px-3 py-1.5 rounded-lg border transition-all font-semibold',
-                  period === t.key
-                    ? 'border-cyan-400/40 bg-cyan-400/10 text-cyan-300 shadow-[0_0_12px_rgba(34,211,238,0.15)]'
-                    : 'border-glass-soft text-white/50 hover:text-white/90 hover:bg-white/[0.03]'
-                )}
-              >
-                {t.label}
-              </button>
-            </Tooltip>
-          ))}
-        </div>
       </div>
 
-      {isLoading && !data ? (
-        <Skeleton className="h-56" />
-      ) : data ? (
+      <div className="mb-4">
+        <RangeToolbar
+          preset={range.preset}
+          start={range.start}
+          end={effectiveEnd}
+          onSetPreset={range.setPreset}
+          onSetCustomRange={range.setCustomRange}
+          onShift={range.shiftRange}
+          onReset={range.reset}
+        />
+      </div>
+
+      <DrillBreadcrumb drillPath={range.drillPath} onDrillBack={range.drillBack} />
+
+      {/* Graph */}
+      <div className="my-4">
+        {bucketsLoading && !buckets ? (
+          <Skeleton className="h-[200px] w-full" />
+        ) : buckets && buckets.buckets.length > 0 ? (
+          <DailyPnlChart
+            buckets={buckets.buckets}
+            granularity={buckets.granularity_used}
+            live={live}
+            onBarClick={range.drillInto}
+          />
+        ) : (
+          <div className="flex items-center justify-center h-[200px] text-xs text-white/30 rounded-lg border border-white/5">
+            Pas encore de données sur cette période
+          </div>
+        )}
+      </div>
+
+      {/* KPIs existants */}
+      {statsLoading && !stats ? (
+        <Skeleton className="h-40" />
+      ) : stats ? (
         <AnimatePresence mode="wait">
           <motion.div
-            key={period}
+            key={`${range.start}-${effectiveEnd}`}
             initial={{ opacity: 0, y: 4 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -4 }}
             transition={{ duration: 0.2 }}
           >
-            <StatsGrid stats={data} />
+            <StatsGrid stats={stats} />
           </motion.div>
         </AnimatePresence>
       ) : null}
