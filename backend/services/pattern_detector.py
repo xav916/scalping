@@ -242,14 +242,15 @@ def calculate_trade_setup(
 ) -> TradeSetup | None:
     """Calcule un setup de trade complet à partir d'un pattern détecté.
 
-    Refactor 2026-04-22 :
-    - SL calibré sur ATR seul (±1.0 × ATR) au lieu de recent_low/high qui
-      captait les mèches et creusait le SL de manière imprévisible.
-      Résultat attendu : R:R réalisé proche du théorique 1.5.
-    - TP1 = 1.5 × ATR, TP2 = 2.5 × ATR (au lieu de × risk, pour stabilité).
-    - Rounding adaptatif par pair (5-dp forex, 3-dp JPY, etc.) via
-      `_decimals_for_pair`. Fix du bug round(x, 2) qui écrasait SL=entry
-      sur forex 5-dp.
+    État 2026-04-23 : partial revert du fix ATR-only du 2026-04-22.
+    - SL basé sur recent_low/high ± ATR×0.3 (retour à la logique originale) :
+      les SL ATR-only à 1×ATR étaient trop serrés, stop-outs systématiques
+      sur bruit intra-bar. Observé en live post-fix : -89€/8 trades vs
+      -35€/19 trades avant fix (6× pire par trade).
+    - TP1 = 1.5 × risk, TP2 = 2.5 × risk (retour original).
+    - **GARDÉ** : rounding adaptatif par pair via `_decimals_for_pair`
+      (forex 5-dp, JPY 3-dp, XAU 2-dp, etc.). Le fix du round(x, 2)
+      universel restait pertinent pour ne pas écraser SL=entry sur forex.
     """
     if len(candles) < 5:
         return None
@@ -273,21 +274,20 @@ def calculate_trade_setup(
     direction = TradeDirection.BUY if is_buy else TradeDirection.SELL
     entry = round(last.close, decimals)
 
-    # SL à ±1.0 × ATR de l'entry (prévisible, indépendant des mèches)
-    sl_distance = atr * 1.0
-    tp1_distance = atr * 1.5   # R:R 1.5 stable
-    tp2_distance = atr * 2.5
-
     if is_buy:
-        stop_loss = round(entry - sl_distance, decimals)
-        take_profit_1 = round(entry + tp1_distance, decimals)
-        take_profit_2 = round(entry + tp2_distance, decimals)
+        # Achat : SL sous le dernier plus bas, TP au-dessus
+        recent_low = min(c.low for c in candles[-5:])
+        stop_loss = round(recent_low - atr * 0.3, decimals)
         risk = entry - stop_loss
+        take_profit_1 = round(entry + risk * 1.5, decimals)
+        take_profit_2 = round(entry + risk * 2.5, decimals)
     else:
-        stop_loss = round(entry + sl_distance, decimals)
-        take_profit_1 = round(entry - tp1_distance, decimals)
-        take_profit_2 = round(entry - tp2_distance, decimals)
+        # Vente : SL au-dessus du dernier plus haut, TP en-dessous
+        recent_high = max(c.high for c in candles[-5:])
+        stop_loss = round(recent_high + atr * 0.3, decimals)
         risk = stop_loss - entry
+        take_profit_1 = round(entry - risk * 1.5, decimals)
+        take_profit_2 = round(entry - risk * 2.5, decimals)
 
     if risk <= 0:
         return None
