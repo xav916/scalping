@@ -12,6 +12,8 @@ import type {
   AnalyticsReport,
   PeriodStats,
   PeriodKey,
+  Granularity,
+  PnlBucketsResponse,
   MistakesReport,
   CombosReport,
 } from '@/types/domain';
@@ -100,8 +102,18 @@ export const api = {
 
   combos: () => request<CombosReport>('/api/stats/combos'),
 
-  periodStats: (period: PeriodKey) =>
-    request<PeriodStats>(`/api/insights/period-stats?period=${period}`),
+  periodStats: (arg: PeriodKey | { since: string; until: string }) => {
+    if (typeof arg === 'string') {
+      return request<PeriodStats>(`/api/insights/period-stats?period=${arg}`);
+    }
+    const qs = new URLSearchParams({ since: arg.since, until: arg.until });
+    return request<PeriodStats>(`/api/insights/period-stats?${qs.toString()}`);
+  },
+
+  pnlBuckets: (since: string, until: string, granularity: Granularity | 'auto' = 'auto') => {
+    const qs = new URLSearchParams({ since, until, granularity });
+    return request<PnlBucketsResponse>(`/api/insights/pnl-buckets?${qs.toString()}`);
+  },
 
   health: () =>
     request<{

@@ -22,12 +22,21 @@ export function useAnalytics() {
   });
 }
 
-/** Period stats (PnL/win rate/profit factor par période). Poll 30s pour que
- *  le "Jour" se rafraîchisse pendant que des trades se ferment. */
-export function usePeriodStats(period: import('@/types/domain').PeriodKey) {
+/** Period stats (PnL/win rate/profit factor par période). Accepte soit un
+ *  preset (mode legacy) soit un range custom {since, until}. Poll 30s pour que
+ *  les stats se rafraîchissent pendant que des trades se ferment. */
+export function usePeriodStats(
+  arg:
+    | import('@/types/domain').PeriodKey
+    | { since: string; until: string }
+) {
+  const key =
+    typeof arg === 'string'
+      ? ['period-stats', arg]
+      : ['period-stats', 'range', arg.since, arg.until];
   return useQuery({
-    queryKey: ['period-stats', period],
-    queryFn: () => api.periodStats(period),
+    queryKey: key,
+    queryFn: () => api.periodStats(arg),
     refetchInterval: 30_000,
     staleTime: 15_000,
   });
