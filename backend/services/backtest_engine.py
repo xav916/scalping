@@ -134,8 +134,15 @@ def compute_volatility(candles_1h: list[Candle], pair: str) -> VolatilityData:
         )
     recent = candles_1h[-15:]
     atr_current = _calculate_atr(recent, period=14)
-    baseline = candles_1h[-50:] if len(candles_1h) >= 50 else candles_1h
-    atr_baseline = _calculate_atr(baseline, period=min(14, len(baseline) - 1))
+    # Baseline : fenêtre plus large, EXCLUT la fenêtre récente pour que le
+    # ratio reflète vraiment "spike vs calme d'avant" et pas "calme + spike
+    # vs calme + spike" (même série des deux côtés).
+    older = candles_1h[:-15]
+    baseline = older[-50:] if len(older) >= 50 else older
+    if len(baseline) >= 15:
+        atr_baseline = _calculate_atr(baseline, period=14)
+    else:
+        atr_baseline = atr_current  # pas assez d'historique → ratio 1.0
     ratio = atr_current / atr_baseline if atr_baseline > 0 else 1.0
     if ratio >= 1.3:
         level = VolatilityLevel.HIGH
