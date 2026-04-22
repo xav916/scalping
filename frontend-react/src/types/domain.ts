@@ -275,6 +275,34 @@ export interface DrillSegment {
   granularity: Granularity;
 }
 
+export interface RejectionByReason {
+  reason_code: string;
+  label_fr: string;
+  count: number;
+  pairs: Record<string, number>;
+  top_pair: string | null;
+}
+
+export interface RejectionByHour {
+  hour: number;
+  count: number;
+}
+
+export interface RejectionByReasonHour {
+  reason_code: string;
+  hour: number;
+  count: number;
+}
+
+export interface RejectionsReport {
+  total: number;
+  by_reason: RejectionByReason[];
+  by_hour_utc: RejectionByHour[];
+  by_reason_hour: RejectionByReasonHour[];
+  since: string;
+  until: string;
+}
+
 export interface MistakesReport {
   total_trades: number;
   without_checklist: { count: number; avg_pnl: number };

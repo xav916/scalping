@@ -234,6 +234,21 @@ async def api_insights_equity_curve(
     return insights_service.get_equity_curve(since_iso=since)
 
 
+@app.get("/api/insights/rejections")
+async def api_insights_rejections(
+    since: str,
+    until: str,
+    _=Depends(verify_credentials),
+):
+    """Agrégat des rejections d'ordres auto-exec sur la période.
+
+    Retourne by_reason (barres), by_hour_utc (timeline) et by_reason_hour
+    (heatmap) pour la RejectionsCard du cockpit.
+    """
+    from backend.services import rejection_service
+    return rejection_service.get_rejections(since=since, until=until)
+
+
 @app.get("/api/insights/pnl-buckets")
 async def api_insights_pnl_buckets(
     since: str,
