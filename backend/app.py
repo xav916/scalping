@@ -873,6 +873,10 @@ async def stats_mistakes(ctx: AuthContext = Depends(auth_context)):
 # Serve static files
 app.mount("/css", StaticFiles(directory=str(FRONTEND_DIR / "css")), name="css")
 app.mount("/js", StaticFiles(directory=str(FRONTEND_DIR / "js")), name="js")
+# Docs publiques (guide install bridge, FAQ…) — accessible sans auth.
+_DOCS_DIR = FRONTEND_DIR / "docs"
+if _DOCS_DIR.exists():
+    app.mount("/docs", StaticFiles(directory=str(_DOCS_DIR), html=True), name="docs")
 
 # SPA React V2 (coexiste avec l'ancien frontend servi sur /)
 from pathlib import Path as _PathV2
