@@ -20,6 +20,9 @@ const LoginPage = lazy(() =>
 const SignupPage = lazy(() =>
   import('@/pages/SignupPage').then((m) => ({ default: m.SignupPage }))
 );
+const OnboardingPage = lazy(() =>
+  import('@/pages/OnboardingPage').then((m) => ({ default: m.OnboardingPage }))
+);
 const TradesPage = lazy(() =>
   import('@/pages/TradesPage').then((m) => ({ default: m.TradesPage }))
 );
@@ -48,6 +51,9 @@ export default function App() {
               <Route path="/login" element={<LoginPage />} />
               <Route path="/signup" element={<SignupPage />} />
               <Route element={<AuthGate />}>
+                <Route path="/onboarding" element={<OnboardingPage />} />
+              </Route>
+              <Route element={<AuthGate requireOnboarded />}>
                 <Route path="/" element={<DashboardPage />} />
                 <Route path="/cockpit" element={<CockpitPage />} />
                 <Route path="/analytics" element={<AnalyticsPage />} />

@@ -63,6 +63,41 @@ export const api = {
     }),
   logout: () => request<void>('/api/logout', { method: 'POST' }),
 
+  // ─── Onboarding (Chantier 4 SaaS) ─────────────────────────────
+  onboardingStatus: () =>
+    request<{ has_broker: boolean; has_pairs: boolean; needs_onboarding: boolean }>(
+      '/api/user/onboarding-status'
+    ),
+
+  userBrokerGet: () =>
+    request<{ bridge_url: string; broker_name: string; api_key_set: boolean }>(
+      '/api/user/broker'
+    ),
+
+  userBrokerPut: (bridge_url: string, bridge_api_key: string, broker_name?: string) =>
+    request<{ ok: true }>('/api/user/broker', {
+      method: 'PUT',
+      body: JSON.stringify({ bridge_url, bridge_api_key, broker_name }),
+    }),
+
+  userBrokerTest: (bridge_url: string, bridge_api_key: string) =>
+    request<{ ok: boolean; reachable: boolean; error?: string; version?: string }>(
+      '/api/user/broker/test',
+      {
+        method: 'POST',
+        body: JSON.stringify({ bridge_url, bridge_api_key }),
+      }
+    ),
+
+  userWatchedPairsGet: () =>
+    request<{ pairs: string[]; cap: number; tier: string }>('/api/user/watched-pairs'),
+
+  userWatchedPairsPut: (pairs: string[]) =>
+    request<{ ok: true; pairs: string[] }>('/api/user/watched-pairs', {
+      method: 'PUT',
+      body: JSON.stringify({ pairs }),
+    }),
+
   macro: async () => {
     const raw = await request<{ status: string; snapshot: MacroSnapshot | null }>(
       '/api/macro'

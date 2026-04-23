@@ -25,6 +25,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+import json
+
 import bcrypt
 
 logger = logging.getLogger(__name__)
@@ -157,3 +159,116 @@ def touch_last_login(user_id: int) -> None:
     now = datetime.now(timezone.utc).isoformat()
     with _conn() as c:
         c.execute("UPDATE users SET last_login_at = ? WHERE id = ?", (now, user_id))
+
+
+# ─── Broker config + watched pairs (Chantier 4 SaaS onboarding) ──────
+
+def get_broker_config(user_id: int) -> dict:
+    """Retourne le dict broker_config du user. {} si non configuré."""
+    user = get_user_by_id(user_id)
+    if not user or not user.get("broker_config"):
+        return {}
+    try:
+        return json.loads(user["broker_config"])
+    except (json.JSONDecodeError, TypeError):
+        return {}
+
+
+def update_broker_config(
+    user_id: int,
+    *,
+    bridge_url: str,
+    bridge_api_key: str,
+    broker_name: Optional[str] = None,
+) -> None:
+    """Persiste la config broker du user (bridge URL + API key).
+
+    Validation basique : URL non vide, api_key min 16 chars pour éviter les
+    entrées vides accidentelles.
+    """
+    if not bridge_url or "://" not in bridge_url:
+        raise ValueError("bridge_url invalide (doit contenir http:// ou https://)")
+    if not bridge_api_key or len(bridge_api_key) < 16:
+        raise ValueError("bridge_api_key trop court (16 caractères min)")
+
+    payload = {
+        "bridge_url": bridge_url.rstrip("/"),
+        "bridge_api_key": bridge_api_key,
+    }
+    if broker_name:
+        payload["broker_name"] = broker_name
+
+    with _conn() as c:
+        c.execute(
+            "UPDATE users SET broker_config = ? WHERE id = ?",
+            (json.dumps(payload), user_id),
+        )
+
+
+def get_watched_pairs(user_id: int) -> list[str]:
+    """Liste des paires surveillées par le user. [] si non configuré."""
+    user = get_user_by_id(user_id)
+    if not user or not user.get("watched_pairs"):
+        return []
+    try:
+        val = json.loads(user["watched_pairs"])
+        return val if isinstance(val, list) else []
+    except (json.JSONDecodeError, TypeError):
+        return []
+
+
+# Cap nombre de pairs par tier (SaaS).
+MAX_PAIRS_PER_TIER = {"free": 1, "pro": 5, "premium": 16}
+
+
+def update_watched_pairs(user_id: int, pairs: list[str]) -> list[str]:
+    """Remplace les paires surveillées, cap selon tier. Retourne la liste
+    persistée (tronquée si au-delà du tier).
+    """
+    if not isinstance(pairs, list):
+        raise ValueError("pairs doit être une liste")
+    user = get_user_by_id(user_id)
+    if not user:
+        raise ValueError(f"user_id {user_id} introuvable")
+
+    tier = user.get("tier", "free")
+    cap = MAX_PAIRS_PER_TIER.get(tier, 1)
+
+    # Dédup + normalise (uppercase).
+    clean = []
+    seen = set()
+    for p in pairs:
+        if not isinstance(p, str):
+            continue
+        norm = p.strip().upper()
+        if norm and norm not in seen:
+            seen.add(norm)
+            clean.append(norm)
+
+    truncated = clean[:cap]
+
+    with _conn() as c:
+        c.execute(
+            "UPDATE users SET watched_pairs = ? WHERE id = ?",
+            (json.dumps(truncated), user_id),
+        )
+    return truncated
+
+
+def is_onboarding_complete(user_id: int) -> dict:
+    """Retourne l'état d'onboarding du user pour le front.
+
+    - `has_broker` : broker_config contient bridge_url ET bridge_api_key
+    - `has_pairs`  : watched_pairs non vide
+    - `needs_onboarding` : at least one step missing
+    """
+    broker = get_broker_config(user_id)
+    has_broker = bool(broker.get("bridge_url") and broker.get("bridge_api_key"))
+    pairs = get_watched_pairs(user_id)
+    has_pairs = len(pairs) > 0
+
+    return {
+        "has_broker": has_broker,
+        "has_pairs": has_pairs,
+        "needs_onboarding": not (has_broker and has_pairs),
+    }

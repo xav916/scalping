@@ -106,6 +106,121 @@ async def api_logout(request: Request, response: Response):
     return {"ok": True}
 
 
+# ─── SaaS : onboarding utilisateur (Chantier 4) ─────────────────────
+@app.get("/api/user/onboarding-status")
+async def api_onboarding_status(ctx: AuthContext = Depends(auth_context)):
+    """État d'onboarding du user courant.
+
+    Le front utilise cette info pour rediriger vers /v2/onboarding si
+    needs_onboarding=true. Les users env legacy (user_id=None) n'ont pas
+    besoin d'onboarding (config globale via env), on renvoie needs=false.
+    """
+    if ctx.user_id is None:
+        return {"has_broker": True, "has_pairs": True, "needs_onboarding": False}
+    return users_service.is_onboarding_complete(ctx.user_id)
+
+
+@app.get("/api/user/broker")
+async def api_user_broker_get(ctx: AuthContext = Depends(auth_context)):
+    """Retourne la config broker du user (sans exposer l'API key)."""
+    if ctx.user_id is None:
+        raise HTTPException(status_code=400, detail="user legacy env, pas de broker_config DB")
+    cfg = users_service.get_broker_config(ctx.user_id)
+    return {
+        "bridge_url": cfg.get("bridge_url", ""),
+        "broker_name": cfg.get("broker_name", ""),
+        "api_key_set": bool(cfg.get("bridge_api_key")),
+    }
+
+
+@app.put("/api/user/broker")
+async def api_user_broker_put(
+    payload: dict,
+    ctx: AuthContext = Depends(auth_context),
+):
+    """Persiste la config broker. Body : {bridge_url, bridge_api_key, broker_name?}."""
+    if ctx.user_id is None:
+        raise HTTPException(status_code=400, detail="user legacy env, edit via env .env")
+    try:
+        users_service.update_broker_config(
+            ctx.user_id,
+            bridge_url=payload.get("bridge_url", ""),
+            bridge_api_key=payload.get("bridge_api_key", ""),
+            broker_name=payload.get("broker_name"),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True}
+
+
+@app.post("/api/user/broker/test")
+async def api_user_broker_test(payload: dict, _ctx: AuthContext = Depends(auth_context)):
+    """Teste la connexion à un bridge arbitraire (depuis l'onboarding wizard).
+
+    Body : {bridge_url, bridge_api_key}. Fait GET {bridge_url}/health avec
+    X-API-Key. Timeout court 3s.
+
+    Note sécurité : endpoint authentifié (ctx requis). Users payants seulement
+    plus tard via gating tier.
+    """
+    import httpx
+
+    bridge_url = (payload or {}).get("bridge_url", "").rstrip("/")
+    api_key = (payload or {}).get("bridge_api_key", "")
+    if not bridge_url or "://" not in bridge_url:
+        raise HTTPException(status_code=400, detail="bridge_url invalide")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="bridge_api_key requis")
+
+    url = bridge_url + "/health"
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            r = await client.get(url, headers={"X-API-Key": api_key})
+            if r.status_code == 200:
+                try:
+                    return {"ok": True, "reachable": True, **r.json()}
+                except Exception:
+                    return {"ok": True, "reachable": True}
+            return {
+                "ok": False,
+                "reachable": True,
+                "status": r.status_code,
+                "error": f"Bridge a répondu {r.status_code}",
+            }
+    except httpx.HTTPError as e:
+        return {"ok": False, "reachable": False, "error": str(e)[:200]}
+
+
+@app.get("/api/user/watched-pairs")
+async def api_user_watched_pairs_get(ctx: AuthContext = Depends(auth_context)):
+    if ctx.user_id is None:
+        # Env user : renvoie la WATCHED_PAIRS globale.
+        from config.settings import WATCHED_PAIRS
+        return {"pairs": list(WATCHED_PAIRS), "cap": len(WATCHED_PAIRS), "tier": "legacy"}
+    pairs = users_service.get_watched_pairs(ctx.user_id)
+    user = users_service.get_user_by_id(ctx.user_id) or {}
+    tier = user.get("tier", "free")
+    cap = users_service.MAX_PAIRS_PER_TIER.get(tier, 1)
+    return {"pairs": pairs, "cap": cap, "tier": tier}
+
+
+@app.put("/api/user/watched-pairs")
+async def api_user_watched_pairs_put(
+    payload: dict,
+    ctx: AuthContext = Depends(auth_context),
+):
+    if ctx.user_id is None:
+        raise HTTPException(status_code=400, detail="user legacy env, edit via env .env")
+    pairs = payload.get("pairs")
+    if not isinstance(pairs, list):
+        raise HTTPException(status_code=400, detail="pairs doit être une liste")
+    try:
+        saved = users_service.update_watched_pairs(ctx.user_id, pairs)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True, "pairs": saved}
+
+
 # ─── SaaS : signup self-service (gated par SAAS_SIGNUP_ENABLED) ─────
 # Chantier 1 : l'endpoint existe pour tests locaux mais reste OFF en prod
 # tant que le parcours login UI + data isolation (chantiers 2-3) ne sont
