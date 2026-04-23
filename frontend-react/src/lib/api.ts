@@ -48,11 +48,18 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  publicConfig: () => request<{ signup_enabled: boolean }>('/api/config'),
+
   whoami: () => request<User>('/api/me'),
   login: (username: string, password: string) =>
     request<{ ok: true }>('/api/login', {
       method: 'POST',
       body: JSON.stringify({ username, password }),
+    }),
+  signup: (email: string, password: string) =>
+    request<{ ok: true; user_id: number }>('/api/auth/signup', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
     }),
   logout: () => request<void>('/api/logout', { method: 'POST' }),
 

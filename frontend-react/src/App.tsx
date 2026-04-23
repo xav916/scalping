@@ -17,6 +17,9 @@ const DashboardPage = lazy(() =>
 const LoginPage = lazy(() =>
   import('@/pages/LoginPage').then((m) => ({ default: m.LoginPage }))
 );
+const SignupPage = lazy(() =>
+  import('@/pages/SignupPage').then((m) => ({ default: m.SignupPage }))
+);
 const TradesPage = lazy(() =>
   import('@/pages/TradesPage').then((m) => ({ default: m.TradesPage }))
 );
@@ -43,6 +46,7 @@ export default function App() {
           <Suspense fallback={<RouteLoader />}>
             <Routes>
               <Route path="/login" element={<LoginPage />} />
+              <Route path="/signup" element={<SignupPage />} />
               <Route element={<AuthGate />}>
                 <Route path="/" element={<DashboardPage />} />
                 <Route path="/cockpit" element={<CockpitPage />} />

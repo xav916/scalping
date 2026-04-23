@@ -126,6 +126,17 @@ async def api_signup(payload: dict):
     return {"ok": True, "user_id": uid}
 
 
+@app.get("/api/config")
+async def api_public_config():
+    """Config publique pour le frontend (pas d'auth requise).
+
+    Expose uniquement des flags d'UI safe à divulguer (pas de secrets).
+    """
+    return {
+        "signup_enabled": bool(SAAS_SIGNUP_ENABLED),
+    }
+
+
 @app.get("/login", include_in_schema=False)
 async def login_page(request: Request):
     """Sert la page de login. Si déjà authentifié, redirige vers /."""

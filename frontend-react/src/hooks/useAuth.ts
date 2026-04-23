@@ -20,6 +20,11 @@ export function useAuth() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['auth'] }),
   });
 
+  const signup = useMutation({
+    mutationFn: ({ email, password }: { email: string; password: string }) =>
+      api.signup(email, password),
+  });
+
   const logout = useMutation({
     mutationFn: api.logout,
     onSuccess: () => {
@@ -27,5 +32,12 @@ export function useAuth() {
     },
   });
 
-  return { whoami, login, logout };
+  const config = useQuery({
+    queryKey: ['auth', 'config'],
+    queryFn: api.publicConfig,
+    staleTime: 10 * 60_000,
+    retry: 0,
+  });
+
+  return { whoami, login, signup, logout, config };
 }

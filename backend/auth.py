@@ -14,12 +14,15 @@ point de changement.
 """
 
 import base64
+import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException, Request, Response
 
 from config.settings import AUTH_USERS
+
+logger = logging.getLogger(__name__)
 
 SESSION_COOKIE = "scalping_session"
 SESSION_TTL = timedelta(days=7)
@@ -106,12 +109,44 @@ def authenticate(request: Request) -> str:
     )
 
 
+def _authenticate_credentials(username: str, password: str) -> str | None:
+    """Vérifie login/password. Ordre : table users (SaaS) → AUTH_USERS env (fallback).
+
+    Retourne le username normalisé (= email lowercase si user DB, sinon tel quel)
+    à stocker dans la session, ou None si échec.
+    """
+    # 1) Table users : créés via signup ou seed_admin_user.
+    # Import local pour éviter cycle au démarrage (users_service est optionnel
+    # si la DB n'est pas encore initialisée).
+    try:
+        from backend.services import users_service
+
+        user = users_service.get_user_by_email(username)
+        if user and user.get("is_active", 1) and users_service.verify_password(
+            password, user["password_hash"]
+        ):
+            try:
+                users_service.touch_last_login(user["id"])
+            except Exception:
+                logger.exception("touch_last_login a échoué pour uid=%s", user["id"])
+            return user["email"]
+    except Exception:
+        # Si la DB users n'est pas dispo, on log et on passe au fallback env.
+        logger.exception("Lookup users DB a échoué — fallback env")
+
+    # 2) Fallback AUTH_USERS env (format historique, avant SaaS).
+    expected = AUTH_USERS.get(username)
+    if expected is not None and secrets.compare_digest(expected, password):
+        return username
+    return None
+
+
 def login_and_set_cookie(response: Response, username: str, password: str) -> bool:
     """Vérifie les identifiants, crée une session et dépose le cookie. Retourne le succès."""
-    expected = AUTH_USERS.get(username)
-    if expected is None or not secrets.compare_digest(expected, password):
+    auth_user = _authenticate_credentials(username, password)
+    if auth_user is None:
         return False
-    sid = create_session(username)
+    sid = create_session(auth_user)
     # SameSite=Lax (et non Strict) : permet d'envoyer le cookie sur les
     # WebSocket upgrades initiés depuis la même origine. Chrome applique
     # Strict de manière suffisamment stricte pour bloquer le cookie sur
