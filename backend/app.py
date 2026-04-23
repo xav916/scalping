@@ -11,6 +11,7 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from slowapi.errors import RateLimitExceeded
 
 from backend.auth import (
     SESSION_COOKIE,
@@ -20,6 +21,7 @@ from backend.auth import (
     login_and_set_cookie,
     logout_and_clear_cookie,
 )
+from backend.rate_limit import limiter, rate_limit_exceeded_handler
 from config.settings import (
     ADMIN_EMAILS,
     AUTH_USERS,
@@ -88,6 +90,13 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# ─── Rate limiting (brute-force + spam sur endpoints sensibles) ─────
+# slowapi enregistre le limiter dans app.state ; chaque route à protéger
+# ajoute `@limiter.limit("N/unit")` et `request: Request` dans sa signature.
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
+
+
 # ─── Authentification (session cookie prioritaire, Basic Auth en fallback) ───
 # Implémentation dans backend/auth.py. Cette fonction reste un alias pour
 # minimiser le bruit sur les routes existantes.
@@ -97,7 +106,8 @@ def verify_credentials(request: Request) -> str:
 
 # ─── Routes de login/logout ─────────────────────────────────────────
 @app.post("/api/login")
-async def api_login(payload: dict, response: Response):
+@limiter.limit("10/minute")
+async def api_login(request: Request, payload: dict, response: Response):
     """Échange login/password contre un cookie de session HttpOnly."""
     username = (payload or {}).get("username", "")
     password = (payload or {}).get("password", "")
@@ -199,7 +209,9 @@ def require_admin(ctx: AuthContext = Depends(auth_context)) -> AuthContext:
 
 # ─── SaaS : Stripe checkout / webhook / portal (Chantier 5) ─────────
 @app.post("/api/stripe/checkout")
+@limiter.limit("20/hour")
 async def api_stripe_checkout(
+    request: Request,
     payload: dict,
     ctx: AuthContext = Depends(auth_context),
 ):
@@ -250,7 +262,8 @@ async def api_stripe_checkout(
 
 
 @app.post("/api/stripe/portal")
-async def api_stripe_portal(ctx: AuthContext = Depends(auth_context)):
+@limiter.limit("30/hour")
+async def api_stripe_portal(request: Request, ctx: AuthContext = Depends(auth_context)):
     """URL Customer Portal Stripe (gestion sub, cartes, factures)."""
     if not STRIPE_ENABLED:
         raise HTTPException(status_code=503, detail="Stripe désactivé")
@@ -511,7 +524,8 @@ async def api_user_watched_pairs_put(
 # tant que le parcours login UI + data isolation (chantiers 2-3) ne sont
 # pas livrés. On renvoie 404 si désactivé pour ne pas exposer l'API.
 @app.post("/api/auth/forgot-password")
-async def api_forgot_password(payload: dict):
+@limiter.limit("3/hour")
+async def api_forgot_password(request: Request, payload: dict):
     """Génère un token de reset + envoie email. Répond 200 dans TOUS les cas
     pour éviter l'énumération d'emails existants.
     """
@@ -531,7 +545,8 @@ async def api_forgot_password(payload: dict):
 
 
 @app.post("/api/auth/reset-password")
-async def api_reset_password(payload: dict):
+@limiter.limit("10/hour")
+async def api_reset_password(request: Request, payload: dict):
     """Consomme un token de reset + fixe le nouveau password.
     400 si token invalide/expiré ou password trop court.
     """
@@ -549,7 +564,8 @@ async def api_reset_password(payload: dict):
 
 
 @app.post("/api/auth/signup")
-async def api_signup(payload: dict):
+@limiter.limit("5/hour")
+async def api_signup(request: Request, payload: dict):
     if not SAAS_SIGNUP_ENABLED:
         raise HTTPException(status_code=404)
     email = (payload or {}).get("email", "")
@@ -606,7 +622,8 @@ async def api_signup(payload: dict):
 
 
 @app.post("/api/auth/verify-email")
-async def api_verify_email(payload: dict):
+@limiter.limit("20/hour")
+async def api_verify_email(request: Request, payload: dict):
     """Consomme un token de vérification email. Idempotent : si déjà
     vérifié, 200 pour UX simple."""
     token = ((payload or {}).get("token") or "").strip()
@@ -619,7 +636,12 @@ async def api_verify_email(payload: dict):
 
 
 @app.post("/api/user/change-password")
-async def api_change_password(payload: dict, ctx: AuthContext = Depends(auth_context)):
+@limiter.limit("5/hour")
+async def api_change_password(
+    request: Request,
+    payload: dict,
+    ctx: AuthContext = Depends(auth_context),
+):
     """Change le password du user courant. Requiert le password actuel."""
     if ctx.user_id is None:
         raise HTTPException(status_code=400, detail="user legacy env, edit via .env")
@@ -635,9 +657,10 @@ async def api_change_password(payload: dict, ctx: AuthContext = Depends(auth_con
 
 
 @app.delete("/api/user/account")
+@limiter.limit("3/hour")
 async def api_delete_account(
-    payload: dict,
     request: Request,
+    payload: dict,
     response: Response,
     ctx: AuthContext = Depends(auth_context),
 ):
@@ -659,7 +682,11 @@ async def api_delete_account(
 
 
 @app.post("/api/auth/resend-verification")
-async def api_resend_verification(ctx: AuthContext = Depends(auth_context)):
+@limiter.limit("3/hour")
+async def api_resend_verification(
+    request: Request,
+    ctx: AuthContext = Depends(auth_context),
+):
     """Renvoie le lien de vérification pour l'utilisateur courant."""
     if ctx.user_id is None:
         raise HTTPException(status_code=400, detail="user legacy env, déjà vérifié")

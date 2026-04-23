@@ -91,7 +91,8 @@ def test_endpoint_verify_email_success(db):
 
     uid = users_service.create_user("alice@test.com", "pw12345678")
     token = users_service.generate_email_verification_token(uid)
-    result = asyncio.run(app_module.api_verify_email({"token": token}))
+    from backend.tests.conftest import mock_request
+    result = asyncio.run(app_module.api_verify_email(mock_request(), {"token": token}))
     assert result == {"ok": True, "user_id": uid}
 
 
@@ -101,7 +102,8 @@ def test_endpoint_verify_email_invalid(db):
     import asyncio
 
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(app_module.api_verify_email({"token": "bad"}))
+        from backend.tests.conftest import mock_request
+        asyncio.run(app_module.api_verify_email(mock_request(), {"token": "bad"}))
     assert exc.value.status_code == 400
 
 
@@ -111,7 +113,8 @@ def test_endpoint_verify_email_empty(db):
     import asyncio
 
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(app_module.api_verify_email({"token": ""}))
+        from backend.tests.conftest import mock_request
+        asyncio.run(app_module.api_verify_email(mock_request(), {"token": ""}))
     assert exc.value.status_code == 400
 
 
@@ -123,7 +126,8 @@ def test_endpoint_resend_verification_already_verified(db):
     uid = users_service.create_user("alice@test.com", "pw12345678")
     users_service.mark_email_auto_verified(uid)
     ctx = AuthContext(username="alice@test.com", user_id=uid)
-    result = asyncio.run(app_module.api_resend_verification(ctx=ctx))
+    from backend.tests.conftest import mock_request
+    result = asyncio.run(app_module.api_resend_verification(mock_request(), ctx=ctx))
     assert result["already_verified"] is True
 
 
@@ -138,8 +142,9 @@ def test_endpoint_resend_verification_sends_email(db, monkeypatch):
     monkeypatch.setattr(user_email_service, "EMAIL_FROM", "test@test.com")
 
     ctx = AuthContext(username="alice@test.com", user_id=uid)
+    from backend.tests.conftest import mock_request
     with patch.object(user_email_service, "send_email_verification", return_value=True) as mk:
-        result = asyncio.run(app_module.api_resend_verification(ctx=ctx))
+        result = asyncio.run(app_module.api_resend_verification(mock_request(), ctx=ctx))
     assert result["ok"] is True
     mk.assert_called_once()
 
@@ -155,8 +160,9 @@ def test_endpoint_resend_verification_smtp_off_returns_503(db):
     # SMTP off par défaut dans les tests
     assert not user_email_service.is_configured()
     ctx = AuthContext(username="alice@test.com", user_id=uid)
+    from backend.tests.conftest import mock_request
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(app_module.api_resend_verification(ctx=ctx))
+        asyncio.run(app_module.api_resend_verification(mock_request(), ctx=ctx))
     assert exc.value.status_code == 503
 
 
@@ -173,8 +179,9 @@ def test_signup_auto_verifies_when_smtp_off(db, monkeypatch):
     monkeypatch.setattr(settings, "SAAS_SIGNUP_ENABLED", True)
     monkeypatch.setattr(app_module, "SAAS_SIGNUP_ENABLED", True)
 
+    from backend.tests.conftest import mock_request
     result = asyncio.run(
-        app_module.api_signup({"email": "alice@test.com", "password": "pw12345678"})
+        app_module.api_signup(mock_request(), {"email": "alice@test.com", "password": "pw12345678"})
     )
     uid = result["user_id"]
     user = users_service.get_user_by_id(uid)
@@ -198,6 +205,7 @@ def test_stripe_checkout_blocked_if_unverified(db, monkeypatch):
     # User pas encore vérifié
     ctx = AuthContext(username="alice@test.com", user_id=uid)
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(app_module.api_stripe_checkout({"tier": "pro"}, ctx=ctx))
+        from backend.tests.conftest import mock_request
+        asyncio.run(app_module.api_stripe_checkout(mock_request(), {"tier": "pro"}, ctx=ctx))
     assert exc.value.status_code == 403
     assert "mail" in exc.value.detail.lower()

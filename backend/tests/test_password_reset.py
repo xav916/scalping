@@ -139,7 +139,8 @@ def test_endpoint_forgot_password_200_for_unknown_email(db):
     from backend import app as app_module
     import asyncio
 
-    result = asyncio.run(app_module.api_forgot_password({"email": "ghost@test.com"}))
+    from backend.tests.conftest import mock_request
+    result = asyncio.run(app_module.api_forgot_password(mock_request(), {"email": "ghost@test.com"}))
     assert result == {"ok": True}
 
 
@@ -150,7 +151,8 @@ def test_endpoint_forgot_password_sends_email_if_user_exists(db):
 
     users_service.create_user("alice@test.com", "oldpass12")
     with patch.object(user_email_service, "send_password_reset", return_value=True) as mk:
-        asyncio.run(app_module.api_forgot_password({"email": "alice@test.com"}))
+        from backend.tests.conftest import mock_request
+        asyncio.run(app_module.api_forgot_password(mock_request(), {"email": "alice@test.com"}))
     mk.assert_called_once()
     # Le 2e arg est le token.
     assert mk.call_args.args[0] == "alice@test.com"
@@ -163,7 +165,8 @@ def test_endpoint_forgot_password_rejects_invalid_email(db):
     import asyncio
 
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(app_module.api_forgot_password({"email": "not-an-email"}))
+        from backend.tests.conftest import mock_request
+        asyncio.run(app_module.api_forgot_password(mock_request(), {"email": "not-an-email"}))
     assert exc.value.status_code == 400
 
 
@@ -173,7 +176,8 @@ def test_endpoint_reset_password_success(db):
 
     users_service.create_user("alice@test.com", "oldpass12")
     token = users_service.request_password_reset("alice@test.com")
-    result = asyncio.run(app_module.api_reset_password({"token": token, "new_password": "newpass345"}))
+    from backend.tests.conftest import mock_request
+    result = asyncio.run(app_module.api_reset_password(mock_request(), {"token": token, "new_password": "newpass345"}))
     assert result == {"ok": True}
 
 
@@ -183,5 +187,6 @@ def test_endpoint_reset_password_invalid_token(db):
     import asyncio
 
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(app_module.api_reset_password({"token": "bad", "new_password": "newpass345"}))
+        from backend.tests.conftest import mock_request
+        asyncio.run(app_module.api_reset_password(mock_request(), {"token": "bad", "new_password": "newpass345"}))
     assert exc.value.status_code == 400

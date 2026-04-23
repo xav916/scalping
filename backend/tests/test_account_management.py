@@ -110,8 +110,9 @@ def test_endpoint_change_password_success(db):
 
     uid = users_service.create_user("alice@test.com", "mypass12")
     ctx = AuthContext(username="alice@test.com", user_id=uid)
+    from backend.tests.conftest import mock_request
     result = asyncio.run(app_module.api_change_password(
-        {"current_password": "mypass12", "new_password": "newpass99"}, ctx=ctx
+        mock_request(), {"current_password": "mypass12", "new_password": "newpass99"}, ctx=ctx
     ))
     assert result == {"ok": True}
 
@@ -125,8 +126,9 @@ def test_endpoint_change_password_wrong_current(db):
     uid = users_service.create_user("alice@test.com", "mypass12")
     ctx = AuthContext(username="alice@test.com", user_id=uid)
     with pytest.raises(HTTPException) as exc:
+        from backend.tests.conftest import mock_request
         asyncio.run(app_module.api_change_password(
-            {"current_password": "wrong", "new_password": "newpass99"}, ctx=ctx
+            mock_request(), {"current_password": "wrong", "new_password": "newpass99"}, ctx=ctx
         ))
     assert exc.value.status_code == 400
 
@@ -139,7 +141,8 @@ def test_endpoint_change_password_legacy_env_blocked(db):
 
     ctx = AuthContext(username="legacy", user_id=None)
     with pytest.raises(HTTPException) as exc:
+        from backend.tests.conftest import mock_request
         asyncio.run(app_module.api_change_password(
-            {"current_password": "x", "new_password": "newpass99"}, ctx=ctx
+            mock_request(), {"current_password": "x", "new_password": "newpass99"}, ctx=ctx
         ))
     assert exc.value.status_code == 400
