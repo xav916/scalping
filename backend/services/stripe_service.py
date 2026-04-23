@@ -128,6 +128,27 @@ def _tier_from_subscription(sub: dict) -> str:
     return _price_to_tier_map().get(price_id, "free")
 
 
+def _price_to_cycle_map() -> dict[str, str]:
+    """Mapping price_id → billing_cycle ('monthly'|'yearly')."""
+    m: dict[str, str] = {}
+    for p in (settings.STRIPE_PRICE_PRO_MONTHLY, settings.STRIPE_PRICE_PREMIUM_MONTHLY):
+        if p:
+            m[p] = "monthly"
+    for p in (settings.STRIPE_PRICE_PRO_YEARLY, settings.STRIPE_PRICE_PREMIUM_YEARLY):
+        if p:
+            m[p] = "yearly"
+    return m
+
+
+def _cycle_from_subscription(sub: dict) -> str | None:
+    """Extrait le billing_cycle d'une Subscription Stripe via son price_id."""
+    items = (sub.get("items") or {}).get("data") or []
+    if not items:
+        return None
+    price_id = (items[0].get("price") or {}).get("id", "")
+    return _price_to_cycle_map().get(price_id)
+
+
 def handle_webhook(payload: bytes, sig_header: str) -> dict:
     """Parse + dispatch un webhook Stripe. Applique l'event sur la DB
     (update tier, subscription_id, customer_id).
@@ -156,14 +177,23 @@ def handle_webhook(payload: bytes, sig_header: str) -> dict:
     if event_type in ("customer.subscription.created", "customer.subscription.updated"):
         customer_id = obj.get("customer")
         tier = _tier_from_subscription(obj)
+        cycle = _cycle_from_subscription(obj)
         user = users_service.get_user_by_stripe_customer_id(customer_id)
         if not user:
             logger.warning("Webhook %s : aucun user avec customer_id=%s", event_type, customer_id)
             return {"applied": None, "reason": "user_not_found"}
         users_service.update_stripe_subscription(
-            user["id"], subscription_id=obj.get("id"), tier=tier
+            user["id"],
+            subscription_id=obj.get("id"),
+            tier=tier,
+            billing_cycle=cycle,
         )
-        return {"applied": "subscription", "user_id": user["id"], "tier": tier}
+        return {
+            "applied": "subscription",
+            "user_id": user["id"],
+            "tier": tier,
+            "billing_cycle": cycle,
+        }
 
     if event_type == "customer.subscription.deleted":
         customer_id = obj.get("customer")

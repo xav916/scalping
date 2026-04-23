@@ -116,12 +116,18 @@ async def api_logout(request: Request, response: Response):
 async def api_user_tier(ctx: AuthContext = Depends(auth_context)):
     """Tier + état abonnement du user courant, pour la PricingPage/Settings."""
     if ctx.user_id is None:
-        return {"tier": "premium", "stripe_customer_set": False, "legacy_env": True}
+        return {
+            "tier": "premium",
+            "stripe_customer_set": False,
+            "billing_cycle": None,
+            "legacy_env": True,
+        }
     user = users_service.get_user_by_id(ctx.user_id) or {}
     return {
         "tier": user.get("tier", "free"),
         "stripe_customer_set": bool(user.get("stripe_customer_id")),
         "stripe_subscription_set": bool(user.get("stripe_subscription_id")),
+        "billing_cycle": user.get("stripe_billing_cycle"),
         "trial_ends_at": user.get("trial_ends_at"),
         "legacy_env": False,
     }

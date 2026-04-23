@@ -108,6 +108,12 @@ def init_users_schema() -> None:
         c.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_users_tier ON users(tier)")
 
+        # Migration douce Chantier 5.1 : cycle de facturation Stripe.
+        # Vaut 'monthly' | 'yearly' | NULL (users gratuits / legacy).
+        user_cols = [r[1] for r in c.execute("PRAGMA table_info(users)").fetchall()]
+        if "stripe_billing_cycle" not in user_cols:
+            c.execute("ALTER TABLE users ADD COLUMN stripe_billing_cycle TEXT")
+
         # Migration douce : personal_trades.user_id (nullable) — pas encore
         # utilisé, simple placeholder pour chantier 3.
         cols = [r[1] for r in c.execute("PRAGMA table_info(personal_trades)").fetchall()]
@@ -306,19 +312,27 @@ def update_stripe_subscription(
     *,
     subscription_id: Optional[str],
     tier: str,
+    billing_cycle: Optional[str] = None,
 ) -> None:
-    """Met à jour la subscription active + tier. Appelé depuis le webhook
-    subscription.created/updated/deleted.
+    """Met à jour la subscription active + tier + cycle de facturation.
+    Appelé depuis le webhook subscription.created/updated/deleted.
 
     Si subscription_id est None + tier='free' : la sub a été cancellée,
-    le user retombe sur le plan gratuit.
+    le user retombe sur le plan gratuit (cycle reset à NULL).
+    `billing_cycle` ∈ {monthly, yearly, None}.
     """
     if tier not in VALID_TIERS:
         raise ValueError(f"tier invalide : {tier!r}")
+    if billing_cycle is not None and billing_cycle not in ("monthly", "yearly"):
+        raise ValueError(f"billing_cycle invalide : {billing_cycle!r}")
+    # Reset du cycle quand on downgrade en free.
+    if tier == "free":
+        billing_cycle = None
     with _conn() as c:
         c.execute(
-            "UPDATE users SET stripe_subscription_id = ?, tier = ? WHERE id = ?",
-            (subscription_id, tier, user_id),
+            "UPDATE users SET stripe_subscription_id = ?, tier = ?, "
+            "stripe_billing_cycle = ? WHERE id = ?",
+            (subscription_id, tier, billing_cycle, user_id),
         )
 
 

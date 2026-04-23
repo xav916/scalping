@@ -74,7 +74,6 @@ function formatEuro(n: number): string {
 
 export function PricingPage() {
   const navigate = useNavigate();
-  const [cycle, setCycle] = useState<Cycle>('monthly');
 
   const tierInfo = useQuery({
     queryKey: ['user', 'tier'],
@@ -83,7 +82,11 @@ export function PricingPage() {
     staleTime: 60_000,
   });
   const currentTier = tierInfo.data?.tier ?? 'free';
+  const currentCycle = tierInfo.data?.billing_cycle ?? null;
   const isAuth = !tierInfo.isError;
+
+  // Le toggle s'initialise sur le cycle actuel du user (ou monthly par défaut).
+  const [cycle, setCycle] = useState<Cycle>(currentCycle === 'yearly' ? 'yearly' : 'monthly');
 
   const checkout = useMutation({
     mutationFn: ({ tier, c }: { tier: 'pro' | 'premium'; c: Cycle }) =>
@@ -118,11 +121,34 @@ export function PricingPage() {
       return;
     }
     if (tier.id === 'free') return;
+
+    // Même tier : si cycle différent, bascule via portal (Stripe gère le prorata) ;
+    // si cycle identique, juste gérer l'abonnement.
     if (tier.id === currentTier) {
       portal.mutate();
       return;
     }
     checkout.mutate({ tier: tier.id, c: cycle });
+  };
+
+  /** Libellé du CTA selon l'état user + tier + cycle sélectionné. */
+  const ctaLabel = (tier: Tier): string => {
+    if (!isAuth) return tier.id === 'free' ? 'Créer un compte' : 'Créer un compte';
+    if (tier.id === 'free') {
+      return currentTier === 'free' ? 'Gratuit à vie' : 'Downgrade';
+    }
+    if (tier.id === currentTier) {
+      // Même tier — précise si changement de cycle ou pas.
+      if (currentCycle && currentCycle !== cycle) {
+        return cycle === 'yearly' ? 'Passer en annuel' : 'Passer en mensuel';
+      }
+      return 'Gérer mon abonnement';
+    }
+    // Tier différent.
+    const isDowngrade =
+      TIER_ORDER.indexOf(tier.id) < TIER_ORDER.indexOf(currentTier as Tier['id']);
+    if (isDowngrade) return 'Downgrade';
+    return `Passer en ${tier.name}`;
   };
 
   return (
@@ -170,9 +196,7 @@ export function PricingPage() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           {TIERS.map((tier) => {
             const isCurrent = isAuth && tier.id === currentTier;
-            const isDowngrade =
-              isAuth &&
-              TIER_ORDER.indexOf(tier.id) < TIER_ORDER.indexOf(currentTier as Tier['id']);
+            const sameCycle = currentCycle === cycle;
 
             // Prix affiché : toujours "équivalent mensuel" pour comparabilité.
             const monthly_eq =
@@ -232,22 +256,14 @@ export function PricingPage() {
                     onClick={() => handleAction(tier)}
                     disabled={tier.id === 'free' && isCurrent}
                     className={`w-full py-2.5 rounded-xl text-sm font-semibold transition-opacity ${
-                      isCurrent
+                      isCurrent && sameCycle
                         ? 'bg-white/10 text-white/70'
-                        : tier.highlight
+                        : tier.highlight || (isCurrent && !sameCycle)
                           ? 'bg-gradient-to-br from-cyan-400 to-pink-500 text-slate-900'
                           : 'bg-white/10 text-white hover:bg-white/15'
                     } disabled:opacity-50`}
                   >
-                    {isCurrent
-                      ? 'Gérer mon abonnement'
-                      : isDowngrade
-                        ? 'Downgrade'
-                        : !isAuth
-                          ? 'Créer un compte'
-                          : tier.id === 'free'
-                            ? 'Gratuit à vie'
-                            : `Passer en ${tier.name}`}
+                    {ctaLabel(tier)}
                   </button>
                 </GlassCard>
               </motion.div>

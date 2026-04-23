@@ -104,6 +104,7 @@ export const api = {
       tier: string;
       stripe_customer_set: boolean;
       stripe_subscription_set?: boolean;
+      billing_cycle?: 'monthly' | 'yearly' | null;
       trial_ends_at?: string | null;
       legacy_env?: boolean;
     }>('/api/user/tier'),

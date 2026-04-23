@@ -75,6 +75,36 @@ def test_update_stripe_subscription(db):
     assert user["tier"] == "pro"
 
 
+def test_update_stripe_subscription_persists_cycle(db):
+    uid = users_service.create_user("x@y.com", "pw12345678")
+    users_service.update_stripe_subscription(
+        uid, subscription_id="sub_123", tier="pro", billing_cycle="yearly"
+    )
+    user = users_service.get_user_by_id(uid)
+    assert user["stripe_billing_cycle"] == "yearly"
+
+
+def test_update_stripe_subscription_free_resets_cycle(db):
+    uid = users_service.create_user("x@y.com", "pw12345678", tier="pro")
+    users_service.update_stripe_subscription(
+        uid, subscription_id="sub_1", tier="pro", billing_cycle="monthly"
+    )
+    assert users_service.get_user_by_id(uid)["stripe_billing_cycle"] == "monthly"
+    # Downgrade free → cycle reset NULL.
+    users_service.update_stripe_subscription(
+        uid, subscription_id=None, tier="free", billing_cycle="monthly"
+    )
+    assert users_service.get_user_by_id(uid)["stripe_billing_cycle"] is None
+
+
+def test_update_stripe_subscription_invalid_cycle(db):
+    uid = users_service.create_user("x@y.com", "pw12345678")
+    with pytest.raises(ValueError, match="billing_cycle invalide"):
+        users_service.update_stripe_subscription(
+            uid, subscription_id="s", tier="pro", billing_cycle="weekly"
+        )
+
+
 def test_update_stripe_subscription_rejects_invalid_tier(db):
     uid = users_service.create_user("x@y.com", "pw12345678")
     with pytest.raises(ValueError, match="tier invalide"):
@@ -164,9 +194,35 @@ def test_webhook_subscription_created_upgrades_tier(db, enable_stripe):
         result = stripe_service.handle_webhook(b"p", "sig")
 
     assert result["tier"] == "premium"
+    assert result["billing_cycle"] == "monthly"
     user = users_service.get_user_by_id(uid)
     assert user["tier"] == "premium"
     assert user["stripe_subscription_id"] == "sub_123"
+    assert user["stripe_billing_cycle"] == "monthly"
+
+
+def test_webhook_subscription_yearly_persists_cycle(db, enable_stripe):
+    uid = users_service.create_user("x@y.com", "pw12345678")
+    users_service.update_stripe_customer_id(uid, "cus_abc")
+    sub_obj = {
+        "id": "sub_year_42",
+        "customer": "cus_abc",
+        "items": {"data": [{"price": {"id": "price_premium_yearly_dummy"}}]},
+    }
+    event = _fake_event("customer.subscription.updated", sub_obj)
+    with patch.object(stripe_service.stripe.Webhook, "construct_event", return_value=event):
+        stripe_service.handle_webhook(b"p", "sig")
+    assert users_service.get_user_by_id(uid)["stripe_billing_cycle"] == "yearly"
+
+
+def test_cycle_from_subscription(enable_stripe):
+    sub_yearly = {"items": {"data": [{"price": {"id": "price_pro_yearly_dummy"}}]}}
+    sub_monthly = {"items": {"data": [{"price": {"id": "price_pro_monthly_dummy"}}]}}
+    sub_unknown = {"items": {"data": [{"price": {"id": "price_foo"}}]}}
+    assert stripe_service._cycle_from_subscription(sub_yearly) == "yearly"
+    assert stripe_service._cycle_from_subscription(sub_monthly) == "monthly"
+    assert stripe_service._cycle_from_subscription(sub_unknown) is None
+    assert stripe_service._cycle_from_subscription({}) is None
 
 
 def test_webhook_subscription_updated_downgrades_tier(db, enable_stripe):
