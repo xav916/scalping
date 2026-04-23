@@ -62,7 +62,7 @@ export function SignupPage() {
           login.mutate(
             { username: email, password },
             {
-              onSuccess: () => navigate('/', { replace: true }),
+              onSuccess: () => navigate('/dashboard', { replace: true }),
               onError: () => navigate('/login', { replace: true }),
             }
           );

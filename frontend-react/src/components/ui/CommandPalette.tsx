@@ -40,11 +40,11 @@ export function CommandPalette() {
       {
         id: 'nav-dashboard',
         label: 'Aller au Dashboard',
-        hint: '/v2/',
+        hint: '/v2/dashboard',
         group: 'Navigation',
         icon: '▣',
         keywords: ['home', 'accueil'],
-        run: () => navigate('/'),
+        run: () => navigate('/dashboard'),
       },
       {
         id: 'nav-cockpit',

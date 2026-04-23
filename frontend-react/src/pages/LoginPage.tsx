@@ -21,7 +21,7 @@ export function LoginPage() {
     login.mutate(
       { username, password },
       {
-        onSuccess: () => navigate('/', { replace: true }),
+        onSuccess: () => navigate('/dashboard', { replace: true }),
         onError: () => setError('Identifiants invalides'),
       }
     );

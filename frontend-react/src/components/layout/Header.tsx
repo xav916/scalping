@@ -56,7 +56,7 @@ function statusTip(s: SystemStatus): React.ReactNode {
 }
 
 const NAV_LINKS = [
-  { to: '/', label: 'Dashboard' },
+  { to: '/dashboard', label: 'Dashboard' },
   { to: '/cockpit', label: 'Cockpit' },
   { to: '/analytics', label: 'Analytics' },
   { to: '/trades', label: 'Trades' },

@@ -86,7 +86,7 @@ export function OnboardingPage() {
   });
 
   // ─── Étape 3 : done
-  const goDashboard = () => navigate('/', { replace: true });
+  const goDashboard = () => navigate('/dashboard', { replace: true });
 
   return (
     <div className="min-h-screen flex items-center justify-center px-4 py-8">

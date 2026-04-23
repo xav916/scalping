@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { queryClient } from '@/lib/queryClient';
 import { AuthGate } from '@/components/auth/AuthGate';
+import { HomeRoute } from '@/components/HomeRoute';
 import { ToastProvider } from '@/components/ui/Toast';
 import { Skeleton } from '@/components/ui/Skeleton';
 
@@ -57,8 +58,9 @@ export default function App() {
               <Route element={<AuthGate />}>
                 <Route path="/onboarding" element={<OnboardingPage />} />
               </Route>
+              <Route path="/" element={<HomeRoute />} />
               <Route element={<AuthGate requireOnboarded />}>
-                <Route path="/" element={<DashboardPage />} />
+                <Route path="/dashboard" element={<DashboardPage />} />
                 <Route path="/cockpit" element={<CockpitPage />} />
                 <Route path="/analytics" element={<AnalyticsPage />} />
                 <Route path="/trades" element={<TradesPage />} />
