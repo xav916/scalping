@@ -368,6 +368,59 @@ def is_email_verified(user: Optional[dict]) -> bool:
     return bool(user.get("email_verified_at"))
 
 
+def change_password(user_id: int, current_password: str, new_password: str) -> bool:
+    """Change le password après vérif de l'ancien. Lève ValueError si invalide.
+    Retourne True en cas de succès, False si current_password incorrect.
+    """
+    if not new_password or len(new_password) < 8:
+        raise ValueError("new_password trop court (min 8 caractères)")
+    user = get_user_by_id(user_id)
+    if not user:
+        return False
+    if not verify_password(current_password, user["password_hash"]):
+        return False
+    with _conn() as c:
+        c.execute(
+            "UPDATE users SET password_hash = ? WHERE id = ?",
+            (hash_password(new_password), user_id),
+        )
+    return True
+
+
+def delete_account(user_id: int, current_password: str) -> bool:
+    """Anonymise le compte user (RGPD droit à l'effacement).
+
+    - Anonymise email en `deleted_{id}@anon.local`
+    - Remplace password_hash par un hash random non-réversible
+    - is_active=0 (empêche login)
+    - Clear tous les tokens (reset, verification)
+    - Nullifie broker_config / watched_pairs / stripe_*
+    - Conserve l'enregistrement (vs DELETE) pour intégrité référentielle
+      des trades historiques (user_id reste valide pour archive comptable).
+
+    Retourne False si current_password incorrect.
+    """
+    user = get_user_by_id(user_id)
+    if not user:
+        return False
+    if not verify_password(current_password, user["password_hash"]):
+        return False
+    anon_email = f"deleted_{user_id}@anon.local"
+    random_hash = hash_password(secrets.token_urlsafe(32))
+    with _conn() as c:
+        c.execute(
+            "UPDATE users SET email = ?, password_hash = ?, is_active = 0, "
+            "broker_config = NULL, watched_pairs = NULL, "
+            "stripe_customer_id = NULL, stripe_subscription_id = NULL, "
+            "stripe_billing_cycle = NULL, trial_ends_at = NULL, "
+            "trial_reminders_sent = NULL, password_reset_token = NULL, "
+            "password_reset_expires_at = NULL, email_verification_token = NULL "
+            "WHERE id = ?",
+            (anon_email, random_hash, user_id),
+        )
+    return True
+
+
 def mark_email_auto_verified(user_id: int) -> None:
     """Pour les envs où SMTP n'est pas configuré : on considère l'email
     verified automatiquement (sinon les users seraient coincés sans pouvoir

@@ -294,7 +294,16 @@ export function LandingPage() {
       </section>
 
       {/* Footer */}
-      <footer className="relative z-10 max-w-6xl mx-auto px-6 py-10 text-center text-xs text-white/40">
+      <footer className="relative z-10 max-w-6xl mx-auto px-6 py-10 text-center text-xs text-white/40 space-y-3">
+        <div className="flex items-center justify-center gap-4 flex-wrap">
+          <a href="/docs/cgu.html" target="_blank" rel="noopener noreferrer" className="hover:text-white/70">CGU</a>
+          <span>·</span>
+          <a href="/docs/cgv.html" target="_blank" rel="noopener noreferrer" className="hover:text-white/70">CGV</a>
+          <span>·</span>
+          <a href="/docs/privacy.html" target="_blank" rel="noopener noreferrer" className="hover:text-white/70">Confidentialité</a>
+          <span>·</span>
+          <a href="mailto:support@scalping-radar.com" className="hover:text-white/70">Contact</a>
+        </div>
         <p>
           © 2026 Scalping Radar · Les performances passées ne préjugent pas des
           performances futures · Pas un conseil d'investissement.

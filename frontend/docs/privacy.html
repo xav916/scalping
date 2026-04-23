@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Politique de Confidentialité · Scalping Radar</title>
+  <link rel="stylesheet" href="/docs/legal-common.css" />
+</head>
+<body>
+  <header>
+    <span class="brand">Scalping Radar · Légal</span>
+    <a href="/v2/">← Retour à l'app</a>
+  </header>
+
+  <main>
+    <h1>Politique de Confidentialité</h1>
+    <div class="meta">Dernière mise à jour : 23 avril 2026 · Conforme RGPD</div>
+
+    <div class="callout">
+      <div class="tag">Template à personnaliser</div>
+      <p style="margin:0">
+        Gabarit RGPD. Les éléments <span class="template">[À COMPLÉTER]</span>
+        doivent être remplacés. Si tu enregistres à la CNIL ou nommes un DPO,
+        indiquer ses coordonnées.
+      </p>
+    </div>
+
+    <h2>1. Responsable du traitement</h2>
+    <p>
+      Le responsable du traitement est
+      <span class="template">[À COMPLÉTER — dénomination]</span>, accessible à :
+    </p>
+    <ul>
+      <li>Email : <a href="mailto:privacy@scalping-radar.com">privacy@scalping-radar.com</a></li>
+      <li>Adresse : <span class="template">[À COMPLÉTER]</span></li>
+    </ul>
+
+    <h2>2. Données collectées</h2>
+    <h3>2.1 Données de compte</h3>
+    <ul>
+      <li><strong>Email</strong> (identifiant, communication transactionnelle)</li>
+      <li><strong>Mot de passe</strong> (hashé via bcrypt, jamais stocké en clair)</li>
+      <li><strong>Date de création</strong>, <strong>date de dernière connexion</strong></li>
+      <li><strong>Préférences produit</strong> (paires surveillées, tier, cycle de facturation)</li>
+    </ul>
+
+    <h3>2.2 Données de paiement (hors notre système)</h3>
+    <p>
+      Les données de carte bancaire sont traitées exclusivement par
+      <strong>Stripe Payments Europe, Ltd.</strong> (certifié PCI-DSS niveau
+      1). Nous ne collectons ni ne stockons jamais de numéro de carte.
+      Seul un identifiant client Stripe (<code>stripe_customer_id</code>) est
+      lié à ton compte pour permettre la facturation récurrente.
+    </p>
+
+    <h3>2.3 Données d'usage</h3>
+    <ul>
+      <li>Historique des setups détectés et trades loggués</li>
+      <li>Logs de connexion (adresse IP tronquée, user-agent)</li>
+      <li>Métriques d'usage agrégées (pages vues, temps passé)</li>
+    </ul>
+
+    <h3>2.4 Ce qu'on ne collecte PAS</h3>
+    <ul>
+      <li>Aucune donnée de compte broker (login/password MT5, n° compte)</li>
+      <li>Aucun fonds de l'utilisateur ne transite par nos serveurs</li>
+      <li>Aucun cookie publicitaire tiers, aucun pixel Facebook / Google Ads</li>
+    </ul>
+
+    <h2>3. Finalités du traitement</h2>
+    <ul>
+      <li><strong>Gestion du compte</strong> : authentification, sessions (base légale : exécution du contrat)</li>
+      <li><strong>Communication transactionnelle</strong> : emails welcome, rappels trial, factures (base légale : exécution du contrat)</li>
+      <li><strong>Amélioration du service</strong> : agrégats anonymisés (base légale : intérêt légitime)</li>
+      <li><strong>Prévention de la fraude</strong> : logs, anti-bot (base légale : intérêt légitime)</li>
+    </ul>
+
+    <h2>4. Durée de conservation</h2>
+    <ul>
+      <li>Données de compte actif : pendant toute la durée d'usage + 3 ans (prospection réglementaire)</li>
+      <li>Factures : 10 ans (obligation comptable)</li>
+      <li>Logs techniques : 12 mois maximum</li>
+      <li>Compte supprimé par l'utilisateur : anonymisation immédiate (email remplacé, is_active=0)</li>
+    </ul>
+
+    <h2>5. Destinataires</h2>
+    <p>Les données sont accessibles uniquement :</p>
+    <ul>
+      <li>À l'éditeur du Service et éventuels salariés/prestataires techniques habilités</li>
+      <li>À Stripe (processeur de paiement), AWS (hébergeur), notre fournisseur SMTP</li>
+      <li>Aux autorités compétentes en cas de réquisition légale</li>
+    </ul>
+    <p>
+      Aucune vente de données à des tiers commerciaux. Aucun transfert hors
+      Union Européenne autre que Stripe (Irlande) et AWS (serveurs eu-north-1).
+    </p>
+
+    <h2>6. Tes droits (RGPD)</h2>
+    <p>Tu peux à tout moment :</p>
+    <ul>
+      <li><strong>Accéder</strong> à tes données : depuis <a href="/v2/settings">Paramètres</a></li>
+      <li><strong>Rectifier</strong> tes données : depuis Paramètres (email, mot de passe, paires, config bridge)</li>
+      <li><strong>Supprimer</strong> ton compte : depuis Paramètres → « Supprimer mon compte » (anonymisation immédiate, suppression définitive des identifiants de compte)</li>
+      <li><strong>Porter</strong> tes données : export CSV disponible depuis le dashboard</li>
+      <li><strong>Limiter</strong> le traitement : email à <a href="mailto:privacy@scalping-radar.com">privacy@scalping-radar.com</a></li>
+      <li><strong>Opposer</strong> au traitement : idem email</li>
+    </ul>
+    <p>
+      En cas de réclamation non résolue, tu peux saisir la CNIL
+      (<a href="https://www.cnil.fr/fr/plaintes">cnil.fr/fr/plaintes</a>).
+    </p>
+
+    <h2>7. Sécurité</h2>
+    <ul>
+      <li>HTTPS/TLS 1.3 pour tous les échanges</li>
+      <li>Mots de passe hashés en bcrypt (cost 12), jamais stockés en clair</li>
+      <li>Sessions HttpOnly + Secure + SameSite=Lax</li>
+      <li>Isolation stricte des données entre utilisateurs (scope par user_id)</li>
+      <li>Sauvegarde quotidienne chiffrée sur S3</li>
+    </ul>
+
+    <h2>8. Cookies</h2>
+    <p>Nous utilisons un cookie technique strictement nécessaire :</p>
+    <ul>
+      <li><code>scalping_session</code> — cookie de session HttpOnly, TTL 7 jours glissant (base légale : exécution du contrat, pas de consentement requis)</li>
+    </ul>
+    <p>Aucun cookie tiers (pas de Google Analytics, pas de Facebook Pixel).</p>
+
+    <h2>9. Contact</h2>
+    <p>
+      Pour toute question sur cette politique ou pour exercer tes droits :
+      <a href="mailto:privacy@scalping-radar.com">privacy@scalping-radar.com</a>.
+    </p>
+  </main>
+
+  <footer>
+    <a href="/docs/cgu.html">CGU</a>
+    <a href="/docs/cgv.html">CGV</a>
+    <a href="/docs/privacy.html">Confidentialité</a>
+    <a href="/v2/">App</a>
+  </footer>
+</body>
+</html>

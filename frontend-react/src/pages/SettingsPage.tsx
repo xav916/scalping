@@ -136,6 +136,55 @@ export function SettingsPage() {
     },
   });
 
+  // ─── Change password section ──────────────────────────────────
+  const [pwOpen, setPwOpen] = useState(false);
+  const [pwCurrent, setPwCurrent] = useState('');
+  const [pwNew, setPwNew] = useState('');
+  const [pwConfirm, setPwConfirm] = useState('');
+  const [pwError, setPwError] = useState<string | null>(null);
+
+  const changePwMut = useMutation({
+    mutationFn: () => api.changePassword(pwCurrent, pwNew),
+    onSuccess: () => {
+      setPwCurrent(''); setPwNew(''); setPwConfirm(''); setPwError(null);
+    },
+    onError: (err) => {
+      setPwError(err instanceof ApiError ? err.message || 'Erreur' : 'Erreur');
+    },
+  });
+
+  const submitChangePw = (e: React.FormEvent) => {
+    e.preventDefault();
+    setPwError(null);
+    if (pwNew.length < 8) { setPwError('Min 8 caractères'); return; }
+    if (pwNew !== pwConfirm) { setPwError('Les mots de passe ne correspondent pas'); return; }
+    changePwMut.mutate();
+  };
+
+  // ─── Delete account section ──────────────────────────────────
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deletePw, setDeletePw] = useState('');
+  const [deleteConfirm, setDeleteConfirm] = useState('');
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const deleteMut = useMutation({
+    mutationFn: () => api.deleteAccount(deletePw),
+    onSuccess: () => navigate('/'),
+    onError: (err) => {
+      setDeleteError(err instanceof ApiError ? err.message || 'Erreur' : 'Erreur');
+    },
+  });
+
+  const submitDelete = (e: React.FormEvent) => {
+    e.preventDefault();
+    setDeleteError(null);
+    if (deleteConfirm !== 'SUPPRIMER') {
+      setDeleteError('Tape SUPPRIMER pour confirmer');
+      return;
+    }
+    deleteMut.mutate();
+  };
+
   return (
     <div className="min-h-screen py-10 px-4">
       <motion.div
@@ -402,6 +451,161 @@ export function SettingsPage() {
             </motion.div>
           )}
         </GlassCard>
+
+        {/* ─── Change password ─── */}
+        <GlassCard className="p-6">
+          <button
+            onClick={() => setPwOpen((o) => !o)}
+            className="w-full flex items-start justify-between text-left"
+          >
+            <div>
+              <h2 className="text-lg font-semibold">Changer mon mot de passe</h2>
+              <p className="text-sm text-white/50 mt-1">
+                Min 8 caractères. Vérification du password actuel requise.
+              </p>
+            </div>
+            <span className="text-white/40 text-xl ml-4 shrink-0">
+              {pwOpen ? '−' : '+'}
+            </span>
+          </button>
+
+          {pwOpen && (
+            <motion.form
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              onSubmit={submitChangePw}
+              className="mt-5 pt-5 border-t border-white/10 space-y-3"
+            >
+              <div>
+                <label className="block text-xs uppercase tracking-wider text-white/50 mb-1.5">
+                  Mot de passe actuel
+                </label>
+                <input
+                  type="password"
+                  autoComplete="current-password"
+                  required
+                  value={pwCurrent}
+                  onChange={(e) => setPwCurrent(e.target.value)}
+                  className="w-full px-4 py-2.5 rounded-xl bg-white/5 border border-glass-soft focus:outline-none font-mono text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs uppercase tracking-wider text-white/50 mb-1.5">
+                  Nouveau mot de passe
+                </label>
+                <input
+                  type="password"
+                  autoComplete="new-password"
+                  required
+                  minLength={8}
+                  value={pwNew}
+                  onChange={(e) => setPwNew(e.target.value)}
+                  className="w-full px-4 py-2.5 rounded-xl bg-white/5 border border-glass-soft focus:outline-none font-mono text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs uppercase tracking-wider text-white/50 mb-1.5">
+                  Confirmer
+                </label>
+                <input
+                  type="password"
+                  autoComplete="new-password"
+                  required
+                  value={pwConfirm}
+                  onChange={(e) => setPwConfirm(e.target.value)}
+                  className="w-full px-4 py-2.5 rounded-xl bg-white/5 border border-glass-soft focus:outline-none font-mono text-sm"
+                />
+              </div>
+              {pwError && <p className="text-xs text-rose-400">{pwError}</p>}
+              {changePwMut.isSuccess && (
+                <p className="text-xs text-emerald-400">Mot de passe changé ✓</p>
+              )}
+              <button
+                type="submit"
+                disabled={changePwMut.isPending}
+                className="w-full py-2.5 rounded-xl bg-gradient-to-br from-cyan-400 to-pink-500 text-slate-900 text-sm font-semibold disabled:opacity-40"
+              >
+                {changePwMut.isPending ? 'Mise à jour…' : 'Mettre à jour'}
+              </button>
+            </motion.form>
+          )}
+        </GlassCard>
+
+        {/* ─── Delete account ─── */}
+        <GlassCard className="p-6 border-rose-400/30">
+          <button
+            onClick={() => setDeleteOpen((o) => !o)}
+            className="w-full flex items-start justify-between text-left"
+          >
+            <div>
+              <h2 className="text-lg font-semibold text-rose-200">Supprimer mon compte</h2>
+              <p className="text-sm text-white/50 mt-1">
+                Anonymisation RGPD définitive. Action irréversible.
+              </p>
+            </div>
+            <span className="text-white/40 text-xl ml-4 shrink-0">
+              {deleteOpen ? '−' : '+'}
+            </span>
+          </button>
+
+          {deleteOpen && (
+            <motion.form
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              onSubmit={submitDelete}
+              className="mt-5 pt-5 border-t border-white/10 space-y-3"
+            >
+              <p className="text-sm text-white/70">
+                Ton compte sera anonymisé immédiatement. Tu ne pourras plus te connecter.
+                Les trades historiques sont conservés pour l'intégrité comptable mais
+                désassociés de ton identité (email anonymisé).
+              </p>
+              <div>
+                <label className="block text-xs uppercase tracking-wider text-white/50 mb-1.5">
+                  Mot de passe actuel
+                </label>
+                <input
+                  type="password"
+                  autoComplete="current-password"
+                  required
+                  value={deletePw}
+                  onChange={(e) => setDeletePw(e.target.value)}
+                  className="w-full px-4 py-2.5 rounded-xl bg-white/5 border border-glass-soft focus:outline-none font-mono text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs uppercase tracking-wider text-white/50 mb-1.5">
+                  Tape <code className="text-amber-300">SUPPRIMER</code> pour confirmer
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={deleteConfirm}
+                  onChange={(e) => setDeleteConfirm(e.target.value)}
+                  placeholder="SUPPRIMER"
+                  className="w-full px-4 py-2.5 rounded-xl bg-white/5 border border-rose-400/30 focus:outline-none font-mono text-sm"
+                />
+              </div>
+              {deleteError && <p className="text-xs text-rose-400">{deleteError}</p>}
+              <button
+                type="submit"
+                disabled={deleteMut.isPending || !deletePw || deleteConfirm !== 'SUPPRIMER'}
+                className="w-full py-2.5 rounded-xl bg-rose-500/20 border border-rose-400/40 text-rose-200 text-sm font-semibold disabled:opacity-40 hover:bg-rose-500/30"
+              >
+                {deleteMut.isPending ? 'Suppression…' : 'Supprimer définitivement mon compte'}
+              </button>
+            </motion.form>
+          )}
+        </GlassCard>
+
+        {/* Footer links */}
+        <div className="flex items-center justify-center gap-3 text-xs text-white/40 pt-2">
+          <a href="/docs/cgu.html" target="_blank" rel="noopener noreferrer" className="hover:text-white/70">CGU</a>
+          <span>·</span>
+          <a href="/docs/cgv.html" target="_blank" rel="noopener noreferrer" className="hover:text-white/70">CGV</a>
+          <span>·</span>
+          <a href="/docs/privacy.html" target="_blank" rel="noopener noreferrer" className="hover:text-white/70">Confidentialité</a>
+        </div>
 
         <p className="text-center text-xs text-white/30 pt-4">
           Scalping Radar v2 · 2026.04

@@ -618,6 +618,46 @@ async def api_verify_email(payload: dict):
     return {"ok": True, "user_id": user_id}
 
 
+@app.post("/api/user/change-password")
+async def api_change_password(payload: dict, ctx: AuthContext = Depends(auth_context)):
+    """Change le password du user courant. Requiert le password actuel."""
+    if ctx.user_id is None:
+        raise HTTPException(status_code=400, detail="user legacy env, edit via .env")
+    current = (payload or {}).get("current_password", "")
+    new_password = (payload or {}).get("new_password", "")
+    try:
+        ok = users_service.change_password(ctx.user_id, current, new_password)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not ok:
+        raise HTTPException(status_code=400, detail="Mot de passe actuel incorrect")
+    return {"ok": True}
+
+
+@app.delete("/api/user/account")
+async def api_delete_account(
+    payload: dict,
+    request: Request,
+    response: Response,
+    ctx: AuthContext = Depends(auth_context),
+):
+    """Suppression RGPD du compte user courant : anonymise en DB + logout.
+
+    Requiert `current_password` dans le body pour confirmer l'intention.
+    """
+    if ctx.user_id is None:
+        raise HTTPException(status_code=400, detail="user legacy env, non supprimable")
+    current = (payload or {}).get("current_password", "")
+    if not current:
+        raise HTTPException(status_code=400, detail="current_password requis")
+    ok = users_service.delete_account(ctx.user_id, current)
+    if not ok:
+        raise HTTPException(status_code=400, detail="Mot de passe incorrect")
+    # Invalide la session + cookie après anonymisation.
+    logout_and_clear_cookie(request, response)
+    return {"ok": True, "deleted": True}
+
+
 @app.post("/api/auth/resend-verification")
 async def api_resend_verification(ctx: AuthContext = Depends(auth_context)):
     """Renvoie le lien de vérification pour l'utilisateur courant."""

@@ -133,6 +133,18 @@ export const api = {
       method: 'POST',
     }),
 
+  changePassword: (current_password: string, new_password: string) =>
+    request<{ ok: true }>('/api/user/change-password', {
+      method: 'POST',
+      body: JSON.stringify({ current_password, new_password }),
+    }),
+
+  deleteAccount: (current_password: string) =>
+    request<{ ok: true; deleted: true }>('/api/user/account', {
+      method: 'DELETE',
+      body: JSON.stringify({ current_password }),
+    }),
+
   stripeCheckout: (tier: 'pro' | 'premium', billing_cycle: 'monthly' | 'yearly' = 'monthly') =>
     request<{ url: string }>('/api/stripe/checkout', {
       method: 'POST',
