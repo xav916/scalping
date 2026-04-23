@@ -44,9 +44,25 @@ const FEATURES = [
 ];
 
 const PRICING_PREVIEW = [
-  { name: 'Free', price: '0€', tagline: '1 paire, 7j d\'historique' },
-  { name: 'Pro', price: '19€', tagline: '5 paires + alertes + illimité', highlight: true },
-  { name: 'Premium', price: '39€', tagline: 'Tout + backtest + multi-broker' },
+  {
+    name: 'Free',
+    price: '0€',
+    yearly: null,
+    tagline: '1 paire, 7j d\'historique',
+  },
+  {
+    name: 'Pro',
+    price: '19€',
+    yearly: '190€/an (-17%)',
+    tagline: '5 paires + alertes + illimité',
+    highlight: true,
+  },
+  {
+    name: 'Premium',
+    price: '39€',
+    yearly: '390€/an (-17%)',
+    tagline: 'Tout + backtest + multi-broker',
+  },
 ];
 
 export function LandingPage() {
@@ -241,6 +257,11 @@ export function LandingPage() {
                   <span className="text-white/50 text-sm">/mois</span>
                 )}
               </div>
+              {p.yearly && (
+                <div className="mt-2 text-xs text-emerald-300/80">
+                  ou {p.yearly}
+                </div>
+              )}
             </GlassCard>
           ))}
         </div>

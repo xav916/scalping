@@ -108,10 +108,10 @@ export const api = {
       legacy_env?: boolean;
     }>('/api/user/tier'),
 
-  stripeCheckout: (tier: 'pro' | 'premium') =>
+  stripeCheckout: (tier: 'pro' | 'premium', billing_cycle: 'monthly' | 'yearly' = 'monthly') =>
     request<{ url: string }>('/api/stripe/checkout', {
       method: 'POST',
-      body: JSON.stringify({ tier }),
+      body: JSON.stringify({ tier, billing_cycle }),
     }),
 
   stripePortal: () =>

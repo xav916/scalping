@@ -282,9 +282,15 @@ SAAS_SIGNUP_ENABLED = os.getenv("SAAS_SIGNUP_ENABLED", "false").lower() in ("1",
 STRIPE_ENABLED = os.getenv("STRIPE_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
-# Ids des prix Stripe pour chaque tier (configurables dans Stripe Dashboard).
-STRIPE_PRICE_PRO = os.getenv("STRIPE_PRICE_PRO", "")
-STRIPE_PRICE_PREMIUM = os.getenv("STRIPE_PRICE_PREMIUM", "")
+# Ids des prix Stripe pour chaque tier + cycle (configurables dans Stripe Dashboard).
+# Back-compat : STRIPE_PRICE_PRO sert de fallback pour STRIPE_PRICE_PRO_MONTHLY.
+STRIPE_PRICE_PRO_MONTHLY = os.getenv("STRIPE_PRICE_PRO_MONTHLY") or os.getenv("STRIPE_PRICE_PRO", "")
+STRIPE_PRICE_PRO_YEARLY = os.getenv("STRIPE_PRICE_PRO_YEARLY", "")
+STRIPE_PRICE_PREMIUM_MONTHLY = os.getenv("STRIPE_PRICE_PREMIUM_MONTHLY") or os.getenv("STRIPE_PRICE_PREMIUM", "")
+STRIPE_PRICE_PREMIUM_YEARLY = os.getenv("STRIPE_PRICE_PREMIUM_YEARLY", "")
+# Alias legacy (tests existants référencent STRIPE_PRICE_PRO).
+STRIPE_PRICE_PRO = STRIPE_PRICE_PRO_MONTHLY
+STRIPE_PRICE_PREMIUM = STRIPE_PRICE_PREMIUM_MONTHLY
 # URL publique pour rediriger après checkout success/cancel.
 STRIPE_SUCCESS_URL = os.getenv("STRIPE_SUCCESS_URL", "https://app.scalping-radar.com/v2/?upgrade=success")
 STRIPE_CANCEL_URL = os.getenv("STRIPE_CANCEL_URL", "https://app.scalping-radar.com/v2/pricing?upgrade=cancel")

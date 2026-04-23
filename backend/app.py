@@ -162,7 +162,11 @@ async def api_stripe_checkout(
     payload: dict,
     ctx: AuthContext = Depends(auth_context),
 ):
-    """Crée une Checkout Session Stripe pour upgrade. Body : {tier: 'pro'|'premium'}."""
+    """Crée une Checkout Session Stripe pour upgrade.
+
+    Body : {tier: 'pro'|'premium', billing_cycle?: 'monthly'|'yearly'}.
+    billing_cycle default = 'monthly'.
+    """
     if not STRIPE_ENABLED:
         raise HTTPException(status_code=503, detail="Stripe désactivé")
     if ctx.user_id is None:
@@ -170,6 +174,11 @@ async def api_stripe_checkout(
     tier = (payload or {}).get("tier")
     if tier not in ("pro", "premium"):
         raise HTTPException(status_code=400, detail="tier invalide (pro|premium)")
+    billing_cycle = (payload or {}).get("billing_cycle", "monthly")
+    if billing_cycle not in ("monthly", "yearly"):
+        raise HTTPException(
+            status_code=400, detail="billing_cycle invalide (monthly|yearly)"
+        )
 
     user = users_service.get_user_by_id(ctx.user_id) or {}
     from backend.services import stripe_service
@@ -179,6 +188,7 @@ async def api_stripe_checkout(
             user_id=ctx.user_id,
             user_email=user.get("email", ""),
             tier=tier,
+            billing_cycle=billing_cycle,
             existing_customer_id=user.get("stripe_customer_id"),
         )
     except ValueError as e:

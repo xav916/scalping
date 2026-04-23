@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { useQuery, useMutation } from '@tanstack/react-query';
@@ -6,20 +7,26 @@ import { GlassCard } from '@/components/ui/GlassCard';
 import { AnimatedMeshGradient } from '@/components/ui/AnimatedMeshGradient';
 import { GradientText } from '@/components/ui/GradientText';
 
+type Cycle = 'monthly' | 'yearly';
+
 type Tier = {
   id: 'free' | 'pro' | 'premium';
   name: string;
-  price: string;
+  /** Prix mensuel effectif (€/mois) dans chaque cycle. */
+  price_monthly: number;
+  price_yearly_total: number;
   tagline: string;
   features: string[];
   highlight?: boolean;
 };
 
+// -17% sur l'annuel = équivalent à 2 mois offerts sur 12.
 const TIERS: Tier[] = [
   {
     id: 'free',
     name: 'Free',
-    price: '0€',
+    price_monthly: 0,
+    price_yearly_total: 0,
     tagline: 'Pour découvrir',
     features: [
       'Dashboard lecture',
@@ -31,7 +38,8 @@ const TIERS: Tier[] = [
   {
     id: 'pro',
     name: 'Pro',
-    price: '19€',
+    price_monthly: 19,
+    price_yearly_total: 190,
     tagline: 'Pour trader sérieusement',
     highlight: true,
     features: [
@@ -45,7 +53,8 @@ const TIERS: Tier[] = [
   {
     id: 'premium',
     name: 'Premium',
-    price: '39€',
+    price_monthly: 39,
+    price_yearly_total: 390,
     tagline: 'Toutes les features',
     features: [
       'Tout Pro +',
@@ -57,8 +66,15 @@ const TIERS: Tier[] = [
   },
 ];
 
+const TIER_ORDER: Tier['id'][] = ['free', 'pro', 'premium'];
+
+function formatEuro(n: number): string {
+  return n % 1 === 0 ? `${n}€` : `${n.toFixed(2).replace('.', ',')}€`;
+}
+
 export function PricingPage() {
   const navigate = useNavigate();
+  const [cycle, setCycle] = useState<Cycle>('monthly');
 
   const tierInfo = useQuery({
     queryKey: ['user', 'tier'],
@@ -70,7 +86,8 @@ export function PricingPage() {
   const isAuth = !tierInfo.isError;
 
   const checkout = useMutation({
-    mutationFn: (tier: 'pro' | 'premium') => api.stripeCheckout(tier),
+    mutationFn: ({ tier, c }: { tier: 'pro' | 'premium'; c: Cycle }) =>
+      api.stripeCheckout(tier, c),
     onSuccess: (data) => {
       if (data.url) {
         window.location.href = data.url;
@@ -100,13 +117,12 @@ export function PricingPage() {
       navigate('/signup');
       return;
     }
-    if (tier.id === 'free') return; // déjà free ou downgrade via portal
+    if (tier.id === 'free') return;
     if (tier.id === currentTier) {
-      // Même tier → gestion via portal
       portal.mutate();
       return;
     }
-    checkout.mutate(tier.id);
+    checkout.mutate({ tier: tier.id, c: cycle });
   };
 
   return (
@@ -119,7 +135,7 @@ export function PricingPage() {
         transition={{ duration: 0.5 }}
         className="max-w-5xl mx-auto"
       >
-        <div className="text-center mb-12">
+        <div className="text-center mb-8">
           <h1 className="text-4xl font-bold mb-2">
             <GradientText>Choisis ton plan</GradientText>
           </h1>
@@ -134,12 +150,37 @@ export function PricingPage() {
           )}
         </div>
 
+        {/* Toggle Mensuel/Annuel */}
+        <div className="flex justify-center mb-10">
+          <div className="relative inline-flex items-center gap-1 p-1 rounded-xl bg-white/5 border border-white/10">
+            <CycleButton
+              active={cycle === 'monthly'}
+              onClick={() => setCycle('monthly')}
+              label="Mensuel"
+            />
+            <CycleButton
+              active={cycle === 'yearly'}
+              onClick={() => setCycle('yearly')}
+              label="Annuel"
+              badge="-17%"
+            />
+          </div>
+        </div>
+
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           {TIERS.map((tier) => {
             const isCurrent = isAuth && tier.id === currentTier;
             const isDowngrade =
               isAuth &&
               TIER_ORDER.indexOf(tier.id) < TIER_ORDER.indexOf(currentTier as Tier['id']);
+
+            // Prix affiché : toujours "équivalent mensuel" pour comparabilité.
+            const monthly_eq =
+              cycle === 'yearly'
+                ? tier.price_yearly_total / 12
+                : tier.price_monthly;
+            const showSaving = cycle === 'yearly' && tier.id !== 'free';
+
             return (
               <motion.div
                 key={tier.id}
@@ -161,14 +202,24 @@ export function PricingPage() {
                   <p className="text-xs uppercase tracking-wider text-white/40 mb-4">
                     {tier.tagline}
                   </p>
-                  <div className="mb-5">
-                    <span className="text-4xl font-bold">{tier.price}</span>
+                  <div className="mb-2 min-h-[70px]">
+                    <span className="text-4xl font-bold">{formatEuro(monthly_eq)}</span>
                     {tier.id !== 'free' && (
                       <span className="text-white/50 text-sm">/mois</span>
                     )}
+                    {showSaving && (
+                      <div className="mt-1 text-xs text-emerald-400">
+                        Facturé {tier.price_yearly_total}€/an
+                      </div>
+                    )}
+                    {!showSaving && tier.id !== 'free' && (
+                      <div className="mt-1 text-xs text-white/40">
+                        soit {tier.price_yearly_total}€/an en annuel
+                      </div>
+                    )}
                   </div>
 
-                  <ul className="space-y-2 mb-6 flex-1">
+                  <ul className="space-y-2 mb-6 mt-3 flex-1">
                     {tier.features.map((f) => (
                       <li key={f} className="text-sm text-white/70 flex items-start gap-2">
                         <span className="text-cyan-400 mt-0.5">✓</span>
@@ -220,4 +271,43 @@ export function PricingPage() {
   );
 }
 
-const TIER_ORDER: Tier['id'][] = ['free', 'pro', 'premium'];
+function CycleButton({
+  active,
+  onClick,
+  label,
+  badge,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  badge?: string;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`relative px-5 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+        active ? 'text-slate-900' : 'text-white/70 hover:text-white'
+      }`}
+    >
+      {active && (
+        <motion.span
+          layoutId="cycle-pill"
+          transition={{ type: 'spring', stiffness: 500, damping: 40 }}
+          className="absolute inset-0 rounded-lg bg-gradient-to-br from-cyan-400 to-pink-500"
+        />
+      )}
+      <span className="relative z-10 flex items-center gap-1.5">
+        {label}
+        {badge && (
+          <span
+            className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
+              active ? 'bg-slate-900/20 text-slate-900' : 'bg-emerald-400/20 text-emerald-300'
+            }`}
+          >
+            {badge}
+          </span>
+        )}
+      </span>
+    </button>
+  );
+}

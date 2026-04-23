@@ -31,14 +31,29 @@ def _assert_enabled() -> None:
     stripe.api_key = settings.STRIPE_SECRET_KEY
 
 
-def _price_for_tier(tier: str) -> str:
+VALID_BILLING_CYCLES = ("monthly", "yearly")
+
+
+def _price_for_tier(tier: str, billing_cycle: str = "monthly") -> str:
+    """Résout le price_id Stripe pour (tier, cycle).
+
+    Lève ValueError si non configuré ou cycle invalide.
+    """
+    if billing_cycle not in VALID_BILLING_CYCLES:
+        raise ValueError(
+            f"billing_cycle invalide : {billing_cycle!r} (attendu {VALID_BILLING_CYCLES})"
+        )
     mapping = {
-        "pro": settings.STRIPE_PRICE_PRO,
-        "premium": settings.STRIPE_PRICE_PREMIUM,
+        ("pro", "monthly"): settings.STRIPE_PRICE_PRO_MONTHLY,
+        ("pro", "yearly"): settings.STRIPE_PRICE_PRO_YEARLY,
+        ("premium", "monthly"): settings.STRIPE_PRICE_PREMIUM_MONTHLY,
+        ("premium", "yearly"): settings.STRIPE_PRICE_PREMIUM_YEARLY,
     }
-    price_id = mapping.get(tier)
+    price_id = mapping.get((tier, billing_cycle))
     if not price_id:
-        raise ValueError(f"Pas de price_id Stripe configuré pour tier={tier!r}")
+        raise ValueError(
+            f"Pas de price_id Stripe configuré pour tier={tier!r} cycle={billing_cycle!r}"
+        )
     return price_id
 
 
@@ -47,14 +62,16 @@ def create_checkout_session(
     user_email: str,
     tier: str,
     *,
+    billing_cycle: str = "monthly",
     existing_customer_id: str | None = None,
 ) -> str:
     """Crée une Checkout Session pour upgrade du user au tier donné.
 
+    `billing_cycle` : 'monthly' (défaut) ou 'yearly'.
     Retourne l'URL Stripe à laquelle rediriger le front.
     """
     _assert_enabled()
-    price_id = _price_for_tier(tier)
+    price_id = _price_for_tier(tier, billing_cycle)
 
     kwargs: dict[str, Any] = {
         "mode": "subscription",
@@ -62,7 +79,7 @@ def create_checkout_session(
         "success_url": settings.STRIPE_SUCCESS_URL,
         "cancel_url": settings.STRIPE_CANCEL_URL,
         "client_reference_id": str(user_id),
-        "metadata": {"user_id": str(user_id), "tier": tier},
+        "metadata": {"user_id": str(user_id), "tier": tier, "billing_cycle": billing_cycle},
     }
     # Si le user a déjà un customer Stripe, le réutiliser (sinon Stripe
     # crée automatiquement un customer vu l'email).
@@ -88,12 +105,18 @@ def create_portal_session(customer_id: str, return_url: str) -> str:
 
 # ─── Webhook handler ──────────────────────────────────────────
 
-# Mapping price_id → tier pour dériver le tier d'une subscription.
+# Mapping price_id → tier pour dériver le tier d'une subscription. On map les
+# 4 prices (monthly + yearly × pro + premium) au même tier — le billing cycle
+# n'influe pas sur les features accordées, juste sur la facturation.
 def _price_to_tier_map() -> dict[str, str]:
-    return {
-        settings.STRIPE_PRICE_PRO: "pro",
-        settings.STRIPE_PRICE_PREMIUM: "premium",
-    }
+    m: dict[str, str] = {}
+    for price_id in (settings.STRIPE_PRICE_PRO_MONTHLY, settings.STRIPE_PRICE_PRO_YEARLY):
+        if price_id:
+            m[price_id] = "pro"
+    for price_id in (settings.STRIPE_PRICE_PREMIUM_MONTHLY, settings.STRIPE_PRICE_PREMIUM_YEARLY):
+        if price_id:
+            m[price_id] = "premium"
+    return m
 
 
 def _tier_from_subscription(sub: dict) -> str:
