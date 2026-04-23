@@ -480,9 +480,14 @@ def list_users_with_active_trial() -> list[dict]:
 def is_onboarding_complete(user_id: int) -> dict:
     """Retourne l'état d'onboarding du user pour le front.
 
+    Modèle signal-only (2026-04-23 pivot) : le bridge MT5 devient une option
+    Premium optionnelle, seule la sélection des pairs est requise pour
+    utiliser le produit (dashboard + alertes + analytics).
+
+    - `has_pairs`  : watched_pairs non vide (seul critère bloquant)
     - `has_broker` : broker_config contient bridge_url ET bridge_api_key
-    - `has_pairs`  : watched_pairs non vide
-    - `needs_onboarding` : at least one step missing
+                     (optionnel, info only)
+    - `needs_onboarding` : `not has_pairs`
     """
     broker = get_broker_config(user_id)
     has_broker = bool(broker.get("bridge_url") and broker.get("bridge_api_key"))
@@ -492,5 +497,5 @@ def is_onboarding_complete(user_id: int) -> dict:
     return {
         "has_broker": has_broker,
         "has_pairs": has_pairs,
-        "needs_onboarding": not (has_broker and has_pairs),
+        "needs_onboarding": not has_pairs,
     }

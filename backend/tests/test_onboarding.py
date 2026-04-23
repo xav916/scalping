@@ -117,7 +117,8 @@ def test_new_user_needs_onboarding(db):
     assert status["needs_onboarding"] is True
 
 
-def test_partial_onboarding_still_needs(db):
+def test_broker_only_still_needs_pairs(db):
+    """Modèle signal-only : avoir un broker sans pairs → onboarding pas terminé."""
     uid = users_service.create_user("alice@test.com", "pw12345678")
     users_service.update_broker_config(
         uid, bridge_url="http://x:8787", bridge_api_key="secret_api_key_12345"
@@ -128,7 +129,18 @@ def test_partial_onboarding_still_needs(db):
     assert status["needs_onboarding"] is True
 
 
-def test_complete_onboarding(db):
+def test_pairs_only_completes_onboarding(db):
+    """Modèle signal-only : pairs seul suffit, bridge est optionnel."""
+    uid = users_service.create_user("alice@test.com", "pw12345678", tier="pro")
+    users_service.update_watched_pairs(uid, ["EUR/USD"])
+    status = users_service.is_onboarding_complete(uid)
+    assert status["has_broker"] is False
+    assert status["has_pairs"] is True
+    # has_broker=False mais onboarding complet (bridge optionnel).
+    assert status["needs_onboarding"] is False
+
+
+def test_complete_onboarding_with_broker(db):
     uid = users_service.create_user("alice@test.com", "pw12345678", tier="pro")
     users_service.update_broker_config(
         uid, bridge_url="http://x:8787", bridge_api_key="secret_api_key_12345"

@@ -17,29 +17,29 @@ const FEATURES = [
     icon: '◎',
   },
   {
-    title: 'Auto-exécution MT5',
-    desc: 'Chaque signal > seuil de confiance est poussé à ton bridge MT5 local via Tailscale. Rien ne transite par nos serveurs.',
-    icon: '⚡',
-  },
-  {
-    title: 'Data isolation stricte',
-    desc: 'Tes trades, tes stats, tes rejections — zéro croisement entre utilisateurs. Bridge sur ton PC, API key à toi.',
-    icon: '🔒',
-  },
-  {
-    title: 'Analytics multi-dimension',
-    desc: 'Win rate par paire, heure, pattern, asset class, régime macro. Comprendre pourquoi ça gagne ou perd.',
-    icon: '📊',
-  },
-  {
     title: 'Alertes Telegram',
-    desc: 'Notifs push instantanées sur les setups haute conviction. Tu décides si tu valides.',
+    desc: 'Notifs push instantanées sur les setups haute conviction. Tu trades quand tu veux, où tu veux.',
     icon: '🔔',
   },
   {
-    title: 'Journal ML-ready',
-    desc: "Chaque trade est loggé avec son contexte complet (macro, slippage, close reason). Base d'entraînement pour future optimisation.",
+    title: 'Analytics multi-dimension',
+    desc: 'Win rate par paire, heure, pattern, asset class, régime macro. Comprendre ce qui gagne et ce qui perd.',
+    icon: '📊',
+  },
+  {
+    title: 'Contexte macro intégré',
+    desc: 'DXY, SPX, VIX, régime risk-on/off intégrés au scoring. Le radar sait dans quelle mer il nage.',
+    icon: '🌍',
+  },
+  {
+    title: 'Journal & historique complet',
+    desc: 'Chaque setup loggué avec contexte macro, raison, close_reason. Tu apprends de chaque trade.',
     icon: '⋯',
+  },
+  {
+    title: 'Auto-exec MT5 (Premium)',
+    desc: 'Optionnel : connecte ton bridge MT5 local pour auto-exécuter les setups au broker de ton choix. Pour les traders avancés.',
+    icon: '⚡',
   },
 ];
 
@@ -114,14 +114,14 @@ export function LandingPage() {
             </span>
           </div>
           <h1 className="text-5xl md:text-6xl font-bold tracking-tight mb-5 leading-tight">
-            <GradientText>Le radar de scalping</GradientText>
+            <GradientText>Les meilleurs setups</GradientText>
             <br />
-            <span className="text-white/90">qui tourne sur ton PC.</span>
+            <span className="text-white/90">de scalping, en direct.</span>
           </h1>
           <p className="text-lg text-white/70 max-w-2xl mx-auto mb-8 leading-relaxed">
-            Détection automatisée de setups sur 16 instruments. Scoring macro + technique
-            en continu. Auto-exécution directe sur ton compte MT5 via bridge local.
-            Aucun fonds chez nous, ton broker à toi.
+            Un radar qui scanne 16 paires (forex, métaux, crypto, indices) en continu.
+            Scoring macro + technique. Alertes Telegram instantanées.
+            <strong className="text-white/90"> Tu trades au broker de ton choix, on ne touche jamais à tes fonds.</strong>
           </p>
           <div className="flex items-center justify-center gap-3">
             <button
@@ -188,23 +188,23 @@ export function LandingPage() {
           {[
             {
               n: '01',
-              title: 'Installe le bridge sur ton PC Windows',
-              desc: 'Petit serveur local qui relaie les ordres au terminal MT5. 10 minutes à configurer avec notre guide + Tailscale gratuit.',
+              title: 'Crée ton compte en 30 secondes',
+              desc: '14 jours d\'essai Pro gratuit, sans carte bancaire. Accès immédiat au dashboard et aux alertes.',
             },
             {
               n: '02',
-              title: 'Connecte-toi à Scalping Radar',
-              desc: "Saisie l'URL Tailscale du bridge + l'API key dans l'app. On test la connexion en un clic.",
+              title: 'Choisis tes paires à surveiller',
+              desc: 'Jusqu\'à 5 paires en Pro, 16 en Premium. Forex majeurs, métaux, crypto, indices, énergie.',
             },
             {
               n: '03',
-              title: 'Choisis tes paires et active',
-              desc: 'Sélectionne jusqu\'à 16 paires à surveiller. Active le mode auto-exec. Le radar pousse les ordres dès qu\'un setup haute confiance apparaît.',
+              title: 'Reçois les alertes en temps réel',
+              desc: "Dès qu'un setup apparaît sur une de tes paires, notification Telegram + ligne dans le dashboard avec scoring détaillé.",
             },
             {
               n: '04',
-              title: 'Supervise depuis le cockpit',
-              desc: 'PnL temps réel, exposure, rejections, analytics multi-dimension. Tu coupes le kill-switch quand tu veux, tu reprends quand tu veux.',
+              title: 'Trades chez ton broker',
+              desc: 'Tu décides quoi faire de chaque setup. Ton broker, ton compte, ton argent — nous ne touchons jamais à tes fonds. Optionnel : connecte ton bridge MT5 pour auto-exec (Premium).',
             },
           ].map((step, i) => (
             <motion.div

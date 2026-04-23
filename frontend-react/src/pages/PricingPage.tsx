@@ -29,7 +29,7 @@ const TIERS: Tier[] = [
     price_yearly_total: 0,
     tagline: 'Pour découvrir',
     features: [
-      'Dashboard lecture',
+      'Dashboard en lecture',
       '1 paire surveillée',
       'Historique 7 jours',
       'Pas d\'alertes Telegram',
@@ -45,9 +45,9 @@ const TIERS: Tier[] = [
     features: [
       'Dashboard complet',
       '5 paires surveillées',
+      'Alertes Telegram temps réel',
       'Historique illimité',
-      'Alertes Telegram',
-      'Rejections log',
+      'Analytics complètes',
     ],
   },
   {
@@ -55,12 +55,12 @@ const TIERS: Tier[] = [
     name: 'Premium',
     price_monthly: 39,
     price_yearly_total: 390,
-    tagline: 'Toutes les features',
+    tagline: 'Pour les traders avancés',
     features: [
       'Tout Pro +',
       '16 paires surveillées',
-      'Backtest illimité',
-      'Multi-broker',
+      'Backtest historique illimité',
+      'Auto-exec MT5 (bridge self-hosted)',
       'Support prioritaire',
     ],
   },

@@ -12,6 +12,9 @@ import { GradientText } from '@/components/ui/GradientText';
  *  1. Profil (email, logout)
  *  2. Abonnement (tier effectif, trial days restants, CTA portal/upgrade)
  *  3. Pairs surveillées (édition avec cap par tier)
+ *  4. Auto-exec MT5 (optionnel, section repliée par défaut) — Chantier pivot
+ *     signal-only. L'user peut configurer son bridge MT5 pour auto-exec,
+ *     mais ce n'est plus requis ni central au produit.
  */
 
 const ALL_PAIRS = [
@@ -93,6 +96,45 @@ export function SettingsPage() {
     pairsQ.data?.pairs &&
     (selected.size !== pairsQ.data.pairs.length ||
       Array.from(selected).some((p) => !pairsQ.data!.pairs.includes(p)));
+
+  // ─── Section Bridge (optionnelle, repliable) ────────────────────
+  const brokerQ = useQuery({
+    queryKey: ['user', 'broker'],
+    queryFn: api.userBrokerGet,
+    retry: 0,
+    staleTime: 60_000,
+  });
+  const [bridgeOpen, setBridgeOpen] = useState(false);
+  const [bridgeUrl, setBridgeUrl] = useState('');
+  const [bridgeApiKey, setBridgeApiKey] = useState('');
+  const [bridgeTestResult, setBridgeTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
+
+  // Hydrate bridgeUrl depuis la query quand elle répond.
+  useEffect(() => {
+    if (brokerQ.data?.bridge_url && !bridgeUrl) {
+      setBridgeUrl(brokerQ.data.bridge_url);
+    }
+  }, [brokerQ.data, bridgeUrl]);
+
+  const testBridgeMut = useMutation({
+    mutationFn: () => api.userBrokerTest(bridgeUrl, bridgeApiKey),
+    onSuccess: (data) => {
+      if (data.ok && data.reachable) {
+        setBridgeTestResult({ ok: true, msg: 'Bridge joignable ✓' });
+      } else {
+        setBridgeTestResult({ ok: false, msg: data.error || 'Bridge injoignable' });
+      }
+    },
+    onError: () => setBridgeTestResult({ ok: false, msg: 'Erreur de test' }),
+  });
+
+  const saveBridgeMut = useMutation({
+    mutationFn: () => api.userBrokerPut(bridgeUrl, bridgeApiKey),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['user', 'broker'] });
+      setBridgeApiKey(''); // clear after save
+    },
+  });
 
   return (
     <div className="min-h-screen py-10 px-4">
@@ -262,6 +304,102 @@ export function SettingsPage() {
             >
               Paires enregistrées ✓
             </motion.p>
+          )}
+        </GlassCard>
+
+        {/* ─── Bridge MT5 (optionnel, Premium) ─── */}
+        <GlassCard className="p-6">
+          <button
+            onClick={() => setBridgeOpen((o) => !o)}
+            className="w-full flex items-start justify-between text-left"
+          >
+            <div>
+              <h2 className="text-lg font-semibold flex items-center gap-2">
+                Auto-exec MT5
+                <span className="px-2 py-0.5 rounded-full text-[10px] uppercase tracking-wider bg-pink-400/20 text-pink-300 border border-pink-400/30">
+                  Premium
+                </span>
+                <span className="text-xs text-white/40 font-normal">· optionnel</span>
+              </h2>
+              <p className="text-sm text-white/50 mt-1">
+                {brokerQ.data?.api_key_set
+                  ? `Bridge configuré : ${brokerQ.data.bridge_url}`
+                  : 'Connecte ton bridge MT5 pour auto-exécuter les setups directement sur ton compte.'}
+              </p>
+            </div>
+            <span className="text-white/40 text-xl ml-4 shrink-0">
+              {bridgeOpen ? '−' : '+'}
+            </span>
+          </button>
+
+          {bridgeOpen && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              className="mt-5 pt-5 border-t border-white/10 space-y-3"
+            >
+              <p className="text-sm text-white/60">
+                Installation requise : <a href="/docs/bridge-setup.html" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:text-cyan-300 underline">voir le guide</a>.
+                Tu as besoin de Tailscale + MetaTrader 5 + le bridge Windows sur un PC ou VPS 24/5.
+              </p>
+              <div>
+                <label className="block text-xs uppercase tracking-wider text-white/50 mb-1.5">
+                  URL du bridge
+                </label>
+                <input
+                  type="url"
+                  value={bridgeUrl}
+                  onChange={(e) => {
+                    setBridgeUrl(e.target.value);
+                    setBridgeTestResult(null);
+                  }}
+                  placeholder="http://100.x.y.z:8787"
+                  className="w-full px-4 py-2.5 rounded-xl bg-white/5 border border-glass-soft focus:border-cyan-400/50 focus:outline-none font-mono text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs uppercase tracking-wider text-white/50 mb-1.5">
+                  API key
+                </label>
+                <input
+                  type="password"
+                  value={bridgeApiKey}
+                  onChange={(e) => {
+                    setBridgeApiKey(e.target.value);
+                    setBridgeTestResult(null);
+                  }}
+                  placeholder={brokerQ.data?.api_key_set ? '•••••••• (laisser vide pour ne pas changer)' : 'min 16 caractères'}
+                  className="w-full px-4 py-2.5 rounded-xl bg-white/5 border border-glass-soft focus:border-pink-400/50 focus:outline-none font-mono text-sm"
+                />
+              </div>
+
+              {bridgeTestResult && (
+                <p className={`text-sm ${bridgeTestResult.ok ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  {bridgeTestResult.msg}
+                </p>
+              )}
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  onClick={() => testBridgeMut.mutate()}
+                  disabled={testBridgeMut.isPending || !bridgeUrl || bridgeApiKey.length < 16}
+                  className="flex-1 py-2 rounded-xl border border-cyan-400/30 text-cyan-300 text-sm font-medium disabled:opacity-40 hover:bg-cyan-400/10"
+                >
+                  {testBridgeMut.isPending ? 'Test…' : 'Tester'}
+                </button>
+                <button
+                  onClick={() => saveBridgeMut.mutate()}
+                  disabled={saveBridgeMut.isPending || !bridgeTestResult?.ok}
+                  className="flex-1 py-2 rounded-xl bg-gradient-to-br from-cyan-400 to-pink-500 text-slate-900 text-sm font-semibold disabled:opacity-40"
+                >
+                  {saveBridgeMut.isPending ? 'Enregistrement…' : 'Enregistrer'}
+                </button>
+              </div>
+
+              {saveBridgeMut.isSuccess && (
+                <p className="text-xs text-emerald-400">Bridge enregistré ✓</p>
+              )}
+            </motion.div>
           )}
         </GlassCard>
 
