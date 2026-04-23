@@ -440,6 +440,20 @@ def mark_trial_reminder_sent(user_id: int, key: str) -> None:
         )
 
 
+def list_all_users() -> list[dict]:
+    """Retourne tous les users (pour admin backoffice), ordonnés par
+    created_at DESC. Exclut password_hash pour éviter les fuites accidentelles.
+    """
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT id, email, tier, stripe_customer_id, stripe_subscription_id, "
+            "stripe_billing_cycle, trial_ends_at, created_at, last_login_at, "
+            "is_active, trial_reminders_sent "
+            "FROM users ORDER BY created_at DESC"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def list_users_with_active_trial() -> list[dict]:
     """Retourne tous les users avec un trial toujours actif (pas expiré, pas
     de sub payante). Utilisé par le job quotidien de rappels.

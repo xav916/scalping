@@ -21,6 +21,7 @@ from backend.auth import (
     logout_and_clear_cookie,
 )
 from config.settings import (
+    ADMIN_EMAILS,
     AUTH_USERS,
     SAAS_SIGNUP_ENABLED,
     STRIPE_ENABLED,
@@ -179,6 +180,21 @@ def _tier_of(ctx: AuthContext) -> str:
     return users_service.effective_tier(user)
 
 
+def _is_admin(ctx: AuthContext) -> bool:
+    """True si le user courant est dans la whitelist admin ou legacy env."""
+    if ctx.user_id is None:
+        # Users env legacy = admin historique, passent toutes les gates.
+        return True
+    return (ctx.username or "").lower() in ADMIN_EMAILS
+
+
+def require_admin(ctx: AuthContext = Depends(auth_context)) -> AuthContext:
+    """Dep FastAPI : 403 si le user courant n'est pas dans ADMIN_EMAILS."""
+    if not _is_admin(ctx):
+        raise HTTPException(status_code=403, detail="Accès admin requis")
+    return ctx
+
+
 # ─── SaaS : Stripe checkout / webhook / portal (Chantier 5) ─────────
 @app.post("/api/stripe/checkout")
 async def api_stripe_checkout(
@@ -265,6 +281,103 @@ async def api_stripe_webhook(request: Request):
         logger.exception("Webhook Stripe a échoué")
         raise HTTPException(status_code=400, detail=str(e)[:200])
     return {"ok": True, **result}
+
+
+# ─── SaaS Admin backoffice (Chantier 12) ────────────────────────────
+@app.get("/api/admin/users")
+async def api_admin_users(_ctx: AuthContext = Depends(require_admin)):
+    """Liste de tous les users + KPIs résumés pour le dashboard /admin.
+
+    KPIs calculés :
+    - total_users, active_users (is_active=1)
+    - signups_7d, signups_30d
+    - trials_active, trials_j3_or_less
+    - paying_users par tier
+    - mrr_eur (revenu mensuel récurrent estimé, basé tier + cycle)
+
+    Les MRR Yearly sont divisés par 12 pour le ramener à un équivalent mensuel.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    users = users_service.list_all_users()
+    now = datetime.now(timezone.utc)
+    d7 = now - timedelta(days=7)
+    d30 = now - timedelta(days=30)
+
+    def _parse(iso: str | None):
+        if not iso:
+            return None
+        try:
+            return datetime.fromisoformat(iso.replace("Z", "+00:00"))
+        except (ValueError, AttributeError):
+            return None
+
+    # Tarifs de référence (source = spec SaaS). Si yearly, /12 pour MRR equivalent.
+    PRICING = {
+        ("pro", "monthly"): 19.0,
+        ("pro", "yearly"): 190.0 / 12,
+        ("premium", "monthly"): 39.0,
+        ("premium", "yearly"): 390.0 / 12,
+    }
+
+    signups_7d = 0
+    signups_30d = 0
+    trials_active = 0
+    trials_j3_or_less = 0
+    by_tier: dict[str, int] = {"free": 0, "pro": 0, "premium": 0}
+    mrr = 0.0
+    enriched: list[dict] = []
+
+    for u in users:
+        created = _parse(u.get("created_at"))
+        if created:
+            if created > d7:
+                signups_7d += 1
+            if created > d30:
+                signups_30d += 1
+
+        trial = users_service.trial_status(u)
+        if trial["trial_active"]:
+            trials_active += 1
+            if (trial["trial_days_left"] or 0) <= 3:
+                trials_j3_or_less += 1
+
+        eff = users_service.effective_tier(u)
+        by_tier[eff] = by_tier.get(eff, 0) + 1
+
+        if u.get("stripe_subscription_id") and eff in ("pro", "premium"):
+            cycle = u.get("stripe_billing_cycle") or "monthly"
+            mrr += PRICING.get((eff, cycle), 0.0)
+
+        enriched.append({
+            "id": u["id"],
+            "email": u["email"],
+            "tier_stored": u.get("tier"),
+            "tier_effective": eff,
+            "billing_cycle": u.get("stripe_billing_cycle"),
+            "trial_active": trial["trial_active"],
+            "trial_days_left": trial["trial_days_left"],
+            "trial_ends_at": trial["trial_ends_at"],
+            "stripe_customer_set": bool(u.get("stripe_customer_id")),
+            "stripe_subscription_set": bool(u.get("stripe_subscription_id")),
+            "created_at": u.get("created_at"),
+            "last_login_at": u.get("last_login_at"),
+            "is_active": bool(u.get("is_active")),
+        })
+
+    return {
+        "totals": {
+            "total_users": len(users),
+            "active_users": sum(1 for u in users if u.get("is_active")),
+            "signups_7d": signups_7d,
+            "signups_30d": signups_30d,
+            "trials_active": trials_active,
+            "trials_j3_or_less": trials_j3_or_less,
+            "by_tier": by_tier,
+            "mrr_eur": round(mrr, 2),
+        },
+        "users": enriched,
+    }
 
 
 # ─── SaaS : onboarding utilisateur (Chantier 4) ─────────────────────

@@ -276,6 +276,10 @@ MACRO_VETO_ENABLED = os.getenv("MACRO_VETO_ENABLED", "false").lower() in ("1", "
 # livrés. L'endpoint existe mais répond 404 si désactivé.
 SAAS_SIGNUP_ENABLED = os.getenv("SAAS_SIGNUP_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 
+# Whitelist admin (Chantier 12 SaaS). Emails séparés par virgule. Les users
+# whitelistés voient /admin avec users list + MRR + trials.
+ADMIN_EMAILS = [e.strip().lower() for e in os.getenv("ADMIN_EMAILS", "").split(",") if e.strip()]
+
 # Stripe (Chantier 5 SaaS) : ouverture des endpoints checkout/portal/webhook
 # gated par STRIPE_ENABLED. OFF par défaut pour ne pas exposer en prod tant
 # que les clés + produits Stripe ne sont pas configurés.

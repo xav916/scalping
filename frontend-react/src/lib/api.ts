@@ -121,6 +121,36 @@ export const api = {
   stripePortal: () =>
     request<{ url: string }>('/api/stripe/portal', { method: 'POST' }),
 
+  // ─── Admin (Chantier 12 SaaS) ────────────────────────────────
+  adminUsers: () =>
+    request<{
+      totals: {
+        total_users: number;
+        active_users: number;
+        signups_7d: number;
+        signups_30d: number;
+        trials_active: number;
+        trials_j3_or_less: number;
+        by_tier: { free?: number; pro?: number; premium?: number };
+        mrr_eur: number;
+      };
+      users: Array<{
+        id: number;
+        email: string;
+        tier_stored: string;
+        tier_effective: string;
+        billing_cycle: string | null;
+        trial_active: boolean;
+        trial_days_left: number | null;
+        trial_ends_at: string | null;
+        stripe_customer_set: boolean;
+        stripe_subscription_set: boolean;
+        created_at: string;
+        last_login_at: string | null;
+        is_active: boolean;
+      }>;
+    }>('/api/admin/users'),
+
   macro: async () => {
     const raw = await request<{ status: string; snapshot: MacroSnapshot | null }>(
       '/api/macro'
