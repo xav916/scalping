@@ -324,15 +324,18 @@ async def api_broker_account(_=Depends(verify_credentials)):
 async def api_insights_rejections(
     since: str,
     until: str,
-    _=Depends(verify_credentials),
+    ctx: AuthContext = Depends(auth_context),
 ):
     """Agrégat des rejections d'ordres auto-exec sur la période.
 
     Retourne by_reason (barres), by_hour_utc (timeline) et by_reason_hour
-    (heatmap) pour la RejectionsCard du cockpit.
+    (heatmap) pour la RejectionsCard du cockpit. Scopé par user_id
+    (Chantier 3D) : un user ne voit que ses propres rejections.
     """
     from backend.services import rejection_service
-    return rejection_service.get_rejections(since=since, until=until)
+    return rejection_service.get_rejections(
+        since=since, until=until, user_id=ctx.user_id
+    )
 
 
 @app.get("/api/insights/pnl-buckets")

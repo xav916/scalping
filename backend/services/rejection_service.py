@@ -64,6 +64,14 @@ def _ensure_schema() -> None:
                 details TEXT
             )
         """)
+        # Chantier 3D SaaS : ajoute user_id (nullable tant que la migration
+        # du bridge pour propager le contexte user n'est pas faite).
+        cols = [r[1] for r in c.execute("PRAGMA table_info(signal_rejections)").fetchall()]
+        if "user_id" not in cols:
+            c.execute("ALTER TABLE signal_rejections ADD COLUMN user_id INTEGER")
+            c.execute(
+                "CREATE INDEX IF NOT EXISTS idx_sr_user_id ON signal_rejections(user_id)"
+            )
         c.execute(
             "CREATE INDEX IF NOT EXISTS idx_sr_created ON signal_rejections(created_at)"
         )
@@ -78,17 +86,24 @@ def record_rejection(
     confidence: float | None,
     reason_code: str,
     details: dict[str, Any] | None = None,
+    user_id: int | None = None,
 ) -> None:
     """Enregistre une ligne dans `signal_rejections`. Best-effort : toute
-    erreur DB est silencieusement avalée pour ne pas planter le pipeline."""
+    erreur DB est silencieusement avalée pour ne pas planter le pipeline.
+
+    `user_id` (Chantier 3D) : id du user auquel imputer la rejection.
+    Laisser None tant que le bridge MT5 ne propage pas encore l'identité
+    du user (mono-tenant actuel). Les rows NULL sont rattrapées par le
+    script de backfill (scripts/backfill_rejections_user_id.py).
+    """
     try:
         _ensure_schema()
         with sqlite3.connect(_db_path()) as c:
             c.execute(
                 """
                 INSERT INTO signal_rejections
-                    (created_at, pair, direction, confidence, reason_code, details)
-                VALUES (?, ?, ?, ?, ?, ?)
+                    (created_at, pair, direction, confidence, reason_code, details, user_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     datetime.now(timezone.utc).isoformat(),
@@ -97,6 +112,7 @@ def record_rejection(
                     confidence,
                     reason_code,
                     json.dumps(details) if details else None,
+                    user_id,
                 ),
             )
     except Exception:
@@ -104,7 +120,11 @@ def record_rejection(
         logging.getLogger(__name__).exception("record_rejection failed (silencé)")
 
 
-def get_rejections(since: str, until: str) -> dict[str, Any]:
+def get_rejections(
+    since: str,
+    until: str,
+    user_id: int | None = None,
+) -> dict[str, Any]:
     """Agrège les rejections pour la RejectionsCard.
 
     Retourne :
@@ -118,15 +138,26 @@ def get_rejections(since: str, until: str) -> dict[str, Any]:
         }
     """
     _ensure_schema()
+    scope_sql = ""
+    scope_params: tuple = ()
+    if user_id is not None:
+        # Chantier 3D : un user ne voit QUE ses propres rejections. Les rows
+        # NULL (legacy avant backfill) sont ignorées côté user — les opérateurs
+        # peuvent lancer scripts/backfill_rejections_user_id.py pour les
+        # attribuer.
+        scope_sql = " AND user_id = ?"
+        scope_params = (user_id,)
+
     with sqlite3.connect(_db_path()) as c:
         c.row_factory = sqlite3.Row
         rows = c.execute(
-            """
+            f"""
             SELECT created_at, pair, reason_code
               FROM signal_rejections
              WHERE created_at >= ? AND created_at <= ?
+               {scope_sql}
             """,
-            (since, until),
+            (since, until, *scope_params),
         ).fetchall()
 
     by_reason: dict[str, dict[str, Any]] = {}
