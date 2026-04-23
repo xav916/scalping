@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -39,6 +39,10 @@ VALID_TIERS = ("free", "pro", "premium")
 # Ordre des tiers pour feature gating : free < pro < premium.
 TIER_RANK = {"free": 0, "pro": 1, "premium": 2}
 
+# Lookback max analytics (days) par tier. Free est limité à 7 jours glissants
+# pour encourager l'upgrade ; Pro/Premium ont accès illimité (None = no cap).
+TIER_MAX_LOOKBACK_DAYS = {"free": 7, "pro": None, "premium": None}
+
 
 def tier_rank(tier: str) -> int:
     return TIER_RANK.get(tier, 0)
@@ -47,6 +51,25 @@ def tier_rank(tier: str) -> int:
 def has_min_tier(user_tier: str, min_tier: str) -> bool:
     """True si user_tier >= min_tier. Défaut 'free' pour les unknowns."""
     return tier_rank(user_tier) >= tier_rank(min_tier)
+
+
+def max_lookback_days(user_tier: str) -> Optional[int]:
+    """Nombre max de jours d'historique consultable sur les endpoints
+    insights/analytics. None = illimité."""
+    return TIER_MAX_LOOKBACK_DAYS.get(user_tier, 7)
+
+
+def clamp_since_iso(since_iso: Optional[str], user_tier: str) -> Optional[str]:
+    """Si le tier a un cap, ramène `since_iso` à max(since_iso, today - cap).
+    None reste None.
+    """
+    cap = max_lookback_days(user_tier)
+    if cap is None:
+        return since_iso
+    floor = (datetime.now(timezone.utc) - timedelta(days=cap)).isoformat()
+    if since_iso is None:
+        return floor
+    return max(since_iso, floor)
 
 
 @contextmanager

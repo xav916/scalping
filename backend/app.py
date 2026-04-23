@@ -148,6 +148,14 @@ def require_min_tier(min_tier: str):
     return _dep
 
 
+def _tier_of(ctx: AuthContext) -> str:
+    """Retourne le tier du user courant. 'premium' pour les users legacy env."""
+    if ctx.user_id is None:
+        return "premium"
+    user = users_service.get_user_by_id(ctx.user_id) or {}
+    return user.get("tier", "free")
+
+
 # ─── SaaS : Stripe checkout / webhook / portal (Chantier 5) ─────────
 @app.post("/api/stripe/checkout")
 async def api_stripe_checkout(
@@ -459,6 +467,7 @@ async def api_insights_performance(
     du veto macro.
     """
     from backend.services import insights_service
+    since = users_service.clamp_since_iso(since, _tier_of(ctx))
     return insights_service.get_performance(
         since_iso=since, user=ctx.username, user_id=ctx.user_id
     )
@@ -487,6 +496,8 @@ async def api_insights_period_stats(
     if since or until:
         if not (since and until):
             raise HTTPException(status_code=400, detail="since et until requis ensemble")
+        # Clamp custom range pour tier free (Free = 7 jours max).
+        since = users_service.clamp_since_iso(since, _tier_of(ctx))
         return insights_service.get_period_stats_range(
             since=since, until=until, user=ctx.username, user_id=ctx.user_id
         )
@@ -494,6 +505,13 @@ async def api_insights_period_stats(
     period = period or "day"
     if period not in {"day", "week", "month", "year", "all"}:
         raise HTTPException(status_code=400, detail="period invalide (day|week|month|year|all)")
+    # Free : bloque les presets au-delà de 7 jours (week max côté cap 7j).
+    tier = _tier_of(ctx)
+    if tier == "free" and period in {"month", "year", "all"}:
+        raise HTTPException(
+            status_code=403,
+            detail="Périodes > 7j nécessitent le tier Pro",
+        )
     return insights_service.get_period_stats(
         period=period, user=ctx.username, user_id=ctx.user_id
     )
@@ -513,6 +531,7 @@ async def api_insights_equity_curve(
               total_trades, final_pnl, since}.
     """
     from backend.services import insights_service
+    since = users_service.clamp_since_iso(since, _tier_of(ctx))
     return insights_service.get_equity_curve(
         since_iso=since, user=ctx.username, user_id=ctx.user_id
     )
@@ -536,6 +555,7 @@ async def api_insights_exposure_timeseries(
     from backend.services import insights_service
     if granularity not in {"5min", "hour", "day", "month", "auto"}:
         raise HTTPException(status_code=400, detail="granularity invalide")
+    since = users_service.clamp_since_iso(since, _tier_of(ctx))
     try:
         return insights_service.get_exposure_timeseries(
             since=since, until=until, granularity=granularity,
@@ -559,13 +579,15 @@ async def api_broker_account(_=Depends(verify_credentials)):
 async def api_insights_rejections(
     since: str,
     until: str,
-    ctx: AuthContext = Depends(auth_context),
+    ctx: AuthContext = Depends(require_min_tier("pro")),
 ):
     """Agrégat des rejections d'ordres auto-exec sur la période.
 
     Retourne by_reason (barres), by_hour_utc (timeline) et by_reason_hour
     (heatmap) pour la RejectionsCard du cockpit. Scopé par user_id
     (Chantier 3D) : un user ne voit que ses propres rejections.
+
+    Feature Pro+ (Chantier 6 gating).
     """
     from backend.services import rejection_service
     return rejection_service.get_rejections(
@@ -596,6 +618,7 @@ async def api_insights_pnl_buckets(
             status_code=400,
             detail="granularity invalide (5min|hour|day|month|auto)",
         )
+    since = users_service.clamp_since_iso(since, _tier_of(ctx))
     try:
         return insights_service.get_pnl_buckets(
             since=since, until=until, granularity=granularity,
@@ -1321,14 +1344,17 @@ async def toggle_silent_mode(payload: dict, user: str = Depends(verify_credentia
 
 
 @app.get("/api/backtest/stats")
-async def get_backtest_stats(_=Depends(verify_credentials)):
-    """Statistiques globales des signaux backtestes."""
+async def get_backtest_stats(_ctx: AuthContext = Depends(require_min_tier("premium"))):
+    """Statistiques globales des signaux backtestes (Premium)."""
     return backtest_service.get_stats()
 
 
 @app.get("/api/backtest/trades")
-async def get_backtest_trades(limit: int = 50, _=Depends(verify_credentials)):
-    """Historique des trades backtestes."""
+async def get_backtest_trades(
+    limit: int = 50,
+    _ctx: AuthContext = Depends(require_min_tier("premium")),
+):
+    """Historique des trades backtestes (Premium)."""
     return backtest_service.get_recent_trades(limit=limit)
 
 
