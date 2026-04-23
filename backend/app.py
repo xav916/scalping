@@ -20,7 +20,12 @@ from backend.auth import (
     login_and_set_cookie,
     logout_and_clear_cookie,
 )
-from config.settings import AUTH_USERS, SAAS_SIGNUP_ENABLED, display_name_for
+from config.settings import (
+    AUTH_USERS,
+    SAAS_SIGNUP_ENABLED,
+    STRIPE_ENABLED,
+    display_name_for,
+)
 
 from backend.services import (
     backtest_service,
@@ -104,6 +109,121 @@ async def api_login(payload: dict, response: Response):
 async def api_logout(request: Request, response: Response):
     logout_and_clear_cookie(request, response)
     return {"ok": True}
+
+
+# ─── SaaS : tier current user + feature gating dep (Chantier 5) ─────
+@app.get("/api/user/tier")
+async def api_user_tier(ctx: AuthContext = Depends(auth_context)):
+    """Tier + état abonnement du user courant, pour la PricingPage/Settings."""
+    if ctx.user_id is None:
+        return {"tier": "premium", "stripe_customer_set": False, "legacy_env": True}
+    user = users_service.get_user_by_id(ctx.user_id) or {}
+    return {
+        "tier": user.get("tier", "free"),
+        "stripe_customer_set": bool(user.get("stripe_customer_id")),
+        "stripe_subscription_set": bool(user.get("stripe_subscription_id")),
+        "trial_ends_at": user.get("trial_ends_at"),
+        "legacy_env": False,
+    }
+
+
+def require_min_tier(min_tier: str):
+    """Factory de dépendance FastAPI : 403 si le user courant a un tier
+    inférieur à min_tier.
+
+    Users legacy env (user_id=None) sont traités comme premium (admin).
+    """
+
+    def _dep(ctx: AuthContext = Depends(auth_context)) -> AuthContext:
+        if ctx.user_id is None:
+            return ctx  # env legacy = accès total
+        user = users_service.get_user_by_id(ctx.user_id) or {}
+        if not users_service.has_min_tier(user.get("tier", "free"), min_tier):
+            raise HTTPException(
+                status_code=403,
+                detail=f"Cette fonctionnalité nécessite le tier {min_tier} ou supérieur",
+            )
+        return ctx
+
+    return _dep
+
+
+# ─── SaaS : Stripe checkout / webhook / portal (Chantier 5) ─────────
+@app.post("/api/stripe/checkout")
+async def api_stripe_checkout(
+    payload: dict,
+    ctx: AuthContext = Depends(auth_context),
+):
+    """Crée une Checkout Session Stripe pour upgrade. Body : {tier: 'pro'|'premium'}."""
+    if not STRIPE_ENABLED:
+        raise HTTPException(status_code=503, detail="Stripe désactivé")
+    if ctx.user_id is None:
+        raise HTTPException(status_code=400, detail="user legacy env, pas de checkout")
+    tier = (payload or {}).get("tier")
+    if tier not in ("pro", "premium"):
+        raise HTTPException(status_code=400, detail="tier invalide (pro|premium)")
+
+    user = users_service.get_user_by_id(ctx.user_id) or {}
+    from backend.services import stripe_service
+
+    try:
+        url = stripe_service.create_checkout_session(
+            user_id=ctx.user_id,
+            user_email=user.get("email", ""),
+            tier=tier,
+            existing_customer_id=user.get("stripe_customer_id"),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("Stripe checkout a échoué")
+        raise HTTPException(status_code=502, detail=f"Stripe : {str(e)[:200]}")
+    return {"url": url}
+
+
+@app.post("/api/stripe/portal")
+async def api_stripe_portal(ctx: AuthContext = Depends(auth_context)):
+    """URL Customer Portal Stripe (gestion sub, cartes, factures)."""
+    if not STRIPE_ENABLED:
+        raise HTTPException(status_code=503, detail="Stripe désactivé")
+    if ctx.user_id is None:
+        raise HTTPException(status_code=400, detail="user legacy env, pas de portal")
+    user = users_service.get_user_by_id(ctx.user_id) or {}
+    customer_id = user.get("stripe_customer_id")
+    if not customer_id:
+        raise HTTPException(status_code=400, detail="Pas de customer Stripe — checkout d'abord")
+    from backend.services import stripe_service
+    from config.settings import STRIPE_CANCEL_URL
+
+    try:
+        url = stripe_service.create_portal_session(customer_id, return_url=STRIPE_CANCEL_URL)
+    except Exception as e:
+        logger.exception("Stripe portal a échoué")
+        raise HTTPException(status_code=502, detail=f"Stripe : {str(e)[:200]}")
+    return {"url": url}
+
+
+@app.post("/api/stripe/webhook")
+async def api_stripe_webhook(request: Request):
+    """Webhook Stripe pour subscription events. Signature vérifiée.
+
+    Public (pas d'auth_context) — Stripe pousse depuis ses serveurs. La
+    sécurité repose sur la signature HMAC (STRIPE_WEBHOOK_SECRET).
+    """
+    if not STRIPE_ENABLED:
+        raise HTTPException(status_code=503, detail="Stripe désactivé")
+    payload = await request.body()
+    sig_header = request.headers.get("Stripe-Signature", "")
+    from backend.services import stripe_service
+
+    try:
+        result = stripe_service.handle_webhook(payload, sig_header)
+    except stripe_service.stripe.error.SignatureVerificationError:  # type: ignore[attr-defined]
+        raise HTTPException(status_code=400, detail="Signature Stripe invalide")
+    except Exception as e:
+        logger.exception("Webhook Stripe a échoué")
+        raise HTTPException(status_code=400, detail=str(e)[:200])
+    return {"ok": True, **result}
 
 
 # ─── SaaS : onboarding utilisateur (Chantier 4) ─────────────────────

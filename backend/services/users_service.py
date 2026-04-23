@@ -36,6 +36,18 @@ _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 VALID_TIERS = ("free", "pro", "premium")
 
+# Ordre des tiers pour feature gating : free < pro < premium.
+TIER_RANK = {"free": 0, "pro": 1, "premium": 2}
+
+
+def tier_rank(tier: str) -> int:
+    return TIER_RANK.get(tier, 0)
+
+
+def has_min_tier(user_tier: str, min_tier: str) -> bool:
+    """True si user_tier >= min_tier. Défaut 'free' pour les unknowns."""
+    return tier_rank(user_tier) >= tier_rank(min_tier)
+
 
 @contextmanager
 def _conn():
@@ -253,6 +265,49 @@ def update_watched_pairs(user_id: int, pairs: list[str]) -> list[str]:
             (json.dumps(truncated), user_id),
         )
     return truncated
+
+
+# ─── Stripe IDs + tier transitions (Chantier 5 SaaS) ────────────
+
+def update_stripe_customer_id(user_id: int, customer_id: str) -> None:
+    """Persiste le customer_id Stripe lors du 1er checkout."""
+    with _conn() as c:
+        c.execute(
+            "UPDATE users SET stripe_customer_id = ? WHERE id = ?",
+            (customer_id, user_id),
+        )
+
+
+def update_stripe_subscription(
+    user_id: int,
+    *,
+    subscription_id: Optional[str],
+    tier: str,
+) -> None:
+    """Met à jour la subscription active + tier. Appelé depuis le webhook
+    subscription.created/updated/deleted.
+
+    Si subscription_id est None + tier='free' : la sub a été cancellée,
+    le user retombe sur le plan gratuit.
+    """
+    if tier not in VALID_TIERS:
+        raise ValueError(f"tier invalide : {tier!r}")
+    with _conn() as c:
+        c.execute(
+            "UPDATE users SET stripe_subscription_id = ?, tier = ? WHERE id = ?",
+            (subscription_id, tier, user_id),
+        )
+
+
+def get_user_by_stripe_customer_id(customer_id: str) -> Optional[dict]:
+    """Résolution utilisée par le webhook pour retrouver le user par son id Stripe."""
+    if not customer_id:
+        return None
+    with _conn() as c:
+        row = c.execute(
+            "SELECT * FROM users WHERE stripe_customer_id = ?", (customer_id,)
+        ).fetchone()
+        return dict(row) if row else None
 
 
 def is_onboarding_complete(user_id: int) -> dict:

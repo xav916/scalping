@@ -98,6 +98,25 @@ export const api = {
       body: JSON.stringify({ pairs }),
     }),
 
+  // ─── Billing (Chantier 5 SaaS) ────────────────────────────────
+  userTier: () =>
+    request<{
+      tier: string;
+      stripe_customer_set: boolean;
+      stripe_subscription_set?: boolean;
+      trial_ends_at?: string | null;
+      legacy_env?: boolean;
+    }>('/api/user/tier'),
+
+  stripeCheckout: (tier: 'pro' | 'premium') =>
+    request<{ url: string }>('/api/stripe/checkout', {
+      method: 'POST',
+      body: JSON.stringify({ tier }),
+    }),
+
+  stripePortal: () =>
+    request<{ url: string }>('/api/stripe/portal', { method: 'POST' }),
+
   macro: async () => {
     const raw = await request<{ status: string; snapshot: MacroSnapshot | null }>(
       '/api/macro'

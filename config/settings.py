@@ -276,6 +276,19 @@ MACRO_VETO_ENABLED = os.getenv("MACRO_VETO_ENABLED", "false").lower() in ("1", "
 # livrés. L'endpoint existe mais répond 404 si désactivé.
 SAAS_SIGNUP_ENABLED = os.getenv("SAAS_SIGNUP_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 
+# Stripe (Chantier 5 SaaS) : ouverture des endpoints checkout/portal/webhook
+# gated par STRIPE_ENABLED. OFF par défaut pour ne pas exposer en prod tant
+# que les clés + produits Stripe ne sont pas configurés.
+STRIPE_ENABLED = os.getenv("STRIPE_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
+STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
+# Ids des prix Stripe pour chaque tier (configurables dans Stripe Dashboard).
+STRIPE_PRICE_PRO = os.getenv("STRIPE_PRICE_PRO", "")
+STRIPE_PRICE_PREMIUM = os.getenv("STRIPE_PRICE_PREMIUM", "")
+# URL publique pour rediriger après checkout success/cancel.
+STRIPE_SUCCESS_URL = os.getenv("STRIPE_SUCCESS_URL", "https://app.scalping-radar.com/v2/?upgrade=success")
+STRIPE_CANCEL_URL = os.getenv("STRIPE_CANCEL_URL", "https://app.scalping-radar.com/v2/pricing?upgrade=cancel")
+
 # Refresh cadence and cache tolerance
 MACRO_REFRESH_INTERVAL_SEC = int(os.getenv("MACRO_REFRESH_INTERVAL_SEC", "900"))  # 15 min
 MACRO_CACHE_MAX_AGE_SEC = int(os.getenv("MACRO_CACHE_MAX_AGE_SEC", "7200"))  # 2h fallback
