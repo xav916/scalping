@@ -212,7 +212,7 @@ async def debug_macro(_=Depends(verify_credentials)):
 @app.get("/api/insights/performance")
 async def api_insights_performance(
     since: str | None = None,
-    _=Depends(verify_credentials),
+    ctx: AuthContext = Depends(auth_context),
 ):
     """Agrégat de performance des trades auto (is_auto=1, CLOSED).
 
@@ -224,7 +224,9 @@ async def api_insights_performance(
     du veto macro.
     """
     from backend.services import insights_service
-    return insights_service.get_performance(since_iso=since)
+    return insights_service.get_performance(
+        since_iso=since, user=ctx.username, user_id=ctx.user_id
+    )
 
 
 @app.get("/api/insights/period-stats")
@@ -232,7 +234,7 @@ async def api_insights_period_stats(
     period: str | None = None,
     since: str | None = None,
     until: str | None = None,
-    _=Depends(verify_credentials),
+    ctx: AuthContext = Depends(auth_context),
 ):
     """Métriques consolidées par période.
 
@@ -250,18 +252,22 @@ async def api_insights_period_stats(
     if since or until:
         if not (since and until):
             raise HTTPException(status_code=400, detail="since et until requis ensemble")
-        return insights_service.get_period_stats_range(since=since, until=until)
+        return insights_service.get_period_stats_range(
+            since=since, until=until, user=ctx.username, user_id=ctx.user_id
+        )
 
     period = period or "day"
     if period not in {"day", "week", "month", "year", "all"}:
         raise HTTPException(status_code=400, detail="period invalide (day|week|month|year|all)")
-    return insights_service.get_period_stats(period=period)
+    return insights_service.get_period_stats(
+        period=period, user=ctx.username, user_id=ctx.user_id
+    )
 
 
 @app.get("/api/insights/equity-curve")
 async def api_insights_equity_curve(
     since: str | None = None,
-    _=Depends(verify_credentials),
+    ctx: AuthContext = Depends(auth_context),
 ):
     """Série temporelle du PnL cumulé (auto trades CLOSED, ordre chronologique).
 
@@ -272,7 +278,9 @@ async def api_insights_equity_curve(
               total_trades, final_pnl, since}.
     """
     from backend.services import insights_service
-    return insights_service.get_equity_curve(since_iso=since)
+    return insights_service.get_equity_curve(
+        since_iso=since, user=ctx.username, user_id=ctx.user_id
+    )
 
 
 @app.get("/api/insights/exposure-timeseries")
@@ -280,7 +288,7 @@ async def api_insights_exposure_timeseries(
     since: str,
     until: str,
     granularity: str = "auto",
-    _=Depends(verify_credentials),
+    ctx: AuthContext = Depends(auth_context),
 ):
     """Capital à risque (€) et nb de positions ouvertes dans le temps.
 
@@ -295,7 +303,8 @@ async def api_insights_exposure_timeseries(
         raise HTTPException(status_code=400, detail="granularity invalide")
     try:
         return insights_service.get_exposure_timeseries(
-            since=since, until=until, granularity=granularity
+            since=since, until=until, granularity=granularity,
+            user=ctx.username, user_id=ctx.user_id,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -331,7 +340,7 @@ async def api_insights_pnl_buckets(
     since: str,
     until: str,
     granularity: str = "auto",
-    _=Depends(verify_credentials),
+    ctx: AuthContext = Depends(auth_context),
 ):
     """Série temporelle bucketisée du PnL pour le graph de la carte Performance.
 
@@ -350,7 +359,10 @@ async def api_insights_pnl_buckets(
             detail="granularity invalide (5min|hour|day|month|auto)",
         )
     try:
-        return insights_service.get_pnl_buckets(since=since, until=until, granularity=granularity)
+        return insights_service.get_pnl_buckets(
+            since=since, until=until, granularity=granularity,
+            user=ctx.username, user_id=ctx.user_id,
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -909,15 +921,15 @@ async def cockpit(ctx: AuthContext = Depends(auth_context)):
 
 
 @app.get("/api/analytics")
-async def analytics(_=Depends(verify_credentials)):
+async def analytics(ctx: AuthContext = Depends(auth_context)):
     """Breakdowns du win rate par features : pair, hour, pattern, confidence,
     asset_class, risk_regime. Inclut la qualité d'exécution (slippage,
-    close_reason). Voir backend/services/analytics_service.py.
+    close_reason) scopée sur les trades de l'utilisateur courant.
 
     Utile pour piloter le modèle : quels instruments retirer, quelles
     heures éviter, si le confidence_score est calibré."""
     from backend.services.analytics_service import build_analytics
-    return build_analytics()
+    return build_analytics(user=ctx.username, user_id=ctx.user_id)
 
 
 @app.get("/api/drift")
