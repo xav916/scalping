@@ -130,6 +130,7 @@ async def api_user_tier(ctx: AuthContext = Depends(auth_context)):
             "trial_active": False,
             "trial_days_left": None,
             "trial_ends_at": None,
+            "email_verified": True,
             "legacy_env": True,
         }
     user = users_service.get_user_by_id(ctx.user_id) or {}
@@ -143,6 +144,7 @@ async def api_user_tier(ctx: AuthContext = Depends(auth_context)):
         "trial_active": trial["trial_active"],
         "trial_days_left": trial["trial_days_left"],
         "trial_ends_at": trial["trial_ends_at"],
+        "email_verified": users_service.is_email_verified(user),
         "legacy_env": False,
     }
 
@@ -205,11 +207,20 @@ async def api_stripe_checkout(
 
     Body : {tier: 'pro'|'premium', billing_cycle?: 'monthly'|'yearly'}.
     billing_cycle default = 'monthly'.
+
+    Nécessite email_verified=true (anti-fraude : on s'assure que l'user
+    contrôle bien son email avant de lui facturer quoi que ce soit).
     """
     if not STRIPE_ENABLED:
         raise HTTPException(status_code=503, detail="Stripe désactivé")
     if ctx.user_id is None:
         raise HTTPException(status_code=400, detail="user legacy env, pas de checkout")
+    user_for_verif = users_service.get_user_by_id(ctx.user_id)
+    if not users_service.is_email_verified(user_for_verif):
+        raise HTTPException(
+            status_code=403,
+            detail="Vérifie ton email avant d'accéder au paiement",
+        )
     tier = (payload or {}).get("tier")
     if tier not in ("pro", "premium"):
         raise HTTPException(status_code=400, detail="tier invalide (pro|premium)")
@@ -572,14 +583,62 @@ async def api_signup(payload: dict):
         "SaaS signup : user id=%s email=%s trial=%dj",
         uid, email, users_service.SIGNUP_TRIAL_DAYS,
     )
-    # Welcome email best-effort (ne bloque pas le signup si SMTP KO).
+    # Welcome + verification emails. Si SMTP pas configuré, on marque le user
+    # comme verified direct (sinon il serait bloqué sans pouvoir cliquer un
+    # lien jamais envoyé).
     try:
         from backend.services import user_email_service
 
-        user_email_service.send_welcome(email, trial_days=users_service.SIGNUP_TRIAL_DAYS)
+        if not user_email_service.is_configured():
+            users_service.mark_email_auto_verified(uid)
+        else:
+            user_email_service.send_welcome(email, trial_days=users_service.SIGNUP_TRIAL_DAYS)
+            verif_token = users_service.generate_email_verification_token(uid)
+            user_email_service.send_email_verification(email, verif_token)
     except Exception:
-        logger.exception("send_welcome a échoué pour %s", email)
+        logger.exception("envoi emails signup a échoué pour %s", email)
+        # Fallback sûr : marque verified pour ne pas bloquer l'user.
+        try:
+            users_service.mark_email_auto_verified(uid)
+        except Exception:
+            pass
     return {"ok": True, "user_id": uid, "trial_days": users_service.SIGNUP_TRIAL_DAYS}
+
+
+@app.post("/api/auth/verify-email")
+async def api_verify_email(payload: dict):
+    """Consomme un token de vérification email. Idempotent : si déjà
+    vérifié, 200 pour UX simple."""
+    token = ((payload or {}).get("token") or "").strip()
+    if not token:
+        raise HTTPException(status_code=400, detail="token requis")
+    user_id = users_service.verify_email_token(token)
+    if user_id is None:
+        raise HTTPException(status_code=400, detail="Lien invalide")
+    return {"ok": True, "user_id": user_id}
+
+
+@app.post("/api/auth/resend-verification")
+async def api_resend_verification(ctx: AuthContext = Depends(auth_context)):
+    """Renvoie le lien de vérification pour l'utilisateur courant."""
+    if ctx.user_id is None:
+        raise HTTPException(status_code=400, detail="user legacy env, déjà vérifié")
+    user = users_service.get_user_by_id(ctx.user_id)
+    if not user:
+        raise HTTPException(status_code=404)
+    if users_service.is_email_verified(user):
+        return {"ok": True, "already_verified": True}
+    from backend.services import user_email_service
+
+    if not user_email_service.is_configured():
+        raise HTTPException(status_code=503, detail="SMTP non configuré")
+    token = users_service.generate_email_verification_token(ctx.user_id)
+    try:
+        user_email_service.send_email_verification(user["email"], token)
+    except Exception:
+        logger.exception("resend verification a échoué pour uid=%s", ctx.user_id)
+        raise HTTPException(status_code=502, detail="Envoi impossible")
+    return {"ok": True}
 
 
 @app.get("/api/config")

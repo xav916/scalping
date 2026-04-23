@@ -5,6 +5,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { MobileBottomNav } from '@/components/layout/MobileBottomNav';
 import { CommandPalette } from '@/components/ui/CommandPalette';
 import { TrialBanner } from '@/components/TrialBanner';
+import { VerifyEmailBanner } from '@/components/VerifyEmailBanner';
 
 /** Anime SEULEMENT le contenu de route (Outlet). La bottom nav et la
  *  command palette restent montées hors de l'AnimatePresence pour que
@@ -51,7 +52,8 @@ export function AuthGate({
 
   return (
     <>
-      {/* Bannière trial globale (self-hides si trial inactif). */}
+      {/* Bannières globales (self-hide si conditions pas remplies). */}
+      <VerifyEmailBanner />
       <TrialBanner />
       {/* Padding bottom sur mobile pour que le contenu ne soit pas masqué
           par la bottom nav fixée (env safe-area pour iPhone X+). */}

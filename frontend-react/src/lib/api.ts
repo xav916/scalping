@@ -119,8 +119,19 @@ export const api = {
       trial_active?: boolean;
       trial_days_left?: number | null;
       trial_ends_at?: string | null;
+      email_verified?: boolean;
       legacy_env?: boolean;
     }>('/api/user/tier'),
+
+  verifyEmail: (token: string) =>
+    request<{ ok: true; user_id: number }>('/api/auth/verify-email', {
+      method: 'POST',
+      body: JSON.stringify({ token }),
+    }),
+  resendVerification: () =>
+    request<{ ok: true; already_verified?: boolean }>('/api/auth/resend-verification', {
+      method: 'POST',
+    }),
 
   stripeCheckout: (tier: 'pro' | 'premium', billing_cycle: 'monthly' | 'yearly' = 'monthly') =>
     request<{ url: string }>('/api/stripe/checkout', {

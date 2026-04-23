@@ -183,6 +183,11 @@ def init_users_schema() -> None:
             c.execute("ALTER TABLE users ADD COLUMN password_reset_token TEXT")
         if "password_reset_expires_at" not in user_cols:
             c.execute("ALTER TABLE users ADD COLUMN password_reset_expires_at TEXT")
+        # Email verification (double opt-in signup, anti-bot).
+        if "email_verified_at" not in user_cols:
+            c.execute("ALTER TABLE users ADD COLUMN email_verified_at TEXT")
+        if "email_verification_token" not in user_cols:
+            c.execute("ALTER TABLE users ADD COLUMN email_verification_token TEXT")
 
         # Migration douce : personal_trades.user_id (nullable) — pas encore
         # utilisé, simple placeholder pour chantier 3.
@@ -316,6 +321,65 @@ def validate_reset_token(token: str) -> Optional[dict]:
     if exp <= datetime.now(timezone.utc):
         return None
     return user
+
+
+# ─── Email verification (double opt-in signup) ───────────────
+
+def generate_email_verification_token(user_id: int) -> str:
+    """Génère + persiste un token de vérification email. Remplace tout token
+    précédent (un seul actif à la fois). Pas d'expiry côté DB : le lien est
+    actif jusqu'à utilisation (ou re-génération).
+    """
+    token = secrets.token_urlsafe(32)
+    with _conn() as c:
+        c.execute(
+            "UPDATE users SET email_verification_token = ? WHERE id = ?",
+            (token, user_id),
+        )
+    return token
+
+
+def verify_email_token(token: str) -> Optional[int]:
+    """Valide un token de vérification. Retourne user_id en cas de succès
+    (et marque email_verified_at), None sinon.
+    """
+    if not token:
+        return None
+    with _conn() as c:
+        row = c.execute(
+            "SELECT id FROM users WHERE email_verification_token = ?", (token,)
+        ).fetchone()
+        if not row:
+            return None
+        user_id = int(row[0])
+        now = datetime.now(timezone.utc).isoformat()
+        c.execute(
+            "UPDATE users SET email_verified_at = ?, email_verification_token = NULL "
+            "WHERE id = ?",
+            (now, user_id),
+        )
+    return user_id
+
+
+def is_email_verified(user: Optional[dict]) -> bool:
+    """True si l'user a vérifié son email OU si l'user est legacy env (None)."""
+    if not user:
+        return False
+    return bool(user.get("email_verified_at"))
+
+
+def mark_email_auto_verified(user_id: int) -> None:
+    """Pour les envs où SMTP n'est pas configuré : on considère l'email
+    verified automatiquement (sinon les users seraient coincés sans pouvoir
+    recevoir de mail). À appeler au signup si is_configured() == False.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    with _conn() as c:
+        c.execute(
+            "UPDATE users SET email_verified_at = ?, email_verification_token = NULL "
+            "WHERE id = ?",
+            (now, user_id),
+        )
 
 
 def consume_reset_token(token: str, new_password: str) -> bool:

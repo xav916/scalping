@@ -168,6 +168,24 @@ depuis ton espace :</p>
     return send_email(to_email, subject, _layout("Abonnement activé", body))
 
 
+def send_email_verification(to_email: str, token: str) -> bool:
+    """Envoie le magic link de vérification email post-signup."""
+    subject = "📧 Vérifie ton email Scalping Radar"
+    verify_url = f"{APP_URL}/verify-email?token={token}"
+    body = f"""
+<p>Hello,</p>
+<p>Merci d'avoir créé ton compte. Pour activer toutes les fonctionnalités
+et recevoir tes alertes et rappels, clique sur le bouton ci-dessous pour
+confirmer ton adresse email :</p>
+<p><a href="{verify_url}" class="btn">Vérifier mon email →</a></p>
+<p class="muted">Tu peux continuer à utiliser le radar en attendant, mais
+certaines actions (upgrade, alertes) nécessitent un email vérifié.</p>
+<p class="muted" style="font-size:11px;">Lien direct si le bouton ne marche pas :<br>
+<span style="word-break:break-all">{verify_url}</span></p>
+"""
+    return send_email(to_email, subject, _layout("Vérification email", body))
+
+
 def send_password_reset(to_email: str, token: str) -> bool:
     """Envoie le magic link de reset password. Valide 1h (côté backend)."""
     subject = "🔑 Réinitialise ton mot de passe Scalping Radar"
