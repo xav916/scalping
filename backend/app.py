@@ -499,6 +499,44 @@ async def api_user_watched_pairs_put(
 # Chantier 1 : l'endpoint existe pour tests locaux mais reste OFF en prod
 # tant que le parcours login UI + data isolation (chantiers 2-3) ne sont
 # pas livrés. On renvoie 404 si désactivé pour ne pas exposer l'API.
+@app.post("/api/auth/forgot-password")
+async def api_forgot_password(payload: dict):
+    """Génère un token de reset + envoie email. Répond 200 dans TOUS les cas
+    pour éviter l'énumération d'emails existants.
+    """
+    email = ((payload or {}).get("email") or "").strip()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="email invalide")
+    token = users_service.request_password_reset(email)
+    if token:
+        try:
+            from backend.services import user_email_service
+
+            user_email_service.send_password_reset(email, token)
+        except Exception:
+            logger.exception("send_password_reset a échoué pour %s", email)
+    # Réponse identique dans les 2 cas (user existe ou pas).
+    return {"ok": True}
+
+
+@app.post("/api/auth/reset-password")
+async def api_reset_password(payload: dict):
+    """Consomme un token de reset + fixe le nouveau password.
+    400 si token invalide/expiré ou password trop court.
+    """
+    token = ((payload or {}).get("token") or "").strip()
+    new_password = (payload or {}).get("new_password", "")
+    if not token:
+        raise HTTPException(status_code=400, detail="token requis")
+    try:
+        success = users_service.consume_reset_token(token, new_password)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not success:
+        raise HTTPException(status_code=400, detail="Lien invalide ou expiré")
+    return {"ok": True}
+
+
 @app.post("/api/auth/signup")
 async def api_signup(payload: dict):
     if not SAAS_SIGNUP_ENABLED:

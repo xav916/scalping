@@ -123,21 +123,27 @@ export function LoginPage() {
             </motion.button>
           </motion.form>
 
-          {signupEnabled && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ duration: 0.4, delay: 0.45 }}
-              className="mt-6 text-center"
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.4, delay: 0.45 }}
+            className="mt-6 text-center space-y-2"
+          >
+            <Link
+              to="/forgot-password"
+              className="block text-xs uppercase tracking-wider text-white/40 hover:text-cyan-300 transition-colors"
             >
+              Mot de passe oublié ?
+            </Link>
+            {signupEnabled && (
               <Link
                 to="/signup"
-                className="text-xs uppercase tracking-wider text-white/50 hover:text-cyan-300 transition-colors"
+                className="block text-xs uppercase tracking-wider text-white/50 hover:text-cyan-300 transition-colors"
               >
                 Pas de compte ? Créer un compte →
               </Link>
-            </motion.div>
-          )}
+            )}
+          </motion.div>
 
           {/* Trust indicators */}
           <motion.div

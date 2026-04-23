@@ -168,6 +168,23 @@ depuis ton espace :</p>
     return send_email(to_email, subject, _layout("Abonnement activé", body))
 
 
+def send_password_reset(to_email: str, token: str) -> bool:
+    """Envoie le magic link de reset password. Valide 1h (côté backend)."""
+    subject = "🔑 Réinitialise ton mot de passe Scalping Radar"
+    reset_url = f"{APP_URL}/reset-password?token={token}"
+    body = f"""
+<p>Hello,</p>
+<p>Tu as demandé à réinitialiser ton mot de passe. Clique sur le bouton ci-dessous
+pour en choisir un nouveau. Ce lien expire dans <strong>1 heure</strong>.</p>
+<p><a href="{reset_url}" class="btn">Choisir un nouveau mot de passe →</a></p>
+<p class="muted">Si tu n'as pas fait cette demande, ignore cet email — ton mot de passe
+actuel reste inchangé.</p>
+<p class="muted" style="font-size:11px;">Lien direct si le bouton ne marche pas :<br>
+<span style="word-break:break-all">{reset_url}</span></p>
+"""
+    return send_email(to_email, subject, _layout("Reset password", body))
+
+
 def send_sub_cancelled(to_email: str) -> bool:
     subject = "Abonnement annulé · ton compte reste actif"
     body = f"""

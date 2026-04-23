@@ -19,6 +19,7 @@ Ne fait PAS (volontairement, scope chantier 1) :
 from __future__ import annotations
 
 import logging
+import secrets
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -177,6 +178,11 @@ def init_users_schema() -> None:
         # Chantier 11 : tracker des rappels trial envoyés (JSON list ['3d', '1d']).
         if "trial_reminders_sent" not in user_cols:
             c.execute("ALTER TABLE users ADD COLUMN trial_reminders_sent TEXT")
+        # Password reset flow (lien magic link via email).
+        if "password_reset_token" not in user_cols:
+            c.execute("ALTER TABLE users ADD COLUMN password_reset_token TEXT")
+        if "password_reset_expires_at" not in user_cols:
+            c.execute("ALTER TABLE users ADD COLUMN password_reset_expires_at TEXT")
 
         # Migration douce : personal_trades.user_id (nullable) — pas encore
         # utilisé, simple placeholder pour chantier 3.
@@ -264,6 +270,71 @@ def touch_last_login(user_id: int) -> None:
     now = datetime.now(timezone.utc).isoformat()
     with _conn() as c:
         c.execute("UPDATE users SET last_login_at = ? WHERE id = ?", (now, user_id))
+
+
+# ─── Password reset (magic link email) ───────────────────────
+
+PASSWORD_RESET_TTL_HOURS = 1
+
+
+def request_password_reset(email: str) -> Optional[str]:
+    """Génère un token de reset pour l'email. Retourne le token si le user
+    existe et est actif, None sinon (anti-énumération côté caller : le caller
+    doit répondre 200 dans TOUS les cas, mais n'envoie l'email que si token).
+    """
+    user = get_user_by_email(email)
+    if not user or not user.get("is_active", 1):
+        return None
+    token = secrets.token_urlsafe(32)
+    expires = (datetime.now(timezone.utc) + timedelta(hours=PASSWORD_RESET_TTL_HOURS)).isoformat()
+    with _conn() as c:
+        c.execute(
+            "UPDATE users SET password_reset_token = ?, password_reset_expires_at = ? WHERE id = ?",
+            (token, expires, user["id"]),
+        )
+    return token
+
+
+def validate_reset_token(token: str) -> Optional[dict]:
+    """Retourne le user si le token est valide (existe + non expiré), sinon None."""
+    if not token:
+        return None
+    with _conn() as c:
+        row = c.execute(
+            "SELECT * FROM users WHERE password_reset_token = ?", (token,)
+        ).fetchone()
+    if not row:
+        return None
+    user = dict(row)
+    expires_at = user.get("password_reset_expires_at")
+    if not expires_at:
+        return None
+    try:
+        exp = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return None
+    if exp <= datetime.now(timezone.utc):
+        return None
+    return user
+
+
+def consume_reset_token(token: str, new_password: str) -> bool:
+    """Valide le token, hash+persiste le nouveau password, invalide le token.
+    Retourne True en cas de succès.
+    """
+    if not new_password or len(new_password) < 8:
+        raise ValueError("password trop court (min 8 caractères)")
+    user = validate_reset_token(token)
+    if not user:
+        return False
+    new_hash = hash_password(new_password)
+    with _conn() as c:
+        c.execute(
+            "UPDATE users SET password_hash = ?, password_reset_token = NULL, "
+            "password_reset_expires_at = NULL WHERE id = ?",
+            (new_hash, user["id"]),
+        )
+    return True
 
 
 # ─── Broker config + watched pairs (Chantier 4 SaaS onboarding) ──────
