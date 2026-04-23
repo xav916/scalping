@@ -410,6 +410,13 @@ async def api_signup(payload: dict):
         "SaaS signup : user id=%s email=%s trial=%dj",
         uid, email, users_service.SIGNUP_TRIAL_DAYS,
     )
+    # Welcome email best-effort (ne bloque pas le signup si SMTP KO).
+    try:
+        from backend.services import user_email_service
+
+        user_email_service.send_welcome(email, trial_days=users_service.SIGNUP_TRIAL_DAYS)
+    except Exception:
+        logger.exception("send_welcome a échoué pour %s", email)
     return {"ok": True, "user_id": uid, "trial_days": users_service.SIGNUP_TRIAL_DAYS}
 
 

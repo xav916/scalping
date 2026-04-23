@@ -182,12 +182,25 @@ def handle_webhook(payload: bytes, sig_header: str) -> dict:
         if not user:
             logger.warning("Webhook %s : aucun user avec customer_id=%s", event_type, customer_id)
             return {"applied": None, "reason": "user_not_found"}
+        was_free = user.get("tier") == "free" or not user.get("stripe_subscription_id")
         users_service.update_stripe_subscription(
             user["id"],
             subscription_id=obj.get("id"),
             tier=tier,
             billing_cycle=cycle,
         )
+        # Email de confirmation à la première activation d'une sub payante.
+        # On ne spamme pas sur chaque updated (prorata, renewal) — uniquement
+        # quand le user PASSE de free/trial à payant.
+        if was_free and tier != "free":
+            try:
+                from backend.services import user_email_service
+
+                user_email_service.dispatch_subscription_event(
+                    user.get("email", ""), kind="confirmed", tier=tier, billing_cycle=cycle,
+                )
+            except Exception:
+                logger.exception("email sub_confirmed a échoué pour uid=%s", user["id"])
         return {
             "applied": "subscription",
             "user_id": user["id"],
@@ -203,6 +216,14 @@ def handle_webhook(payload: bytes, sig_header: str) -> dict:
         users_service.update_stripe_subscription(
             user["id"], subscription_id=None, tier="free"
         )
+        try:
+            from backend.services import user_email_service
+
+            user_email_service.dispatch_subscription_event(
+                user.get("email", ""), kind="cancelled",
+            )
+        except Exception:
+            logger.exception("email sub_cancelled a échoué pour uid=%s", user["id"])
         return {"applied": "downgrade", "user_id": user["id"], "tier": "free"}
 
     logger.debug("Stripe webhook %s ignoré (non géré)", event_type)

@@ -174,6 +174,9 @@ def init_users_schema() -> None:
         user_cols = [r[1] for r in c.execute("PRAGMA table_info(users)").fetchall()]
         if "stripe_billing_cycle" not in user_cols:
             c.execute("ALTER TABLE users ADD COLUMN stripe_billing_cycle TEXT")
+        # Chantier 11 : tracker des rappels trial envoyés (JSON list ['3d', '1d']).
+        if "trial_reminders_sent" not in user_cols:
+            c.execute("ALTER TABLE users ADD COLUMN trial_reminders_sent TEXT")
 
         # Migration douce : personal_trades.user_id (nullable) — pas encore
         # utilisé, simple placeholder pour chantier 3.
@@ -406,6 +409,58 @@ def get_user_by_stripe_customer_id(customer_id: str) -> Optional[dict]:
             "SELECT * FROM users WHERE stripe_customer_id = ?", (customer_id,)
         ).fetchone()
         return dict(row) if row else None
+
+
+def get_trial_reminders_sent(user: dict) -> list[str]:
+    raw = user.get("trial_reminders_sent") if user else None
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, list) else []
+    except (json.JSONDecodeError, TypeError):
+        return []
+
+
+def mark_trial_reminder_sent(user_id: int, key: str) -> None:
+    """Ajoute `key` ('3d', '1d') à la liste des rappels envoyés pour ce user.
+    Idempotent : ne re-ajoute pas si déjà présent.
+    """
+    user = get_user_by_id(user_id)
+    if not user:
+        return
+    existing = get_trial_reminders_sent(user)
+    if key in existing:
+        return
+    existing.append(key)
+    with _conn() as c:
+        c.execute(
+            "UPDATE users SET trial_reminders_sent = ? WHERE id = ?",
+            (json.dumps(existing), user_id),
+        )
+
+
+def list_users_with_active_trial() -> list[dict]:
+    """Retourne tous les users avec un trial toujours actif (pas expiré, pas
+    de sub payante). Utilisé par le job quotidien de rappels.
+    """
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT * FROM users WHERE is_active = 1 "
+            "AND trial_ends_at IS NOT NULL "
+            "AND stripe_subscription_id IS NULL"
+        ).fetchall()
+    now = datetime.now(timezone.utc)
+    result = []
+    for row in rows:
+        d = dict(row)
+        try:
+            end = datetime.fromisoformat(d["trial_ends_at"].replace("Z", "+00:00"))
+        except (ValueError, AttributeError):
+            continue
+        if end > now:
+            result.append(d)
+    return result
 
 
 def is_onboarding_complete(user_id: int) -> dict:
