@@ -271,6 +271,11 @@ FOREXFACTORY_CALENDAR_URL = "https://www.forexfactory.com/calendar"
 MACRO_SCORING_ENABLED = os.getenv("MACRO_SCORING_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 MACRO_VETO_ENABLED = os.getenv("MACRO_VETO_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 
+# Chantier 1 SaaS : feature-flag du parcours signup self-service. OFF par
+# défaut tant que les chantiers 2-3 (login UI + data isolation) ne sont pas
+# livrés. L'endpoint existe mais répond 404 si désactivé.
+SAAS_SIGNUP_ENABLED = os.getenv("SAAS_SIGNUP_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+
 # Refresh cadence and cache tolerance
 MACRO_REFRESH_INTERVAL_SEC = int(os.getenv("MACRO_REFRESH_INTERVAL_SEC", "900"))  # 15 min
 MACRO_CACHE_MAX_AGE_SEC = int(os.getenv("MACRO_CACHE_MAX_AGE_SEC", "7200"))  # 2h fallback

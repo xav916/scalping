@@ -18,13 +18,14 @@ from backend.auth import (
     login_and_set_cookie,
     logout_and_clear_cookie,
 )
-from config.settings import AUTH_USERS, display_name_for
+from config.settings import AUTH_USERS, SAAS_SIGNUP_ENABLED, display_name_for
 
 from backend.services import (
     backtest_service,
     indicators,
     trade_log_service,
     twelvedata_ws,
+    users_service,
 )
 from backend.services.notification_service import (
     get_signal_history,
@@ -55,6 +56,11 @@ FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
 async def lifespan(app: FastAPI):
     """Startup and shutdown lifecycle."""
     logger.info("Starting Scalping Decision Tool...")
+    # Chantier 1 SaaS : init table users + migration user_id. Idempotent.
+    try:
+        users_service.init_users_schema()
+    except Exception:
+        logger.exception("init_users_schema a échoué")
     # Run initial analysis
     asyncio.create_task(run_analysis_cycle())
     # Start periodic scheduler
@@ -96,6 +102,28 @@ async def api_login(payload: dict, response: Response):
 async def api_logout(request: Request, response: Response):
     logout_and_clear_cookie(request, response)
     return {"ok": True}
+
+
+# ─── SaaS : signup self-service (gated par SAAS_SIGNUP_ENABLED) ─────
+# Chantier 1 : l'endpoint existe pour tests locaux mais reste OFF en prod
+# tant que le parcours login UI + data isolation (chantiers 2-3) ne sont
+# pas livrés. On renvoie 404 si désactivé pour ne pas exposer l'API.
+@app.post("/api/auth/signup")
+async def api_signup(payload: dict):
+    if not SAAS_SIGNUP_ENABLED:
+        raise HTTPException(status_code=404)
+    email = (payload or {}).get("email", "")
+    password = (payload or {}).get("password", "")
+    if not email or not password:
+        raise HTTPException(status_code=400, detail="email et password requis")
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="password trop court (min 8)")
+    try:
+        uid = users_service.create_user(email, password, tier="free")
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    logger.info("SaaS signup : nouveau user id=%s email=%s", uid, email)
+    return {"ok": True, "user_id": uid}
 
 
 @app.get("/login", include_in_schema=False)
