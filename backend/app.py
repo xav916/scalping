@@ -14,6 +14,8 @@ from fastapi.staticfiles import StaticFiles
 
 from backend.auth import (
     SESSION_COOKIE,
+    AuthContext,
+    auth_context,
     authenticate,
     login_and_set_cookie,
     logout_and_clear_cookie,
@@ -457,9 +459,11 @@ async def debug_smoke_test(_=Depends(verify_credentials)):
 
 
 @app.get("/api/risk")
-async def risk_dashboard(user: str = Depends(verify_credentials)):
+async def risk_dashboard(ctx: AuthContext = Depends(auth_context)):
     """Risque cumule sur les positions ouvertes."""
-    open_trades = trade_log_service.list_trades(status="OPEN", user=user)
+    open_trades = trade_log_service.list_trades(
+        status="OPEN", user=ctx.username, user_id=ctx.user_id
+    )
     total_risk = 0.0
     rows = []
     for t in open_trades:
@@ -484,11 +488,13 @@ async def risk_dashboard(user: str = Depends(verify_credentials)):
 
 
 @app.get("/api/equity")
-async def equity_curve(user: str = Depends(verify_credentials)):
+async def equity_curve(ctx: AuthContext = Depends(auth_context)):
     """Courbe d'equity quotidienne calculee depuis l'historique des trades."""
     from collections import defaultdict
     from config.settings import TRADING_CAPITAL
-    trades = trade_log_service.list_trades(status="CLOSED", limit=1000, user=user)
+    trades = trade_log_service.list_trades(
+        status="CLOSED", limit=1000, user=ctx.username, user_id=ctx.user_id
+    )
     by_day = defaultdict(float)
     for t in trades:
         if t.get("closed_at"):
@@ -504,12 +510,15 @@ async def equity_curve(user: str = Depends(verify_credentials)):
 
 
 @app.get("/api/trades.csv")
-async def trades_csv(user: str = Depends(verify_credentials)):
+async def trades_csv(ctx: AuthContext = Depends(auth_context)):
     """Export CSV de l'historique des trades de l'utilisateur."""
     import io
     import csv
     from fastapi.responses import StreamingResponse
-    trades = trade_log_service.list_trades(limit=10000, user=user)
+    trades = trade_log_service.list_trades(
+        limit=10000, user=ctx.username, user_id=ctx.user_id
+    )
+    user = ctx.username
     output = io.StringIO()
     if trades:
         fieldnames = list(trades[0].keys())
@@ -526,11 +535,13 @@ async def trades_csv(user: str = Depends(verify_credentials)):
 
 
 @app.get("/api/stats/combos")
-async def stats_combos(user: str = Depends(verify_credentials)):
+async def stats_combos(ctx: AuthContext = Depends(auth_context)):
     """Win rate par combinaison (pattern + paire). Necessite un historique
     de trades clotures pour etre pertinent."""
     from collections import defaultdict
-    trades = trade_log_service.list_trades(status="CLOSED", limit=1000, user=user)
+    trades = trade_log_service.list_trades(
+        status="CLOSED", limit=1000, user=ctx.username, user_id=ctx.user_id
+    )
     combos: dict[tuple[str, str], dict] = defaultdict(lambda: {"wins": 0, "losses": 0, "total_pnl": 0.0})
     for t in trades:
         key = (t.get("signal_pattern") or "unknown", t.get("pair"))
@@ -554,9 +565,11 @@ async def stats_combos(user: str = Depends(verify_credentials)):
 
 
 @app.get("/api/stats/mistakes")
-async def stats_mistakes(user: str = Depends(verify_credentials)):
+async def stats_mistakes(ctx: AuthContext = Depends(auth_context)):
     """Detection d'erreurs : trades pris sans checklist + trades sans SL/TP poses."""
-    trades = trade_log_service.list_trades(limit=500, user=user)
+    trades = trade_log_service.list_trades(
+        limit=500, user=ctx.username, user_id=ctx.user_id
+    )
     no_checklist = [t for t in trades if not t.get("checklist_passed")]
     no_sl_in_mt5 = [t for t in trades if not t.get("post_entry_sl")]
     no_tp_in_mt5 = [t for t in trades if not t.get("post_entry_tp")]
@@ -873,12 +886,18 @@ async def get_all_candles(_=Depends(verify_credentials)):
 
 
 @app.get("/api/trades")
-async def list_trades(status: str | None = None, limit: int = 100, user: str = Depends(verify_credentials)):
-    return trade_log_service.list_trades(status=status, limit=limit, user=user)
+async def list_trades(
+    status: str | None = None,
+    limit: int = 100,
+    ctx: AuthContext = Depends(auth_context),
+):
+    return trade_log_service.list_trades(
+        status=status, limit=limit, user=ctx.username, user_id=ctx.user_id
+    )
 
 
 @app.get("/api/cockpit")
-async def cockpit(user: str = Depends(verify_credentials)):
+async def cockpit(ctx: AuthContext = Depends(auth_context)):
     """Snapshot consolidé pour la homepage "tour de contrôle".
 
     Regroupe en un seul appel : trades actifs (PnL temps réel), setups en
@@ -886,7 +905,7 @@ async def cockpit(user: str = Depends(verify_credentials)):
     et alertes. Voir backend/services/cockpit_service.py.
     """
     from backend.services.cockpit_service import build_cockpit
-    return await build_cockpit(user)
+    return await build_cockpit(ctx.username, user_id=ctx.user_id)
 
 
 @app.get("/api/analytics")
@@ -1031,13 +1050,15 @@ async def kill_switch_set(payload: dict, _=Depends(verify_credentials)):
 
 
 @app.get("/api/daily-status")
-async def daily_status(user: str = Depends(verify_credentials)):
+async def daily_status(ctx: AuthContext = Depends(auth_context)):
     """Statut journalier : PnL, nb trades, mode silencieux."""
-    status = trade_log_service.get_daily_status(user=user)
-    open_trades = trade_log_service.list_trades(status="OPEN", user=user)
+    status = trade_log_service.get_daily_status(user=ctx.username, user_id=ctx.user_id)
+    open_trades = trade_log_service.list_trades(
+        status="OPEN", user=ctx.username, user_id=ctx.user_id
+    )
     status["open_trades"] = open_trades
-    status["username"] = user
-    status["display_name"] = display_name_for(user)
+    status["username"] = ctx.username
+    status["display_name"] = display_name_for(ctx.username)
     return status
 
 
