@@ -21,8 +21,15 @@ export function useAuth() {
   });
 
   const signup = useMutation({
-    mutationFn: ({ email, password }: { email: string; password: string }) =>
-      api.signup(email, password),
+    mutationFn: ({
+      email,
+      password,
+      accepted_terms,
+    }: {
+      email: string;
+      password: string;
+      accepted_terms: boolean;
+    }) => api.signup(email, password, accepted_terms),
   });
 
   const logout = useMutation({

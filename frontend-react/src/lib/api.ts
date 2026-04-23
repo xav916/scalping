@@ -56,10 +56,10 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ username, password }),
     }),
-  signup: (email: string, password: string) =>
+  signup: (email: string, password: string, accepted_terms: boolean) =>
     request<{ ok: true; user_id: number }>('/api/auth/signup', {
       method: 'POST',
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({ email, password, accepted_terms }),
     }),
   forgotPassword: (email: string) =>
     request<{ ok: true }>('/api/auth/forgot-password', {

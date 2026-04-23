@@ -48,6 +48,12 @@ TIER_MAX_LOOKBACK_DAYS = {"free": 7, "pro": None, "premium": None}
 SIGNUP_TRIAL_DAYS = 14
 SIGNUP_TRIAL_TIER = "pro"
 
+# Version courante des documents légaux acceptés à l'inscription (CGU, CGV,
+# Privacy). À incrémenter chaque fois qu'un de ces documents change : les
+# users existants devront ré-accepter (UI non implémentée ici, v1 suffit
+# pour le lancement public).
+TERMS_CURRENT_VERSION = "1.0"
+
 
 def new_trial_end_iso() -> str:
     """Retourne l'ISO UTC du trial_ends_at pour un signup maintenant."""
@@ -188,6 +194,14 @@ def init_users_schema() -> None:
             c.execute("ALTER TABLE users ADD COLUMN email_verified_at TEXT")
         if "email_verification_token" not in user_cols:
             c.execute("ALTER TABLE users ADD COLUMN email_verification_token TEXT")
+        # Consentement CGU/CGV/Privacy à l'inscription (obligation UE).
+        # `terms_accepted_at` = timestamp ISO du clic sur "J'accepte".
+        # `terms_version` = version courante (TERMS_CURRENT_VERSION) au moment
+        #   du clic — preuve de ce qui a été accepté en cas de litige.
+        if "terms_accepted_at" not in user_cols:
+            c.execute("ALTER TABLE users ADD COLUMN terms_accepted_at TEXT")
+        if "terms_version" not in user_cols:
+            c.execute("ALTER TABLE users ADD COLUMN terms_version TEXT")
 
         # Migration douce : personal_trades.user_id (nullable) — pas encore
         # utilisé, simple placeholder pour chantier 3.
@@ -228,9 +242,15 @@ def create_user(
     password: str,
     tier: str = "free",
     trial_ends_at: Optional[str] = None,
+    terms_version: Optional[str] = None,
 ) -> int:
     """Crée un user et retourne son id. Lève ValueError si email déjà pris
     ou tier invalide.
+
+    Si `terms_version` est fourni, stocke aussi `terms_accepted_at=now` —
+    preuve de consentement CGU/CGV/Privacy (obligatoire pour les signups
+    publics UE). Laisser à None pour les users créés par script admin
+    (seed, migration) qui ne passent pas par la checkbox front.
     """
     email_norm = _normalize_email(email)
     if not email_norm or "@" not in email_norm:
@@ -240,15 +260,22 @@ def create_user(
 
     pw_hash = hash_password(password)
     now = datetime.now(timezone.utc).isoformat()
+    terms_accepted_at = now if terms_version else None
 
     with _conn() as c:
         try:
             cur = c.execute(
                 """
-                INSERT INTO users (email, password_hash, tier, trial_ends_at, created_at)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO users (
+                    email, password_hash, tier, trial_ends_at, created_at,
+                    terms_accepted_at, terms_version
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (email_norm, pw_hash, tier, trial_ends_at, now),
+                (
+                    email_norm, pw_hash, tier, trial_ends_at, now,
+                    terms_accepted_at, terms_version,
+                ),
             )
             return int(cur.lastrowid)
         except sqlite3.IntegrityError as e:

@@ -60,13 +60,21 @@ def test_signup_rate_limit_triggers_after_5_per_hour(client, db, rate_limit_on, 
     for i in range(5):
         r = client.post(
             "/api/auth/signup",
-            json={"email": f"user{i}@test.com", "password": "password123"},
+            json={
+                "email": f"user{i}@test.com",
+                "password": "password123",
+                "accepted_terms": True,
+            },
         )
         assert r.status_code != 429, f"attempt {i+1} hit rate limit prematurely"
 
     r = client.post(
         "/api/auth/signup",
-        json={"email": "user6@test.com", "password": "password123"},
+        json={
+            "email": "user6@test.com",
+            "password": "password123",
+            "accepted_terms": True,
+        },
     )
     assert r.status_code == 429
 

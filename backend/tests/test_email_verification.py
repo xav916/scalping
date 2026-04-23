@@ -181,7 +181,10 @@ def test_signup_auto_verifies_when_smtp_off(db, monkeypatch):
 
     from backend.tests.conftest import mock_request
     result = asyncio.run(
-        app_module.api_signup(mock_request(), {"email": "alice@test.com", "password": "pw12345678"})
+        app_module.api_signup(
+            mock_request(),
+            {"email": "alice@test.com", "password": "pw12345678", "accepted_terms": True},
+        )
     )
     uid = result["user_id"]
     user = users_service.get_user_by_id(uid)

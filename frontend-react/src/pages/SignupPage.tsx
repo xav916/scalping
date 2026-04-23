@@ -16,6 +16,7 @@ export function SignupPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Si le flag serveur est désactivé, on redirige vers login (parcours public).
@@ -54,8 +55,12 @@ export function SignupPage() {
       setError('Les passwords ne correspondent pas');
       return;
     }
+    if (!acceptedTerms) {
+      setError('Vous devez accepter les CGU, CGV et la politique de confidentialité');
+      return;
+    }
     signup.mutate(
-      { email, password },
+      { email, password, accepted_terms: true },
       {
         onSuccess: () => {
           // Auto-login après signup réussi.
@@ -162,6 +167,44 @@ export function SignupPage() {
                 className="w-full px-4 py-2.5 rounded-xl bg-white/5 border border-glass-soft focus:border-pink-400/50 focus:bg-white/[0.07] focus:outline-none focus:ring-2 focus:ring-pink-400/20 transition-all font-mono text-sm"
               />
             </div>
+            <label className="flex items-start gap-2.5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={acceptedTerms}
+                onChange={(e) => setAcceptedTerms(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border border-glass-soft bg-white/5 text-cyan-400 focus:ring-2 focus:ring-cyan-400/30 focus:ring-offset-0 accent-cyan-400 cursor-pointer"
+              />
+              <span className="text-xs text-white/60 leading-relaxed">
+                J'accepte les{' '}
+                <a
+                  href="/docs/cgu.html"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-cyan-300 hover:text-cyan-200 underline underline-offset-2"
+                >
+                  CGU
+                </a>
+                , les{' '}
+                <a
+                  href="/docs/cgv.html"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-cyan-300 hover:text-cyan-200 underline underline-offset-2"
+                >
+                  CGV
+                </a>{' '}
+                et la{' '}
+                <a
+                  href="/docs/privacy.html"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-cyan-300 hover:text-cyan-200 underline underline-offset-2"
+                >
+                  politique de confidentialité
+                </a>
+                .
+              </span>
+            </label>
             {error && (
               <motion.p
                 initial={{ opacity: 0, x: -4 }}
@@ -173,10 +216,10 @@ export function SignupPage() {
             )}
             <motion.button
               type="submit"
-              disabled={busy}
-              whileHover={{ scale: busy ? 1 : 1.02 }}
-              whileTap={{ scale: busy ? 1 : 0.98 }}
-              className="relative w-full py-3 rounded-xl bg-gradient-to-br from-cyan-400 to-pink-500 text-slate-900 font-semibold text-sm disabled:opacity-50 transition-opacity overflow-hidden group"
+              disabled={busy || !acceptedTerms}
+              whileHover={{ scale: busy || !acceptedTerms ? 1 : 1.02 }}
+              whileTap={{ scale: busy || !acceptedTerms ? 1 : 0.98 }}
+              className="relative w-full py-3 rounded-xl bg-gradient-to-br from-cyan-400 to-pink-500 text-slate-900 font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed transition-opacity overflow-hidden group"
             >
               <span className="relative z-10">
                 {busy ? 'Création…' : 'Créer mon compte'}

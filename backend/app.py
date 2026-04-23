@@ -570,10 +570,19 @@ async def api_signup(request: Request, payload: dict):
         raise HTTPException(status_code=404)
     email = (payload or {}).get("email", "")
     password = (payload or {}).get("password", "")
+    accepted_terms = bool((payload or {}).get("accepted_terms", False))
     if not email or not password:
         raise HTTPException(status_code=400, detail="email et password requis")
     if len(password) < 8:
         raise HTTPException(status_code=400, detail="password trop court (min 8)")
+    # Obligation légale UE : consentement explicite aux CGU/CGV/Privacy
+    # avant toute création de compte facturable. Preuve stockée en DB
+    # (terms_accepted_at + terms_version).
+    if not accepted_terms:
+        raise HTTPException(
+            status_code=400,
+            detail="Vous devez accepter les CGU, CGV et la politique de confidentialité",
+        )
     # Chantier 9 SaaS : 14 jours de trial Pro à l'inscription, sans CB.
     try:
         uid = users_service.create_user(
@@ -581,6 +590,7 @@ async def api_signup(request: Request, payload: dict):
             password,
             tier=users_service.SIGNUP_TRIAL_TIER,
             trial_ends_at=users_service.new_trial_end_iso(),
+            terms_version=users_service.TERMS_CURRENT_VERSION,
         )
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
