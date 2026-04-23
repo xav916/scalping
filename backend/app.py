@@ -519,6 +519,17 @@ async def api_signup(payload: dict):
         )
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
+    # Pivot zero-friction (2026-04-23) : on pré-sélectionne les paires
+    # populaires pour que l'user atterrisse direct sur le dashboard sans
+    # passer par un formulaire d'onboarding. Il peut customiser ensuite
+    # depuis /settings.
+    try:
+        users_service.update_watched_pairs(
+            uid,
+            users_service.default_pairs_for_tier(users_service.SIGNUP_TRIAL_TIER),
+        )
+    except Exception:
+        logger.exception("Pré-sélection pairs par défaut a échoué pour uid=%s", uid)
     logger.info(
         "SaaS signup : user id=%s email=%s trial=%dj",
         uid, email, users_service.SIGNUP_TRIAL_DAYS,

@@ -140,6 +140,23 @@ def test_pairs_only_completes_onboarding(db):
     assert status["needs_onboarding"] is False
 
 
+def test_default_pairs_for_tier_respects_cap():
+    """Les paires par défaut respectent MAX_PAIRS_PER_TIER."""
+    free = users_service.default_pairs_for_tier("free")
+    pro = users_service.default_pairs_for_tier("pro")
+    prem = users_service.default_pairs_for_tier("premium")
+    assert len(free) == 1
+    assert len(pro) == 5
+    assert len(prem) == 16
+    # EUR/USD doit être la 1ère paire (plus populaire).
+    assert free[0] == "EUR/USD"
+    assert pro[0] == "EUR/USD"
+
+
+def test_default_pairs_unknown_tier_falls_back_to_1():
+    assert len(users_service.default_pairs_for_tier("enterprise")) == 1
+
+
 def test_complete_onboarding_with_broker(db):
     uid = users_service.create_user("alice@test.com", "pw12345678", tier="pro")
     users_service.update_broker_config(

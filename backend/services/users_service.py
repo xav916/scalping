@@ -325,6 +325,21 @@ def get_watched_pairs(user_id: int) -> list[str]:
 # Cap nombre de pairs par tier (SaaS).
 MAX_PAIRS_PER_TIER = {"free": 1, "pro": 5, "premium": 16}
 
+# Paires pré-sélectionnées au signup pour que l'user voit immédiatement le
+# radar tourner (zéro friction onboarding). Ordonnées par popularité / volume.
+# Limitées par MAX_PAIRS_PER_TIER à l'application.
+DEFAULT_PAIRS_ORDERED = [
+    "EUR/USD", "GBP/USD", "USD/JPY", "XAU/USD", "BTC/USD",
+    "EUR/JPY", "AUD/USD", "USD/CAD", "GBP/JPY", "XAG/USD",
+    "ETH/USD", "SPX", "NDX", "WTI/USD", "USD/CHF", "EUR/GBP",
+]
+
+
+def default_pairs_for_tier(tier: str) -> list[str]:
+    """Retourne la liste par défaut des paires pour un tier, cap respecté."""
+    cap = MAX_PAIRS_PER_TIER.get(tier, 1)
+    return DEFAULT_PAIRS_ORDERED[:cap]
+
 
 def update_watched_pairs(user_id: int, pairs: list[str]) -> list[str]:
     """Remplace les paires surveillées, cap selon tier. Retourne la liste
