@@ -27,6 +27,9 @@ const OnboardingPage = lazy(() =>
 const PricingPage = lazy(() =>
   import('@/pages/PricingPage').then((m) => ({ default: m.PricingPage }))
 );
+const SettingsPage = lazy(() =>
+  import('@/pages/SettingsPage').then((m) => ({ default: m.SettingsPage }))
+);
 const TradesPage = lazy(() =>
   import('@/pages/TradesPage').then((m) => ({ default: m.TradesPage }))
 );
@@ -64,6 +67,7 @@ export default function App() {
                 <Route path="/cockpit" element={<CockpitPage />} />
                 <Route path="/analytics" element={<AnalyticsPage />} />
                 <Route path="/trades" element={<TradesPage />} />
+                <Route path="/settings" element={<SettingsPage />} />
               </Route>
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>

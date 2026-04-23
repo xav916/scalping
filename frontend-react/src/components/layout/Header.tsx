@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import clsx from 'clsx';
 import { motion } from 'motion/react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useAudioAlerts } from '@/hooks/useAudioAlerts';
 import { useSystemStatus, type SystemStatus } from '@/hooks/useSystemStatus';
@@ -173,6 +173,23 @@ export function Header() {
           )}
         </button>
         </Tooltip>
+        {/* Paramètres */}
+        {whoami.data && (
+          <NavLink
+            to="/settings"
+            className={({ isActive }) =>
+              `text-xs px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-lg border transition-all ${
+                isActive
+                  ? 'border-cyan-400/40 text-cyan-200 bg-cyan-400/10'
+                  : 'border-glass-soft hover:border-glass-strong hover:bg-white/5 text-white/70'
+              }`
+            }
+            title="Paramètres du compte"
+            aria-label="Paramètres"
+          >
+            <span>⚙</span>
+          </NavLink>
+        )}
         {/* Logout */}
         {whoami.data && (
           <button
