@@ -102,9 +102,12 @@ export const api = {
   userTier: () =>
     request<{
       tier: string;
+      tier_stored?: string;
       stripe_customer_set: boolean;
       stripe_subscription_set?: boolean;
       billing_cycle?: 'monthly' | 'yearly' | null;
+      trial_active?: boolean;
+      trial_days_left?: number | null;
       trial_ends_at?: string | null;
       legacy_env?: boolean;
     }>('/api/user/tier'),

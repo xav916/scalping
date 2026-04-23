@@ -114,21 +114,34 @@ async def api_logout(request: Request, response: Response):
 # ─── SaaS : tier current user + feature gating dep (Chantier 5) ─────
 @app.get("/api/user/tier")
 async def api_user_tier(ctx: AuthContext = Depends(auth_context)):
-    """Tier + état abonnement du user courant, pour la PricingPage/Settings."""
+    """Tier + état abonnement du user courant, pour la PricingPage/Settings.
+
+    Expose `tier` (effectif, après trial expiry), `tier_stored` (brut en DB),
+    `trial_active`, `trial_days_left` pour que le front puisse afficher les
+    banners appropriés.
+    """
     if ctx.user_id is None:
         return {
             "tier": "premium",
+            "tier_stored": "premium",
             "stripe_customer_set": False,
             "billing_cycle": None,
+            "trial_active": False,
+            "trial_days_left": None,
+            "trial_ends_at": None,
             "legacy_env": True,
         }
     user = users_service.get_user_by_id(ctx.user_id) or {}
+    trial = users_service.trial_status(user)
     return {
-        "tier": user.get("tier", "free"),
+        "tier": users_service.effective_tier(user),
+        "tier_stored": user.get("tier", "free"),
         "stripe_customer_set": bool(user.get("stripe_customer_id")),
         "stripe_subscription_set": bool(user.get("stripe_subscription_id")),
         "billing_cycle": user.get("stripe_billing_cycle"),
-        "trial_ends_at": user.get("trial_ends_at"),
+        "trial_active": trial["trial_active"],
+        "trial_days_left": trial["trial_days_left"],
+        "trial_ends_at": trial["trial_ends_at"],
         "legacy_env": False,
     }
 
@@ -137,14 +150,15 @@ def require_min_tier(min_tier: str):
     """Factory de dépendance FastAPI : 403 si le user courant a un tier
     inférieur à min_tier.
 
-    Users legacy env (user_id=None) sont traités comme premium (admin).
+    Utilise le tier EFFECTIF (gère l'expiration du trial de 14j) ; users
+    legacy env (user_id=None) sont traités comme premium (admin).
     """
 
     def _dep(ctx: AuthContext = Depends(auth_context)) -> AuthContext:
         if ctx.user_id is None:
             return ctx  # env legacy = accès total
-        user = users_service.get_user_by_id(ctx.user_id) or {}
-        if not users_service.has_min_tier(user.get("tier", "free"), min_tier):
+        user = users_service.get_user_by_id(ctx.user_id)
+        if not users_service.has_min_tier(users_service.effective_tier(user), min_tier):
             raise HTTPException(
                 status_code=403,
                 detail=f"Cette fonctionnalité nécessite le tier {min_tier} ou supérieur",
@@ -155,11 +169,14 @@ def require_min_tier(min_tier: str):
 
 
 def _tier_of(ctx: AuthContext) -> str:
-    """Retourne le tier du user courant. 'premium' pour les users legacy env."""
+    """Retourne le tier EFFECTIF du user (applique l'expiration du trial).
+
+    'premium' pour les users legacy env.
+    """
     if ctx.user_id is None:
         return "premium"
-    user = users_service.get_user_by_id(ctx.user_id) or {}
-    return user.get("tier", "free")
+    user = users_service.get_user_by_id(ctx.user_id)
+    return users_service.effective_tier(user)
 
 
 # ─── SaaS : Stripe checkout / webhook / portal (Chantier 5) ─────────
@@ -379,12 +396,21 @@ async def api_signup(payload: dict):
         raise HTTPException(status_code=400, detail="email et password requis")
     if len(password) < 8:
         raise HTTPException(status_code=400, detail="password trop court (min 8)")
+    # Chantier 9 SaaS : 14 jours de trial Pro à l'inscription, sans CB.
     try:
-        uid = users_service.create_user(email, password, tier="free")
+        uid = users_service.create_user(
+            email,
+            password,
+            tier=users_service.SIGNUP_TRIAL_TIER,
+            trial_ends_at=users_service.new_trial_end_iso(),
+        )
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
-    logger.info("SaaS signup : nouveau user id=%s email=%s", uid, email)
-    return {"ok": True, "user_id": uid}
+    logger.info(
+        "SaaS signup : user id=%s email=%s trial=%dj",
+        uid, email, users_service.SIGNUP_TRIAL_DAYS,
+    )
+    return {"ok": True, "user_id": uid, "trial_days": users_service.SIGNUP_TRIAL_DAYS}
 
 
 @app.get("/api/config")

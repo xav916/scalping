@@ -103,6 +103,11 @@ def test_require_min_tier_allows_pro(db):
     from backend.auth import AuthContext
 
     uid = users_service.create_user("pro@test.com", "pw12345678", tier="pro")
+    # Simule sub Stripe active pour que effective_tier respecte le tier stocké
+    # (sans stripe_subscription_id et sans trial, un pro est considéré free).
+    users_service.update_stripe_subscription(
+        uid, subscription_id="sub_test_pro", tier="pro", billing_cycle="monthly"
+    )
     dep = app_module.require_min_tier("pro")
     ctx = AuthContext(username="pro@test.com", user_id=uid)
     result = dep(ctx=ctx)
@@ -114,6 +119,9 @@ def test_require_min_tier_allows_premium_on_pro_route(db):
     from backend.auth import AuthContext
 
     uid = users_service.create_user("prem@test.com", "pw12345678", tier="premium")
+    users_service.update_stripe_subscription(
+        uid, subscription_id="sub_test_prem", tier="premium", billing_cycle="monthly"
+    )
     dep = app_module.require_min_tier("pro")
     ctx = AuthContext(username="prem@test.com", user_id=uid)
     assert dep(ctx=ctx).user_id == uid

@@ -168,11 +168,21 @@ export function PricingPage() {
           <p className="text-white/60 text-sm">
             Sans engagement, annulable à tout moment depuis ton espace.
           </p>
-          {tierInfo.data?.trial_ends_at && (
-            <p className="text-xs text-cyan-300 mt-3">
-              Trial Pro actif jusqu'au{' '}
-              {new Date(tierInfo.data.trial_ends_at).toLocaleDateString('fr-FR')}
-            </p>
+          {tierInfo.data?.trial_active && tierInfo.data?.trial_days_left !== null && (
+            <motion.div
+              initial={{ opacity: 0, y: -4 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="inline-flex items-center gap-2 mt-4 px-3 py-1.5 rounded-full bg-cyan-400/15 border border-cyan-400/30"
+            >
+              <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
+              <span className="text-xs text-cyan-200">
+                Trial Pro actif — il te reste{' '}
+                <strong>
+                  {tierInfo.data.trial_days_left}{' '}
+                  jour{(tierInfo.data.trial_days_left ?? 0) > 1 ? 's' : ''}
+                </strong>
+              </span>
+            </motion.div>
           )}
         </div>
 

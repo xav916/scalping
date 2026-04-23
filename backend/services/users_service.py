@@ -43,6 +43,15 @@ TIER_RANK = {"free": 0, "pro": 1, "premium": 2}
 # pour encourager l'upgrade ; Pro/Premium ont accès illimité (None = no cap).
 TIER_MAX_LOOKBACK_DAYS = {"free": 7, "pro": None, "premium": None}
 
+# Trial Pro gratuit à l'inscription (Chantier 9 SaaS).
+SIGNUP_TRIAL_DAYS = 14
+SIGNUP_TRIAL_TIER = "pro"
+
+
+def new_trial_end_iso() -> str:
+    """Retourne l'ISO UTC du trial_ends_at pour un signup maintenant."""
+    return (datetime.now(timezone.utc) + timedelta(days=SIGNUP_TRIAL_DAYS)).isoformat()
+
 
 def tier_rank(tier: str) -> int:
     return TIER_RANK.get(tier, 0)
@@ -51,6 +60,58 @@ def tier_rank(tier: str) -> int:
 def has_min_tier(user_tier: str, min_tier: str) -> bool:
     """True si user_tier >= min_tier. Défaut 'free' pour les unknowns."""
     return tier_rank(user_tier) >= tier_rank(min_tier)
+
+
+def effective_tier(user: Optional[dict]) -> str:
+    """Retourne le tier réellement applicable pour le gating.
+
+    - Paying sub active (stripe_subscription_id set) → tier stocké (source de
+      vérité : Stripe dicte).
+    - Pas de sub, trial encore actif (trial_ends_at > now) → tier stocké.
+    - Pas de sub, trial expiré → 'free' (downgrade silencieux sans muter la DB).
+    - Tier 'free' → toujours 'free'.
+    """
+    if not user:
+        return "free"
+    stored = user.get("tier", "free")
+    if stored == "free":
+        return "free"
+    # Paying subscription active → tier stocké.
+    if user.get("stripe_subscription_id"):
+        return stored
+    # Pas de sub payante : trial éventuellement actif.
+    trial_end = user.get("trial_ends_at")
+    if trial_end:
+        try:
+            end_dt = datetime.fromisoformat(trial_end.replace("Z", "+00:00"))
+            if end_dt > datetime.now(timezone.utc):
+                return stored
+        except (ValueError, AttributeError):
+            pass
+    # Trial absent ou expiré, pas de sub → effectivement free.
+    return "free"
+
+
+def trial_status(user: Optional[dict]) -> dict:
+    """Retourne {trial_active: bool, trial_ends_at: str|None, trial_days_left: int|None}.
+
+    `trial_active` = True seulement si trial_ends_at > now ET pas de sub payante
+    (un user qui a upgradé pendant le trial a trial_active=False).
+    """
+    if not user:
+        return {"trial_active": False, "trial_ends_at": None, "trial_days_left": None}
+    trial_end = user.get("trial_ends_at")
+    if not trial_end or user.get("stripe_subscription_id"):
+        return {"trial_active": False, "trial_ends_at": trial_end, "trial_days_left": None}
+    try:
+        end_dt = datetime.fromisoformat(trial_end.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return {"trial_active": False, "trial_ends_at": trial_end, "trial_days_left": None}
+    now = datetime.now(timezone.utc)
+    if end_dt <= now:
+        return {"trial_active": False, "trial_ends_at": trial_end, "trial_days_left": 0}
+    days_left = max(0, (end_dt - now).days)
+    return {"trial_active": True, "trial_ends_at": trial_end, "trial_days_left": days_left}
 
 
 def max_lookback_days(user_tier: str) -> Optional[int]:
