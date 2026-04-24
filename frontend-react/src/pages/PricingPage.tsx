@@ -115,6 +115,8 @@ export function PricingPage() {
     onError: () => alert('Impossible d\'ouvrir le portail Stripe'),
   });
 
+  const hasActiveSub = tierInfo.data?.stripe_subscription_set ?? false;
+
   const handleAction = (tier: Tier) => {
     if (!isAuth) {
       navigate('/signup');
@@ -122,10 +124,17 @@ export function PricingPage() {
     }
     if (tier.id === 'free') return;
 
-    // Même tier : si cycle différent, bascule via portal (Stripe gère le prorata) ;
-    // si cycle identique, juste gérer l'abonnement.
+    // Même tier : deux cas de figure :
+    //  - User avec subscription Stripe active → ouvrir le portail (prorata
+    //    automatique sur changement de cycle, gestion cartes/factures).
+    //  - User en trial (tier='pro' effectif mais pas de subscription) →
+    //    checkout direct pour convertir le trial en paid.
     if (tier.id === currentTier) {
-      portal.mutate();
+      if (hasActiveSub) {
+        portal.mutate();
+      } else {
+        checkout.mutate({ tier: tier.id, c: cycle });
+      }
       return;
     }
     checkout.mutate({ tier: tier.id, c: cycle });
@@ -138,6 +147,13 @@ export function PricingPage() {
       return currentTier === 'free' ? 'Gratuit à vie' : 'Downgrade';
     }
     if (tier.id === currentTier) {
+      // User en trial (même tier mais pas encore de subscription Stripe) :
+      // le CTA doit proposer l'activation du paiement, pas la gestion.
+      if (!hasActiveSub) {
+        return cycle === 'yearly'
+          ? `Activer ${tier.name} annuel`
+          : `Activer ${tier.name} mensuel`;
+      }
       // Même tier — précise si changement de cycle ou pas.
       if (currentCycle && currentCycle !== cycle) {
         return cycle === 'yearly' ? 'Passer en annuel' : 'Passer en mensuel';
