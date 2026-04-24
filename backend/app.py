@@ -782,13 +782,8 @@ async def api_public_config():
 
 @app.get("/login", include_in_schema=False)
 async def login_page(request: Request):
-    """Sert la page de login. Si déjà authentifié, redirige vers /."""
-    sid = request.cookies.get(SESSION_COOKIE)
-    if sid:
-        from backend.auth import validate_session
-        if validate_session(sid):
-            return RedirectResponse("/", status_code=303)
-    return FileResponse(str(FRONTEND_DIR / "login.html"))
+    """Legacy login page retirée : redirige vers /v2/login."""
+    return RedirectResponse("/v2/login", status_code=308)
 
 
 @app.get("/api/me")
@@ -1313,13 +1308,9 @@ if _V2_DIST.exists():
 
 @app.get("/")
 async def index(request: Request):
-    """Serve the main dashboard page. Redirige vers /login si pas authentifié
-    (plus agréable qu'un prompt Basic Auth sur la route principale)."""
-    try:
-        authenticate(request)
-    except HTTPException:
-        return RedirectResponse("/login", status_code=303)
-    return FileResponse(str(FRONTEND_DIR / "index.html"))
+    """Racine redirige désormais vers la V2 (SPA React). L'ancien frontend
+    est conservé sur disque mais plus exposé."""
+    return RedirectResponse("/v2/", status_code=308)
 
 
 @app.get("/manifest.json")
