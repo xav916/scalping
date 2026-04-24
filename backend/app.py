@@ -405,6 +405,42 @@ async def api_admin_users(_ctx: AuthContext = Depends(require_admin)):
     }
 
 
+@app.delete("/api/admin/users/{user_id}")
+@limiter.limit("30/hour")
+async def api_admin_delete_user(
+    request: Request,
+    user_id: int,
+    ctx: AuthContext = Depends(require_admin),
+):
+    """Hard delete d'un user par un admin (backoffice cleanup).
+
+    Réservé aux users de test. Pour un RGPD "right to be forgotten" sur un
+    user réel avec trades historiques, l'user utilise `POST
+    /api/user/delete-account` (soft delete anonymisant qui préserve les FK).
+
+    Protection : on refuse de supprimer un user qui a des trades liés
+    (personal_trades.user_id=?) pour éviter les orphans. L'admin doit
+    d'abord utiliser l'endpoint soft delete, puis si besoin faire un hard
+    delete manuel offline.
+    """
+    target = users_service.get_user_by_id(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User introuvable")
+    # Empêche un admin de se supprimer lui-même accidentellement.
+    if ctx.user_id == user_id:
+        raise HTTPException(status_code=400, detail="Impossible de supprimer son propre compte admin")
+    if users_service.has_trades(user_id):
+        raise HTTPException(
+            status_code=409,
+            detail="User a des trades liés — utiliser soft delete (anonymisation) plutôt",
+        )
+    ok = users_service.admin_hard_delete_user(user_id)
+    if not ok:
+        raise HTTPException(status_code=500, detail="Delete a échoué")
+    logger.info("Admin %s hard-deleted user id=%s email=%s", ctx.username, user_id, target.get("email"))
+    return {"ok": True, "deleted_user_id": user_id}
+
+
 # ─── SaaS : onboarding utilisateur (Chantier 4) ─────────────────────
 @app.get("/api/user/onboarding-status")
 async def api_onboarding_status(ctx: AuthContext = Depends(auth_context)):

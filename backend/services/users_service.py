@@ -448,6 +448,38 @@ def delete_account(user_id: int, current_password: str) -> bool:
     return True
 
 
+def has_trades(user_id: int) -> bool:
+    """True si le user a au moins un trade lié (personal_trades.user_id=?).
+
+    Utilisé par l'admin delete pour décider entre hard delete (aucun trade,
+    user de test) et soft delete/anonymisation (trades historiques à
+    préserver pour l'archive comptable).
+    """
+    with _conn() as c:
+        cols = [r[1] for r in c.execute("PRAGMA table_info(personal_trades)").fetchall()]
+        if "user_id" not in cols:
+            return False
+        row = c.execute(
+            "SELECT 1 FROM personal_trades WHERE user_id = ? LIMIT 1",
+            (user_id,),
+        ).fetchone()
+    return row is not None
+
+
+def admin_hard_delete_user(user_id: int) -> bool:
+    """Suppression définitive d'un user par un admin (backoffice).
+
+    Usage réservé aux cleanup de users de test. Pour un user "réel" qui
+    demande la suppression RGPD, préférer `delete_account` (soft delete /
+    anonymisation) qui préserve l'intégrité des trades historiques.
+
+    Retourne True si un row a été supprimé.
+    """
+    with _conn() as c:
+        cur = c.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    return cur.rowcount > 0
+
+
 def mark_email_auto_verified(user_id: int) -> None:
     """Pour les envs où SMTP n'est pas configuré : on considère l'email
     verified automatiquement (sinon les users seraient coincés sans pouvoir

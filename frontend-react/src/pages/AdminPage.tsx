@@ -1,6 +1,7 @@
+import { useState } from 'react';
 import { motion } from 'motion/react';
 import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '@/lib/api';
 import { GlassCard } from '@/components/ui/GlassCard';
 import { GradientText } from '@/components/ui/GradientText';
@@ -15,6 +16,8 @@ import { Skeleton } from '@/components/ui/Skeleton';
  * Si 403, on redirige l'utilisateur vers le dashboard.
  */
 export function AdminPage() {
+  const queryClient = useQueryClient();
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const { data, isLoading, error } = useQuery({
     queryKey: ['admin', 'users'],
     queryFn: api.adminUsers,
@@ -22,6 +25,26 @@ export function AdminPage() {
     refetchInterval: 30_000,  // live-ish
     staleTime: 10_000,
   });
+
+  const deleteUser = useMutation({
+    mutationFn: (userId: number) => api.adminDeleteUser(userId),
+    onSuccess: () => {
+      setDeleteError(null);
+      queryClient.invalidateQueries({ queryKey: ['admin', 'users'] });
+    },
+    onError: (err) => {
+      const msg =
+        err instanceof ApiError ? err.message || `HTTP ${err.status}` : String(err);
+      setDeleteError(msg);
+    },
+  });
+
+  const onDelete = (userId: number, email: string) => {
+    if (!window.confirm(`Supprimer définitivement ${email} ?\n\nRéservé aux users de test. Un user avec des trades liés sera refusé (409) — utiliser le soft delete côté user.`)) {
+      return;
+    }
+    deleteUser.mutate(userId);
+  };
 
   if (error instanceof ApiError && error.status === 403) {
     return (
@@ -110,6 +133,7 @@ export function AdminPage() {
                     <th className="text-left font-medium">Stripe</th>
                     <th className="text-left font-medium">Signup</th>
                     <th className="text-left font-medium">Last login</th>
+                    <th className="text-right font-medium">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -160,10 +184,25 @@ export function AdminPage() {
                           ? new Date(u.last_login_at).toLocaleDateString('fr-FR')
                           : 'jamais'}
                       </td>
+                      <td className="text-right">
+                        <button
+                          onClick={() => onDelete(u.id, u.email)}
+                          disabled={deleteUser.isPending}
+                          className="text-rose-400/70 hover:text-rose-300 disabled:opacity-30 text-[11px] uppercase tracking-wider transition-colors"
+                          title="Hard delete (users de test). Les users avec trades sont bloqués 409."
+                        >
+                          Delete
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
+              {deleteError && (
+                <div className="mt-3 text-[11px] text-rose-300/80">
+                  Erreur delete : {deleteError}
+                </div>
+              )}
             </GlassCard>
           </>
         )}

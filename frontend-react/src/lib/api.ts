@@ -184,6 +184,11 @@ export const api = {
       }>;
     }>('/api/admin/users'),
 
+  adminDeleteUser: (userId: number) =>
+    request<{ ok: boolean; deleted_user_id: number }>(`/api/admin/users/${userId}`, {
+      method: 'DELETE',
+    }),
+
   macro: async () => {
     const raw = await request<{ status: string; snapshot: MacroSnapshot | null }>(
       '/api/macro'
