@@ -210,9 +210,20 @@ def handle_webhook(payload: bytes, sig_header: str) -> dict:
 
     if event_type == "customer.subscription.deleted":
         customer_id = obj.get("customer")
+        deleted_sub_id = obj.get("id")
         user = users_service.get_user_by_stripe_customer_id(customer_id)
         if not user:
             return {"applied": None, "reason": "user_not_found"}
+        # Garde-fou : ne downgrade que si la sub cancellée est bien celle
+        # référencée sur le user. Sinon c'est une sub en doublon (l'user a
+        # cliqué plusieurs fois le checkout) dont la suppression ne doit
+        # PAS toucher la sub active actuelle.
+        if user.get("stripe_subscription_id") and user.get("stripe_subscription_id") != deleted_sub_id:
+            logger.info(
+                "subscription.deleted %s ignoré (user=%s garde sa sub active %s)",
+                deleted_sub_id, user["id"], user.get("stripe_subscription_id"),
+            )
+            return {"applied": None, "reason": "sub_not_current"}
         users_service.update_stripe_subscription(
             user["id"], subscription_id=None, tier="free"
         )
