@@ -276,6 +276,31 @@ MACRO_VETO_ENABLED = os.getenv("MACRO_VETO_ENABLED", "false").lower() in ("1", "
 # livrés. L'endpoint existe mais répond 404 si désactivé.
 SAAS_SIGNUP_ENABLED = os.getenv("SAAS_SIGNUP_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 
+# Whitelist signup : emails autorisés à s'inscrire même quand
+# SAAS_SIGNUP_ENABLED=false. Permet de tester le funnel en prod pendant
+# qu'il est fermé au public. Support du wildcard `*` en partie locale
+# (ex: `couderc.xavier+*@gmail.com` match tous les alias Gmail plus).
+SIGNUP_WHITELIST = [e.strip().lower() for e in os.getenv("SIGNUP_WHITELIST", "").split(",") if e.strip()]
+
+
+def email_in_whitelist(email: str, patterns: list[str] | None = None) -> bool:
+    """True si `email` match un pattern SIGNUP_WHITELIST.
+
+    Support : match exact (insensible à la casse) ou wildcard `*` dans la
+    partie locale (avant @). Le `*` match 0+ caractères. Utilisé pour
+    autoriser des alias Gmail type `foo+test1@gmail.com`, `foo+test2@...`
+    via un seul pattern `foo+*@gmail.com`.
+    """
+    if not email:
+        return False
+    patterns = patterns if patterns is not None else SIGNUP_WHITELIST
+    if not patterns:
+        return False
+    import fnmatch
+    e = email.strip().lower()
+    return any(fnmatch.fnmatchcase(e, p) for p in patterns)
+
+
 # Whitelist admin (Chantier 12 SaaS). Emails séparés par virgule. Les users
 # whitelistés voient /admin avec users list + MRR + trials.
 ADMIN_EMAILS = [e.strip().lower() for e in os.getenv("ADMIN_EMAILS", "").split(",") if e.strip()]

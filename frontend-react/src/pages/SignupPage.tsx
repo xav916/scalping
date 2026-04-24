@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { useAuth } from '@/hooks/useAuth';
 import { GlassCard } from '@/components/ui/GlassCard';
@@ -13,15 +13,19 @@ const PASSWORD_MIN = 8;
 export function SignupPage() {
   const { signup, login, config } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Si le flag serveur est désactivé, on redirige vers login (parcours public).
+  // Beta fermée : le flag serveur bloque le signup public, mais la query
+  // `?preview=1` affiche quand même le form pour tester le funnel end-to-end
+  // depuis une whitelist d'emails (vérifiée côté backend par SIGNUP_WHITELIST).
+  const previewMode = searchParams.get('preview') === '1';
   const signupEnabled = config.data?.signup_enabled ?? false;
-  if (config.isFetched && !signupEnabled) {
+  if (config.isFetched && !signupEnabled && !previewMode) {
     return (
       <div className="min-h-screen flex items-center justify-center px-4">
         <AnimatedMeshGradient />

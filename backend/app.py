@@ -28,6 +28,7 @@ from config.settings import (
     SAAS_SIGNUP_ENABLED,
     STRIPE_ENABLED,
     display_name_for,
+    email_in_whitelist,
 )
 
 from backend.services import (
@@ -566,9 +567,15 @@ async def api_reset_password(request: Request, payload: dict):
 @app.post("/api/auth/signup")
 @limiter.limit("5/hour")
 async def api_signup(request: Request, payload: dict):
-    if not SAAS_SIGNUP_ENABLED:
-        raise HTTPException(status_code=404)
     email = (payload or {}).get("email", "")
+    # Gate : soit le signup public est ouvert (SAAS_SIGNUP_ENABLED=true),
+    # soit l'email appartient à la whitelist d'emails de test autorisés
+    # pendant la beta fermée (SIGNUP_WHITELIST). Le check whitelist se fait
+    # sur l'email fourni, ce qui permet à l'admin de tester le vrai funnel
+    # UI avec des alias Gmail (`+test1`, `+test2`, ...) sans rouvrir
+    # l'inscription au public.
+    if not SAAS_SIGNUP_ENABLED and not email_in_whitelist(email):
+        raise HTTPException(status_code=404)
     password = (payload or {}).get("password", "")
     accepted_terms = bool((payload or {}).get("accepted_terms", False))
     if not email or not password:
