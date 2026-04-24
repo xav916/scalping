@@ -152,10 +152,14 @@ def auth_context(request: Request) -> AuthContext:
     if user:
         return AuthContext(username=user, user_id=_resolve_user_id(user))
 
+    # Pas de header WWW-Authenticate : on veut que le navigateur NE déclenche
+    # PAS sa popup Basic Auth native (UX catastrophique dans une SPA). Le
+    # front React gère lui-même les 401 en redirigeant vers /v2/login.
+    # Les scripts curl/monitoring peuvent envoyer un header Authorization
+    # explicitement sans avoir besoin du challenge.
     raise HTTPException(
         status_code=401,
         detail="Authentification requise",
-        headers={"WWW-Authenticate": "Basic"},
     )
 
 
