@@ -1,74 +1,32 @@
-/**
- * Service Worker — app shell offline pour Scalping Radar.
- * Stratégie : cache-first pour HTML/CSS/JS, network-only pour /api et /ws.
- * Aucun cache dynamique des données marché : elles doivent toujours être fraîches.
- */
+// Legacy Service Worker — v10 (post-migration V2).
+//
+// Les users qui avaient installé la PWA V1 ont ce SW enregistré sur leur
+// browser. Il cache des assets qui n'existent plus. Plutôt que de laisser
+// des références cassées, on le remplace par un SW qui se désinstalle
+// lui-même : au prochain navigate, il unregister la PWA V1 et le browser
+// laisse /v2/sw.js prendre la relève (scope /v2/).
 
-const CACHE_VERSION = 'scalping-shell-v16';
-const SHELL_ASSETS = [
-    '/',
-    '/css/tailwind.css',
-    '/css/style.css',
-    '/js/app.js',
-    '/js/login.js',
-    '/js/animations.js',
-    '/js/modules/utils.js',
-    '/js/modules/market-hours.js',
-    '/js/vendor/lightweight-charts.standalone.production.js',
-    '/js/vendor/motion.min.js',
-    '/manifest.json',
-    '/icons/icon-192.png',
-    '/icons/icon-512.png',
-];
-
-self.addEventListener('install', (event) => {
-    // cache: 'reload' force le SW à bypasser le HTTP cache du navigateur
-    // et à fetch chaque asset directement depuis le serveur. Sans ça, le SW
-    // re-cacherait les versions périmées encore dans le disk cache.
-    event.waitUntil(
-        caches.open(CACHE_VERSION).then((cache) =>
-            Promise.all(SHELL_ASSETS.map((url) =>
-                fetch(new Request(url, { cache: 'reload' }))
-                    .then((res) => {
-                        if (res.ok) return cache.put(url, res);
-                    })
-                    .catch(() => {})
-            ))
-        )
-    );
-    self.skipWaiting();
+self.addEventListener('install', () => {
+  self.skipWaiting();
 });
 
-self.addEventListener('activate', (event) => {
-    event.waitUntil(
-        caches.keys().then((keys) =>
-            Promise.all(keys.filter((k) => k !== CACHE_VERSION).map((k) => caches.delete(k)))
-        )
-    );
-    self.clients.claim();
+self.addEventListener('activate', async (event) => {
+  event.waitUntil(
+    (async () => {
+      // Vide tous les caches legacy.
+      const names = await caches.keys();
+      await Promise.all(names.map((n) => caches.delete(n)));
+      // Self-unregister — la PWA V1 disparaît proprement.
+      await self.registration.unregister();
+      // Force les clients ouverts à recharger (ils tomberont sur /v2/ via 308).
+      const clients = await self.clients.matchAll();
+      clients.forEach((client) => client.navigate(client.url));
+    })()
+  );
 });
 
 self.addEventListener('fetch', (event) => {
-    const req = event.request;
-    if (req.method !== 'GET') return;
-
-    const url = new URL(req.url);
-    // Données live + auth : toujours en direct, pas de cache.
-    if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/ws') || url.pathname === '/login') return;
-
-    // Shell : cache-first avec fallback réseau puis mise en cache best-effort.
-    event.respondWith(
-        caches.match(req).then((cached) => {
-            if (cached) return cached;
-            return fetch(req)
-                .then((res) => {
-                    if (res.ok && url.origin === self.location.origin) {
-                        const copy = res.clone();
-                        caches.open(CACHE_VERSION).then((c) => c.put(req, copy)).catch(() => {});
-                    }
-                    return res;
-                })
-                .catch(() => cached);
-        })
-    );
+  // Passthrough : on ne cache plus rien. Chrome exige un fetch handler pour
+  // installer la PWA — mais ici on n'installe plus, on désinstalle.
+  event.respondWith(fetch(event.request));
 });

@@ -1263,10 +1263,9 @@ async def stats_mistakes(ctx: AuthContext = Depends(auth_context)):
     }
 
 
-# Serve static files
-app.mount("/css", StaticFiles(directory=str(FRONTEND_DIR / "css")), name="css")
-app.mount("/js", StaticFiles(directory=str(FRONTEND_DIR / "js")), name="js")
-# Docs publiques (guide install bridge, FAQ…) — accessible sans auth.
+# Docs publiques (CGU/CGV/Privacy + guide install bridge) — accessible sans auth.
+# Les anciens mounts `/css` et `/js` pour le frontend V1 ont été retirés
+# après le swap / → /v2 (2026-04-24).
 _DOCS_DIR = FRONTEND_DIR / "docs"
 if _DOCS_DIR.exists():
     app.mount("/docs", StaticFiles(directory=str(_DOCS_DIR), html=True), name="docs")
@@ -1387,12 +1386,6 @@ async def pwa_icon(size: int):
         media_type="image/png",
         headers={"Cache-Control": "public, max-age=2592000, immutable"},
     )
-
-
-@app.get("/mobile")
-async def mobile_view(_=Depends(verify_credentials)):
-    """Vue mobile-first focalisee sur les setups TAKE uniquement."""
-    return FileResponse(str(FRONTEND_DIR / "mobile.html"))
 
 
 @app.get("/api/macro")
