@@ -71,7 +71,7 @@ export function TradesPage() {
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div>
             <Link
-              to="/"
+              to="/dashboard"
               className="text-xs text-white/40 hover:text-white/70 transition-colors inline-flex items-center gap-1 mb-1"
             >
               ← Dashboard

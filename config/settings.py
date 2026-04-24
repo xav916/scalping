@@ -271,6 +271,59 @@ FOREXFACTORY_CALENDAR_URL = "https://www.forexfactory.com/calendar"
 MACRO_SCORING_ENABLED = os.getenv("MACRO_SCORING_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 MACRO_VETO_ENABLED = os.getenv("MACRO_VETO_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 
+# Chantier 1 SaaS : feature-flag du parcours signup self-service. OFF par
+# défaut tant que les chantiers 2-3 (login UI + data isolation) ne sont pas
+# livrés. L'endpoint existe mais répond 404 si désactivé.
+SAAS_SIGNUP_ENABLED = os.getenv("SAAS_SIGNUP_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+
+# Whitelist signup : emails autorisés à s'inscrire même quand
+# SAAS_SIGNUP_ENABLED=false. Permet de tester le funnel en prod pendant
+# qu'il est fermé au public. Support du wildcard `*` en partie locale
+# (ex: `couderc.xavier+*@gmail.com` match tous les alias Gmail plus).
+SIGNUP_WHITELIST = [e.strip().lower() for e in os.getenv("SIGNUP_WHITELIST", "").split(",") if e.strip()]
+
+
+def email_in_whitelist(email: str, patterns: list[str] | None = None) -> bool:
+    """True si `email` match un pattern SIGNUP_WHITELIST.
+
+    Support : match exact (insensible à la casse) ou wildcard `*` dans la
+    partie locale (avant @). Le `*` match 0+ caractères. Utilisé pour
+    autoriser des alias Gmail type `foo+test1@gmail.com`, `foo+test2@...`
+    via un seul pattern `foo+*@gmail.com`.
+    """
+    if not email:
+        return False
+    patterns = patterns if patterns is not None else SIGNUP_WHITELIST
+    if not patterns:
+        return False
+    import fnmatch
+    e = email.strip().lower()
+    return any(fnmatch.fnmatchcase(e, p) for p in patterns)
+
+
+# Whitelist admin (Chantier 12 SaaS). Emails séparés par virgule. Les users
+# whitelistés voient /admin avec users list + MRR + trials.
+ADMIN_EMAILS = [e.strip().lower() for e in os.getenv("ADMIN_EMAILS", "").split(",") if e.strip()]
+
+# Stripe (Chantier 5 SaaS) : ouverture des endpoints checkout/portal/webhook
+# gated par STRIPE_ENABLED. OFF par défaut pour ne pas exposer en prod tant
+# que les clés + produits Stripe ne sont pas configurés.
+STRIPE_ENABLED = os.getenv("STRIPE_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
+STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
+# Ids des prix Stripe pour chaque tier + cycle (configurables dans Stripe Dashboard).
+# Back-compat : STRIPE_PRICE_PRO sert de fallback pour STRIPE_PRICE_PRO_MONTHLY.
+STRIPE_PRICE_PRO_MONTHLY = os.getenv("STRIPE_PRICE_PRO_MONTHLY") or os.getenv("STRIPE_PRICE_PRO", "")
+STRIPE_PRICE_PRO_YEARLY = os.getenv("STRIPE_PRICE_PRO_YEARLY", "")
+STRIPE_PRICE_PREMIUM_MONTHLY = os.getenv("STRIPE_PRICE_PREMIUM_MONTHLY") or os.getenv("STRIPE_PRICE_PREMIUM", "")
+STRIPE_PRICE_PREMIUM_YEARLY = os.getenv("STRIPE_PRICE_PREMIUM_YEARLY", "")
+# Alias legacy (tests existants référencent STRIPE_PRICE_PRO).
+STRIPE_PRICE_PRO = STRIPE_PRICE_PRO_MONTHLY
+STRIPE_PRICE_PREMIUM = STRIPE_PRICE_PREMIUM_MONTHLY
+# URL publique pour rediriger après checkout success/cancel.
+STRIPE_SUCCESS_URL = os.getenv("STRIPE_SUCCESS_URL", "https://app.scalping-radar.com/v2/?upgrade=success")
+STRIPE_CANCEL_URL = os.getenv("STRIPE_CANCEL_URL", "https://app.scalping-radar.com/v2/pricing?upgrade=cancel")
+
 # Refresh cadence and cache tolerance
 MACRO_REFRESH_INTERVAL_SEC = int(os.getenv("MACRO_REFRESH_INTERVAL_SEC", "900"))  # 15 min
 MACRO_CACHE_MAX_AGE_SEC = int(os.getenv("MACRO_CACHE_MAX_AGE_SEC", "7200"))  # 2h fallback

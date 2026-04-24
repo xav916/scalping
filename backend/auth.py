@@ -14,28 +14,52 @@ point de changement.
 """
 
 import base64
+import logging
 import secrets
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException, Request, Response
 
 from config.settings import AUTH_USERS
 
+logger = logging.getLogger(__name__)
+
 SESSION_COOKIE = "scalping_session"
 SESSION_TTL = timedelta(days=7)
 
-# sid -> {"user": str, "expires": datetime}
+# sid -> {"user": str, "user_id": int | None, "expires": datetime}
+# user_id vaut None pour les users AUTH_USERS env (legacy), sinon users.id.
 _sessions: dict[str, dict] = {}
+
+
+@dataclass(frozen=True)
+class AuthContext:
+    """Contexte d'auth exposé aux routes (Chantier 3 SaaS).
+
+    - `username` : identifiant de session (email lowercase pour DB users,
+      valeur brute pour users env legacy).
+    - `user_id` : id numérique de la table users si le user existe en DB,
+      None pour les users AUTH_USERS env (pas de colonne user_id sur leurs
+      trades historiques).
+    """
+
+    username: str
+    user_id: int | None
 
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def create_session(username: str) -> str:
+def create_session(username: str, user_id: int | None = None) -> str:
     """Crée une nouvelle session et retourne le SID à déposer dans le cookie."""
     sid = secrets.token_urlsafe(32)
-    _sessions[sid] = {"user": username, "expires": _now() + SESSION_TTL}
+    _sessions[sid] = {
+        "user": username,
+        "user_id": user_id,
+        "expires": _now() + SESSION_TTL,
+    }
     return sid
 
 
@@ -44,6 +68,12 @@ def validate_session(sid: str | None) -> str | None:
 
     Le TTL est glissant : chaque validation le repousse à now + SESSION_TTL.
     """
+    session = _load_session(sid)
+    return session["user"] if session else None
+
+
+def _load_session(sid: str | None) -> dict | None:
+    """Helper interne : charge + renouvelle TTL, renvoie le dict brut ou None."""
     if not sid:
         return None
     session = _sessions.get(sid)
@@ -53,7 +83,7 @@ def validate_session(sid: str | None) -> str | None:
         _sessions.pop(sid, None)
         return None
     session["expires"] = _now() + SESSION_TTL
-    return session["user"]
+    return session
 
 
 def destroy_session(sid: str | None) -> None:
@@ -82,36 +112,87 @@ def authenticate(request: Request) -> str:
     """Dépendance FastAPI : accepte une session cookie OU Basic Auth, sinon 401.
 
     Si AUTH_USERS est vide, tout le monde est "anonymous" (pas d'auth configurée).
+
+    Back-compat : ne retourne que le username. Préférer `auth_context()` pour
+    récupérer aussi le user_id (Chantier 3 data isolation).
+    """
+    ctx = auth_context(request)
+    return ctx.username
+
+
+def _resolve_user_id(username: str) -> int | None:
+    """Lookup users.id pour un username. None si pas trouvé (users env legacy)."""
+    try:
+        from backend.services import users_service
+
+        user = users_service.get_user_by_email(username)
+        return int(user["id"]) if user else None
+    except Exception:
+        logger.exception("resolve_user_id a échoué pour %s", username)
+        return None
+
+
+def auth_context(request: Request) -> AuthContext:
+    """Dépendance FastAPI : renvoie un AuthContext (username + user_id), sinon 401.
+
+    Utiliser cette dep pour les routes qui doivent scoper leurs queries par
+    user_id (Chantier 3 SaaS data isolation).
     """
     if not AUTH_USERS:
-        return "anonymous"
+        return AuthContext(username="anonymous", user_id=None)
 
-    # 1. Cookie de session
+    # 1. Cookie de session : user_id déjà résolu au login, stocké dans le dict.
     sid = request.cookies.get(SESSION_COOKIE)
-    user = validate_session(sid)
-    if user:
-        return user
+    session = _load_session(sid)
+    if session:
+        return AuthContext(username=session["user"], user_id=session.get("user_id"))
 
-    # 2. Fallback Basic Auth (scripts, monitoring, anciens bookmarks)
+    # 2. Fallback Basic Auth : pas de session, on résout le user_id à la volée.
     user = _basic_auth_user(request.headers.get("Authorization"))
     if user:
-        return user
+        return AuthContext(username=user, user_id=_resolve_user_id(user))
 
     raise HTTPException(
         status_code=401,
         detail="Authentification requise",
-        # WWW-Authenticate permet aux clients Basic de re-prompter, l'UI web
-        # elle redirigera sur /login via son handler 401.
         headers={"WWW-Authenticate": "Basic"},
     )
 
 
+def _authenticate_credentials(username: str, password: str) -> tuple[str, int | None] | None:
+    """Vérifie login/password. Ordre : table users (SaaS) → AUTH_USERS env (fallback).
+
+    Retourne (username_normalisé, user_id) sur succès, ou None sur échec.
+    user_id vaut l'id de la table users pour les DB users, None pour env.
+    """
+    try:
+        from backend.services import users_service
+
+        user = users_service.get_user_by_email(username)
+        if user and user.get("is_active", 1) and users_service.verify_password(
+            password, user["password_hash"]
+        ):
+            try:
+                users_service.touch_last_login(user["id"])
+            except Exception:
+                logger.exception("touch_last_login a échoué pour uid=%s", user["id"])
+            return user["email"], int(user["id"])
+    except Exception:
+        logger.exception("Lookup users DB a échoué — fallback env")
+
+    expected = AUTH_USERS.get(username)
+    if expected is not None and secrets.compare_digest(expected, password):
+        return username, None
+    return None
+
+
 def login_and_set_cookie(response: Response, username: str, password: str) -> bool:
     """Vérifie les identifiants, crée une session et dépose le cookie. Retourne le succès."""
-    expected = AUTH_USERS.get(username)
-    if expected is None or not secrets.compare_digest(expected, password):
+    result = _authenticate_credentials(username, password)
+    if result is None:
         return False
-    sid = create_session(username)
+    auth_user, user_id = result
+    sid = create_session(auth_user, user_id=user_id)
     # SameSite=Lax (et non Strict) : permet d'envoyer le cookie sur les
     # WebSocket upgrades initiés depuis la même origine. Chrome applique
     # Strict de manière suffisamment stricte pour bloquer le cookie sur

@@ -40,11 +40,11 @@ export function CommandPalette() {
       {
         id: 'nav-dashboard',
         label: 'Aller au Dashboard',
-        hint: '/v2/',
+        hint: '/v2/dashboard',
         group: 'Navigation',
         icon: '▣',
         keywords: ['home', 'accueil'],
-        run: () => navigate('/'),
+        run: () => navigate('/dashboard'),
       },
       {
         id: 'nav-cockpit',
@@ -72,6 +72,24 @@ export function CommandPalette() {
         icon: '≡',
         keywords: ['journal', 'positions'],
         run: () => navigate('/trades'),
+      },
+      {
+        id: 'nav-settings',
+        label: 'Paramètres du compte',
+        hint: '/v2/settings',
+        group: 'Navigation',
+        icon: '⚙',
+        keywords: ['profil', 'abonnement', 'plan', 'pairs', 'billing'],
+        run: () => navigate('/settings'),
+      },
+      {
+        id: 'nav-pricing',
+        label: 'Voir les plans',
+        hint: '/v2/pricing',
+        group: 'Navigation',
+        icon: '€',
+        keywords: ['pricing', 'upgrade', 'abonnement', 'pro', 'premium'],
+        run: () => navigate('/pricing'),
       },
       // Actions
       {

@@ -4,6 +4,8 @@ import { useAuth } from '@/hooks/useAuth';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { MobileBottomNav } from '@/components/layout/MobileBottomNav';
 import { CommandPalette } from '@/components/ui/CommandPalette';
+import { TrialBanner } from '@/components/TrialBanner';
+import { VerifyEmailBanner } from '@/components/VerifyEmailBanner';
 
 /** Anime SEULEMENT le contenu de route (Outlet). La bottom nav et la
  *  command palette restent montées hors de l'AnimatePresence pour que
@@ -26,7 +28,15 @@ function AnimatedOutlet() {
   );
 }
 
-export function AuthGate() {
+/**
+ * Pivot zero-friction (2026-04-23) : on ne bloque plus les routes auth sur
+ * un "needs_onboarding" — les paires sont pré-sélectionnées au signup côté
+ * backend, donc l'user atterrit direct sur le dashboard. La prop
+ * `requireOnboarded` reste acceptée pour compat mais n'a plus d'effet.
+ */
+export function AuthGate({
+  requireOnboarded: _requireOnboarded = false,
+}: { requireOnboarded?: boolean } = {}) {
   const { whoami } = useAuth();
 
   if (whoami.isLoading) {
@@ -39,8 +49,12 @@ export function AuthGate() {
   if (whoami.isError || !whoami.data) {
     return <Navigate to="/login" replace />;
   }
+
   return (
     <>
+      {/* Bannières globales (self-hide si conditions pas remplies). */}
+      <VerifyEmailBanner />
+      <TrialBanner />
       {/* Padding bottom sur mobile pour que le contenu ne soit pas masqué
           par la bottom nav fixée (env safe-area pour iPhone X+). */}
       <div className="pb-[72px] sm:pb-0">

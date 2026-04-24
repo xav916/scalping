@@ -226,14 +226,31 @@ def _by_risk_regime() -> list[dict]:
     return _safe_stats(wins, losses)
 
 
-def _execution_quality() -> dict:
+def _user_scope(user: str | None, user_id: int | None) -> tuple[str, tuple]:
+    """Chantier 3B SaaS : fragment SQL pour scoper personal_trades par user.
+
+    user_id préféré si fourni, sinon user TEXT (legacy env), sinon pas de scope.
+    """
+    if user_id is not None:
+        return " AND user_id = ?", (user_id,)
+    if user is not None:
+        return " AND user = ?", (user,)
+    return "", ()
+
+
+def _execution_quality(user: str | None = None, user_id: int | None = None) -> dict:
     """Qualite d'execution : slippage moyen, distribution des close_reason.
     Reponses : 'les pertes viennent du signal ou du broker ?' et 'combien
-    de fois on touche TP2 vs TP1 vs SL ?'."""
+    de fois on touche TP2 vs TP1 vs SL ?'.
+
+    Scopé par user/user_id (Chantier 3B). Sans args, agrégé sur tous les users
+    (back-compat pour callers internes / scripts d'admin).
+    """
+    scope_sql, scope_params = _user_scope(user, user_id)
     with sqlite3.connect(_trades_db()) as c:
         _row_factory(c)
         slippage_stats = c.execute(
-            """
+            f"""
             SELECT pair,
                    COUNT(*) AS n,
                    AVG(slippage_pips) AS avg_slippage,
@@ -241,20 +258,25 @@ def _execution_quality() -> dict:
                    MAX(slippage_pips) AS max_slippage
               FROM personal_trades
              WHERE slippage_pips IS NOT NULL
+               {scope_sql}
              GROUP BY pair
-            """
+            """,
+            scope_params,
         ).fetchall()
         close_reasons = c.execute(
-            """
+            f"""
             SELECT close_reason, COUNT(*) AS n, AVG(pnl) AS avg_pnl
               FROM personal_trades
              WHERE status = 'CLOSED' AND close_reason IS NOT NULL
+               {scope_sql}
              GROUP BY close_reason
              ORDER BY n DESC
-            """
+            """,
+            scope_params,
         ).fetchall()
         total_closed = c.execute(
-            "SELECT COUNT(*) FROM personal_trades WHERE status = 'CLOSED'"
+            f"SELECT COUNT(*) FROM personal_trades WHERE status = 'CLOSED'{scope_sql}",
+            scope_params,
         ).fetchone()[0]
 
     return {
@@ -317,17 +339,30 @@ def _signal_volume() -> dict:
 import time as _time
 from concurrent.futures import ThreadPoolExecutor as _Executor
 
-# Cache TTL global : les stats ne changent qu'au rythme des closures auto
+# Cache TTL par user : les stats ne changent qu'au rythme des closures auto
 # (1-2/h post-fix). 60s de staleness est acceptable pour une page analytics
-# consultative (pas pour de l'auto-exec).
-_ANALYTICS_CACHE: dict[str, object] = {"data": None, "ts": 0.0}
+# consultative (pas pour de l'auto-exec). Clé = (user_id or user or "__all__").
+_ANALYTICS_CACHE: dict[str, dict[str, object]] = {}
 _ANALYTICS_CACHE_TTL_SEC = 60.0
 
 
-def _build_analytics_uncached() -> dict:
+def _cache_key(user: str | None, user_id: int | None) -> str:
+    """Clé stable pour le cache par user. Préfère user_id (numérique)."""
+    if user_id is not None:
+        return f"uid:{user_id}"
+    if user is not None:
+        return f"user:{user}"
+    return "__all__"
+
+
+def _build_analytics_uncached(user: str | None = None, user_id: int | None = None) -> dict:
     """Exécute les 8 breakdowns en parallèle (ThreadPool de 4). Les queries
     SQL sqlite3 libèrent le GIL → vraie parallélisation. Wall time réduit
-    du sum des durées (2150ms) au max individuel (750ms, by_pair)."""
+    du sum des durées (2150ms) au max individuel (750ms, by_pair).
+
+    `_execution_quality` est scopé par user/user_id (trades perso) ; les
+    autres breakdowns lisent `signals` (backtest.db, partagé — data radar).
+    """
     tasks = {
         "by_pair": _by_pair,
         "by_hour_utc": _by_hour,
@@ -335,7 +370,7 @@ def _build_analytics_uncached() -> dict:
         "by_confidence_bucket": _by_confidence_bucket,
         "by_asset_class": _by_asset_class,
         "by_risk_regime": _by_risk_regime,
-        "execution_quality": _execution_quality,
+        "execution_quality": lambda: _execution_quality(user=user, user_id=user_id),
         "signal_volume": _signal_volume,
     }
     out: dict[str, object] = {}
@@ -346,18 +381,19 @@ def _build_analytics_uncached() -> dict:
     return out
 
 
-def build_analytics() -> dict:
+def build_analytics(user: str | None = None, user_id: int | None = None) -> dict:
     """Point d'entree unique : retourne toutes les breakdowns en un payload.
-    Cache in-memory 60s — les 8 queries coûtent ~1.4s avec 2500+ trades."""
+    Cache in-memory 60s par user — les 8 queries coûtent ~1.4s avec 2500+ trades."""
     now = _time.time()
-    cached = _ANALYTICS_CACHE["data"]
-    cached_ts = float(_ANALYTICS_CACHE["ts"])
-    if cached is not None and (now - cached_ts) < _ANALYTICS_CACHE_TTL_SEC:
-        return cached  # type: ignore[return-value]
+    key = _cache_key(user, user_id)
+    entry = _ANALYTICS_CACHE.get(key)
+    if entry is not None:
+        cached_ts = float(entry.get("ts", 0.0))
+        if (now - cached_ts) < _ANALYTICS_CACHE_TTL_SEC:
+            return entry["data"]  # type: ignore[return-value]
     try:
-        result = _build_analytics_uncached()
-        _ANALYTICS_CACHE["data"] = result
-        _ANALYTICS_CACHE["ts"] = now
+        result = _build_analytics_uncached(user=user, user_id=user_id)
+        _ANALYTICS_CACHE[key] = {"data": result, "ts": now}
         return result
     except Exception as e:
         logger.warning(f"analytics: build_analytics a echoue: {e}", exc_info=True)
@@ -365,8 +401,7 @@ def build_analytics() -> dict:
 
 
 def invalidate_analytics_cache() -> None:
-    """Vide le cache. À appeler explicitement si une mutation critique
-    (ex: backfill trade) doit forcer un refresh. Non utilisé en auto :
-    le TTL suffit pour l'usage actuel (read-only consultation)."""
-    _ANALYTICS_CACHE["data"] = None
-    _ANALYTICS_CACHE["ts"] = 0.0
+    """Vide le cache (toutes entrées user). À appeler explicitement si une
+    mutation critique (ex: backfill trade) doit forcer un refresh. Non
+    utilisé en auto : le TTL suffit pour l'usage actuel (read-only)."""
+    _ANALYTICS_CACHE.clear()

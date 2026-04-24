@@ -33,6 +33,28 @@ def _db_path() -> str:
     return str(_DB_PATH)
 
 
+def _user_scope(
+    user: str | None,
+    user_id: int | None,
+) -> tuple[str, tuple]:
+    """Chantier 3B SaaS : retourne un fragment SQL pour scoper par user.
+
+    Ordre de précédence :
+    - `user_id` fourni → "AND user_id = ?" (isolation stricte multi-tenant)
+    - `user` fourni → "AND user = ?" (legacy AUTH_USERS env fallback)
+    - ni l'un ni l'autre → "" (pas de filtre ; appelants internes / admin)
+
+    Le "" final permet aux callers internes (scripts, cron, tests) qui ne
+    s'intéressent à aucun user spécifique de continuer à lire l'ensemble.
+    Les routes HTTP doivent TOUJOURS passer user ou user_id via auth_context.
+    """
+    if user_id is not None:
+        return " AND user_id = ?", (user_id,)
+    if user is not None:
+        return " AND user = ?", (user,)
+    return "", ()
+
+
 def _pair_asset_class(pair: str) -> str:
     """Dérive l'asset class depuis la paire (réplique de config.settings
     mais sans dépendance pour éviter un cycle d'import)."""
@@ -92,19 +114,27 @@ def _aggregate(rows: list[dict[str, Any]], key_func) -> list[dict[str, Any]]:
     return out
 
 
-def get_performance(since_iso: str | None = None) -> dict[str, Any]:
+def get_performance(
+    since_iso: str | None = None,
+    user: str | None = None,
+    user_id: int | None = None,
+) -> dict[str, Any]:
     """Retourne un snapshot agrégé pour analyse.
 
     Args:
         since_iso: filtre created_at >= cette date ISO (défaut: tout).
+        user / user_id: scope multi-tenant (Chantier 3B). user_id est
+            préféré si fourni, sinon fallback sur user TEXT.
     """
+    scope_sql, scope_params = _user_scope(user, user_id)
     sql = (
         "SELECT pair, direction, signal_confidence, pnl, created_at, closed_at, "
         "exit_price, entry_price, context_macro "
         "FROM personal_trades "
         "WHERE is_auto=1 AND status='CLOSED' AND pnl IS NOT NULL"
+        + scope_sql
     )
-    params: list[Any] = []
+    params: list[Any] = list(scope_params)
     if since_iso:
         sql += " AND created_at >= ?"
         params.append(since_iso)
@@ -158,19 +188,25 @@ def get_performance(since_iso: str | None = None) -> dict[str, Any]:
     }
 
 
-def get_equity_curve(since_iso: str | None = None) -> dict[str, Any]:
+def get_equity_curve(
+    since_iso: str | None = None,
+    user: str | None = None,
+    user_id: int | None = None,
+) -> dict[str, Any]:
     """Série temporelle du PnL cumulé, trade par trade (chronologique).
 
     Format retourné : liste de points {closed_at, pnl, cumulative_pnl, trade_num}.
     Permet de tracer une equity curve côté UI (sparkline ou chart complet).
     """
+    scope_sql, scope_params = _user_scope(user, user_id)
     sql = (
         "SELECT closed_at, pnl, pair, direction "
         "FROM personal_trades "
         "WHERE is_auto=1 AND status='CLOSED' AND pnl IS NOT NULL "
         "AND closed_at IS NOT NULL"
+        + scope_sql
     )
-    params: list[Any] = []
+    params: list[Any] = list(scope_params)
     if since_iso:
         sql += " AND closed_at >= ?"
         params.append(since_iso)
@@ -238,7 +274,11 @@ def _period_window(period: str) -> tuple[str, str]:
     return (since_dt.isoformat(), until)
 
 
-def get_period_stats(period: str = "day") -> dict:
+def get_period_stats(
+    period: str = "day",
+    user: str | None = None,
+    user_id: int | None = None,
+) -> dict:
     """Métriques consolidées pour une période preset : PnL, win rate, profit
     factor, expectancy, max drawdown, best/worst trade, durée moyenne,
     distribution close_reason.
@@ -250,26 +290,39 @@ def get_period_stats(period: str = "day") -> dict:
     closed_at in [since, until].
     """
     since, until = _period_window(period)
-    return _compute_stats_for_range(since, until, period_label=period)
+    return _compute_stats_for_range(since, until, period_label=period, user=user, user_id=user_id)
 
 
-def get_period_stats_range(since: str, until: str) -> dict:
+def get_period_stats_range(
+    since: str,
+    until: str,
+    user: str | None = None,
+    user_id: int | None = None,
+) -> dict:
     """Même chose que `get_period_stats` mais avec un range custom arbitraire
     passé par l'API. `period` dans la réponse = 'custom'."""
-    return _compute_stats_for_range(since, until, period_label="custom")
+    return _compute_stats_for_range(since, until, period_label="custom", user=user, user_id=user_id)
 
 
-def _compute_stats_for_range(since: str, until: str, period_label: str) -> dict:
+def _compute_stats_for_range(
+    since: str,
+    until: str,
+    period_label: str,
+    user: str | None = None,
+    user_id: int | None = None,
+) -> dict:
     """Fonction pure : calcule tous les KPIs pour le range `[since, until]`.
 
     Ne dépend ni du wall-clock ni d'un preset — juste des bornes ISO UTC.
     """
     from config.settings import TRADING_CAPITAL
 
+    scope_sql, scope_params = _user_scope(user, user_id)
+
     with sqlite3.connect(_db_path()) as c:
         c.row_factory = sqlite3.Row
         trades_rows = c.execute(
-            """
+            f"""
             SELECT pair, direction, pnl, created_at, closed_at, close_reason, size_lot
               FROM personal_trades
              WHERE status = 'CLOSED'
@@ -277,18 +330,21 @@ def _compute_stats_for_range(since: str, until: str, period_label: str) -> dict:
                AND pnl IS NOT NULL
                AND closed_at >= ?
                AND closed_at <= ?
+               {scope_sql}
              ORDER BY closed_at ASC
             """,
-            (since, until),
+            (since, until, *scope_params),
         ).fetchall()
-        
-        # Trades encore ouverts au moment du calcul (pour afficher capital engagé)
+
+        # Trades encore ouverts au moment du calcul (pour afficher capital engagé).
         open_rows = c.execute(
-            """
+            f"""
             SELECT pair, entry_price, stop_loss, size_lot
               FROM personal_trades
              WHERE status = 'OPEN' AND is_auto = 1
-            """
+               {scope_sql}
+            """,
+            scope_params,
         ).fetchall()
     
     trades = [dict(r) for r in trades_rows]
@@ -429,7 +485,13 @@ def _pair_units(pair: str) -> float:
     return 100_000.0
 
 
-def get_exposure_timeseries(since: str, until: str, granularity: str = "auto") -> dict[str, Any]:
+def get_exposure_timeseries(
+    since: str,
+    until: str,
+    granularity: str = "auto",
+    user: str | None = None,
+    user_id: int | None = None,
+) -> dict[str, Any]:
     """Capital à risque et nombre de positions ouvertes snapshotés à la fin
     de chaque bucket temporel.
 
@@ -456,17 +518,19 @@ def get_exposure_timeseries(since: str, until: str, granularity: str = "auto") -
             raise ValueError("5min granularity limitée à une plage de 24h maximum")
 
     # Charge tous les trades qui pouvaient être ouverts à un moment dans [since, until]
+    scope_sql, scope_params = _user_scope(user, user_id)
     with sqlite3.connect(_db_path()) as c:
         c.row_factory = sqlite3.Row
         rows = c.execute(
-            """
+            f"""
             SELECT pair, entry_price, stop_loss, size_lot, created_at, closed_at
               FROM personal_trades
              WHERE is_auto = 1
                AND created_at <= ?
                AND (closed_at IS NULL OR closed_at >= ?)
+               {scope_sql}
             """,
-            (until, since),
+            (until, since, *scope_params),
         ).fetchall()
     trades = [dict(r) for r in rows]
 
@@ -618,7 +682,13 @@ def _next_bucket_key(key: str, granularity: str) -> str:
     raise ValueError(f"granularity inconnue: {granularity}")
 
 
-def get_pnl_buckets(since: str, until: str, granularity: str = "auto") -> dict:
+def get_pnl_buckets(
+    since: str,
+    until: str,
+    granularity: str = "auto",
+    user: str | None = None,
+    user_id: int | None = None,
+) -> dict:
     """Série temporelle du PnL bucketisée pour le graph de la carte Performance.
 
     Args:
@@ -652,10 +722,11 @@ def get_pnl_buckets(since: str, until: str, granularity: str = "auto") -> dict:
             raise ValueError("5min granularity limitée à une plage de 24h maximum")
 
     # Récupère tous les trades CLOSED dans le range
+    scope_sql, scope_params = _user_scope(user, user_id)
     with sqlite3.connect(_db_path()) as c:
         c.row_factory = sqlite3.Row
         rows = c.execute(
-            """
+            f"""
             SELECT closed_at, pnl
               FROM personal_trades
              WHERE is_auto = 1
@@ -664,9 +735,10 @@ def get_pnl_buckets(since: str, until: str, granularity: str = "auto") -> dict:
                AND closed_at IS NOT NULL
                AND closed_at >= ?
                AND closed_at <= ?
+               {scope_sql}
              ORDER BY closed_at ASC
             """,
-            (since, until),
+            (since, until, *scope_params),
         ).fetchall()
 
     trades = [dict(r) for r in rows]

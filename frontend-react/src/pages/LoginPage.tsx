@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { useAuth } from '@/hooks/useAuth';
 import { GlassCard } from '@/components/ui/GlassCard';
@@ -8,7 +8,8 @@ import { GradientText } from '@/components/ui/GradientText';
 import { RadarPulse } from '@/components/ui/RadarPulse';
 
 export function LoginPage() {
-  const { login } = useAuth();
+  const { login, config } = useAuth();
+  const signupEnabled = config.data?.signup_enabled ?? false;
   const navigate = useNavigate();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -20,7 +21,7 @@ export function LoginPage() {
     login.mutate(
       { username, password },
       {
-        onSuccess: () => navigate('/', { replace: true }),
+        onSuccess: () => navigate('/dashboard', { replace: true }),
         onError: () => setError('Identifiants invalides'),
       }
     );
@@ -71,7 +72,7 @@ export function LoginPage() {
           >
             <div>
               <label className="block text-xs uppercase tracking-wider text-white/50 mb-1.5">
-                Utilisateur
+                Email ou utilisateur
               </label>
               <input
                 type="text"
@@ -121,6 +122,28 @@ export function LoginPage() {
               />
             </motion.button>
           </motion.form>
+
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.4, delay: 0.45 }}
+            className="mt-6 text-center space-y-2"
+          >
+            <Link
+              to="/forgot-password"
+              className="block text-xs uppercase tracking-wider text-white/40 hover:text-cyan-300 transition-colors"
+            >
+              Mot de passe oublié ?
+            </Link>
+            {signupEnabled && (
+              <Link
+                to="/signup"
+                className="block text-xs uppercase tracking-wider text-white/50 hover:text-cyan-300 transition-colors"
+              >
+                Pas de compte ? Créer un compte →
+              </Link>
+            )}
+          </motion.div>
 
           {/* Trust indicators */}
           <motion.div

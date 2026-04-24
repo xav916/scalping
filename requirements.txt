@@ -22,3 +22,16 @@ pytest-asyncio==0.25.0
 scikit-learn==1.5.2
 pandas==2.2.3
 joblib==1.4.2
+
+# Auth multi-tenant : hashing password (Chantier 1 SaaS).
+# bcrypt[standard] : bind natif, déjà packagé pour Linux/Win.
+bcrypt==4.2.1
+
+# Stripe : checkout + webhook + customer portal (Chantier 5 SaaS).
+# Opt-in via STRIPE_ENABLED=true ; sinon endpoints renvoient 503.
+stripe==12.0.1
+
+# Rate limiting sur endpoints sensibles (login, signup, password reset,
+# email verif, stripe checkout, account deletion). Désactivable via
+# RATE_LIMIT_ENABLED=false. Storage in-memory, suffisant pour 1 instance.
+slowapi==0.1.9

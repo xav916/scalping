@@ -11,20 +11,32 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from slowapi.errors import RateLimitExceeded
 
 from backend.auth import (
     SESSION_COOKIE,
+    AuthContext,
+    auth_context,
     authenticate,
     login_and_set_cookie,
     logout_and_clear_cookie,
 )
-from config.settings import AUTH_USERS, display_name_for
+from backend.rate_limit import limiter, rate_limit_exceeded_handler
+from config.settings import (
+    ADMIN_EMAILS,
+    AUTH_USERS,
+    SAAS_SIGNUP_ENABLED,
+    STRIPE_ENABLED,
+    display_name_for,
+    email_in_whitelist,
+)
 
 from backend.services import (
     backtest_service,
     indicators,
     trade_log_service,
     twelvedata_ws,
+    users_service,
 )
 from backend.services.notification_service import (
     get_signal_history,
@@ -55,6 +67,11 @@ FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
 async def lifespan(app: FastAPI):
     """Startup and shutdown lifecycle."""
     logger.info("Starting Scalping Decision Tool...")
+    # Chantier 1 SaaS : init table users + migration user_id. Idempotent.
+    try:
+        users_service.init_users_schema()
+    except Exception:
+        logger.exception("init_users_schema a échoué")
     # Run initial analysis
     asyncio.create_task(run_analysis_cycle())
     # Start periodic scheduler
@@ -74,6 +91,13 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# ─── Rate limiting (brute-force + spam sur endpoints sensibles) ─────
+# slowapi enregistre le limiter dans app.state ; chaque route à protéger
+# ajoute `@limiter.limit("N/unit")` et `request: Request` dans sa signature.
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
+
+
 # ─── Authentification (session cookie prioritaire, Basic Auth en fallback) ───
 # Implémentation dans backend/auth.py. Cette fonction reste un alias pour
 # minimiser le bruit sur les routes existantes.
@@ -83,7 +107,8 @@ def verify_credentials(request: Request) -> str:
 
 # ─── Routes de login/logout ─────────────────────────────────────────
 @app.post("/api/login")
-async def api_login(payload: dict, response: Response):
+@limiter.limit("10/minute")
+async def api_login(request: Request, payload: dict, response: Response):
     """Échange login/password contre un cookie de session HttpOnly."""
     username = (payload or {}).get("username", "")
     password = (payload or {}).get("password", "")
@@ -96,6 +121,619 @@ async def api_login(payload: dict, response: Response):
 async def api_logout(request: Request, response: Response):
     logout_and_clear_cookie(request, response)
     return {"ok": True}
+
+
+# ─── SaaS : tier current user + feature gating dep (Chantier 5) ─────
+@app.get("/api/user/tier")
+async def api_user_tier(ctx: AuthContext = Depends(auth_context)):
+    """Tier + état abonnement du user courant, pour la PricingPage/Settings.
+
+    Expose `tier` (effectif, après trial expiry), `tier_stored` (brut en DB),
+    `trial_active`, `trial_days_left` pour que le front puisse afficher les
+    banners appropriés.
+    """
+    if ctx.user_id is None:
+        return {
+            "tier": "premium",
+            "tier_stored": "premium",
+            "stripe_customer_set": False,
+            "billing_cycle": None,
+            "trial_active": False,
+            "trial_days_left": None,
+            "trial_ends_at": None,
+            "email_verified": True,
+            "legacy_env": True,
+        }
+    user = users_service.get_user_by_id(ctx.user_id) or {}
+    trial = users_service.trial_status(user)
+    return {
+        "tier": users_service.effective_tier(user),
+        "tier_stored": user.get("tier", "free"),
+        "stripe_customer_set": bool(user.get("stripe_customer_id")),
+        "stripe_subscription_set": bool(user.get("stripe_subscription_id")),
+        "billing_cycle": user.get("stripe_billing_cycle"),
+        "trial_active": trial["trial_active"],
+        "trial_days_left": trial["trial_days_left"],
+        "trial_ends_at": trial["trial_ends_at"],
+        "email_verified": users_service.is_email_verified(user),
+        "legacy_env": False,
+    }
+
+
+def require_min_tier(min_tier: str):
+    """Factory de dépendance FastAPI : 403 si le user courant a un tier
+    inférieur à min_tier.
+
+    Utilise le tier EFFECTIF (gère l'expiration du trial de 14j) ; users
+    legacy env (user_id=None) sont traités comme premium (admin).
+    """
+
+    def _dep(ctx: AuthContext = Depends(auth_context)) -> AuthContext:
+        if ctx.user_id is None:
+            return ctx  # env legacy = accès total
+        user = users_service.get_user_by_id(ctx.user_id)
+        if not users_service.has_min_tier(users_service.effective_tier(user), min_tier):
+            raise HTTPException(
+                status_code=403,
+                detail=f"Cette fonctionnalité nécessite le tier {min_tier} ou supérieur",
+            )
+        return ctx
+
+    return _dep
+
+
+def _tier_of(ctx: AuthContext) -> str:
+    """Retourne le tier EFFECTIF du user (applique l'expiration du trial).
+
+    'premium' pour les users legacy env.
+    """
+    if ctx.user_id is None:
+        return "premium"
+    user = users_service.get_user_by_id(ctx.user_id)
+    return users_service.effective_tier(user)
+
+
+def _is_admin(ctx: AuthContext) -> bool:
+    """True si le user courant est dans la whitelist admin ou legacy env."""
+    if ctx.user_id is None:
+        # Users env legacy = admin historique, passent toutes les gates.
+        return True
+    return (ctx.username or "").lower() in ADMIN_EMAILS
+
+
+def require_admin(ctx: AuthContext = Depends(auth_context)) -> AuthContext:
+    """Dep FastAPI : 403 si le user courant n'est pas dans ADMIN_EMAILS."""
+    if not _is_admin(ctx):
+        raise HTTPException(status_code=403, detail="Accès admin requis")
+    return ctx
+
+
+# ─── SaaS : Stripe checkout / webhook / portal (Chantier 5) ─────────
+@app.post("/api/stripe/checkout")
+@limiter.limit("20/hour")
+async def api_stripe_checkout(
+    request: Request,
+    payload: dict,
+    ctx: AuthContext = Depends(auth_context),
+):
+    """Crée une Checkout Session Stripe pour upgrade.
+
+    Body : {tier: 'pro'|'premium', billing_cycle?: 'monthly'|'yearly'}.
+    billing_cycle default = 'monthly'.
+
+    Nécessite email_verified=true (anti-fraude : on s'assure que l'user
+    contrôle bien son email avant de lui facturer quoi que ce soit).
+    """
+    if not STRIPE_ENABLED:
+        raise HTTPException(status_code=503, detail="Stripe désactivé")
+    if ctx.user_id is None:
+        raise HTTPException(status_code=400, detail="user legacy env, pas de checkout")
+    user_for_verif = users_service.get_user_by_id(ctx.user_id)
+    if not users_service.is_email_verified(user_for_verif):
+        raise HTTPException(
+            status_code=403,
+            detail="Vérifie ton email avant d'accéder au paiement",
+        )
+    tier = (payload or {}).get("tier")
+    if tier not in ("pro", "premium"):
+        raise HTTPException(status_code=400, detail="tier invalide (pro|premium)")
+    billing_cycle = (payload or {}).get("billing_cycle", "monthly")
+    if billing_cycle not in ("monthly", "yearly"):
+        raise HTTPException(
+            status_code=400, detail="billing_cycle invalide (monthly|yearly)"
+        )
+
+    user = users_service.get_user_by_id(ctx.user_id) or {}
+    from backend.services import stripe_service
+
+    try:
+        url = stripe_service.create_checkout_session(
+            user_id=ctx.user_id,
+            user_email=user.get("email", ""),
+            tier=tier,
+            billing_cycle=billing_cycle,
+            existing_customer_id=user.get("stripe_customer_id"),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("Stripe checkout a échoué")
+        raise HTTPException(status_code=502, detail=f"Stripe : {str(e)[:200]}")
+    return {"url": url}
+
+
+@app.post("/api/stripe/portal")
+@limiter.limit("30/hour")
+async def api_stripe_portal(request: Request, ctx: AuthContext = Depends(auth_context)):
+    """URL Customer Portal Stripe (gestion sub, cartes, factures)."""
+    if not STRIPE_ENABLED:
+        raise HTTPException(status_code=503, detail="Stripe désactivé")
+    if ctx.user_id is None:
+        raise HTTPException(status_code=400, detail="user legacy env, pas de portal")
+    user = users_service.get_user_by_id(ctx.user_id) or {}
+    customer_id = user.get("stripe_customer_id")
+    if not customer_id:
+        raise HTTPException(status_code=400, detail="Pas de customer Stripe — checkout d'abord")
+    from backend.services import stripe_service
+    from config.settings import STRIPE_CANCEL_URL
+
+    try:
+        url = stripe_service.create_portal_session(customer_id, return_url=STRIPE_CANCEL_URL)
+    except Exception as e:
+        logger.exception("Stripe portal a échoué")
+        raise HTTPException(status_code=502, detail=f"Stripe : {str(e)[:200]}")
+    return {"url": url}
+
+
+@app.post("/api/stripe/webhook")
+async def api_stripe_webhook(request: Request):
+    """Webhook Stripe pour subscription events. Signature vérifiée.
+
+    Public (pas d'auth_context) — Stripe pousse depuis ses serveurs. La
+    sécurité repose sur la signature HMAC (STRIPE_WEBHOOK_SECRET).
+    """
+    if not STRIPE_ENABLED:
+        raise HTTPException(status_code=503, detail="Stripe désactivé")
+    payload = await request.body()
+    sig_header = request.headers.get("Stripe-Signature", "")
+    from backend.services import stripe_service
+
+    try:
+        result = stripe_service.handle_webhook(payload, sig_header)
+    except stripe_service.stripe.error.SignatureVerificationError:  # type: ignore[attr-defined]
+        raise HTTPException(status_code=400, detail="Signature Stripe invalide")
+    except Exception as e:
+        logger.exception("Webhook Stripe a échoué")
+        raise HTTPException(status_code=400, detail=str(e)[:200])
+    return {"ok": True, **result}
+
+
+# ─── SaaS Admin backoffice (Chantier 12) ────────────────────────────
+@app.get("/api/admin/users")
+async def api_admin_users(_ctx: AuthContext = Depends(require_admin)):
+    """Liste de tous les users + KPIs résumés pour le dashboard /admin.
+
+    KPIs calculés :
+    - total_users, active_users (is_active=1)
+    - signups_7d, signups_30d
+    - trials_active, trials_j3_or_less
+    - paying_users par tier
+    - mrr_eur (revenu mensuel récurrent estimé, basé tier + cycle)
+
+    Les MRR Yearly sont divisés par 12 pour le ramener à un équivalent mensuel.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    users = users_service.list_all_users()
+    now = datetime.now(timezone.utc)
+    d7 = now - timedelta(days=7)
+    d30 = now - timedelta(days=30)
+
+    def _parse(iso: str | None):
+        if not iso:
+            return None
+        try:
+            return datetime.fromisoformat(iso.replace("Z", "+00:00"))
+        except (ValueError, AttributeError):
+            return None
+
+    # Tarifs de référence (source = spec SaaS). Si yearly, /12 pour MRR equivalent.
+    PRICING = {
+        ("pro", "monthly"): 19.0,
+        ("pro", "yearly"): 190.0 / 12,
+        ("premium", "monthly"): 39.0,
+        ("premium", "yearly"): 390.0 / 12,
+    }
+
+    signups_7d = 0
+    signups_30d = 0
+    trials_active = 0
+    trials_j3_or_less = 0
+    by_tier: dict[str, int] = {"free": 0, "pro": 0, "premium": 0}
+    mrr = 0.0
+    enriched: list[dict] = []
+
+    for u in users:
+        created = _parse(u.get("created_at"))
+        if created:
+            if created > d7:
+                signups_7d += 1
+            if created > d30:
+                signups_30d += 1
+
+        trial = users_service.trial_status(u)
+        if trial["trial_active"]:
+            trials_active += 1
+            if (trial["trial_days_left"] or 0) <= 3:
+                trials_j3_or_less += 1
+
+        eff = users_service.effective_tier(u)
+        by_tier[eff] = by_tier.get(eff, 0) + 1
+
+        if u.get("stripe_subscription_id") and eff in ("pro", "premium"):
+            cycle = u.get("stripe_billing_cycle") or "monthly"
+            mrr += PRICING.get((eff, cycle), 0.0)
+
+        enriched.append({
+            "id": u["id"],
+            "email": u["email"],
+            "tier_stored": u.get("tier"),
+            "tier_effective": eff,
+            "billing_cycle": u.get("stripe_billing_cycle"),
+            "trial_active": trial["trial_active"],
+            "trial_days_left": trial["trial_days_left"],
+            "trial_ends_at": trial["trial_ends_at"],
+            "stripe_customer_set": bool(u.get("stripe_customer_id")),
+            "stripe_subscription_set": bool(u.get("stripe_subscription_id")),
+            "created_at": u.get("created_at"),
+            "last_login_at": u.get("last_login_at"),
+            "is_active": bool(u.get("is_active")),
+        })
+
+    return {
+        "totals": {
+            "total_users": len(users),
+            "active_users": sum(1 for u in users if u.get("is_active")),
+            "signups_7d": signups_7d,
+            "signups_30d": signups_30d,
+            "trials_active": trials_active,
+            "trials_j3_or_less": trials_j3_or_less,
+            "by_tier": by_tier,
+            "mrr_eur": round(mrr, 2),
+        },
+        "users": enriched,
+    }
+
+
+# ─── SaaS : onboarding utilisateur (Chantier 4) ─────────────────────
+@app.get("/api/user/onboarding-status")
+async def api_onboarding_status(ctx: AuthContext = Depends(auth_context)):
+    """État d'onboarding du user courant.
+
+    Le front utilise cette info pour rediriger vers /v2/onboarding si
+    needs_onboarding=true. Les users env legacy (user_id=None) n'ont pas
+    besoin d'onboarding (config globale via env), on renvoie needs=false.
+    """
+    if ctx.user_id is None:
+        return {"has_broker": True, "has_pairs": True, "needs_onboarding": False}
+    return users_service.is_onboarding_complete(ctx.user_id)
+
+
+@app.get("/api/user/broker")
+async def api_user_broker_get(ctx: AuthContext = Depends(auth_context)):
+    """Retourne la config broker du user (sans exposer l'API key)."""
+    if ctx.user_id is None:
+        raise HTTPException(status_code=400, detail="user legacy env, pas de broker_config DB")
+    cfg = users_service.get_broker_config(ctx.user_id)
+    return {
+        "bridge_url": cfg.get("bridge_url", ""),
+        "broker_name": cfg.get("broker_name", ""),
+        "api_key_set": bool(cfg.get("bridge_api_key")),
+    }
+
+
+@app.put("/api/user/broker")
+async def api_user_broker_put(
+    payload: dict,
+    ctx: AuthContext = Depends(auth_context),
+):
+    """Persiste la config broker. Body : {bridge_url, bridge_api_key, broker_name?}."""
+    if ctx.user_id is None:
+        raise HTTPException(status_code=400, detail="user legacy env, edit via env .env")
+    try:
+        users_service.update_broker_config(
+            ctx.user_id,
+            bridge_url=payload.get("bridge_url", ""),
+            bridge_api_key=payload.get("bridge_api_key", ""),
+            broker_name=payload.get("broker_name"),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True}
+
+
+@app.post("/api/user/broker/test")
+async def api_user_broker_test(payload: dict, _ctx: AuthContext = Depends(auth_context)):
+    """Teste la connexion à un bridge arbitraire (depuis l'onboarding wizard).
+
+    Body : {bridge_url, bridge_api_key}. Fait GET {bridge_url}/health avec
+    X-API-Key. Timeout court 3s.
+
+    Note sécurité : endpoint authentifié (ctx requis). Users payants seulement
+    plus tard via gating tier.
+    """
+    import httpx
+
+    bridge_url = (payload or {}).get("bridge_url", "").rstrip("/")
+    api_key = (payload or {}).get("bridge_api_key", "")
+    if not bridge_url or "://" not in bridge_url:
+        raise HTTPException(status_code=400, detail="bridge_url invalide")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="bridge_api_key requis")
+
+    url = bridge_url + "/health"
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            r = await client.get(url, headers={"X-API-Key": api_key})
+            if r.status_code == 200:
+                try:
+                    return {"ok": True, "reachable": True, **r.json()}
+                except Exception:
+                    return {"ok": True, "reachable": True}
+            return {
+                "ok": False,
+                "reachable": True,
+                "status": r.status_code,
+                "error": f"Bridge a répondu {r.status_code}",
+            }
+    except httpx.HTTPError as e:
+        return {"ok": False, "reachable": False, "error": str(e)[:200]}
+
+
+@app.get("/api/user/watched-pairs")
+async def api_user_watched_pairs_get(ctx: AuthContext = Depends(auth_context)):
+    if ctx.user_id is None:
+        # Env user : renvoie la WATCHED_PAIRS globale.
+        from config.settings import WATCHED_PAIRS
+        return {"pairs": list(WATCHED_PAIRS), "cap": len(WATCHED_PAIRS), "tier": "legacy"}
+    pairs = users_service.get_watched_pairs(ctx.user_id)
+    user = users_service.get_user_by_id(ctx.user_id) or {}
+    tier = user.get("tier", "free")
+    cap = users_service.MAX_PAIRS_PER_TIER.get(tier, 1)
+    return {"pairs": pairs, "cap": cap, "tier": tier}
+
+
+@app.put("/api/user/watched-pairs")
+async def api_user_watched_pairs_put(
+    payload: dict,
+    ctx: AuthContext = Depends(auth_context),
+):
+    if ctx.user_id is None:
+        raise HTTPException(status_code=400, detail="user legacy env, edit via env .env")
+    pairs = payload.get("pairs")
+    if not isinstance(pairs, list):
+        raise HTTPException(status_code=400, detail="pairs doit être une liste")
+    try:
+        saved = users_service.update_watched_pairs(ctx.user_id, pairs)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True, "pairs": saved}
+
+
+# ─── SaaS : signup self-service (gated par SAAS_SIGNUP_ENABLED) ─────
+# Chantier 1 : l'endpoint existe pour tests locaux mais reste OFF en prod
+# tant que le parcours login UI + data isolation (chantiers 2-3) ne sont
+# pas livrés. On renvoie 404 si désactivé pour ne pas exposer l'API.
+@app.post("/api/auth/forgot-password")
+@limiter.limit("3/hour")
+async def api_forgot_password(request: Request, payload: dict):
+    """Génère un token de reset + envoie email. Répond 200 dans TOUS les cas
+    pour éviter l'énumération d'emails existants.
+    """
+    email = ((payload or {}).get("email") or "").strip()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="email invalide")
+    token = users_service.request_password_reset(email)
+    if token:
+        try:
+            from backend.services import user_email_service
+
+            user_email_service.send_password_reset(email, token)
+        except Exception:
+            logger.exception("send_password_reset a échoué pour %s", email)
+    # Réponse identique dans les 2 cas (user existe ou pas).
+    return {"ok": True}
+
+
+@app.post("/api/auth/reset-password")
+@limiter.limit("10/hour")
+async def api_reset_password(request: Request, payload: dict):
+    """Consomme un token de reset + fixe le nouveau password.
+    400 si token invalide/expiré ou password trop court.
+    """
+    token = ((payload or {}).get("token") or "").strip()
+    new_password = (payload or {}).get("new_password", "")
+    if not token:
+        raise HTTPException(status_code=400, detail="token requis")
+    try:
+        success = users_service.consume_reset_token(token, new_password)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not success:
+        raise HTTPException(status_code=400, detail="Lien invalide ou expiré")
+    return {"ok": True}
+
+
+@app.post("/api/auth/signup")
+@limiter.limit("5/hour")
+async def api_signup(request: Request, payload: dict):
+    email = (payload or {}).get("email", "")
+    # Gate : soit le signup public est ouvert (SAAS_SIGNUP_ENABLED=true),
+    # soit l'email appartient à la whitelist d'emails de test autorisés
+    # pendant la beta fermée (SIGNUP_WHITELIST). Le check whitelist se fait
+    # sur l'email fourni, ce qui permet à l'admin de tester le vrai funnel
+    # UI avec des alias Gmail (`+test1`, `+test2`, ...) sans rouvrir
+    # l'inscription au public.
+    if not SAAS_SIGNUP_ENABLED and not email_in_whitelist(email):
+        raise HTTPException(status_code=404)
+    password = (payload or {}).get("password", "")
+    accepted_terms = bool((payload or {}).get("accepted_terms", False))
+    if not email or not password:
+        raise HTTPException(status_code=400, detail="email et password requis")
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="password trop court (min 8)")
+    # Obligation légale UE : consentement explicite aux CGU/CGV/Privacy
+    # avant toute création de compte facturable. Preuve stockée en DB
+    # (terms_accepted_at + terms_version).
+    if not accepted_terms:
+        raise HTTPException(
+            status_code=400,
+            detail="Vous devez accepter les CGU, CGV et la politique de confidentialité",
+        )
+    # Chantier 9 SaaS : 14 jours de trial Pro à l'inscription, sans CB.
+    try:
+        uid = users_service.create_user(
+            email,
+            password,
+            tier=users_service.SIGNUP_TRIAL_TIER,
+            trial_ends_at=users_service.new_trial_end_iso(),
+            terms_version=users_service.TERMS_CURRENT_VERSION,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    # Pivot zero-friction (2026-04-23) : on pré-sélectionne les paires
+    # populaires pour que l'user atterrisse direct sur le dashboard sans
+    # passer par un formulaire d'onboarding. Il peut customiser ensuite
+    # depuis /settings.
+    try:
+        users_service.update_watched_pairs(
+            uid,
+            users_service.default_pairs_for_tier(users_service.SIGNUP_TRIAL_TIER),
+        )
+    except Exception:
+        logger.exception("Pré-sélection pairs par défaut a échoué pour uid=%s", uid)
+    logger.info(
+        "SaaS signup : user id=%s email=%s trial=%dj",
+        uid, email, users_service.SIGNUP_TRIAL_DAYS,
+    )
+    # Welcome + verification emails. Si SMTP pas configuré, on marque le user
+    # comme verified direct (sinon il serait bloqué sans pouvoir cliquer un
+    # lien jamais envoyé).
+    try:
+        from backend.services import user_email_service
+
+        if not user_email_service.is_configured():
+            users_service.mark_email_auto_verified(uid)
+        else:
+            user_email_service.send_welcome(email, trial_days=users_service.SIGNUP_TRIAL_DAYS)
+            verif_token = users_service.generate_email_verification_token(uid)
+            user_email_service.send_email_verification(email, verif_token)
+    except Exception:
+        logger.exception("envoi emails signup a échoué pour %s", email)
+        # Fallback sûr : marque verified pour ne pas bloquer l'user.
+        try:
+            users_service.mark_email_auto_verified(uid)
+        except Exception:
+            pass
+    return {"ok": True, "user_id": uid, "trial_days": users_service.SIGNUP_TRIAL_DAYS}
+
+
+@app.post("/api/auth/verify-email")
+@limiter.limit("20/hour")
+async def api_verify_email(request: Request, payload: dict):
+    """Consomme un token de vérification email. Idempotent : si déjà
+    vérifié, 200 pour UX simple."""
+    token = ((payload or {}).get("token") or "").strip()
+    if not token:
+        raise HTTPException(status_code=400, detail="token requis")
+    user_id = users_service.verify_email_token(token)
+    if user_id is None:
+        raise HTTPException(status_code=400, detail="Lien invalide")
+    return {"ok": True, "user_id": user_id}
+
+
+@app.post("/api/user/change-password")
+@limiter.limit("5/hour")
+async def api_change_password(
+    request: Request,
+    payload: dict,
+    ctx: AuthContext = Depends(auth_context),
+):
+    """Change le password du user courant. Requiert le password actuel."""
+    if ctx.user_id is None:
+        raise HTTPException(status_code=400, detail="user legacy env, edit via .env")
+    current = (payload or {}).get("current_password", "")
+    new_password = (payload or {}).get("new_password", "")
+    try:
+        ok = users_service.change_password(ctx.user_id, current, new_password)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not ok:
+        raise HTTPException(status_code=400, detail="Mot de passe actuel incorrect")
+    return {"ok": True}
+
+
+@app.delete("/api/user/account")
+@limiter.limit("3/hour")
+async def api_delete_account(
+    request: Request,
+    payload: dict,
+    response: Response,
+    ctx: AuthContext = Depends(auth_context),
+):
+    """Suppression RGPD du compte user courant : anonymise en DB + logout.
+
+    Requiert `current_password` dans le body pour confirmer l'intention.
+    """
+    if ctx.user_id is None:
+        raise HTTPException(status_code=400, detail="user legacy env, non supprimable")
+    current = (payload or {}).get("current_password", "")
+    if not current:
+        raise HTTPException(status_code=400, detail="current_password requis")
+    ok = users_service.delete_account(ctx.user_id, current)
+    if not ok:
+        raise HTTPException(status_code=400, detail="Mot de passe incorrect")
+    # Invalide la session + cookie après anonymisation.
+    logout_and_clear_cookie(request, response)
+    return {"ok": True, "deleted": True}
+
+
+@app.post("/api/auth/resend-verification")
+@limiter.limit("3/hour")
+async def api_resend_verification(
+    request: Request,
+    ctx: AuthContext = Depends(auth_context),
+):
+    """Renvoie le lien de vérification pour l'utilisateur courant."""
+    if ctx.user_id is None:
+        raise HTTPException(status_code=400, detail="user legacy env, déjà vérifié")
+    user = users_service.get_user_by_id(ctx.user_id)
+    if not user:
+        raise HTTPException(status_code=404)
+    if users_service.is_email_verified(user):
+        return {"ok": True, "already_verified": True}
+    from backend.services import user_email_service
+
+    if not user_email_service.is_configured():
+        raise HTTPException(status_code=503, detail="SMTP non configuré")
+    token = users_service.generate_email_verification_token(ctx.user_id)
+    try:
+        user_email_service.send_email_verification(user["email"], token)
+    except Exception:
+        logger.exception("resend verification a échoué pour uid=%s", ctx.user_id)
+        raise HTTPException(status_code=502, detail="Envoi impossible")
+    return {"ok": True}
+
+
+@app.get("/api/config")
+async def api_public_config():
+    """Config publique pour le frontend (pas d'auth requise).
+
+    Expose uniquement des flags d'UI safe à divulguer (pas de secrets).
+    """
+    return {
+        "signup_enabled": bool(SAAS_SIGNUP_ENABLED),
+    }
 
 
 @app.get("/login", include_in_schema=False)
@@ -171,7 +809,7 @@ async def debug_macro(_=Depends(verify_credentials)):
 @app.get("/api/insights/performance")
 async def api_insights_performance(
     since: str | None = None,
-    _=Depends(verify_credentials),
+    ctx: AuthContext = Depends(auth_context),
 ):
     """Agrégat de performance des trades auto (is_auto=1, CLOSED).
 
@@ -183,7 +821,10 @@ async def api_insights_performance(
     du veto macro.
     """
     from backend.services import insights_service
-    return insights_service.get_performance(since_iso=since)
+    since = users_service.clamp_since_iso(since, _tier_of(ctx))
+    return insights_service.get_performance(
+        since_iso=since, user=ctx.username, user_id=ctx.user_id
+    )
 
 
 @app.get("/api/insights/period-stats")
@@ -191,7 +832,7 @@ async def api_insights_period_stats(
     period: str | None = None,
     since: str | None = None,
     until: str | None = None,
-    _=Depends(verify_credentials),
+    ctx: AuthContext = Depends(auth_context),
 ):
     """Métriques consolidées par période.
 
@@ -209,18 +850,31 @@ async def api_insights_period_stats(
     if since or until:
         if not (since and until):
             raise HTTPException(status_code=400, detail="since et until requis ensemble")
-        return insights_service.get_period_stats_range(since=since, until=until)
+        # Clamp custom range pour tier free (Free = 7 jours max).
+        since = users_service.clamp_since_iso(since, _tier_of(ctx))
+        return insights_service.get_period_stats_range(
+            since=since, until=until, user=ctx.username, user_id=ctx.user_id
+        )
 
     period = period or "day"
     if period not in {"day", "week", "month", "year", "all"}:
         raise HTTPException(status_code=400, detail="period invalide (day|week|month|year|all)")
-    return insights_service.get_period_stats(period=period)
+    # Free : bloque les presets au-delà de 7 jours (week max côté cap 7j).
+    tier = _tier_of(ctx)
+    if tier == "free" and period in {"month", "year", "all"}:
+        raise HTTPException(
+            status_code=403,
+            detail="Périodes > 7j nécessitent le tier Pro",
+        )
+    return insights_service.get_period_stats(
+        period=period, user=ctx.username, user_id=ctx.user_id
+    )
 
 
 @app.get("/api/insights/equity-curve")
 async def api_insights_equity_curve(
     since: str | None = None,
-    _=Depends(verify_credentials),
+    ctx: AuthContext = Depends(auth_context),
 ):
     """Série temporelle du PnL cumulé (auto trades CLOSED, ordre chronologique).
 
@@ -231,7 +885,10 @@ async def api_insights_equity_curve(
               total_trades, final_pnl, since}.
     """
     from backend.services import insights_service
-    return insights_service.get_equity_curve(since_iso=since)
+    since = users_service.clamp_since_iso(since, _tier_of(ctx))
+    return insights_service.get_equity_curve(
+        since_iso=since, user=ctx.username, user_id=ctx.user_id
+    )
 
 
 @app.get("/api/insights/exposure-timeseries")
@@ -239,7 +896,7 @@ async def api_insights_exposure_timeseries(
     since: str,
     until: str,
     granularity: str = "auto",
-    _=Depends(verify_credentials),
+    ctx: AuthContext = Depends(auth_context),
 ):
     """Capital à risque (€) et nb de positions ouvertes dans le temps.
 
@@ -252,9 +909,11 @@ async def api_insights_exposure_timeseries(
     from backend.services import insights_service
     if granularity not in {"5min", "hour", "day", "month", "auto"}:
         raise HTTPException(status_code=400, detail="granularity invalide")
+    since = users_service.clamp_since_iso(since, _tier_of(ctx))
     try:
         return insights_service.get_exposure_timeseries(
-            since=since, until=until, granularity=granularity
+            since=since, until=until, granularity=granularity,
+            user=ctx.username, user_id=ctx.user_id,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -274,15 +933,20 @@ async def api_broker_account(_=Depends(verify_credentials)):
 async def api_insights_rejections(
     since: str,
     until: str,
-    _=Depends(verify_credentials),
+    ctx: AuthContext = Depends(require_min_tier("pro")),
 ):
     """Agrégat des rejections d'ordres auto-exec sur la période.
 
     Retourne by_reason (barres), by_hour_utc (timeline) et by_reason_hour
-    (heatmap) pour la RejectionsCard du cockpit.
+    (heatmap) pour la RejectionsCard du cockpit. Scopé par user_id
+    (Chantier 3D) : un user ne voit que ses propres rejections.
+
+    Feature Pro+ (Chantier 6 gating).
     """
     from backend.services import rejection_service
-    return rejection_service.get_rejections(since=since, until=until)
+    return rejection_service.get_rejections(
+        since=since, until=until, user_id=ctx.user_id
+    )
 
 
 @app.get("/api/insights/pnl-buckets")
@@ -290,7 +954,7 @@ async def api_insights_pnl_buckets(
     since: str,
     until: str,
     granularity: str = "auto",
-    _=Depends(verify_credentials),
+    ctx: AuthContext = Depends(auth_context),
 ):
     """Série temporelle bucketisée du PnL pour le graph de la carte Performance.
 
@@ -308,8 +972,12 @@ async def api_insights_pnl_buckets(
             status_code=400,
             detail="granularity invalide (5min|hour|day|month|auto)",
         )
+    since = users_service.clamp_since_iso(since, _tier_of(ctx))
     try:
-        return insights_service.get_pnl_buckets(since=since, until=until, granularity=granularity)
+        return insights_service.get_pnl_buckets(
+            since=since, until=until, granularity=granularity,
+            user=ctx.username, user_id=ctx.user_id,
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -418,9 +1086,11 @@ async def debug_smoke_test(_=Depends(verify_credentials)):
 
 
 @app.get("/api/risk")
-async def risk_dashboard(user: str = Depends(verify_credentials)):
+async def risk_dashboard(ctx: AuthContext = Depends(auth_context)):
     """Risque cumule sur les positions ouvertes."""
-    open_trades = trade_log_service.list_trades(status="OPEN", user=user)
+    open_trades = trade_log_service.list_trades(
+        status="OPEN", user=ctx.username, user_id=ctx.user_id
+    )
     total_risk = 0.0
     rows = []
     for t in open_trades:
@@ -445,11 +1115,13 @@ async def risk_dashboard(user: str = Depends(verify_credentials)):
 
 
 @app.get("/api/equity")
-async def equity_curve(user: str = Depends(verify_credentials)):
+async def equity_curve(ctx: AuthContext = Depends(auth_context)):
     """Courbe d'equity quotidienne calculee depuis l'historique des trades."""
     from collections import defaultdict
     from config.settings import TRADING_CAPITAL
-    trades = trade_log_service.list_trades(status="CLOSED", limit=1000, user=user)
+    trades = trade_log_service.list_trades(
+        status="CLOSED", limit=1000, user=ctx.username, user_id=ctx.user_id
+    )
     by_day = defaultdict(float)
     for t in trades:
         if t.get("closed_at"):
@@ -465,12 +1137,15 @@ async def equity_curve(user: str = Depends(verify_credentials)):
 
 
 @app.get("/api/trades.csv")
-async def trades_csv(user: str = Depends(verify_credentials)):
+async def trades_csv(ctx: AuthContext = Depends(auth_context)):
     """Export CSV de l'historique des trades de l'utilisateur."""
     import io
     import csv
     from fastapi.responses import StreamingResponse
-    trades = trade_log_service.list_trades(limit=10000, user=user)
+    trades = trade_log_service.list_trades(
+        limit=10000, user=ctx.username, user_id=ctx.user_id
+    )
+    user = ctx.username
     output = io.StringIO()
     if trades:
         fieldnames = list(trades[0].keys())
@@ -487,11 +1162,13 @@ async def trades_csv(user: str = Depends(verify_credentials)):
 
 
 @app.get("/api/stats/combos")
-async def stats_combos(user: str = Depends(verify_credentials)):
+async def stats_combos(ctx: AuthContext = Depends(auth_context)):
     """Win rate par combinaison (pattern + paire). Necessite un historique
     de trades clotures pour etre pertinent."""
     from collections import defaultdict
-    trades = trade_log_service.list_trades(status="CLOSED", limit=1000, user=user)
+    trades = trade_log_service.list_trades(
+        status="CLOSED", limit=1000, user=ctx.username, user_id=ctx.user_id
+    )
     combos: dict[tuple[str, str], dict] = defaultdict(lambda: {"wins": 0, "losses": 0, "total_pnl": 0.0})
     for t in trades:
         key = (t.get("signal_pattern") or "unknown", t.get("pair"))
@@ -515,9 +1192,11 @@ async def stats_combos(user: str = Depends(verify_credentials)):
 
 
 @app.get("/api/stats/mistakes")
-async def stats_mistakes(user: str = Depends(verify_credentials)):
+async def stats_mistakes(ctx: AuthContext = Depends(auth_context)):
     """Detection d'erreurs : trades pris sans checklist + trades sans SL/TP poses."""
-    trades = trade_log_service.list_trades(limit=500, user=user)
+    trades = trade_log_service.list_trades(
+        limit=500, user=ctx.username, user_id=ctx.user_id
+    )
     no_checklist = [t for t in trades if not t.get("checklist_passed")]
     no_sl_in_mt5 = [t for t in trades if not t.get("post_entry_sl")]
     no_tp_in_mt5 = [t for t in trades if not t.get("post_entry_tp")]
@@ -548,6 +1227,10 @@ async def stats_mistakes(user: str = Depends(verify_credentials)):
 # Serve static files
 app.mount("/css", StaticFiles(directory=str(FRONTEND_DIR / "css")), name="css")
 app.mount("/js", StaticFiles(directory=str(FRONTEND_DIR / "js")), name="js")
+# Docs publiques (guide install bridge, FAQ…) — accessible sans auth.
+_DOCS_DIR = FRONTEND_DIR / "docs"
+if _DOCS_DIR.exists():
+    app.mount("/docs", StaticFiles(directory=str(_DOCS_DIR), html=True), name="docs")
 
 # SPA React V2 (coexiste avec l'ancien frontend servi sur /)
 from pathlib import Path as _PathV2
@@ -834,12 +1517,18 @@ async def get_all_candles(_=Depends(verify_credentials)):
 
 
 @app.get("/api/trades")
-async def list_trades(status: str | None = None, limit: int = 100, user: str = Depends(verify_credentials)):
-    return trade_log_service.list_trades(status=status, limit=limit, user=user)
+async def list_trades(
+    status: str | None = None,
+    limit: int = 100,
+    ctx: AuthContext = Depends(auth_context),
+):
+    return trade_log_service.list_trades(
+        status=status, limit=limit, user=ctx.username, user_id=ctx.user_id
+    )
 
 
 @app.get("/api/cockpit")
-async def cockpit(user: str = Depends(verify_credentials)):
+async def cockpit(ctx: AuthContext = Depends(auth_context)):
     """Snapshot consolidé pour la homepage "tour de contrôle".
 
     Regroupe en un seul appel : trades actifs (PnL temps réel), setups en
@@ -847,19 +1536,19 @@ async def cockpit(user: str = Depends(verify_credentials)):
     et alertes. Voir backend/services/cockpit_service.py.
     """
     from backend.services.cockpit_service import build_cockpit
-    return await build_cockpit(user)
+    return await build_cockpit(ctx.username, user_id=ctx.user_id)
 
 
 @app.get("/api/analytics")
-async def analytics(_=Depends(verify_credentials)):
+async def analytics(ctx: AuthContext = Depends(auth_context)):
     """Breakdowns du win rate par features : pair, hour, pattern, confidence,
     asset_class, risk_regime. Inclut la qualité d'exécution (slippage,
-    close_reason). Voir backend/services/analytics_service.py.
+    close_reason) scopée sur les trades de l'utilisateur courant.
 
     Utile pour piloter le modèle : quels instruments retirer, quelles
     heures éviter, si le confidence_score est calibré."""
     from backend.services.analytics_service import build_analytics
-    return build_analytics()
+    return build_analytics(user=ctx.username, user_id=ctx.user_id)
 
 
 @app.get("/api/drift")
@@ -992,13 +1681,15 @@ async def kill_switch_set(payload: dict, _=Depends(verify_credentials)):
 
 
 @app.get("/api/daily-status")
-async def daily_status(user: str = Depends(verify_credentials)):
+async def daily_status(ctx: AuthContext = Depends(auth_context)):
     """Statut journalier : PnL, nb trades, mode silencieux."""
-    status = trade_log_service.get_daily_status(user=user)
-    open_trades = trade_log_service.list_trades(status="OPEN", user=user)
+    status = trade_log_service.get_daily_status(user=ctx.username, user_id=ctx.user_id)
+    open_trades = trade_log_service.list_trades(
+        status="OPEN", user=ctx.username, user_id=ctx.user_id
+    )
     status["open_trades"] = open_trades
-    status["username"] = user
-    status["display_name"] = display_name_for(user)
+    status["username"] = ctx.username
+    status["display_name"] = display_name_for(ctx.username)
     return status
 
 
@@ -1011,14 +1702,17 @@ async def toggle_silent_mode(payload: dict, user: str = Depends(verify_credentia
 
 
 @app.get("/api/backtest/stats")
-async def get_backtest_stats(_=Depends(verify_credentials)):
-    """Statistiques globales des signaux backtestes."""
+async def get_backtest_stats(_ctx: AuthContext = Depends(require_min_tier("premium"))):
+    """Statistiques globales des signaux backtestes (Premium)."""
     return backtest_service.get_stats()
 
 
 @app.get("/api/backtest/trades")
-async def get_backtest_trades(limit: int = 50, _=Depends(verify_credentials)):
-    """Historique des trades backtestes."""
+async def get_backtest_trades(
+    limit: int = 50,
+    _ctx: AuthContext = Depends(require_min_tier("premium")),
+):
+    """Historique des trades backtestes (Premium)."""
     return backtest_service.get_recent_trades(limit=limit)
 
 

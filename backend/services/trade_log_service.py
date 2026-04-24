@@ -138,35 +138,62 @@ def _conn():
         conn.close()
 
 
-def list_trades(status: str | None = None, limit: int = 100, user: str = "anonymous") -> list[dict]:
+def _scope_clause(user: str, user_id: int | None) -> tuple[str, tuple]:
+    """Chantier 3 SaaS : retourne (SQL fragment, params) pour scoper par user.
+
+    - Si `user_id` est fourni (user DB) : scope par colonne `user_id` (exact,
+      isolation multi-tenant garantie).
+    - Sinon (user env legacy) : scope par colonne `user` TEXT (back-compat).
+
+    Garde invariable : une seule des deux colonnes est interrogée, évite les
+    OR ambigus.
+    """
+    if user_id is not None:
+        return "user_id = ?", (user_id,)
+    return "user = ?", (user,)
+
+
+def list_trades(
+    status: str | None = None,
+    limit: int = 100,
+    user: str = "anonymous",
+    user_id: int | None = None,
+) -> list[dict]:
     _init_schema()
+    scope_sql, scope_params = _scope_clause(user, user_id)
     with _conn() as c:
         if status:
             rows = c.execute(
-                "SELECT * FROM personal_trades WHERE user=? AND status=? "
+                f"SELECT * FROM personal_trades WHERE {scope_sql} AND status=? "
                 "ORDER BY created_at DESC LIMIT ?",
-                (user, status, limit),
+                (*scope_params, status, limit),
             ).fetchall()
         else:
             rows = c.execute(
-                "SELECT * FROM personal_trades WHERE user=? "
+                f"SELECT * FROM personal_trades WHERE {scope_sql} "
                 "ORDER BY created_at DESC LIMIT ?",
-                (user, limit),
+                (*scope_params, limit),
             ).fetchall()
         return [dict(r) for r in rows]
 
 
-def get_trade(trade_id: int, user: str = "anonymous") -> dict | None:
+def get_trade(
+    trade_id: int,
+    user: str = "anonymous",
+    user_id: int | None = None,
+) -> dict | None:
     _init_schema()
+    scope_sql, scope_params = _scope_clause(user, user_id)
     with _conn() as c:
         row = c.execute(
-            "SELECT * FROM personal_trades WHERE id=? AND user=?", (trade_id, user)
+            f"SELECT * FROM personal_trades WHERE id=? AND {scope_sql}",
+            (trade_id, *scope_params),
         ).fetchone()
         return dict(row) if row else None
 
 
-def get_daily_status(user: str = "anonymous") -> dict:
-    """Stats du jour pour `user`.
+def get_daily_status(user: str = "anonymous", user_id: int | None = None) -> dict:
+    """Stats du jour pour `user` (ou `user_id` si fourni, préféré).
 
     Retourne :
     - silent_mode : ON/OFF selon le choix manuel du user (source unique de verite)
@@ -174,11 +201,12 @@ def get_daily_status(user: str = "anonymous") -> dict:
     """
     _init_schema()
     today_iso = date.today().isoformat()
+    scope_sql, scope_params = _scope_clause(user, user_id)
     with _conn() as c:
         rows = c.execute(
-            "SELECT pnl, status FROM personal_trades "
-            "WHERE user=? AND created_at >= ?",
-            (user, today_iso + "T00:00:00"),
+            f"SELECT pnl, status FROM personal_trades "
+            f"WHERE {scope_sql} AND created_at >= ?",
+            (*scope_params, today_iso + "T00:00:00"),
         ).fetchall()
 
     n_total = len(rows)

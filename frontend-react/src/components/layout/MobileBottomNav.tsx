@@ -10,7 +10,7 @@ import { Link, useLocation } from 'react-router-dom';
  *  décalé dans leur viewBox (Analytics, Trades).
  */
 const NAV_ITEMS = [
-  { to: '/', label: 'Dashboard', icon: DashboardIcon },
+  { to: '/dashboard', label: 'Dashboard', icon: DashboardIcon },
   { to: '/cockpit', label: 'Cockpit', icon: CockpitIcon },
   { to: '/analytics', label: 'Analytics', icon: AnalyticsIcon },
   { to: '/trades', label: 'Trades', icon: TradesIcon },

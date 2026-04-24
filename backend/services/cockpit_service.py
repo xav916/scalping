@@ -318,14 +318,17 @@ def _build_alerts(active_trades: list[dict], next_events: list[dict]) -> list[di
     return alerts
 
 
-async def build_cockpit(user: str) -> dict:
+async def build_cockpit(user: str, user_id: int | None = None) -> dict:
     """Snapshot cockpit consolidé pour la homepage.
 
     Un seul appel depuis le frontend → 1 payload complet → rendu rapide
     et cohérent (toutes les zones partagent le même instant de lecture).
+
+    `user_id` (Chantier 3 SaaS) : si fourni, scope la lecture par user_id
+    pour isolation multi-tenant ; sinon fallback sur `user` TEXT (legacy).
     """
     # Trades actifs enrichis (PnL temps réel, distance SL/TP, durée).
-    open_trades = trade_log_service.list_trades(status="OPEN", user=user)
+    open_trades = trade_log_service.list_trades(status="OPEN", user=user, user_id=user_id)
     active_trades = [_enrich_open_trade(t) for t in open_trades]
     total_unrealized = sum((t["pnl_unrealized"] or 0) for t in active_trades)
     total_exposure = sum(t.get("size_lot") or 0 for t in active_trades)
@@ -342,7 +345,7 @@ async def build_cockpit(user: str) -> dict:
         next_events = []
 
     # Stats du jour (réutilise la logique existante).
-    daily = trade_log_service.get_daily_status(user=user)
+    daily = trade_log_service.get_daily_status(user=user, user_id=user_id)
 
     # Santé et contexte.
     health = await _system_health()

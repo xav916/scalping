@@ -561,6 +561,17 @@ def start_scheduler() -> AsyncIOScheduler:
         replace_existing=True,
     )
 
+    # SaaS : rappels trial J-3 / J-1 envoyés chaque jour à 9h UTC. Best-effort :
+    # si SMTP désactivé, la fn devient no-op. Idempotent via trial_reminders_sent.
+    from backend.services import user_email_service as _ues
+    _scheduler.add_job(
+        _ues.run_trial_reminders,
+        CronTrigger(hour=9, minute=0),
+        id="trial_reminders",
+        name="Rappels trial J-3 / J-1 (SaaS)",
+        replace_existing=True,
+    )
+
     _scheduler.start()
     logger.info(
         f"Scheduler démarré. Analyse {MATAF_POLL_INTERVAL}s, backtest 60s, "

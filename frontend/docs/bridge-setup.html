@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Installer le bridge MT5 — Scalping Radar</title>
+  <meta name="description" content="Guide complet pour installer le bridge MT5 sur ton PC Windows et le connecter à Scalping Radar via Tailscale." />
+  <style>
+    :root {
+      --bg: #0b0f1a;
+      --surface: rgba(255, 255, 255, 0.04);
+      --border: rgba(255, 255, 255, 0.08);
+      --text: rgba(255, 255, 255, 0.92);
+      --text-dim: rgba(255, 255, 255, 0.6);
+      --text-faint: rgba(255, 255, 255, 0.4);
+      --cyan: #22d3ee;
+      --pink: #ec4899;
+      --emerald: #34d399;
+      --amber: #fbbf24;
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      background: radial-gradient(circle at 20% 0%, rgba(34, 211, 238, 0.12), transparent 40%),
+                  radial-gradient(circle at 80% 100%, rgba(236, 72, 153, 0.1), transparent 40%);
+      pointer-events: none;
+      z-index: 0;
+    }
+    header, main, footer { position: relative; z-index: 1; }
+    header {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 20px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    header a { color: var(--text-dim); text-decoration: none; font-size: 14px; }
+    header a:hover { color: var(--text); }
+    .brand { font-weight: 600; letter-spacing: -0.01em; }
+    main {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 40px 24px 80px;
+    }
+    h1 {
+      font-size: clamp(2rem, 4vw, 2.75rem);
+      background: linear-gradient(135deg, var(--cyan), var(--pink));
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+    }
+    .lead {
+      color: var(--text-dim);
+      font-size: 1.05rem;
+      margin-bottom: 40px;
+    }
+    h2 {
+      font-size: 1.5rem;
+      margin: 48px 0 16px;
+      letter-spacing: -0.01em;
+    }
+    h2 .num {
+      display: inline-block;
+      width: 40px;
+      height: 40px;
+      border-radius: 12px;
+      background: rgba(34, 211, 238, 0.15);
+      color: var(--cyan);
+      text-align: center;
+      line-height: 40px;
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: 0.85rem;
+      margin-right: 10px;
+      vertical-align: middle;
+    }
+    h3 { font-size: 1.1rem; margin: 24px 0 8px; }
+    p, li { color: var(--text); }
+    a { color: var(--cyan); }
+    a:hover { color: var(--pink); }
+    code {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 1px 6px;
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: 0.88em;
+      color: var(--amber);
+    }
+    pre {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px 18px;
+      overflow-x: auto;
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: 0.88rem;
+      line-height: 1.55;
+    }
+    pre code {
+      background: transparent;
+      border: 0;
+      padding: 0;
+      color: var(--text);
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 22px 26px;
+      margin: 20px 0;
+    }
+    .callout {
+      background: rgba(251, 191, 36, 0.08);
+      border: 1px solid rgba(251, 191, 36, 0.3);
+      border-radius: 12px;
+      padding: 16px 20px;
+      margin: 20px 0;
+    }
+    .callout .tag {
+      color: var(--amber);
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+    ul { padding-left: 22px; }
+    ul li { margin-bottom: 6px; }
+    .btn {
+      display: inline-block;
+      padding: 10px 20px;
+      border-radius: 10px;
+      background: linear-gradient(135deg, var(--cyan), var(--pink));
+      color: #0b0f1a;
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 0.9rem;
+      margin-top: 4px;
+    }
+    .btn:hover { color: #0b0f1a; opacity: 0.9; }
+    .table-of-contents {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px 20px;
+      margin: 32px 0;
+    }
+    .table-of-contents strong {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--text-faint);
+    }
+    .table-of-contents ol { margin: 10px 0 0; padding-left: 22px; }
+    footer {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 30px 24px;
+      border-top: 1px solid var(--border);
+      color: var(--text-faint);
+      font-size: 0.8rem;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <span class="brand">Scalping Radar · Docs</span>
+    <a href="/v2/">← Retour à l'app</a>
+  </header>
+
+  <main>
+    <h1>Installer le bridge MT5</h1>
+    <p class="lead">
+      Le bridge est une petite application Windows qui tourne sur ton PC et
+      relaie les ordres entre Scalping Radar et ton terminal MT5. Compter
+      10-15 minutes pour tout configurer.
+    </p>
+
+    <div class="table-of-contents">
+      <strong>Sommaire</strong>
+      <ol>
+        <li><a href="#prereqs">Prérequis</a></li>
+        <li><a href="#step-tailscale">Installer Tailscale</a></li>
+        <li><a href="#step-mt5">Installer MetaTrader 5</a></li>
+        <li><a href="#step-bridge">Télécharger et lancer le bridge</a></li>
+        <li><a href="#step-connect">Connecter Scalping Radar</a></li>
+        <li><a href="#troubleshoot">Dépannage</a></li>
+      </ol>
+    </div>
+
+    <h2 id="prereqs"><span class="num">00</span>Prérequis</h2>
+    <div class="card">
+      <ul>
+        <li>Un PC <strong>Windows 10 ou 11</strong> allumé pendant les heures où tu veux trader (les marchés forex tournent dimanche 22h UTC → vendredi 22h UTC)</li>
+        <li>Un compte broker supportant MT5 (par ex. <a href="https://pepperstone.com/" target="_blank" rel="noopener">Pepperstone</a>, <a href="https://www.ic-markets.com/" target="_blank" rel="noopener">IC Markets</a>, <a href="https://www.metaquotes.net/" target="_blank" rel="noopener">MetaQuotes</a>, etc.)</li>
+        <li>Un compte <a href="https://tailscale.com/" target="_blank" rel="noopener">Tailscale</a> gratuit (pour exposer le bridge au cloud sans ouvrir de port public)</li>
+        <li>Un compte <a href="/v2/signup">Scalping Radar</a> actif</li>
+      </ul>
+    </div>
+
+    <div class="callout">
+      <div class="tag">Sécurité</div>
+      <p style="margin: 0;">
+        <strong>Aucun fond n'est chez nous.</strong> Le bridge tourne sur
+        <em>ton</em> PC, connecté à <em>ton</em> broker via <em>tes</em>
+        identifiants MT5. Scalping Radar envoie uniquement des instructions
+        de trade (pair, direction, SL, TP) au bridge, qui les exécute
+        localement. Tes clés broker ne transitent jamais par nos serveurs.
+      </p>
+    </div>
+
+    <h2 id="step-tailscale"><span class="num">01</span>Installer Tailscale</h2>
+    <p>
+      Tailscale crée un réseau privé virtuel (VPN mesh) entre ton PC et nos
+      serveurs. C'est gratuit jusqu'à 3 appareils et sans configuration
+      réseau (pas de port forwarding).
+    </p>
+    <ol>
+      <li>Crée un compte sur <a href="https://tailscale.com/" target="_blank" rel="noopener">tailscale.com</a> (connexion via Google/GitHub/Microsoft)</li>
+      <li>Télécharge et installe le client Windows depuis <a href="https://tailscale.com/download/windows" target="_blank" rel="noopener">tailscale.com/download/windows</a></li>
+      <li>Ouvre Tailscale et connecte-toi. Note l'adresse <code>100.x.y.z</code> qui apparaît dans l'interface — c'est l'IP de ton PC dans le réseau privé</li>
+    </ol>
+
+    <h2 id="step-mt5"><span class="num">02</span>Installer MetaTrader 5</h2>
+    <p>
+      Télécharge MT5 depuis le site de <strong>ton broker</strong> (pas
+      depuis metaquotes.net, certains brokers livrent une build custom).
+      Ensuite :
+    </p>
+    <ol>
+      <li>Ouvre MT5 et connecte-toi avec tes identifiants broker (login + server + password investor ou master)</li>
+      <li>Active <strong>Outils → Options → Expert Advisors → "Autoriser le trading algorithmique"</strong></li>
+      <li>Laisse MT5 ouvert tant que tu veux que le radar fonctionne</li>
+    </ol>
+
+    <div class="callout">
+      <div class="tag">Démo d'abord</div>
+      <p style="margin: 0;">
+        On recommande fortement de démarrer sur un <strong>compte démo</strong>
+        (chaque broker en propose un). Tu valides le comportement du bridge
+        sur plusieurs jours, puis tu passes en compte réel une fois confiant.
+      </p>
+    </div>
+
+    <h2 id="step-bridge"><span class="num">03</span>Télécharger et lancer le bridge</h2>
+    <p>
+      Le bridge est un exécutable Windows qui parle à MT5 via le protocole
+      MetaTrader. Il expose un serveur HTTP local protégé par API key.
+    </p>
+    <ol>
+      <li>Télécharge la dernière version du bridge : <a href="#" onclick="alert('Bientôt dispo — contacte le support pour obtenir l’exécutable');return false;">scalping-bridge-win.zip</a></li>
+      <li>Dézippe et lance <code>bridge.exe</code></li>
+      <li>Au premier lancement, le bridge génère automatiquement une <strong>API key aléatoire</strong> et l'affiche dans le terminal. <em>Copie-la</em> — tu en auras besoin à l'étape suivante</li>
+      <li>Le bridge écoute par défaut sur <code>http://0.0.0.0:8787</code></li>
+    </ol>
+    <p>Tu peux vérifier qu'il tourne depuis n'importe quel onglet :</p>
+    <pre><code>curl http://localhost:8787/health -H "X-API-Key: TA_CLE"
+# → {"status": "ok", "mt5_connected": true, ...}</code></pre>
+
+    <h2 id="step-connect"><span class="num">04</span>Connecter Scalping Radar</h2>
+    <p>
+      Dernière étape : donner à Scalping Radar l'URL Tailscale de ton bridge +
+      l'API key.
+    </p>
+    <ol>
+      <li>Construis l'URL : <code>http://&lt;ton-ip-tailscale&gt;:8787</code> (ex. <code>http://100.64.0.12:8787</code>)</li>
+      <li>Va sur l'<a href="/v2/onboarding">onboarding de Scalping Radar</a></li>
+      <li>Colle l'URL + l'API key, clique <strong>"Tester la connexion"</strong></li>
+      <li>Si tu vois <strong>Bridge joignable ✓</strong>, tu es bon. Sinon voir <a href="#troubleshoot">dépannage</a></li>
+    </ol>
+
+    <a href="/v2/onboarding" class="btn">Ouvrir l'onboarding →</a>
+
+    <h2 id="troubleshoot"><span class="num">05</span>Dépannage</h2>
+
+    <h3>Le test de connexion échoue (bridge injoignable)</h3>
+    <ul>
+      <li>Vérifie que Tailscale est bien connecté (icône dans la barre système Windows)</li>
+      <li>Vérifie que <code>bridge.exe</code> tourne toujours</li>
+      <li>Vérifie l'URL : il faut <code>http://</code> (pas <code>https</code>), l'IP Tailscale (<code>100.x.y.z</code>, pas <code>192.168.x.x</code>), et le port <code>:8787</code></li>
+      <li>Depuis ton navigateur, essaie d'ouvrir <code>http://&lt;ton-ip-tailscale&gt;:8787/health</code> — tu devrais avoir un JSON</li>
+    </ul>
+
+    <h3>Le bridge tourne mais MT5 n'est pas "connecté"</h3>
+    <ul>
+      <li>Ouvre MT5, connecte-toi à ton compte</li>
+      <li>Vérifie <strong>Outils → Options → Expert Advisors</strong> : "Autoriser le trading algorithmique" doit être coché</li>
+      <li>Redémarre le bridge après avoir configuré MT5</li>
+    </ul>
+
+    <h3>Ordres rejetés pour "invalid stops"</h3>
+    <ul>
+      <li>Certains brokers exigent un <code>stop_level</code> minimum (distance mini entre entry et SL/TP). Scalping Radar respecte ce paramètre, mais en cas de marché ultra-volatil le rejet peut arriver</li>
+      <li>Consulte la carte <strong>Rejections</strong> sur le cockpit (Pro+) pour voir les motifs</li>
+    </ul>
+
+    <h3>Le bridge consomme trop de CPU / RAM</h3>
+    <ul>
+      <li>C'est normalement très léger (&lt; 50 Mo RAM, &lt; 1% CPU au repos). Si tu vois des pics, ouvre une issue sur <a href="mailto:support@scalping-radar.com">support@scalping-radar.com</a> avec une capture</li>
+    </ul>
+
+    <h3>Autre problème ?</h3>
+    <p>
+      Écris-nous à <a href="mailto:support@scalping-radar.com">support@scalping-radar.com</a>
+      avec les logs du bridge (console) et une description du comportement.
+      Réponse sous 24h en semaine.
+    </p>
+  </main>
+
+  <footer>
+    © 2026 Scalping Radar ·
+    <a href="/v2/pricing">Pricing</a> ·
+    <a href="/v2/">App</a>
+  </footer>
+</body>
+</html>
