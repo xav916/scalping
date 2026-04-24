@@ -190,6 +190,38 @@ try:
     )
 except (ValueError, _json_min_sl.JSONDecodeError):
     MT5_BRIDGE_MIN_SL_DISTANCE_PCT_PER_CLASS = _DEFAULT_MIN_SL_DISTANCE_PCT_PER_CLASS
+
+# Filtres diagnostiques anti-saigne (ajoutés 2026-04-24 après diagnostic
+# des 124 trades CLOSED post-fix pipeline). Basés sur buckets qui
+# perdent systématiquement — override env si le dataset change.
+#
+# Format `PAIR:direction` séparé par virgules. `*` matche toutes les pairs.
+# Ex : "XAU/USD:buy,GBP/JPY:buy,*:buy" bloque tous les BUY sur metals +
+# GBP/JPY + globalement tous les BUY. Direction en lowercase.
+_blocked_raw = os.getenv("MT5_BRIDGE_BLOCKED_DIRECTIONS", "")
+MT5_BRIDGE_BLOCKED_DIRECTIONS: set[tuple[str, str]] = set()
+for _e in _blocked_raw.split(","):
+    _e = _e.strip()
+    if ":" in _e:
+        _pair, _dir = _e.rsplit(":", 1)
+        MT5_BRIDGE_BLOCKED_DIRECTIONS.add((_pair.strip().upper(), _dir.strip().lower()))
+
+# Heures UTC à éviter (format "17-21" inclusif ou liste "17,18,19,20,21").
+# Le filtre compare l'heure d'entrée au moment du push, pas au moment où le
+# signal a été généré (cohérent avec le timing réel du fill).
+_avoid_raw = os.getenv("MT5_BRIDGE_AVOID_HOURS_UTC", "")
+MT5_BRIDGE_AVOID_HOURS_UTC: set[int] = set()
+if _avoid_raw:
+    for _part in _avoid_raw.split(","):
+        _part = _part.strip()
+        if "-" in _part:
+            _a, _b = _part.split("-", 1)
+            try:
+                MT5_BRIDGE_AVOID_HOURS_UTC.update(range(int(_a), int(_b) + 1))
+            except ValueError:
+                pass
+        elif _part.isdigit():
+            MT5_BRIDGE_AVOID_HOURS_UTC.add(int(_part))
 # Sync bridge → personal_trades : pull périodique des ordres LIVE depuis le
 # bridge pour que les positions auto apparaissent dans le dashboard
 # (sections Mes trades, Risque ouvert, Courbe d'équité, Détecteur d'erreurs).

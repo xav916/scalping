@@ -18,7 +18,7 @@ Sécurité
 
 import asyncio
 import logging
-from datetime import date
+from datetime import date, datetime, timezone
 
 import httpx
 
@@ -33,6 +33,8 @@ from config.settings import (
     MT5_BRIDGE_MIN_SL_DISTANCE_PCT,
     MT5_BRIDGE_MIN_SL_DISTANCE_PCT_PER_CLASS,
     MT5_BRIDGE_MAX_POSITIONS_PER_PAIR,
+    MT5_BRIDGE_BLOCKED_DIRECTIONS,
+    MT5_BRIDGE_AVOID_HOURS_UTC,
     TRADING_CAPITAL,
     RISK_PER_TRADE_PCT,
     asset_class_for,
@@ -168,6 +170,21 @@ def _check_rejection(setup) -> str | None:
     score = getattr(setup, "confidence_score", None) or 0
     if score < MT5_BRIDGE_MIN_CONFIDENCE:
         return "below_confidence"
+    # Filtre direction par pair (diagnostic 2026-04-24 : les BUY ont 18%
+    # winrate vs 42% pour les SELL sur notre dataset post-fix pipeline).
+    # Env `MT5_BRIDGE_BLOCKED_DIRECTIONS=PAIR:dir,*:dir,...`.
+    direction = _direction_value(setup).lower()
+    pair_upper = setup.pair.upper()
+    if (pair_upper, direction) in MT5_BRIDGE_BLOCKED_DIRECTIONS:
+        return "direction_blocked_for_pair"
+    if ("*", direction) in MT5_BRIDGE_BLOCKED_DIRECTIONS:
+        return "direction_blocked_global"
+    # Filtre session : skip les heures UTC qui saignent (diag : session
+    # NY pm 17-21 UTC = 23% winrate, -186€ sur 17 trades).
+    if MT5_BRIDGE_AVOID_HOURS_UTC:
+        current_hour_utc = datetime.now(timezone.utc).hour
+        if current_hour_utc in MT5_BRIDGE_AVOID_HOURS_UTC:
+            return "hour_in_avoid_list"
     # Cap par pair : forcer la diversification. Le backtest a montré qu'on
     # peut avoir jusqu'à 5-7 trades XAU simultanés sur un même régime, ce
     # qui transforme 1 pari macro en 5-7 pertes corrélées si le régime

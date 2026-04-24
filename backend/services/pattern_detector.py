@@ -13,6 +13,7 @@ avec entrée, stop loss et take profit.
 """
 
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 
 from backend.models.schemas import (
@@ -23,6 +24,13 @@ from backend.models.schemas import (
     TradeSetup,
 )
 from config.settings import asset_class_for
+
+# Ratios R:R des TP. Élargis le 2026-04-24 après diagnostic : 1.5x donnait
+# un break-even à 40% winrate mais le winrate observé est 39.5% — juste
+# sous la ligne. 1.8x abaisse le break-even à 35.7% et sort du rouge.
+# Rollback rapide via env `PATTERN_TP1_RR` / `PATTERN_TP2_RR`.
+PATTERN_TP1_RR = float(os.getenv("PATTERN_TP1_RR", "1.8"))
+PATTERN_TP2_RR = float(os.getenv("PATTERN_TP2_RR", "3.0"))
 
 logger = logging.getLogger(__name__)
 
@@ -279,15 +287,15 @@ def calculate_trade_setup(
         recent_low = min(c.low for c in candles[-5:])
         stop_loss = round(recent_low - atr * 0.3, decimals)
         risk = entry - stop_loss
-        take_profit_1 = round(entry + risk * 1.5, decimals)
-        take_profit_2 = round(entry + risk * 2.5, decimals)
+        take_profit_1 = round(entry + risk * PATTERN_TP1_RR, decimals)
+        take_profit_2 = round(entry + risk * PATTERN_TP2_RR, decimals)
     else:
         # Vente : SL au-dessus du dernier plus haut, TP en-dessous
         recent_high = max(c.high for c in candles[-5:])
         stop_loss = round(recent_high + atr * 0.3, decimals)
         risk = stop_loss - entry
-        take_profit_1 = round(entry - risk * 1.5, decimals)
-        take_profit_2 = round(entry - risk * 2.5, decimals)
+        take_profit_1 = round(entry - risk * PATTERN_TP1_RR, decimals)
+        take_profit_2 = round(entry - risk * PATTERN_TP2_RR, decimals)
 
     if risk <= 0:
         return None

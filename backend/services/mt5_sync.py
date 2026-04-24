@@ -135,9 +135,23 @@ def _upsert_open_trade(row: dict[str, Any], user: str) -> None:
     # fill (pair + direction + entry a +/-0.1% pres, dans les 30 dernieres
     # minutes). Best-effort : si aucun match, reste NULL.
     signal_id = None
+    signal_pattern = None
     try:
-        from backend.services.backtest_service import find_signal_for_order
+        from backend.services.backtest_service import find_signal_for_order, _DB_PATH as _SIGNALS_DB
         signal_id = find_signal_for_order(pair, direction, float(entry_price or 0))
+        # Récupère le pattern du signal matché pour le persister sur le trade.
+        # Permet au diagnostic de ventiler les trades par pattern gagnant/perdant
+        # (avant ce fix, signal_pattern était hardcodé NULL → diag aveugle).
+        if signal_id:
+            try:
+                with sqlite3.connect(str(_SIGNALS_DB)) as sc:
+                    r = sc.execute(
+                        "SELECT pattern FROM signals WHERE id = ?", (signal_id,)
+                    ).fetchone()
+                    if r and r[0]:
+                        signal_pattern = r[0]
+            except Exception as e:
+                logger.debug(f"mt5_sync: lookup pattern for signal_id={signal_id} failed: {e}")
     except Exception as e:
         logger.debug(f"mt5_sync: find_signal_for_order failed: {e}")
 
@@ -149,7 +163,7 @@ def _upsert_open_trade(row: dict[str, Any], user: str) -> None:
                 notes, status, created_at, mt5_ticket, is_auto,
                 post_entry_sl, post_entry_tp, post_entry_size, context_macro,
                 signal_id, fill_price, slippage_pips
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, 1, ?, 'OPEN', ?, ?, 1, 1, 1, 1, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 'OPEN', ?, ?, 1, 1, 1, 1, ?, ?, ?, ?)
         """, (
             user,
             pair,
@@ -158,6 +172,9 @@ def _upsert_open_trade(row: dict[str, Any], user: str) -> None:
             row.get("sl") or 0,
             row.get("tp") or 0,
             row.get("lots") or 0.01,
+            # signal_pattern = récupéré depuis signals via signal_id matché
+            # (NULL si aucun match, ex: trade manuel ou signal_id introuvable).
+            signal_pattern,
             # signal_confidence = score de confidence envoyé par le radar au moment du /order
             # (bridge a une colonne audit dédiée depuis 2026-04-21 pour capturer la valeur).
             # Les anciens trades auto ont NULL ici car bridge ne la persistait pas.
