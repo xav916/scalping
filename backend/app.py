@@ -652,9 +652,10 @@ async def api_signup(request: Request, payload: dict):
         "SaaS signup : user id=%s email=%s trial=%dj",
         uid, email, users_service.SIGNUP_TRIAL_DAYS,
     )
-    # Welcome + verification emails. Si SMTP pas configuré, on marque le user
-    # comme verified direct (sinon il serait bloqué sans pouvoir cliquer un
-    # lien jamais envoyé).
+    # Welcome + verification emails. Si SMTP pas configuré OU si l'envoi
+    # échoue (SMTP down, quota dépassé, sandbox Resend qui refuse l'adresse,
+    # etc.), on marque le user comme verified direct — sinon il serait
+    # bloqué sur le checkout Stripe sans pouvoir cliquer un lien jamais reçu.
     try:
         from backend.services import user_email_service
 
@@ -663,7 +664,14 @@ async def api_signup(request: Request, payload: dict):
         else:
             user_email_service.send_welcome(email, trial_days=users_service.SIGNUP_TRIAL_DAYS)
             verif_token = users_service.generate_email_verification_token(uid)
-            user_email_service.send_email_verification(email, verif_token)
+            verif_sent = user_email_service.send_email_verification(email, verif_token)
+            if not verif_sent:
+                # SMTP configuré mais envoi refusé → fallback auto-verify
+                logger.warning(
+                    "send_email_verification a retourné False pour %s, fallback auto-verify",
+                    email,
+                )
+                users_service.mark_email_auto_verified(uid)
     except Exception:
         logger.exception("envoi emails signup a échoué pour %s", email)
         # Fallback sûr : marque verified pour ne pas bloquer l'user.
