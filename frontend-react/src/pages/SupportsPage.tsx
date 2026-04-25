@@ -64,6 +64,26 @@ const SUPPORTS: SupportData[] = [
     recommendedSizing: '0.3% risk/trade (sizing réduit vs XAU vu maxDD 6y plus élevé)',
     warningLevel: 'medium',
   },
+  {
+    symbol: 'WTI/USD',
+    name: 'Pétrole brut WTI vs Dollar US',
+    flag: '🛢️',
+    economicRole: 'USD-priced commodity + geopolitical hedge + inflation proxy',
+    driver: 'OPEC+ supply decisions, sanctions Iran/Russie, demande mondiale, USD inverse, événements politiques',
+    whyItWorks: "Le pétrole fait beaucoup de range trading entre niveaux OPEC implicites (75-90 USD typique). Les rebonds depuis support sont productifs (range_bounce_up PF 1.25). Productif aussi sur momentum continuations claires (momentum_up PF 1.21). Tient cross-régime sur 5.5 ans incluant choc Ukraine 2022 et tensions Iran 2024-26.",
+    whenItStruggles: "Driver politique imprévu : annonces OPEC surprise, sanctions inattendues, gaps sur news geopolitical. Les BREAKOUTS sont TOXIQUES sur WTI (PF 0.73 vs 1.84 sur XAU) — souvent fausses cassures qui se reversent. Les SHORTs perdent (PF 0.74) → LONG only. Driver imprévisible = fat tail risk non capturé en backtest.",
+    pfCumulative: 1.20,
+    pfPeriods: [
+      { window: '2020-10 → 2024-04 (3.5 ans pré-bull)', pf: 1.20, n: 979 },
+      { window: '2024-04 → 2026-04 (2 ans récent)', pf: 1.20, n: 612 },
+      { window: 'Cumul 5.5 ans (max dispo)', pf: 1.20, n: 1593 },
+    ],
+    sharpe24m: 0,  // pas calculé sur sample limité
+    maxDd24m: 104,
+    setupsPerMonth: 24,
+    recommendedSizing: '0.3% risk/trade (filter SPÉCIFIQUE V2_WTI_OPTIMAL ≠ V2_CORE_LONG : range_bounce_up à la place de breakout_up)',
+    warningLevel: 'medium',
+  },
 ];
 
 const PATTERNS_RETAINED = [
@@ -136,12 +156,12 @@ export function SupportsPage() {
 
         {/* Synthèse globale */}
         <GlassCard className="p-5">
-          <h2 className="text-lg font-semibold mb-3">Synthèse système</h2>
+          <h2 className="text-lg font-semibold mb-3">Synthèse système · 3 candidats retenus</h2>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
             <div>
               <div className="text-xs text-white/50 uppercase">Méthodologie</div>
               <div className="font-medium mt-1">Pattern detection LONG only</div>
-              <div className="text-xs text-white/40 mt-1">3 patterns retenus sur 12 testés</div>
+              <div className="text-xs text-white/40 mt-1">Filter par asset (CORE pour XAU/XAG, OPTIMAL pour WTI)</div>
             </div>
             <div>
               <div className="text-xs text-white/50 uppercase">Timeframe</div>
@@ -150,19 +170,19 @@ export function SupportsPage() {
             </div>
             <div>
               <div className="text-xs text-white/50 uppercase">Validation backtest</div>
-              <div className="font-medium mt-1">6 ans cross-régime</div>
-              <div className="text-xs text-white/40 mt-1">2020 (COVID) + 2022 (bear) + 2024-26 (bull)</div>
+              <div className="font-medium mt-1">5.5-6 ans cross-régime</div>
+              <div className="text-xs text-white/40 mt-1">COVID + bear 2022 + Ukraine + bull 2024-26</div>
             </div>
             <div>
-              <div className="text-xs text-white/50 uppercase">Sharpe 24M</div>
-              <div className="font-medium mt-1 text-emerald-400">1.59 (XAU) / 1.55 (XAG)</div>
-              <div className="text-xs text-white/40 mt-1">Top 10% retail (Carver "very good")</div>
+              <div className="text-xs text-white/50 uppercase">PF cumul</div>
+              <div className="font-medium mt-1 text-emerald-400">1.33 (XAU) / 1.34 (XAG) / 1.20 (WTI)</div>
+              <div className="text-xs text-white/40 mt-1">3 actifs validés (sur 15 testés)</div>
             </div>
           </div>
         </GlassCard>
 
         {/* Cards par support */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           {SUPPORTS.map((s) => (
             <GlassCard key={s.symbol} className="p-5 space-y-4">
               <div className="flex items-start justify-between">

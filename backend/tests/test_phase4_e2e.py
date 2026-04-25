@@ -148,7 +148,7 @@ def test_e2e_no_data_pipeline(isolated_db):
     """Pipeline avec 0 setup persisté → summary doit retourner {systems: []}."""
     # Run sans candles → 0 setup
     result = asyncio.run(shadow.run_shadow_log({}))
-    assert result == {"XAU/USD": 0, "XAG/USD": 0}
+    assert result == {"XAU/USD": 0, "XAG/USD": 0, "WTI/USD": 0}
 
     # Reconcile sans pending
     stats = asyncio.run(recon.reconcile_pending_setups(max_per_run=10))

@@ -30,16 +30,43 @@ logger = logging.getLogger(__name__)
 
 # ─── Configuration ──────────────────────────────────────────────────────────
 
-# Paires à observer en shadow log (validées par recherche J1)
-SHADOW_PAIRS: list[str] = ["XAU/USD", "XAG/USD"]
+# Paires à observer en shadow log (validées par recherche J1 + exp #29 WTI)
+SHADOW_PAIRS: list[str] = ["XAU/USD", "XAG/USD", "WTI/USD"]
 
-# Patterns retenus pour V2_CORE_LONG (apprentissage exp #2 + #3 + #4)
+# Patterns retenus pour V2_CORE_LONG (XAU + XAG, exp #2/#3/#4)
 # Tous LONG only — les SHORTs sur XAG sont conditionnels au cycle (exp #11)
 CORE_LONG_PATTERNS: set[str] = {"momentum_up", "engulfing_bullish", "breakout_up"}
 
+# Patterns retenus pour V2_WTI_OPTIMAL (WTI, exp #29)
+# breakout_up TOXIQUE sur WTI (fausses cassures news OPEC) → exclu
+# range_bounce_up productif (range trading entre niveaux OPEC) → ajouté
+WTI_OPTIMAL_PATTERNS: set[str] = {"momentum_up", "engulfing_bullish", "range_bounce_up"}
+
+# Mapping pair → patterns (filter par asset)
+PATTERNS_BY_PAIR: dict[str, set[str]] = {
+    "XAU/USD": CORE_LONG_PATTERNS,
+    "XAG/USD": CORE_LONG_PATTERNS,
+    "WTI/USD": WTI_OPTIMAL_PATTERNS,
+}
+
+# Mapping pair → system_id (pour cohérence avec backtest et reporting)
+SYSTEM_ID_BY_PAIR: dict[str, str] = {
+    "XAU/USD": "V2_CORE_LONG_XAUUSD_4H",
+    "XAG/USD": "V2_CORE_LONG_XAGUSD_4H",
+    "WTI/USD": "V2_WTI_OPTIMAL_WTIUSD_4H",
+}
+
 # Sizing virtuel par défaut Phase 4 (prudence vs 1% backtest)
+# XAU = 0.5% (maxDD 6y modéré 53%)
+# XAG = 0.3% (maxDD 6y élevé 124%)
+# WTI = 0.3% (maxDD 5.5y élevé 123%, et driver politique imprévu)
 DEFAULT_CAPITAL_EUR: float = 10_000.0
-DEFAULT_RISK_PCT: float = 0.005  # 0.5%
+DEFAULT_RISK_PCT: float = 0.005  # 0.5% par défaut
+RISK_PCT_BY_PAIR: dict[str, float] = {
+    "XAU/USD": 0.005,
+    "XAG/USD": 0.003,
+    "WTI/USD": 0.003,
+}
 
 # DB partagée avec trade_log_service / users_service
 DB_PATH = Path("/app/data/trades.db") if Path("/app").exists() else Path("trades.db")
@@ -150,7 +177,10 @@ def _persist_setup(
     macro_features: dict | None = None,
 ) -> bool:
     """Insert idempotent (UNIQUE system_id, bar_timestamp). Retourne True si nouveau."""
-    system_id = f"V2_CORE_LONG_{pair.replace('/', '')}_4H"
+    # Filter par pair (XAU/XAG = V2_CORE_LONG, WTI = V2_WTI_OPTIMAL)
+    system_id = SYSTEM_ID_BY_PAIR.get(pair, f"V2_CORE_LONG_{pair.replace('/', '')}_4H")
+    risk_pct_for_pair = RISK_PCT_BY_PAIR.get(pair, DEFAULT_RISK_PCT)
+
     risk = abs(setup.entry_price - setup.stop_loss)
     risk_pct = risk / setup.entry_price if setup.entry_price > 0 else 0
     if risk_pct <= 0:
@@ -159,7 +189,7 @@ def _persist_setup(
     reward = abs(setup.take_profit_1 - setup.entry_price)
     rr = reward / risk if risk > 0 else 0
 
-    sizing_max_loss_eur = DEFAULT_CAPITAL_EUR * DEFAULT_RISK_PCT
+    sizing_max_loss_eur = DEFAULT_CAPITAL_EUR * risk_pct_for_pair
     sizing_position_eur = sizing_max_loss_eur / risk_pct
 
     macro_json = json.dumps(macro_features) if macro_features else None
@@ -186,7 +216,7 @@ def _persist_setup(
                     setup.take_profit_1,
                     getattr(setup, "take_profit_2", None),
                     risk_pct, rr,
-                    DEFAULT_CAPITAL_EUR, DEFAULT_RISK_PCT,
+                    DEFAULT_CAPITAL_EUR, risk_pct_for_pair,
                     sizing_position_eur, sizing_max_loss_eur,
                     macro_json,
                 ),
@@ -230,14 +260,16 @@ async def run_shadow_log(
             continue
 
         n_new = 0
-        # Détection sur le DERNIER bar H4 fermé uniquement (pas la séquence
-        # entière — ça créerait des doublons à chaque cycle)
+        # Détection sur le DERNIER bar H4 fermé uniquement
         last_bar_ts = h4[-1].timestamp
         patterns = detect_patterns(h4, pair)
 
+        # Filter par pair (XAU/XAG = CORE, WTI = WTI_OPTIMAL)
+        pair_patterns = PATTERNS_BY_PAIR.get(pair, CORE_LONG_PATTERNS)
+
         for pattern in patterns:
             pattern_name = pattern.pattern.value if hasattr(pattern.pattern, "value") else str(pattern.pattern)
-            if pattern_name not in CORE_LONG_PATTERNS:
+            if pattern_name not in pair_patterns:
                 continue
 
             setup = calculate_trade_setup(pair, pattern, h4)

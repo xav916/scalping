@@ -109,7 +109,7 @@ def test_ensure_schema_idempotent(temp_db):
 def test_run_shadow_log_empty_input(temp_db):
     """Pas de candles → 0 nouveaux setups, pas d'exception."""
     result = asyncio.run(shadow.run_shadow_log({}))
-    assert result == {"XAU/USD": 0, "XAG/USD": 0}
+    assert result == {"XAU/USD": 0, "XAG/USD": 0, "WTI/USD": 0}
 
 
 def test_run_shadow_log_too_few_candles(temp_db):

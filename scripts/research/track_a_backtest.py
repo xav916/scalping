@@ -59,6 +59,7 @@ PAIRS = [
     "AUD/USD", "BTC/USD", "ETH/USD", "EUR/GBP", "EUR/USD",
     "GBP/JPY", "GBP/USD", "USD/CAD", "USD/CHF", "USD/JPY",
     "XAG/USD", "XAU/USD",
+    "WTI/USD",  # exp #29 — étude pétrole (3e candidat potentiel)
 ]
 
 # Forward window timeout par timeframe — proportionnel à la taille de bougie.
@@ -346,6 +347,16 @@ def filter_v2_tight_long(t: dict) -> bool:
     return t["direction"] == "buy" and t["pattern"] in TIGHT_LONG_PATTERNS
 
 
+# WTI optimal (exp #29 — étude pétrole)
+# breakout_up TOXIQUE sur WTI (fausses cassures news OPEC/geopolitical) → exclu
+# range_bounce_up BUY est PRODUCTIF (PF 1.25 sur 5.5 ans) → ajouté
+WTI_OPTIMAL_PATTERNS = {"momentum_up", "engulfing_bullish", "range_bounce_up"}
+
+
+def filter_v2_wti_optimal(t: dict) -> bool:
+    return t["direction"] == "buy" and t["pattern"] in WTI_OPTIMAL_PATTERNS
+
+
 # ─── Stats ──────────────────────────────────────────────────────────────────
 
 def stats(label: str, trades: list[dict]) -> dict | None:
@@ -441,6 +452,7 @@ def main() -> None:
     stats("V2_TIGHT_LONG (2pat BUY)", [t for t in all_trades if filter_v2_tight_long(t)])
     stats("V2_CORE_LONG (3pat BUY)", [t for t in all_trades if filter_v2_core_long(t)])
     stats("V2_EXT_LONG (4pat BUY)", [t for t in all_trades if filter_v2_extended_long(t)])
+    stats("V2_WTI_OPTIMAL (3pat BUY)", [t for t in all_trades if filter_v2_wti_optimal(t)])
     stats("RB_DOWN_SELL only", [t for t in all_trades if filter_rb_down_sell(t)])
     print()
 

@@ -22,6 +22,7 @@ Ordre chronologique, par track. Mettre à jour à chaque clôture d'expérience.
 | 16 | 2026-04-26 | Phase 4 | [Pin_bar_up extension test](2026-04-25-exp16-pin-bar-up-extension.md) | closed-negative | V2_EXT (4pat) dégrade PF -0.04 à -0.09 vs V2_CORE (3pat) sur 3/4 fenêtres — V2_CORE_LONG actuel reste optimum |
 | 17 | 2026-04-26 | Phase 4 | [V2_TIGHT (2pat) vs V2_CORE](2026-04-25-exp17-tight-vs-core.md) | closed-positive | Asymétrique : CORE bat TIGHT en bull cycle (Δ -0.10 à -0.15), TIGHT bat CORE en pré-bull (+0.05, maxDD 28% vs 41%) — insight régime-adaptatif futur |
 | 18 | 2026-04-26 | Phase 4 | [Cross-asset SPX/NDX](2026-04-25-exp18-cross-asset-spx-ndx.md) | closed-negative | V2_CORE PF 0.23-0.73 sur indices équités H4 (gaps overnight cassent patterns) — confirme XAU+XAG comme unique périmètre |
+| 29 | 2026-04-26 | Phase 4 | [Étude WTI/USD pétrole](2026-04-26-exp29-wti-study.md) | closed-positive | V2_CORE échec sur WTI (PF 1.06-1.07) MAIS V2_WTI_OPTIMAL avec range_bounce_up à la place de breakout_up passe **PF 1.20-1.78 sur 4/4 fenêtres** — **3e candidat retenu** avec filter dédié et sizing 0.3% |
 | 24 | 2026-04-26 | B | [Walk-forward expansif](2026-04-25-exp24-walk-forward-track-b.md) | closed-negative | Refit mensuel PF 1.60 vs Fixe 1.94 (Δ -0.34) — sur-fit au noise, baseline cross-régime suffit |
 | 25 | 2026-04-26 | A | [V2_ADAPTIVE régime-aware](2026-04-25-exp25-v2-adaptive.md) | closed-neutral | Détecteur DXY+TNX trop crude (Δ -0.02) — confirme V2_CORE comme **optimum local atteint** après 7 tentatives d'extension |
 
