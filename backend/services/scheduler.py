@@ -32,6 +32,7 @@ from backend.services.mt5_bridge import (
 )
 from backend.services.pattern_detector import calculate_trade_setup, detect_patterns
 from backend.services.price_service import fetch_candles
+from backend.services.shadow_v2_core_long import SHADOW_PAIRS as _SHADOW_PAIRS
 from config.settings import (
     CANDLE_COUNT,
     CANDLE_INTERVAL,
@@ -102,9 +103,13 @@ async def run_analysis_cycle() -> None:
         for pair in WATCHED_PAIRS:
             fetch_tasks.append(fetch_candles(pair, interval=CANDLE_INTERVAL, outputsize=CANDLE_COUNT))
         # Bougies 1h pour confirmation MTF + calcul volatilité ATR
-        # (cap a 50 bougies = 50h d'historique, suffisant pour ATR 14 + baseline 35)
+        # (cap a 50 bougies = 50h d'historique, suffisant pour ATR 14 + baseline 35).
+        # Exception SHADOW_PAIRS (XAU/XAG/WTI) : 200 H1 pour aggréger ≥30 H4 fermés
+        # (gate run_shadow_log). 1 requête Twelve Data quel que soit l'outputsize
+        # → coût quota inchangé.
         for pair in WATCHED_PAIRS:
-            fetch_tasks.append(fetch_candles(pair, interval="1h", outputsize=50))
+            outputsize_h1 = 200 if pair in _SHADOW_PAIRS else 50
+            fetch_tasks.append(fetch_candles(pair, interval="1h", outputsize=outputsize_h1))
 
         results = await asyncio.gather(*fetch_tasks)
 
