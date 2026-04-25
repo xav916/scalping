@@ -147,7 +147,7 @@ export function ShadowLogPage() {
         </div>
 
         {/* Filtres */}
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <select
             value={system}
             onChange={(e) => setSystem(e.target.value as SystemFilter)}
@@ -168,6 +168,21 @@ export function ShadowLogPage() {
             <option value="SL">SL</option>
             <option value="TIMEOUT">TIMEOUT</option>
           </select>
+          <a
+            href={`/api/shadow/v2_core_long/setups.csv${(() => {
+              const qs = new URLSearchParams();
+              if (system !== 'all') qs.set('system_id', system);
+              if (outcome !== 'all') qs.set('outcome', outcome);
+              qs.set('limit', '5000');
+              return `?${qs.toString()}`;
+            })()}`}
+            download
+            className="ml-auto bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white/70 hover:bg-white/10 hover:text-white transition-colors inline-flex items-center gap-1.5"
+            title="Télécharger les setups au format CSV (5000 max)"
+          >
+            <span>⬇</span>
+            Export CSV
+          </a>
         </div>
 
         {/* Tableau */}

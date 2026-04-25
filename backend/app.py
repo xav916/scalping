@@ -1820,9 +1820,71 @@ async def api_shadow_summary(ctx: AuthContext = Depends(auth_context)):
     - WR pct
     - net_pnl_eur cumulé
     - first_bar / last_bar
+    - advanced : Sharpe, Calmar, maxDD%, monthly_returns, equity_curve
     """
     from backend.services.shadow_v2_core_long import summary
     return summary()
+
+
+@app.get("/api/shadow/v2_core_long/setups.csv")
+async def api_shadow_setups_csv(
+    since: str | None = None,
+    until: str | None = None,
+    system_id: str | None = None,
+    outcome: str | None = None,
+    limit: int = 5000,
+    ctx: AuthContext = Depends(auth_context),
+):
+    """Export CSV des shadow setups (téléchargement).
+
+    Query params identiques à /setups, sauf limit max 5000.
+    Headers : detected_at, bar_timestamp, system_id, pair, pattern, direction,
+    entry_price, stop_loss, take_profit_1, risk_pct, rr, sizing_position_eur,
+    outcome, exit_at, exit_price, pnl_pct_net, pnl_eur, macro_features_json
+    """
+    import csv
+    import io
+    from datetime import datetime as _dt
+    from fastapi.responses import StreamingResponse
+    from backend.services.shadow_v2_core_long import list_setups
+
+    def _parse(s: str | None):
+        if not s:
+            return None
+        try:
+            return _dt.fromisoformat(s.replace("Z", "+00:00"))
+        except ValueError:
+            return _dt.strptime(s, "%Y-%m-%d")
+
+    rows = list_setups(
+        since=_parse(since), until=_parse(until),
+        system_id=system_id, outcome=outcome,
+        limit=min(limit, 5000),
+    )
+
+    columns = [
+        "detected_at", "bar_timestamp", "system_id", "pair", "timeframe",
+        "direction", "pattern", "entry_price", "stop_loss",
+        "take_profit_1", "take_profit_2", "risk_pct", "rr",
+        "sizing_capital_eur", "sizing_risk_pct", "sizing_position_eur",
+        "sizing_max_loss_eur", "outcome", "exit_at", "exit_price",
+        "pnl_pct_net", "pnl_eur", "macro_features_json",
+    ]
+
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=columns, extrasaction="ignore")
+    writer.writeheader()
+    for r in rows:
+        writer.writerow({k: r.get(k, "") for k in columns})
+
+    today = _dt.now(tz=None).strftime("%Y-%m-%d")
+    filename = f"shadow_setups_{today}.csv"
+    buf.seek(0)
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=\"{filename}\""},
+    )
 
 
 @app.websocket("/ws")
