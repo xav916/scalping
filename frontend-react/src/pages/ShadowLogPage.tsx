@@ -89,13 +89,17 @@ export function ShadowLogPage() {
             <div className="text-xs text-white/50 uppercase tracking-wide">Setups</div>
             <div className="text-2xl font-semibold mt-1">{totals.n_total}</div>
             <div className="text-xs text-white/40">{totals.n_resolved} résolus / {totals.n_pending} pending</div>
+            <div className="text-[10px] text-white/30 mt-1">cible ~25/mois × 2 paires</div>
           </GlassCard>
           <GlassCard className="p-4">
             <div className="text-xs text-white/50 uppercase tracking-wide">PF observé</div>
             <div className={clsx('text-2xl font-semibold mt-1', totals.pf !== null && totals.pf >= 1.3 ? 'text-emerald-400' : totals.pf !== null && totals.pf >= 1.0 ? 'text-amber-400' : 'text-rose-400')}>
               {totals.pf !== null ? totals.pf.toFixed(2) : '—'}
             </div>
-            <div className="text-xs text-white/40">cible backtest 1.59</div>
+            <div className="text-xs text-white/40">
+              cible backtest <span className="font-medium text-white/70">1.32-1.59</span>
+            </div>
+            <div className="text-[10px] text-white/30 mt-1">6 ans cumul cross-régime</div>
           </GlassCard>
           <GlassCard className="p-4">
             <div className="text-xs text-white/50 uppercase tracking-wide">PnL net</div>
@@ -103,20 +107,38 @@ export function ShadowLogPage() {
               {totals.net_pnl_eur >= 0 ? '+' : ''}{totals.net_pnl_eur.toFixed(0)} €
             </div>
             <div className="text-xs text-white/40">capital virtuel 10k€</div>
+            <div className="text-[10px] text-white/30 mt-1">~63%/an attendu (XAU)</div>
           </GlassCard>
-          {summary?.systems?.map((s) => (
-            <GlassCard className="p-4" key={s.system_id}>
-              <div className="text-xs text-white/50 uppercase tracking-wide">
-                {s.system_id.includes('XAU') ? 'XAU/USD' : 'XAG/USD'}
-              </div>
-              <div className="text-lg font-semibold mt-1">
-                {s.n_total} setups
-              </div>
-              <div className="text-xs text-white/40">
-                Sharpe {s.advanced?.sharpe?.toFixed(2) ?? '—'} · maxDD {s.advanced?.max_dd_pct?.toFixed(1) ?? '—'}%
-              </div>
-            </GlassCard>
-          ))}
+          {summary?.systems?.map((s) => {
+            const sharpeTarget = s.system_id.includes('XAU') ? 1.59 : 1.55;
+            const ddTarget = s.system_id.includes('XAU') ? 20 : 26;
+            const sharpe = s.advanced?.sharpe;
+            const dd = s.advanced?.max_dd_pct;
+            return (
+              <GlassCard className="p-4" key={s.system_id}>
+                <div className="text-xs text-white/50 uppercase tracking-wide">
+                  {s.system_id.includes('XAU') ? 'XAU/USD' : 'XAG/USD'}
+                </div>
+                <div className="text-lg font-semibold mt-1">
+                  {s.n_total} setups
+                </div>
+                <div className="text-xs text-white/40 mt-1">
+                  <div>
+                    Sharpe <span className={clsx('font-medium', sharpe !== null && sharpe !== undefined && sharpe >= sharpeTarget * 0.7 ? 'text-emerald-400' : 'text-rose-400/80')}>
+                      {sharpe?.toFixed(2) ?? '—'}
+                    </span>
+                    <span className="text-white/30"> / cible {sharpeTarget}</span>
+                  </div>
+                  <div>
+                    maxDD <span className={clsx('font-medium', dd !== null && dd !== undefined && dd <= ddTarget * 1.5 ? 'text-emerald-400' : 'text-rose-400/80')}>
+                      {dd?.toFixed(1) ?? '—'}%
+                    </span>
+                    <span className="text-white/30"> / cible &lt;{ddTarget}%</span>
+                  </div>
+                </div>
+              </GlassCard>
+            );
+          })}
         </div>
 
         {/* Equity curves par système */}
