@@ -19,6 +19,7 @@ Ordre chronologique, par track. Mettre à jour à chaque clôture d'expérience.
 | 13 | 2026-04-25 | A+C | [Corrélation A × C](2026-04-25-exp13-correlation-a-c.md) | closed-positive | Corrélation 0.56-0.68 (modérée), Sharpe combiné +0.02 marginal — **simplification : Track A XAU SEUL pour Phase 4 v1** |
 | 14 | 2026-04-26 | Phase 4 | [Implémentation + validation](2026-04-25-exp14-phase4-implementation-validation.md) | closed-positive | Module shadow + hook scheduler + reconciliation + endpoints OK ; KPIs cohérents avec backtest classique sur même fenêtre (PF 0.47 = drawdown attendu) |
 | 15 | 2026-04-26 | Phase 4 | [Out-of-sample 2020-2024](2026-04-25-exp15-out-of-sample-2020-2024.md) | closed-positive 🎯 | XAU H4 PF **1.26** sur 4 ans pré-bull, XAG PF 1.16 — **système validé cross-régime sur 6 ans cumulés** (COVID + bear + bull) |
+| 16 | 2026-04-26 | Phase 4 | [Pin_bar_up extension test](2026-04-25-exp16-pin-bar-up-extension.md) | closed-negative | V2_EXT (4pat) dégrade PF -0.04 à -0.09 vs V2_CORE (3pat) sur 3/4 fenêtres — V2_CORE_LONG actuel reste optimum |
 
 ## Conventions
 
