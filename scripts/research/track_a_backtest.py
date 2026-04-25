@@ -59,7 +59,10 @@ PAIRS = [
     "AUD/USD", "BTC/USD", "ETH/USD", "EUR/GBP", "EUR/USD",
     "GBP/JPY", "GBP/USD", "USD/CAD", "USD/CHF", "USD/JPY",
     "XAG/USD", "XAU/USD",
-    "WTI/USD",  # exp #29 — étude pétrole (3e candidat potentiel)
+    "WTI/USD",  # exp #29 — étude pétrole WTI (3e candidat retenu)
+    "XBR/USD",  # exp #30 — étude pétrole Brent (rejeté, doublon WTI)
+    "XPT/USD",  # exp #31 — étude Platinum
+    "XPD/USD",  # exp #32 — étude Palladium
 ]
 
 # Forward window timeout par timeframe — proportionnel à la taille de bougie.
