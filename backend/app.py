@@ -1769,6 +1769,62 @@ async def refresh_analysis(_=Depends(verify_credentials)):
     return {"status": "ok", "message": "Analysis refresh triggered"}
 
 
+# ─── Phase 4 — Shadow log V2_CORE_LONG ─────────────────────────────────────
+# Spec : docs/superpowers/specs/2026-04-25-phase4-shadow-log-spec.md
+
+@app.get("/api/shadow/v2_core_long/setups")
+async def api_shadow_setups(
+    since: str | None = None,
+    until: str | None = None,
+    system_id: str | None = None,
+    outcome: str | None = None,
+    limit: int = 200,
+    ctx: AuthContext = Depends(auth_context),
+):
+    """Liste les shadow setups V2_CORE_LONG avec filtres optionnels.
+
+    Query params:
+    - since: ISO date YYYY-MM-DD ou ISO 8601 timestamp
+    - until: idem
+    - system_id: ex 'V2_CORE_LONG_XAUUSD_4H' / 'V2_CORE_LONG_XAGUSD_4H'
+    - outcome: 'TP1' | 'SL' | 'TIMEOUT' | 'pending' (= NULL)
+    - limit: max 1000
+    """
+    from datetime import datetime as _dt
+    from backend.services.shadow_v2_core_long import list_setups
+
+    def _parse(s: str | None):
+        if not s:
+            return None
+        try:
+            return _dt.fromisoformat(s.replace("Z", "+00:00"))
+        except ValueError:
+            return _dt.strptime(s, "%Y-%m-%d")
+
+    return list_setups(
+        since=_parse(since),
+        until=_parse(until),
+        system_id=system_id,
+        outcome=outcome,
+        limit=min(limit, 1000),
+    )
+
+
+@app.get("/api/shadow/v2_core_long/summary")
+async def api_shadow_summary(ctx: AuthContext = Depends(auth_context)):
+    """KPIs synthétiques sur les shadow setups V2_CORE_LONG.
+
+    Retourne par système :
+    - n_total / n_pending / n_tp1 / n_sl / n_timeout
+    - PF observed (sur outcomes resolved)
+    - WR pct
+    - net_pnl_eur cumulé
+    - first_bar / last_bar
+    """
+    from backend.services.shadow_v2_core_long import summary
+    return summary()
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket pour notifications temps réel des signaux.

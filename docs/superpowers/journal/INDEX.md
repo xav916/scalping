@@ -17,6 +17,7 @@ Ordre chronologique, par track. Mettre à jour à chaque clôture d'expérience.
 | 11 | 2026-04-25 | C | [Track C TF pré-bull cycle](2026-04-25-track-c-exp11-pretest-2023.md) | closed-positive | XAU LONG PF **5.60** (n=16, robuste) ; XAG LONG PF 1.12 (n=31, régime-dépendant) — asymétrie XAU/XAG cohérente théorie macro |
 | 12 | 2026-04-25 | A+C | [Sharpe analysis 4 candidats](2026-04-25-exp12-sharpe-analysis.md) | closed-positive 🚀 | 4/4 candidats Sharpe ≥ 1.27 sur 24M ; Track A XAU **Sharpe 1.59 / maxDD 20%** (Carver "very good") ; Track C XAU **Calmar 4.45** (maxDD 4.7%) |
 | 13 | 2026-04-25 | A+C | [Corrélation A × C](2026-04-25-exp13-correlation-a-c.md) | closed-positive | Corrélation 0.56-0.68 (modérée), Sharpe combiné +0.02 marginal — **simplification : Track A XAU SEUL pour Phase 4 v1** |
+| 14 | 2026-04-26 | Phase 4 | [Implémentation + validation](2026-04-25-exp14-phase4-implementation-validation.md) | closed-positive | Module shadow + hook scheduler + reconciliation + endpoints OK ; KPIs cohérents avec backtest classique sur même fenêtre (PF 0.47 = drawdown attendu) |
 
 ## Conventions
 

@@ -277,6 +277,20 @@ async def run_analysis_cycle() -> None:
             f"{len(all_trade_setups)} setup(s) de trade"
         )
 
+        # Phase 4 — shadow log V2_CORE_LONG (lecture seule, ne touche pas V1)
+        # Système recherche validé J1 : Sharpe 1.59 / maxDD 20% sur XAU H4.
+        # Détecte les setups V2_CORE_LONG sur bougies H4 aggrégées depuis
+        # h1_candles, persiste en DB shadow_setups pour observation. Pas
+        # d'auto-exec, pas de Telegram, pas de UI alert.
+        # Spec : docs/superpowers/specs/2026-04-25-phase4-shadow-log-spec.md
+        try:
+            from backend.services.shadow_v2_core_long import run_shadow_log
+            shadow_counts = await run_shadow_log(h1_candles, cycle_at=now)
+            if any(shadow_counts.values()):
+                logger.info(f"shadow log V2_CORE_LONG: {shadow_counts}")
+        except Exception as e:
+            logger.warning(f"shadow log V2_CORE_LONG failed (non-bloquant): {e}")
+
         # Pousse un snapshot cockpit immediat des qu'un cycle se termine :
         # les clients connectes voient les nouveaux setups sans attendre le
         # prochain tick du job periodique (jusqu'a 5s de latence evitee).
