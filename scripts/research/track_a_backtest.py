@@ -211,20 +211,23 @@ def backtest_pair(
     pair: str,
     timeframe: str,
     spread_slippage_pct: float,
+    use_h1_sim: bool = False,
 ) -> list[dict]:
     """Backtest d'une paire pour un timeframe donné.
 
     Logique :
     1. Charge H1 brutes + 5min (5min sert toujours pour la simu intra-bar).
+       Si use_h1_sim=True, skip le 5min et utilise H1 pour la simu — moins
+       précis mais permet le backtest 2020-2023 où 5min n'existe pas.
     2. Aggrège H1 → signal_candles selon timeframe.
     3. Pour chaque bar i ≥ 30 (warmup ATR) :
        - history = signal_candles[:i+1]
        - detect_patterns + calculate_trade_setup
-       - simulate_trade_forward sur 5min avec timeout scalé
+       - simulate_trade_forward sur 5min (ou H1 fallback) avec timeout scalé
     4. Dedup : 1 setup max par dedup_hours.
     """
     candles_1h = load_h1_candles(pair)
-    candles_5min = load_5min_candles(pair)
+    candles_for_sim = candles_1h if use_h1_sim else load_5min_candles(pair)
     if len(candles_1h) < 50:
         return []
 
@@ -254,7 +257,7 @@ def backtest_pair(
             continue
 
         outcome, exit_time, exit_price = simulate_trade_forward(
-            setup, candles_5min, now, timeout_hours=timeout_hours,
+            setup, candles_for_sim, now, timeout_hours=timeout_hours,
         )
         pips, pct = _bte.compute_pnl(
             setup, exit_price, spread_slippage_pct=spread_slippage_pct,
@@ -384,6 +387,10 @@ def main() -> None:
                         help="Date de fin YYYY-MM-DD (défaut 2026-04-25)")
     parser.add_argument("--deep", action="store_true",
                         help="Avec --pair : breakdown par direction et par pattern")
+    parser.add_argument("--use-h1-sim", action="store_true",
+                        help="Utilise H1 candles pour la simulation forward "
+                             "(au lieu de 5min). Moins précis mais permet "
+                             "backtest 2020-2023 où 5min DB n'existe pas.")
     args = parser.parse_args()
 
     if args.start:
@@ -407,7 +414,7 @@ def main() -> None:
     all_trades: list[dict] = []
     for pair in pairs:
         print(f"  {pair}...", end=" ", flush=True)
-        trades = backtest_pair(pair, args.timeframe, spread)
+        trades = backtest_pair(pair, args.timeframe, spread, use_h1_sim=args.use_h1_sim)
         print(f"{len(trades)} trades")
         all_trades.extend(trades)
 

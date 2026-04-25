@@ -18,6 +18,7 @@ Ordre chronologique, par track. Mettre à jour à chaque clôture d'expérience.
 | 12 | 2026-04-25 | A+C | [Sharpe analysis 4 candidats](2026-04-25-exp12-sharpe-analysis.md) | closed-positive 🚀 | 4/4 candidats Sharpe ≥ 1.27 sur 24M ; Track A XAU **Sharpe 1.59 / maxDD 20%** (Carver "very good") ; Track C XAU **Calmar 4.45** (maxDD 4.7%) |
 | 13 | 2026-04-25 | A+C | [Corrélation A × C](2026-04-25-exp13-correlation-a-c.md) | closed-positive | Corrélation 0.56-0.68 (modérée), Sharpe combiné +0.02 marginal — **simplification : Track A XAU SEUL pour Phase 4 v1** |
 | 14 | 2026-04-26 | Phase 4 | [Implémentation + validation](2026-04-25-exp14-phase4-implementation-validation.md) | closed-positive | Module shadow + hook scheduler + reconciliation + endpoints OK ; KPIs cohérents avec backtest classique sur même fenêtre (PF 0.47 = drawdown attendu) |
+| 15 | 2026-04-26 | Phase 4 | [Out-of-sample 2020-2024](2026-04-25-exp15-out-of-sample-2020-2024.md) | closed-positive 🎯 | XAU H4 PF **1.26** sur 4 ans pré-bull, XAG PF 1.16 — **système validé cross-régime sur 6 ans cumulés** (COVID + bear + bull) |
 
 ## Conventions
 
