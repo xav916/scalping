@@ -47,8 +47,13 @@ from backend.services.pattern_detector import detect_patterns, calculate_trade_s
 
 CANDLES_DB = ROOT / "_macro_veto_analysis" / "backtest_candles.db"
 
-START = datetime(2025, 4, 25, tzinfo=timezone.utc)
-END = datetime(2026, 4, 25, tzinfo=timezone.utc)
+# Fenêtre par défaut : 12 mois jusqu'à aujourd'hui
+DEFAULT_START = datetime(2025, 4, 25, tzinfo=timezone.utc)
+DEFAULT_END = datetime(2026, 4, 25, tzinfo=timezone.utc)
+
+# Variables runtime modifiées par main() selon les args
+START = DEFAULT_START
+END = DEFAULT_END
 
 PAIRS = [
     "AUD/USD", "BTC/USD", "ETH/USD", "EUR/GBP", "EUR/USD",
@@ -347,6 +352,7 @@ def stats(label: str, trades: list[dict]) -> dict | None:
 
 
 def main() -> None:
+    global START, END
     parser = argparse.ArgumentParser(description="Track A multi-TF backtest")
     parser.add_argument("--timeframe", "-t", choices=["1h", "4h", "1d"],
                         required=True, help="Timeframe pour la détection de pattern")
@@ -354,7 +360,18 @@ def main() -> None:
                         help="Backtest sans coûts spread/slippage (edge brut)")
     parser.add_argument("--pair", default=None,
                         help="Tester une seule paire (au lieu de toutes)")
+    parser.add_argument("--start", default=None,
+                        help="Date de début YYYY-MM-DD (défaut 2025-04-25)")
+    parser.add_argument("--end", default=None,
+                        help="Date de fin YYYY-MM-DD (défaut 2026-04-25)")
+    parser.add_argument("--deep", action="store_true",
+                        help="Avec --pair : breakdown par direction et par pattern")
     args = parser.parse_args()
+
+    if args.start:
+        START = datetime.strptime(args.start, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    if args.end:
+        END = datetime.strptime(args.end, "%Y-%m-%d").replace(tzinfo=timezone.utc)
 
     spread = 0.0 if args.no_costs else 0.0002
 
@@ -394,6 +411,29 @@ def main() -> None:
         by_pair[t["pair"]].append(t)
     for pair, ts in sorted(by_pair.items()):
         stats(f"{pair}", ts)
+
+    # Mode --deep : décomposition direction + pattern, utile sur --pair X
+    if args.deep:
+        print(f"\n=== BASELINE — breakdown par direction (TF={args.timeframe}) ===")
+        by_dir: dict[str, list[dict]] = defaultdict(list)
+        for t in all_trades:
+            by_dir[t["direction"]].append(t)
+        for d, ts in sorted(by_dir.items()):
+            stats(f"{d}", ts)
+
+        print(f"\n=== BASELINE — breakdown par pattern (TF={args.timeframe}) ===")
+        by_pat: dict[str, list[dict]] = defaultdict(list)
+        for t in all_trades:
+            by_pat[t["pattern"]].append(t)
+        for pat, ts in sorted(by_pat.items(), key=lambda x: -len(x[1])):
+            stats(f"{pat}", ts)
+
+        print(f"\n=== BASELINE — breakdown direction × pattern (TF={args.timeframe}) ===")
+        by_dp: dict[tuple, list[dict]] = defaultdict(list)
+        for t in all_trades:
+            by_dp[(t["direction"], t["pattern"])].append(t)
+        for (d, p), ts in sorted(by_dp.items(), key=lambda x: -len(x[1])):
+            stats(f"{d:<5} {p}", ts)
 
 
 if __name__ == "__main__":
