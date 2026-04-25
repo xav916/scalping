@@ -144,11 +144,23 @@ def test_e2e_full_pipeline(isolated_db):
         assert len(adv["equity_curve"]) == n_resolved
 
 
-def test_e2e_no_data_pipeline(isolated_db):
-    """Pipeline avec 0 setup persisté → summary doit retourner {systems: []}."""
+def test_e2e_no_data_pipeline(isolated_db, monkeypatch):
+    """Pipeline avec 0 setup persisté → summary doit retourner {systems: []}.
+
+    Les paires Daily (ETH) tenteraient un fetch_candles direct ; on patch
+    la fonction pour qu'elle retourne immédiatement [] (évite un appel
+    Twelve Data réel en test).
+    """
+    async def _fake_fetch(*_args, **_kwargs):
+        return ([], False)
+    monkeypatch.setattr(
+        "backend.services.price_service.fetch_candles", _fake_fetch
+    )
+
     # Run sans candles → 0 setup
     result = asyncio.run(shadow.run_shadow_log({}))
-    assert result == {"XAU/USD": 0, "XAG/USD": 0, "WTI/USD": 0}
+    expected = {p: 0 for p in shadow.SHADOW_PAIRS}
+    assert result == expected
 
     # Reconcile sans pending
     stats = asyncio.run(recon.reconcile_pending_setups(max_per_run=10))

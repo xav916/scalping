@@ -50,7 +50,17 @@ class _MinimalSetup:
 logger = logging.getLogger(__name__)
 
 
-TIMEOUT_HOURS = 96  # H4 forward timeout (= 24 H4 bars)
+# Forward timeout par timeframe — proportionnel à la taille de bougie.
+# H4 : 24 bars × 4h = 96h (4 jours)
+# 1d : 10 bars × 24h = 240h (10 jours), couverture 5min OK depuis 2023-04
+TIMEOUT_HOURS_BY_TF: dict[str, int] = {"4h": 96, "1d": 240}
+TIMEOUT_HOURS_DEFAULT = 96  # H4 fallback pour rows sans timeframe explicite
+
+# Cutoff SQL = le plus court possible (pour pas exclure du SELECT des setups
+# H4 prêts juste parce que les Daily n'ont pas encore atteint leur 240h).
+# La logique par-TF est appliquée dans la boucle Python.
+TIMEOUT_HOURS_MIN = min(TIMEOUT_HOURS_BY_TF.values())
+
 SPREAD_SLIPPAGE_PCT = 0.0002  # 0.02%, identique au backtest
 
 
@@ -140,7 +150,7 @@ async def reconcile_pending_setups(
     fetch_fn = fetch_5min_fn or fetch_5min_for_window
 
     now = datetime.now(timezone.utc)
-    cutoff = now - timedelta(hours=TIMEOUT_HOURS)
+    cutoff = now - timedelta(hours=TIMEOUT_HOURS_MIN)
 
     with sqlite3.connect(DB_PATH) as c:
         c.row_factory = sqlite3.Row
@@ -170,7 +180,18 @@ async def reconcile_pending_setups(
         bar_ts = datetime.fromisoformat(setup_dict["bar_timestamp"]).replace(tzinfo=timezone.utc) \
             if "T" in setup_dict["bar_timestamp"] else \
             datetime.fromisoformat(setup_dict["bar_timestamp"]).replace(tzinfo=timezone.utc)
-        end_ts = bar_ts + timedelta(hours=TIMEOUT_HOURS)
+
+        # Timeout par TF (Daily plus long que H4)
+        tf = setup_dict.get("timeframe", "4h")
+        timeout_hours = TIMEOUT_HOURS_BY_TF.get(tf, TIMEOUT_HOURS_DEFAULT)
+
+        # Le SELECT a un cutoff = TIMEOUT_HOURS_MIN, mais une row Daily
+        # peut être renvoyée alors qu'elle n'a pas encore atteint son
+        # timeout 240h. Skip silencieusement, sera rejouée au prochain run.
+        if bar_ts > now - timedelta(hours=timeout_hours):
+            continue
+
+        end_ts = bar_ts + timedelta(hours=timeout_hours)
 
         try:
             candles_5min = await fetch_fn(setup_dict["pair"], bar_ts, end_ts)
@@ -186,7 +207,7 @@ async def reconcile_pending_setups(
         try:
             setup = _setup_from_row(setup_dict)
             outcome, exit_time, exit_price = simulate_trade_forward(
-                setup, candles_5min, bar_ts, timeout_hours=TIMEOUT_HOURS,
+                setup, candles_5min, bar_ts, timeout_hours=timeout_hours,
             )
             pips, pct_net = compute_pnl(setup, exit_price, spread_slippage_pct=SPREAD_SLIPPAGE_PCT)
             position_eur = setup_dict["sizing_position_eur"]

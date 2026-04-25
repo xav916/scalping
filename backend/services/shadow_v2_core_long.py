@@ -30,10 +30,7 @@ logger = logging.getLogger(__name__)
 
 # ─── Configuration ──────────────────────────────────────────────────────────
 
-# Paires à observer en shadow log (validées par recherche J1 + exp #29 WTI)
-SHADOW_PAIRS: list[str] = ["XAU/USD", "XAG/USD", "WTI/USD"]
-
-# Patterns retenus pour V2_CORE_LONG (XAU + XAG, exp #2/#3/#4)
+# Patterns retenus pour V2_CORE_LONG (XAU + XAG + ETH, exp #2/#3/#4 + #34)
 # Tous LONG only — les SHORTs sur XAG sont conditionnels au cycle (exp #11)
 CORE_LONG_PATTERNS: set[str] = {"momentum_up", "engulfing_bullish", "breakout_up"}
 
@@ -42,31 +39,46 @@ CORE_LONG_PATTERNS: set[str] = {"momentum_up", "engulfing_bullish", "breakout_up
 # range_bounce_up productif (range trading entre niveaux OPEC) → ajouté
 WTI_OPTIMAL_PATTERNS: set[str] = {"momentum_up", "engulfing_bullish", "range_bounce_up"}
 
-# Mapping pair → patterns (filter par asset)
-PATTERNS_BY_PAIR: dict[str, set[str]] = {
-    "XAU/USD": CORE_LONG_PATTERNS,
-    "XAG/USD": CORE_LONG_PATTERNS,
-    "WTI/USD": WTI_OPTIMAL_PATTERNS,
-}
-
-# Mapping pair → system_id (pour cohérence avec backtest et reporting)
-SYSTEM_ID_BY_PAIR: dict[str, str] = {
-    "XAU/USD": "V2_CORE_LONG_XAUUSD_4H",
-    "XAG/USD": "V2_CORE_LONG_XAGUSD_4H",
-    "WTI/USD": "V2_WTI_OPTIMAL_WTIUSD_4H",
-}
-
-# Sizing virtuel par défaut Phase 4 (prudence vs 1% backtest)
-# XAU = 0.5% (maxDD 6y modéré 53%)
-# XAG = 0.3% (maxDD 6y élevé 124%)
-# WTI = 0.3% (maxDD 5.5y élevé 123%, et driver politique imprévu)
+# Configuration unifiée par paire : timeframe, patterns, system_id, sizing.
+# Ajouté ETH/USD Daily V2_CORE_LONG (exp #34) en 4e candidat.
 DEFAULT_CAPITAL_EUR: float = 10_000.0
-DEFAULT_RISK_PCT: float = 0.005  # 0.5% par défaut
-RISK_PCT_BY_PAIR: dict[str, float] = {
-    "XAU/USD": 0.005,
-    "XAG/USD": 0.003,
-    "WTI/USD": 0.003,
+DEFAULT_RISK_PCT: float = 0.005
+
+SHADOW_CONFIG: dict[str, dict[str, Any]] = {
+    "XAU/USD": {
+        "tf": "4h",
+        "patterns": CORE_LONG_PATTERNS,
+        "system_id": "V2_CORE_LONG_XAUUSD_4H",
+        "risk_pct": 0.005,  # maxDD 6y modéré 53%
+    },
+    "XAG/USD": {
+        "tf": "4h",
+        "patterns": CORE_LONG_PATTERNS,
+        "system_id": "V2_CORE_LONG_XAGUSD_4H",
+        "risk_pct": 0.003,  # maxDD 6y élevé 124%
+    },
+    "WTI/USD": {
+        "tf": "4h",
+        "patterns": WTI_OPTIMAL_PATTERNS,
+        "system_id": "V2_WTI_OPTIMAL_WTIUSD_4H",
+        "risk_pct": 0.003,  # maxDD 5.5y élevé 123%, driver politique
+    },
+    "ETH/USD": {
+        "tf": "1d",
+        "patterns": CORE_LONG_PATTERNS,
+        "system_id": "V2_CORE_LONG_ETHUSD_1D",
+        "risk_pct": 0.0025,  # maxDD 3y très élevé 158%, sample 144 trades
+    },
 }
+
+# Liste des paires à observer (dérivé de SHADOW_CONFIG)
+SHADOW_PAIRS: list[str] = list(SHADOW_CONFIG.keys())
+
+# Compat : mappings dérivés pour code legacy / tests
+PATTERNS_BY_PAIR: dict[str, set[str]] = {p: c["patterns"] for p, c in SHADOW_CONFIG.items()}
+SYSTEM_ID_BY_PAIR: dict[str, str] = {p: c["system_id"] for p, c in SHADOW_CONFIG.items()}
+RISK_PCT_BY_PAIR: dict[str, float] = {p: c["risk_pct"] for p, c in SHADOW_CONFIG.items()}
+TIMEFRAME_BY_PAIR: dict[str, str] = {p: c["tf"] for p, c in SHADOW_CONFIG.items()}
 
 # DB partagée avec trade_log_service / users_service
 DB_PATH = Path("/app/data/trades.db") if Path("/app").exists() else Path("trades.db")
@@ -126,6 +138,43 @@ def ensure_schema() -> None:
 # ─── Aggrégation H1 → H4 ────────────────────────────────────────────────────
 
 
+def aggregate_to_daily(candles_1h: list[Candle]) -> list[Candle]:
+    """Aggrège des bougies H1 en bougies Daily (UTC, bucket 00:00).
+
+    Méthode identique à scripts/research/track_a_backtest.aggregate_to_daily :
+    - timestamp bucket = jour UTC à 00:00
+    - open = première candle, close = dernière, high = max, low = min
+    - volumes sommés
+    - les buckets non-fermés (< 24 H1) sont exclus
+
+    Note : pour la prod, on préfère utiliser fetch_candles(interval='1day')
+    directement (cf run_shadow_log) car le scheduler V1 ne fournit que
+    200 H1 (= ~8 daily). Cette fonction est gardée pour les tests unitaires.
+    """
+    if not candles_1h:
+        return []
+
+    buckets: dict[datetime, list[Candle]] = defaultdict(list)
+    for c in candles_1h:
+        bucket_ts = c.timestamp.replace(hour=0, minute=0, second=0, microsecond=0)
+        buckets[bucket_ts].append(c)
+
+    daily_candles: list[Candle] = []
+    for bucket_ts in sorted(buckets.keys()):
+        bucket = sorted(buckets[bucket_ts], key=lambda x: x.timestamp)
+        if len(bucket) < 24:
+            continue
+        daily_candles.append(Candle(
+            timestamp=bucket_ts,
+            open=bucket[0].open,
+            high=max(c.high for c in bucket),
+            low=min(c.low for c in bucket),
+            close=bucket[-1].close,
+            volume=sum(c.volume for c in bucket),
+        ))
+    return daily_candles
+
+
 def aggregate_to_h4(candles_1h: list[Candle]) -> list[Candle]:
     """Aggrège des bougies H1 en bougies H4 alignées 00/04/08/12/16/20 UTC.
 
@@ -177,9 +226,10 @@ def _persist_setup(
     macro_features: dict | None = None,
 ) -> bool:
     """Insert idempotent (UNIQUE system_id, bar_timestamp). Retourne True si nouveau."""
-    # Filter par pair (XAU/XAG = V2_CORE_LONG, WTI = V2_WTI_OPTIMAL)
-    system_id = SYSTEM_ID_BY_PAIR.get(pair, f"V2_CORE_LONG_{pair.replace('/', '')}_4H")
-    risk_pct_for_pair = RISK_PCT_BY_PAIR.get(pair, DEFAULT_RISK_PCT)
+    cfg = SHADOW_CONFIG.get(pair, {})
+    system_id = cfg.get("system_id", f"V2_CORE_LONG_{pair.replace('/', '')}_4H")
+    risk_pct_for_pair = cfg.get("risk_pct", DEFAULT_RISK_PCT)
+    timeframe = cfg.get("tf", "4h")
 
     risk = abs(setup.entry_price - setup.stop_loss)
     risk_pct = risk / setup.entry_price if setup.entry_price > 0 else 0
@@ -209,7 +259,7 @@ def _persist_setup(
                 """,
                 (
                     cycle_at.isoformat(), bar_timestamp.isoformat(),
-                    system_id, pair, "4h",
+                    system_id, pair, timeframe,
                     setup.direction.value if hasattr(setup.direction, "value") else str(setup.direction),
                     pattern_name,
                     setup.entry_price, setup.stop_loss,
@@ -248,31 +298,50 @@ async def run_shadow_log(
     cycle_at = cycle_at or datetime.now(timezone.utc)
 
     counts: dict[str, int] = {}
-    for pair in SHADOW_PAIRS:
-        h1 = h1_candles.get(pair, [])
-        if len(h1) < 30:
+    for pair, cfg in SHADOW_CONFIG.items():
+        tf = cfg["tf"]
+        pair_patterns = cfg["patterns"]
+
+        # Construit la série de bougies au timeframe demandé
+        signal_candles: list[Candle] = []
+        if tf == "4h":
+            h1 = h1_candles.get(pair, [])
+            if len(h1) < 30:
+                counts[pair] = 0
+                continue
+            signal_candles = aggregate_to_h4(h1)
+        elif tf == "1d":
+            # Fetch direct depuis Twelve Data — le scheduler V1 ne fournit
+            # pas assez de H1 pour aggréger 30+ Daily (besoin 720 H1).
+            try:
+                from backend.services.price_service import fetch_candles
+                signal_candles, _ = await fetch_candles(
+                    pair, interval="1day", outputsize=60,
+                )
+            except Exception as e:
+                logger.warning(f"shadow: fetch Daily {pair} failed: {e}")
+                counts[pair] = 0
+                continue
+        else:
+            logger.warning(f"shadow: timeframe non supporté pour {pair}: {tf}")
             counts[pair] = 0
             continue
 
-        h4 = aggregate_to_h4(h1)
-        if len(h4) < 30:
+        if len(signal_candles) < 30:
             counts[pair] = 0
             continue
 
         n_new = 0
-        # Détection sur le DERNIER bar H4 fermé uniquement
-        last_bar_ts = h4[-1].timestamp
-        patterns = detect_patterns(h4, pair)
-
-        # Filter par pair (XAU/XAG = CORE, WTI = WTI_OPTIMAL)
-        pair_patterns = PATTERNS_BY_PAIR.get(pair, CORE_LONG_PATTERNS)
+        # Détection sur le DERNIER bar fermé uniquement
+        last_bar_ts = signal_candles[-1].timestamp
+        patterns = detect_patterns(signal_candles, pair)
 
         for pattern in patterns:
             pattern_name = pattern.pattern.value if hasattr(pattern.pattern, "value") else str(pattern.pattern)
             if pattern_name not in pair_patterns:
                 continue
 
-            setup = calculate_trade_setup(pair, pattern, h4)
+            setup = calculate_trade_setup(pair, pattern, signal_candles)
             if setup is None:
                 continue
             if setup.direction != TradeDirection.BUY:
@@ -292,7 +361,7 @@ async def run_shadow_log(
             ):
                 n_new += 1
                 logger.info(
-                    f"shadow: nouveau setup V2_CORE_LONG {pair} 4H "
+                    f"shadow: nouveau setup {cfg['system_id']} {pair} {tf.upper()} "
                     f"pattern={pattern_name} entry={setup.entry_price:.4f} "
                     f"SL={setup.stop_loss:.4f} TP1={setup.take_profit_1:.4f}"
                 )

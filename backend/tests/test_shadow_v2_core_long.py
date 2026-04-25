@@ -106,10 +106,20 @@ def test_ensure_schema_idempotent(temp_db):
 # ─── run_shadow_log ─────────────────────────────────────────────────────────
 
 
-def test_run_shadow_log_empty_input(temp_db):
-    """Pas de candles → 0 nouveaux setups, pas d'exception."""
+def test_run_shadow_log_empty_input(temp_db, monkeypatch):
+    """Pas de candles → 0 nouveaux setups, pas d'exception.
+
+    Stub fetch_candles pour les paires Daily (ETH) afin d'éviter un
+    appel API externe en test.
+    """
+    async def _fake_fetch(*_args, **_kwargs):
+        return ([], False)
+    monkeypatch.setattr(
+        "backend.services.price_service.fetch_candles", _fake_fetch
+    )
     result = asyncio.run(shadow.run_shadow_log({}))
-    assert result == {"XAU/USD": 0, "XAG/USD": 0, "WTI/USD": 0}
+    expected = {p: 0 for p in shadow.SHADOW_PAIRS}
+    assert result == expected
 
 
 def test_run_shadow_log_too_few_candles(temp_db):
