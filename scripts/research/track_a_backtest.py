@@ -313,6 +313,19 @@ def filter_rb_down_sell(t: dict) -> bool:
     return t["pattern"] == "range_bounce_down" and t["direction"] == "sell"
 
 
+# ─── V2_CORE_LONG : filtre dérivé des exp #2/#3 ────────────────────────────
+# Patterns LONG robustes sur métaux 24M :
+#   momentum_up         (XAU 1.22 / XAG 2.09)
+#   engulfing_bullish   (XAU 1.68 / XAG 1.10)
+#   breakout_up         (XAU 1.84 / XAG 1.19)
+# SHORTs exclus pour éviter le carry XAG (SELL PF 0.83 sur 24M).
+CORE_LONG_PATTERNS = {"momentum_up", "engulfing_bullish", "breakout_up"}
+
+
+def filter_v2_core_long(t: dict) -> bool:
+    return t["direction"] == "buy" and t["pattern"] in CORE_LONG_PATTERNS
+
+
 # ─── Stats ──────────────────────────────────────────────────────────────────
 
 def stats(label: str, trades: list[dict]) -> dict | None:
@@ -401,6 +414,7 @@ def main() -> None:
     stats("V2_LIGHT (sell only)", [t for t in all_trades if filter_v2_light(t)])
     stats("V2_PATTERN (whitelist)", [t for t in all_trades if filter_v2_pattern(t)])
     stats("V2_FULL (all filters)", [t for t in all_trades if filter_v2_full(t)])
+    stats("V2_CORE_LONG (3pat BUY)", [t for t in all_trades if filter_v2_core_long(t)])
     stats("RB_DOWN_SELL only", [t for t in all_trades if filter_rb_down_sell(t)])
     print()
 
