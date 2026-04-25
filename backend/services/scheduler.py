@@ -13,9 +13,9 @@ from backend.services.analysis_engine import (
     enrich_trade_setup,
     filter_high_confidence_setups,
 )
+from backend.services.backtest_engine import compute_volatility as _compute_vol_from_candles
 from backend.services.forexfactory_service import fetch_economic_events
 from backend.services.macro_context_service import refresh_macro_context
-from backend.services.mataf_service import fetch_volatility_data
 from backend.services import backtest_service, coaching, ml_features, ml_predictor
 from backend.services.notification_service import (
     broadcast_cockpit,
@@ -96,38 +96,46 @@ async def run_analysis_cycle() -> None:
     try:
         # Récupérer toutes les données en parallèle
         fetch_tasks = [
-            fetch_volatility_data(),
             fetch_economic_events(),
         ]
         # Bougies CANDLE_INTERVAL (5min) pour analyse principale
         for pair in WATCHED_PAIRS:
             fetch_tasks.append(fetch_candles(pair, interval=CANDLE_INTERVAL, outputsize=CANDLE_COUNT))
-        # Bougies 1h pour confirmation MTF (cap a 50 bougies = 50h d'historique)
+        # Bougies 1h pour confirmation MTF + calcul volatilité ATR
+        # (cap a 50 bougies = 50h d'historique, suffisant pour ATR 14 + baseline 35)
         for pair in WATCHED_PAIRS:
             fetch_tasks.append(fetch_candles(pair, interval="1h", outputsize=50))
 
         results = await asyncio.gather(*fetch_tasks)
 
-        volatility_data = results[0]
-        economic_events = results[1]
+        economic_events = results[0]
         n = len(WATCHED_PAIRS)
 
         # Bougies 5min
         all_candles = {}
         simulated_pairs = {}
         for i, pair in enumerate(WATCHED_PAIRS):
-            candles, is_simulated = results[2 + i]
+            candles, is_simulated = results[1 + i]
             all_candles[pair] = candles
             simulated_pairs[pair] = is_simulated
 
-        # Bougies 1h (pour MTF)
+        # Bougies 1h (pour MTF + volatilité)
         h1_candles = {}
         for i, pair in enumerate(WATCHED_PAIRS):
             try:
-                cs, _sim = results[2 + n + i]
+                cs, _sim = results[1 + n + i]
                 h1_candles[pair] = cs
             except IndexError:
                 h1_candles[pair] = []
+
+        # Volatilité calculée localement depuis les bougies 1h Twelve Data.
+        # Remplace l'ancien fetch Mataf.net (JS-rendered, scraping cassé →
+        # ratio 0.0 systématique → factor Volatilité plafonné à 3/20).
+        # ATR 14 sur 15 dernières bougies vs baseline 35 antérieures.
+        volatility_data = [
+            _compute_vol_from_candles(h1_candles.get(pair, []), pair)
+            for pair in WATCHED_PAIRS
+        ]
 
         # Analyser les tendances pour chaque paire
         trends = [
