@@ -26,6 +26,7 @@ Ordre chronologique, par track. Mettre à jour à chaque clôture d'expérience.
 | 30-32 | 2026-04-26 | Phase 4 | [Brent/XPT/XPD extensions](2026-04-26-exp30-32-extension-rejets.md) | closed-negative | **0/3 retenus** : Brent doublon WTI (24M PF 1.05), Platinum drift pré-bull (PF 0.92), Palladium PF 0.80-1.03 partout — portefeuille reste **XAU+XAG+WTI seulement** |
 | 24 | 2026-04-26 | B | [Walk-forward expansif](2026-04-25-exp24-walk-forward-track-b.md) | closed-negative | Refit mensuel PF 1.60 vs Fixe 1.94 (Δ -0.34) — sur-fit au noise, baseline cross-régime suffit |
 | 25 | 2026-04-26 | A | [V2_ADAPTIVE régime-aware](2026-04-25-exp25-v2-adaptive.md) | closed-neutral | Détecteur DXY+TNX trop crude (Δ -0.02) — confirme V2_CORE comme **optimum local atteint** après 7 tentatives d'extension |
+| 33 | 2026-04-26 | C | [Track C TF sur WTI/USD](2026-04-26-exp33-track-c-tf-wti.md) | closed-negative | LONG PF 1.58 PRE-BULL → **0.46 BULL CYCLE** — edge inversé vs V2_WTI_OPTIMAL, Track C TF spécifique métaux |
 
 ## Conventions
 
