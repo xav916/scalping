@@ -16,6 +16,7 @@ Ordre chronologique, par track. Mettre à jour à chaque clôture d'expérience.
 | 10 | 2026-04-25 | B | [Robustesse pré-bull cycle 2023-24](2026-04-25-track-b-exp10-pretest-2023.md) | closed-positive | Filtre macro **régime-spécifique** (Δ -0.50 sur PRE_TEST). Mais découverte : V2_CORE_LONG **baseline robuste cross-régime** (PF 1.60 PRE_TEST sans filtre) — système principal réinterprété |
 | 11 | 2026-04-25 | C | [Track C TF pré-bull cycle](2026-04-25-track-c-exp11-pretest-2023.md) | closed-positive | XAU LONG PF **5.60** (n=16, robuste) ; XAG LONG PF 1.12 (n=31, régime-dépendant) — asymétrie XAU/XAG cohérente théorie macro |
 | 12 | 2026-04-25 | A+C | [Sharpe analysis 4 candidats](2026-04-25-exp12-sharpe-analysis.md) | closed-positive 🚀 | 4/4 candidats Sharpe ≥ 1.27 sur 24M ; Track A XAU **Sharpe 1.59 / maxDD 20%** (Carver "very good") ; Track C XAU **Calmar 4.45** (maxDD 4.7%) |
+| 13 | 2026-04-25 | A+C | [Corrélation A × C](2026-04-25-exp13-correlation-a-c.md) | closed-positive | Corrélation 0.56-0.68 (modérée), Sharpe combiné +0.02 marginal — **simplification : Track A XAU SEUL pour Phase 4 v1** |
 
 ## Conventions
 
@@ -64,7 +65,12 @@ Ordre chronologique, par track. Mettre à jour à chaque clôture d'expérience.
 | Track C TF LONG XAU H4 | 62 | 1.27 | **4.7** | **4.45** | +38% | moderate return + ultra-low vol |
 | Track C TF LONG XAG H4 | 60 | 1.31 | 5.8 | 3.55 | +38% | moderate return + low vol |
 
-**Allocation conservative recommandée Phase 4 shadow log :** 50% Track C XAU + 30% Track A XAU + 20% Track A XAG. Risque par trade 0.5% (vs 1% backtest) pour démarrer prudent.
+**Allocation Phase 4 shadow log — SIMPLIFIÉE après exp #13 :**
+- **v1 (à démarrer)** : Track A V2_CORE_LONG XAU H4 **SEUL**, 100% capital, 0.5% risk/trade
+- **v2 (fallback maxDD)** : ajouter Track C XAU à 30% si maxDD live > 25%
+- **XAG reporté indéfiniment** (corrélation 0.62 avec Track A XAU = double exposition métaux peu utile)
+
+Justification : la corrélation Track A × Track C = 0.56-0.68 (modérée). Le Sharpe combiné 50/50 ne booste que +0.02 vs Track A solo. Diversification multi-système faible → préférer la simplicité opérationnelle.
 
 ## Gate de décision (planifié fin S6 = ~2026-06-06)
 
