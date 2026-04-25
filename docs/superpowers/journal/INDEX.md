@@ -13,6 +13,7 @@ Ordre chronologique, par track. Mettre à jour à chaque clôture d'expérience.
 | 7 | 2026-04-25 | B | [Pipeline data macro Phase 1](2026-04-25-track-b-phase1-data-pipeline.md) | closed-positive | 5/5 symboles fetchés (VIX/DXY/SPX/TNX/BTC), 8643 obs daily 6y, features non-look-ahead OK — **pipeline opérationnel** |
 | 8 | 2026-04-25 | B | [Macro buckets V2_CORE_LONG](2026-04-25-track-b-exp8-macro-buckets.md) | closed-positive 🔥 | 9/9 dimensions avec spread PF ≥ 0.52, max **+2.06** sur BTC return 5d — **signal macro-conditionnel massif** |
 | 9 | 2026-04-25 | B | [Filtre macro walk-forward](2026-04-25-track-b-exp9-macro-filter-walkforward.md) | closed-positive 🎯 | TEST PF 1.81 → **2.28 filtered** (Δ +0.47), 453/637 trades retenus, PnL +509% sur 12M — **système prod-ready** |
+| 10 | 2026-04-25 | B | [Robustesse pré-bull cycle 2023-24](2026-04-25-track-b-exp10-pretest-2023.md) | closed-positive | Filtre macro **régime-spécifique** (Δ -0.50 sur PRE_TEST). Mais découverte : V2_CORE_LONG **baseline robuste cross-régime** (PF 1.60 PRE_TEST sans filtre) — système principal réinterprété |
 
 ## Conventions
 
@@ -32,12 +33,14 @@ Ordre chronologique, par track. Mettre à jour à chaque clôture d'expérience.
 - **Décision J1 (2026-04-25) : Phase 3 close avec succès partiel.** Phase 4 = shadow log live XAU+XAG H4 V2_CORE_LONG sur 4-8 semaines avant le gate S6.
 
 ### Track B — Alt-data + cross-asset
-- Expériences fermées : 3
-- **Phase 1 close** — pipeline data opérationnel.
-- **Phase 2 close avec succès "Robuste" out-of-sample** (exp #9) : filtre macro walk-forward TRAIN→TEST améliore le PF V2_CORE_LONG de 1.81 → **2.28** sur la fenêtre TEST (Δ +0.47 ≥ +0.30 seuil), 453/637 trades retenus, PnL +509% sur 12 mois.
-- **Système prod-ready identifié** : V2_CORE_LONG ∩ MACRO_FILTER_OR (5 règles SPX/BTC apprises sur 2024-2025, validées sur 2025-2026).
-- Découverte : les features macro qui généralisent en walk-forward sont SPX et BTC (correction modérée = flight to safety vers métaux), pas DXY/TNX/VIX (sample TRAIN trop court pour qu'elles soient discriminantes).
-- Décision intermédiaire (J1) : Phase 3 (ML proper) **optionnelle** — le filtre OR ad-hoc atteint déjà la cible. ML pourrait pousser PF de 2.28 vers 2.5+ si interactions non-linéaires.
+- Expériences fermées : 4
+- **Phase 1 close** — pipeline data opérationnel (5 symboles VIX/DXY/SPX/TNX/BTC daily 6y).
+- **Phase 2 close avec résultat révélateur** :
+  - Exp #9 : filtre macro walk-forward TRAIN→TEST améliore PF 1.81 → **2.28** sur 2025-2026 (Δ +0.47, robuste).
+  - Exp #10 : filtre **dégrade en PRE_TEST 2023-2024** (Δ -0.50). Le filtre est **régime-spécifique** au bull cycle métaux 2024-2026.
+  - **Découverte parallèle** : le baseline V2_CORE_LONG est **robuste cross-régime** (PF 1.60 PRE_TEST sans filtre). C'est le vrai edge méthodologique.
+- **Reco shadow log mise à jour** : système principal = V2_CORE_LONG seul (PF 1.60-1.93 cross-régime). Filtre macro = boost optionnel régime-conditionnel.
+- Phase 3 (ML proper) : **dépriorité** — le baseline simple est déjà robuste, le filtre est optionnel. ML pourrait extraire des règles régime-adaptives mais sur-complexité.
 
 ### Track C — Trend-following systématique
 - Expériences fermées : 1
