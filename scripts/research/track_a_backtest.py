@@ -328,8 +328,10 @@ def filter_rb_down_sell(t: dict) -> bool:
 #   breakout_up         (XAU 1.84 / XAG 1.19)
 # SHORTs exclus pour éviter le carry XAG (SELL PF 0.83 sur 24M).
 CORE_LONG_PATTERNS = {"momentum_up", "engulfing_bullish", "breakout_up"}
-# Extended (exp #16) : ajoute pin_bar_up BUY (PF 1.34 sur XAU 4 ans pré-bull)
+# Extended (exp #16) : ajoute pin_bar_up BUY (dégrade le PF — pas retenu)
 EXTENDED_LONG_PATTERNS = CORE_LONG_PATTERNS | {"pin_bar_up"}
+# Tight (exp #17) : retire breakout_up (le plus faible PF cross-régime)
+TIGHT_LONG_PATTERNS = {"momentum_up", "engulfing_bullish"}
 
 
 def filter_v2_core_long(t: dict) -> bool:
@@ -338,6 +340,10 @@ def filter_v2_core_long(t: dict) -> bool:
 
 def filter_v2_extended_long(t: dict) -> bool:
     return t["direction"] == "buy" and t["pattern"] in EXTENDED_LONG_PATTERNS
+
+
+def filter_v2_tight_long(t: dict) -> bool:
+    return t["direction"] == "buy" and t["pattern"] in TIGHT_LONG_PATTERNS
 
 
 # ─── Stats ──────────────────────────────────────────────────────────────────
@@ -432,6 +438,7 @@ def main() -> None:
     stats("V2_LIGHT (sell only)", [t for t in all_trades if filter_v2_light(t)])
     stats("V2_PATTERN (whitelist)", [t for t in all_trades if filter_v2_pattern(t)])
     stats("V2_FULL (all filters)", [t for t in all_trades if filter_v2_full(t)])
+    stats("V2_TIGHT_LONG (2pat BUY)", [t for t in all_trades if filter_v2_tight_long(t)])
     stats("V2_CORE_LONG (3pat BUY)", [t for t in all_trades if filter_v2_core_long(t)])
     stats("V2_EXT_LONG (4pat BUY)", [t for t in all_trades if filter_v2_extended_long(t)])
     stats("RB_DOWN_SELL only", [t for t in all_trades if filter_rb_down_sell(t)])

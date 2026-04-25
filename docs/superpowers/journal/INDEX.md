@@ -20,6 +20,7 @@ Ordre chronologique, par track. Mettre à jour à chaque clôture d'expérience.
 | 14 | 2026-04-26 | Phase 4 | [Implémentation + validation](2026-04-25-exp14-phase4-implementation-validation.md) | closed-positive | Module shadow + hook scheduler + reconciliation + endpoints OK ; KPIs cohérents avec backtest classique sur même fenêtre (PF 0.47 = drawdown attendu) |
 | 15 | 2026-04-26 | Phase 4 | [Out-of-sample 2020-2024](2026-04-25-exp15-out-of-sample-2020-2024.md) | closed-positive 🎯 | XAU H4 PF **1.26** sur 4 ans pré-bull, XAG PF 1.16 — **système validé cross-régime sur 6 ans cumulés** (COVID + bear + bull) |
 | 16 | 2026-04-26 | Phase 4 | [Pin_bar_up extension test](2026-04-25-exp16-pin-bar-up-extension.md) | closed-negative | V2_EXT (4pat) dégrade PF -0.04 à -0.09 vs V2_CORE (3pat) sur 3/4 fenêtres — V2_CORE_LONG actuel reste optimum |
+| 17 | 2026-04-26 | Phase 4 | [V2_TIGHT (2pat) vs V2_CORE](2026-04-25-exp17-tight-vs-core.md) | closed-positive | Asymétrique : CORE bat TIGHT en bull cycle (Δ -0.10 à -0.15), TIGHT bat CORE en pré-bull (+0.05, maxDD 28% vs 41%) — insight régime-adaptatif futur |
 
 ## Conventions
 
