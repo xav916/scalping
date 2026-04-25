@@ -1826,6 +1826,38 @@ async def api_shadow_summary(ctx: AuthContext = Depends(auth_context)):
     return summary()
 
 
+@app.get("/api/shadow/v2_core_long/public-summary")
+async def api_shadow_public_summary(token: str = ""):
+    """Endpoint summary public auth-by-token (sans cookie session).
+
+    Permet aux agents remote / monitoring externes de fetcher les KPIs
+    shadow log sans avoir le cookie session. Le token est hashé côté
+    backend (constante SHA256), le token clair est conservé seulement
+    dans la config du routine consommateur (pas dans le repo).
+
+    Pour révoquer : générer un nouveau token, mettre à jour le hash
+    constante ci-dessous, redéployer, mettre à jour le routine.
+    """
+    import hashlib
+    from fastapi import HTTPException
+
+    # SHA256 du token clair. Token clair dans la config routine.
+    # Régénérable via : python -c "import secrets; print('shdw_'+secrets.token_urlsafe(24))"
+    SHADOW_PUBLIC_TOKEN_HASH = "e980b1ed0b45ca6873caa3f2d6ddcf27f4d8a1d0aa87cf9072f6e3e0909b31ec"
+
+    if not token:
+        raise HTTPException(status_code=403, detail="token required")
+
+    provided_hash = hashlib.sha256(token.encode()).hexdigest()
+    # Comparison time-constant pour éviter timing attacks
+    import secrets as _s
+    if not _s.compare_digest(provided_hash, SHADOW_PUBLIC_TOKEN_HASH):
+        raise HTTPException(status_code=403, detail="invalid token")
+
+    from backend.services.shadow_v2_core_long import summary
+    return summary()
+
+
 @app.get("/api/shadow/v2_core_long/setups.csv")
 async def api_shadow_setups_csv(
     since: str | None = None,
