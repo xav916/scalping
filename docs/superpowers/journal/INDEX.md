@@ -28,6 +28,7 @@ Ordre chronologique, par track. Mettre à jour à chaque clôture d'expérience.
 | 25 | 2026-04-26 | A | [V2_ADAPTIVE régime-aware](2026-04-25-exp25-v2-adaptive.md) | closed-neutral | Détecteur DXY+TNX trop crude (Δ -0.02) — confirme V2_CORE comme **optimum local atteint** après 7 tentatives d'extension |
 | 33 | 2026-04-26 | C | [Track C TF sur WTI/USD](2026-04-26-exp33-track-c-tf-wti.md) | closed-negative | LONG PF 1.58 PRE-BULL → **0.46 BULL CYCLE** — edge inversé vs V2_WTI_OPTIMAL, Track C TF spécifique métaux |
 | 34 | 2026-04-26 | Ext | [Extensions NatGas/Crypto/MXN](2026-04-26-exp34-extensions-natgas-crypto-mxn.md) | closed-positive | **ETH/USD Daily** retenu (3/4 fenêtres PF ≥ 1.15) ; BTC, USD/MXN rejetés ; NatGas non-testable TD Grow |
+| 35 | 2026-04-26 | Scan | [Scan systématique 57 instruments](2026-04-26-exp35-systematic-scan-57-instruments.md) | closed-positive | **454 cellules pre-screen + 60 deep dive → 28 retenus strict** ; reco shadow log : ajouter **XLI 1d V2_TIGHT_LONG** + **XLK 1d V2_WTI_OPTIMAL** |
 
 ## Conventions
 
