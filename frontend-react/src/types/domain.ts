@@ -435,3 +435,52 @@ export interface CockpitSnapshot {
   next_events: Array<{ time: string; currency: string; impact: string; event_name: string }>;
   alerts: CockpitAlert[];
 }
+
+// Phase 4 — shadow log V2_CORE_LONG
+export interface ShadowSetup {
+  id: number;
+  detected_at: string;
+  cycle_at: string;
+  bar_timestamp: string;
+  system_id: string;
+  pair: string;
+  timeframe: string;
+  direction: string;
+  pattern: string;
+  entry_price: number;
+  stop_loss: number;
+  take_profit_1: number;
+  take_profit_2: number | null;
+  risk_pct: number;
+  rr: number;
+  sizing_capital_eur: number;
+  sizing_risk_pct: number;
+  sizing_position_eur: number;
+  sizing_max_loss_eur: number;
+  macro_features_json: string | null;
+  outcome: 'TP1' | 'SL' | 'TIMEOUT' | null;
+  exit_at: string | null;
+  exit_price: number | null;
+  pnl_pct_net: number | null;
+  pnl_eur: number | null;
+}
+
+export interface ShadowSystemSummary {
+  system_id: string;
+  n_total: number;
+  n_pending: number;
+  n_tp1: number;
+  n_sl: number;
+  n_timeout: number;
+  gross_win_eur: number;
+  gross_loss_eur: number;
+  net_pnl_eur: number;
+  first_bar: string;
+  last_bar: string;
+  pf: number | null;
+  wr_pct: number | null;
+}
+
+export interface ShadowSummary {
+  systems: ShadowSystemSummary[];
+}

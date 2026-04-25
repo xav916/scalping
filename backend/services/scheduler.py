@@ -303,16 +303,35 @@ async def run_analysis_cycle() -> None:
         logger.error(f"Erreur cycle d'analyse: {e}", exc_info=True)
 
 
+_shadow_reconcile_counter = 0  # toutes les N appels de cockpit, on tente reconcile
+
+
 async def cockpit_broadcast_cycle() -> None:
     """Push periodique du snapshot cockpit (toutes les N secondes).
 
     Utile pour refresh les PnL unrealized des trades ouverts, meme entre
     deux cycles d'analyse (qui tournent toutes les 180-300s).
-    No-op si aucun client connecte."""
+    No-op si aucun client connecte.
+
+    Phase 4 : déclenche aussi la réconciliation des shadow setups pending
+    1 fois sur 12 (donc ~ toutes les 60s × 12 = 12 min, configurable).
+    """
+    global _shadow_reconcile_counter
     try:
         await broadcast_cockpit()
     except Exception as e:
         logger.warning(f"cockpit_broadcast_cycle a echoue: {e}")
+
+    # Phase 4 — reconciliation périodique (non-bloquant)
+    _shadow_reconcile_counter = (_shadow_reconcile_counter + 1) % 12
+    if _shadow_reconcile_counter == 0:
+        try:
+            from backend.services.shadow_reconciliation import reconcile_pending_setups
+            stats = await reconcile_pending_setups(max_per_run=20)
+            if stats["resolved"] > 0:
+                logger.info(f"shadow reconcile: {stats}")
+        except Exception as e:
+            logger.warning(f"shadow reconcile failed (non-bloquant): {e}")
 
 
 async def backtest_check_cycle() -> None:

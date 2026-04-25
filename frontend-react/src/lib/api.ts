@@ -19,6 +19,8 @@ import type {
   RejectionsReport,
   MistakesReport,
   CombosReport,
+  ShadowSetup,
+  ShadowSummary,
 } from '@/types/domain';
 import { POST_FIX_CUTOFF } from '@/lib/constants';
 
@@ -257,6 +259,20 @@ export const api = {
   },
 
   brokerAccount: () => request<BrokerAccount>('/api/broker/account'),
+
+  // Phase 4 — shadow log V2_CORE_LONG
+  shadowSetups: (params: { since?: string; until?: string; system_id?: string; outcome?: string; limit?: number } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.since) qs.set('since', params.since);
+    if (params.until) qs.set('until', params.until);
+    if (params.system_id) qs.set('system_id', params.system_id);
+    if (params.outcome) qs.set('outcome', params.outcome);
+    if (params.limit) qs.set('limit', String(params.limit));
+    const q = qs.toString();
+    return request<ShadowSetup[]>(`/api/shadow/v2_core_long/setups${q ? `?${q}` : ''}`);
+  },
+
+  shadowSummary: () => request<ShadowSummary>('/api/shadow/v2_core_long/summary'),
 
   exposureTimeseries: (since: string, until: string, granularity: Granularity | 'auto' = 'auto') => {
     const qs = new URLSearchParams({ since, until, granularity });

@@ -51,6 +51,9 @@ const CockpitPage = lazy(() =>
 const AnalyticsPage = lazy(() =>
   import('@/pages/AnalyticsPage').then((m) => ({ default: m.AnalyticsPage }))
 );
+const ShadowLogPage = lazy(() =>
+  import('@/pages/ShadowLogPage').then((m) => ({ default: m.ShadowLogPage }))
+);
 
 function RouteLoader() {
   return (
@@ -82,6 +85,7 @@ export default function App() {
                 <Route path="/cockpit" element={<CockpitPage />} />
                 <Route path="/analytics" element={<AnalyticsPage />} />
                 <Route path="/trades" element={<TradesPage />} />
+                <Route path="/shadow-log" element={<ShadowLogPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/admin" element={<AdminPage />} />
               </Route>
