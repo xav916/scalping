@@ -34,10 +34,15 @@ logger = logging.getLogger(__name__)
 # Tous LONG only — les SHORTs sur XAG sont conditionnels au cycle (exp #11)
 CORE_LONG_PATTERNS: set[str] = {"momentum_up", "engulfing_bullish", "breakout_up"}
 
-# Patterns retenus pour V2_WTI_OPTIMAL (WTI, exp #29)
+# Patterns retenus pour V2_WTI_OPTIMAL (WTI + XLK, exp #29 + #35)
 # breakout_up TOXIQUE sur WTI (fausses cassures news OPEC) → exclu
 # range_bounce_up productif (range trading entre niveaux OPEC) → ajouté
+# XLK Daily : V2_WTI_OPTIMAL bat V2_CORE_LONG (1.69 vs 1.61 mean PF)
 WTI_OPTIMAL_PATTERNS: set[str] = {"momentum_up", "engulfing_bullish", "range_bounce_up"}
+
+# Patterns retenus pour V2_TIGHT_LONG (XLI Daily, exp #35)
+# 2 patterns BUY only — pas de breakout_up. Mean PF 2.14 sur XLI 1d.
+TIGHT_LONG_PATTERNS: set[str] = {"momentum_up", "engulfing_bullish"}
 
 # Configuration unifiée par paire : timeframe, patterns, system_id, sizing.
 # Ajouté ETH/USD Daily V2_CORE_LONG (exp #34) en 4e candidat.
@@ -68,6 +73,18 @@ SHADOW_CONFIG: dict[str, dict[str, Any]] = {
         "patterns": CORE_LONG_PATTERNS,
         "system_id": "V2_CORE_LONG_ETHUSD_1D",
         "risk_pct": 0.0025,  # maxDD 3y très élevé 158%, sample 144 trades
+    },
+    "XLI": {
+        "tf": "1d",
+        "patterns": TIGHT_LONG_PATTERNS,
+        "system_id": "V2_TIGHT_LONG_XLI_1D",
+        "risk_pct": 0.004,  # exp #35 : mean PF 2.14, Sharpe 12M 2.74, maxDD 0.1%
+    },
+    "XLK": {
+        "tf": "1d",
+        "patterns": WTI_OPTIMAL_PATTERNS,
+        "system_id": "V2_WTI_OPTIMAL_XLK_1D",
+        "risk_pct": 0.004,  # exp #35 : mean PF 1.69, Sharpe 12M 1.01, maxDD 0.4%
     },
 }
 
