@@ -31,3 +31,6 @@ mt5_sync_state.json
 
 # Stratégie personnelle (non partagée, jamais committée)
 docs/strategy/
+
+# Artefacts diagnostiques éphémères (scripts one-shot d'analyse, DBs locales)
+_macro_veto_analysis/
