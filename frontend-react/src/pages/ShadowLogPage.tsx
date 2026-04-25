@@ -6,6 +6,7 @@ import { MeshGradient } from '@/components/ui/MeshGradient';
 import { GlassCard } from '@/components/ui/GlassCard';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { useShadowSetups, useShadowSummary } from '@/hooks/useShadowLog';
+import { EquityCurveChart } from '@/components/shadow/EquityCurveChart';
 import type { ShadowSetup } from '@/types/domain';
 
 type OutcomeFilter = 'all' | 'pending' | 'TP1' | 'SL' | 'TIMEOUT';
@@ -111,8 +112,31 @@ export function ShadowLogPage() {
                 {s.n_total} setups
               </div>
               <div className="text-xs text-white/40">
-                PF {s.pf?.toFixed(2) ?? '—'} · WR {s.wr_pct?.toFixed(0) ?? '—'}%
+                Sharpe {s.advanced?.sharpe?.toFixed(2) ?? '—'} · maxDD {s.advanced?.max_dd_pct?.toFixed(1) ?? '—'}%
               </div>
+            </GlassCard>
+          ))}
+        </div>
+
+        {/* Equity curves par système */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {summary?.systems?.map((s) => (
+            <GlassCard className="p-4" key={`curve-${s.system_id}`}>
+              <div className="flex items-center justify-between mb-2">
+                <div>
+                  <div className="text-xs text-white/50 uppercase tracking-wide">
+                    Equity curve {s.system_id.includes('XAU') ? 'XAU/USD' : 'XAG/USD'}
+                  </div>
+                  <div className="text-xs text-white/40 mt-1">
+                    {s.advanced?.n_months ?? 0} mois · {s.advanced?.equity_curve.length ?? 0} setups résolus
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="text-xs text-white/50">Calmar</div>
+                  <div className="text-sm font-semibold">{s.advanced?.calmar?.toFixed(2) ?? '—'}</div>
+                </div>
+              </div>
+              <EquityCurveChart curve={s.advanced?.equity_curve ?? []} />
             </GlassCard>
           ))}
         </div>

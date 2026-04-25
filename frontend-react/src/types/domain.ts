@@ -465,6 +465,29 @@ export interface ShadowSetup {
   pnl_eur: number | null;
 }
 
+export interface ShadowMonthlyReturn {
+  month: string;
+  pnl_eur: number;
+  return_pct: number;
+}
+
+export interface ShadowEquityPoint {
+  ts: string;
+  equity_eur: number;
+  pnl_eur: number;
+}
+
+export interface ShadowAdvancedKpis {
+  sharpe: number | null;
+  calmar: number | null;
+  max_dd_pct: number | null;
+  monthly_returns: ShadowMonthlyReturn[];
+  equity_curve: ShadowEquityPoint[];
+  annualized_return_pct: number | null;
+  total_return_pct: number;
+  n_months: number;
+}
+
 export interface ShadowSystemSummary {
   system_id: string;
   n_total: number;
@@ -479,6 +502,7 @@ export interface ShadowSystemSummary {
   last_bar: string;
   pf: number | null;
   wr_pct: number | null;
+  advanced: ShadowAdvancedKpis;
 }
 
 export interface ShadowSummary {
