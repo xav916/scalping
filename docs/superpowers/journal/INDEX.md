@@ -14,6 +14,7 @@ Ordre chronologique, par track. Mettre à jour à chaque clôture d'expérience.
 | 8 | 2026-04-25 | B | [Macro buckets V2_CORE_LONG](2026-04-25-track-b-exp8-macro-buckets.md) | closed-positive 🔥 | 9/9 dimensions avec spread PF ≥ 0.52, max **+2.06** sur BTC return 5d — **signal macro-conditionnel massif** |
 | 9 | 2026-04-25 | B | [Filtre macro walk-forward](2026-04-25-track-b-exp9-macro-filter-walkforward.md) | closed-positive 🎯 | TEST PF 1.81 → **2.28 filtered** (Δ +0.47), 453/637 trades retenus, PnL +509% sur 12M — **système prod-ready** |
 | 10 | 2026-04-25 | B | [Robustesse pré-bull cycle 2023-24](2026-04-25-track-b-exp10-pretest-2023.md) | closed-positive | Filtre macro **régime-spécifique** (Δ -0.50 sur PRE_TEST). Mais découverte : V2_CORE_LONG **baseline robuste cross-régime** (PF 1.60 PRE_TEST sans filtre) — système principal réinterprété |
+| 11 | 2026-04-25 | C | [Track C TF pré-bull cycle](2026-04-25-track-c-exp11-pretest-2023.md) | closed-positive | XAU LONG PF **5.60** (n=16, robuste) ; XAG LONG PF 1.12 (n=31, régime-dépendant) — asymétrie XAU/XAG cohérente théorie macro |
 
 ## Conventions
 
@@ -43,14 +44,13 @@ Ordre chronologique, par track. Mettre à jour à chaque clôture d'expérience.
 - Phase 3 (ML proper) : **dépriorité** — le baseline simple est déjà robuste, le filtre est optionnel. ML pourrait extraire des règles régime-adaptives mais sur-complexité.
 
 ### Track C — Trend-following systématique
-- Expériences fermées : 1
-- **Signal détecté : OUI sur métaux H4** (XAU + XAG), avec règles plus simples que Track A
-  - XAU LONG 24M : PF 2.32, maxDD 9.1%, n=62
-  - XAG LONG 24M : PF 2.47, maxDD 16.5%, n=60
-  - SHORTs catastrophiques (PF 0.42-0.61) → essentiellement long-only bull cycle
-  - Cross-asset : forex/crypto à plat, edge concentré métaux uniquement
-- **Track C bat Track A** sur les 2 mêmes paires : +0.88 à +0.91 PF, maxDD écrasé (-42 à -72 points)
-- Décision intermédiaire (J1) : Phase 1 close "Strong". Phase 2 = vol target sizing + extension portefeuille (commodities). Phase 3 = intersection Track A ∩ Track C (double filtre).
+- Expériences fermées : 2
+- **Phase 1 close "Strong"** (exp #5) : signal sur métaux H4, bat Track A en PF + maxDD
+- **Robustesse cross-régime asymétrique** (exp #11) :
+  - **XAU H4 LONG** : PF 5.60 PRE_TEST (n=16) → 2.36 TEST → **robuste cross-régime** (real yields proxy structurel)
+  - **XAG H4 LONG** : PF 1.12 PRE_TEST (n=31) → 3.76 TEST → **régime-dépendant** (industrial demand cycle-driven)
+- Lecture économique cohérente : XAU = mécanique stable, XAG = amplification cycle.
+- Décision intermédiaire (J1) : XAU = candidat #1 indépendamment du système. XAG = à utiliser plus prudemment, idéalement avec filtre macro régime-conditionnel.
 
 ## Gate de décision (planifié fin S6 = ~2026-06-06)
 
