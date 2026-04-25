@@ -12,33 +12,33 @@ import { RadarPulse } from '@/components/ui/RadarPulse';
 
 const FEATURES = [
   {
-    title: 'Radar 16 paires en temps réel',
-    desc: 'Forex, métaux, crypto, indices et énergie. Scoring 0-100 par setup, cycles 20s.',
+    title: '6 setups, pas 600',
+    desc: 'Or, argent, pétrole, ETH, XLI (industrial US), XLK (tech US). Tous validés sur 20 ans de data cross-régime — pas des setups au feeling.',
     icon: '◎',
   },
   {
-    title: 'Alertes Telegram',
-    desc: 'Notifs push instantanées sur les setups haute conviction. Tu trades quand tu veux, où tu veux.',
-    icon: '🔔',
+    title: 'Recherche transparente',
+    desc: '36 expériences publiées dans notre journal. Tu vois nos rejets autant que nos winners. Méthodologie ouverte, pas de boîte noire.',
+    icon: '📓',
   },
   {
-    title: 'Analytics multi-dimension',
-    desc: 'Win rate par paire, heure, pattern, asset class, régime macro. Comprendre ce qui gagne et ce qui perd.',
+    title: 'Profit Factor mesuré',
+    desc: 'PF 1.19-1.42 sur 20 ans. Sharpe annualisé 0.30-0.50. Pas de promesse miracle. Diversification multi-asset = chaque régime a sa star.',
     icon: '📊',
   },
   {
-    title: 'Contexte macro intégré',
-    desc: 'DXY, SPX, VIX, régime risk-on/off intégrés au scoring. Le radar sait dans quelle mer il nage.',
-    icon: '🌍',
+    title: 'Alertes Telegram instantanées',
+    desc: 'Setup détecté → ping Telegram → tu décides. Pas de spam, juste les setups qui matchent les filtres validés.',
+    icon: '🔔',
   },
   {
-    title: 'Journal & historique complet',
-    desc: 'Chaque setup loggué avec contexte macro, raison, close_reason. Tu apprends de chaque trade.',
-    icon: '⋯',
+    title: 'Tu gardes le contrôle',
+    desc: 'On ne touche jamais à ton capital. Trade chez ton broker, ton compte, ton risque. Notifications + analytics, exécution chez toi.',
+    icon: '🔐',
   },
   {
     title: 'Auto-exec MT5 (Premium)',
-    desc: 'Optionnel : connecte ton bridge MT5 local pour auto-exécuter les setups au broker de ton choix. Pour les traders avancés.',
+    desc: 'Optionnel : connecte ton bridge MT5 local pour auto-exécuter les setups sur démo Pepperstone ou autre. Pour les traders avancés.',
     icon: '⚡',
   },
 ];
@@ -48,20 +48,20 @@ const PRICING_PREVIEW = [
     name: 'Free',
     price: '0€',
     yearly: null,
-    tagline: '1 paire, 7j d\'historique',
+    tagline: 'Pour découvrir',
   },
   {
     name: 'Pro',
-    price: '19€',
-    yearly: '190€/an (-17%)',
-    tagline: '5 paires + alertes + illimité',
+    price: '49€',
+    yearly: '490€/an (-17%)',
+    tagline: '6 setups + alertes Telegram + analytics',
     highlight: true,
   },
   {
     name: 'Premium',
-    price: '39€',
-    yearly: '390€/an (-17%)',
-    tagline: 'Tout + backtest + multi-broker',
+    price: '99€',
+    yearly: '990€/an (-17%)',
+    tagline: 'Pro + auto-exec MT5 + Discord VIP',
   },
 ];
 
@@ -110,18 +110,19 @@ export function LandingPage() {
           <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5 border border-white/10 mb-6">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
             <span className="text-xs uppercase tracking-wider text-white/60">
-              16 paires · 24/5 en live
+              6 setups · validés sur 20 ans
             </span>
           </div>
           <h1 className="text-5xl md:text-6xl font-bold tracking-tight mb-5 leading-tight">
-            <GradientText>Les meilleurs setups</GradientText>
+            <GradientText>Trade comme un quant.</GradientText>
             <br />
-            <span className="text-white/90">de scalping, en direct.</span>
+            <span className="text-white/90">Sans coder.</span>
           </h1>
           <p className="text-lg text-white/70 max-w-2xl mx-auto mb-8 leading-relaxed">
-            Un radar qui scanne 16 paires (forex, métaux, crypto, indices) en continu.
-            Scoring macro + technique. Alertes Telegram instantanées.
-            <strong className="text-white/90"> Tu trades au broker de ton choix, on ne touche jamais à tes fonds.</strong>
+            6 setups validés sur <strong className="text-white/90">20 ans de data</strong> cross-régime.
+            Or, argent, pétrole, ETH, XLI, XLK. Profit Factor moyen <strong className="text-white/90">1.31</strong>.
+            Alertes Telegram en temps réel.{' '}
+            <strong className="text-white/90">Tu trades chez ton broker, on ne touche jamais à tes fonds.</strong>
           </p>
           <div className="flex items-center justify-center gap-3">
             <button
@@ -189,22 +190,22 @@ export function LandingPage() {
             {
               n: '01',
               title: 'Crée ton compte en 30 secondes',
-              desc: '14 jours d\'essai Pro gratuit, sans carte bancaire. Accès immédiat au dashboard et aux alertes.',
+              desc: '14 jours d\'essai Pro gratuit, sans carte bancaire. Accès immédiat aux 6 setups en temps réel.',
             },
             {
               n: '02',
-              title: 'Choisis tes paires à surveiller',
-              desc: 'Jusqu\'à 5 paires en Pro, 16 en Premium. Forex majeurs, métaux, crypto, indices, énergie.',
+              title: 'Active les 6 setups validés',
+              desc: 'XAU H4, XAG H4, WTI H4, ETH 1d, XLI 1d, XLK 1d. Filtres V2_CORE_LONG / V2_WTI_OPTIMAL / V2_TIGHT_LONG dérivés de 36 expériences publiées.',
             },
             {
               n: '03',
               title: 'Reçois les alertes en temps réel',
-              desc: "Dès qu'un setup apparaît sur une de tes paires, notification Telegram + ligne dans le dashboard avec scoring détaillé.",
+              desc: "Dès qu'un setup matche les filtres validés, ping Telegram + ligne dans le dashboard avec entry/SL/TP, contexte macro et lien vers le journal.",
             },
             {
               n: '04',
               title: 'Trades chez ton broker',
-              desc: 'Tu décides quoi faire de chaque setup. Ton broker, ton compte, ton argent — nous ne touchons jamais à tes fonds. Optionnel : connecte ton bridge MT5 pour auto-exec (Premium).',
+              desc: 'Tu décides quoi faire de chaque setup. Ton broker, ton compte, ton argent — nous ne touchons jamais à tes fonds. Optionnel : connecte ton bridge MT5 pour auto-exec démo (Premium).',
             },
           ].map((step, i) => (
             <motion.div
