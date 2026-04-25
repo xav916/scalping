@@ -7,6 +7,7 @@ import { GlassCard } from '@/components/ui/GlassCard';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { useShadowSetups, useShadowSummary } from '@/hooks/useShadowLog';
 import { EquityCurveChart } from '@/components/shadow/EquityCurveChart';
+import { MonthlyReturnsChart } from '@/components/shadow/MonthlyReturnsChart';
 import type { ShadowSetup } from '@/types/domain';
 
 type OutcomeFilter = 'all' | 'pending' | 'TP1' | 'SL' | 'TIMEOUT';
@@ -137,6 +138,10 @@ export function ShadowLogPage() {
                 </div>
               </div>
               <EquityCurveChart curve={s.advanced?.equity_curve ?? []} />
+              <div className="mt-3 pt-3 border-t border-white/5">
+                <div className="text-xs text-white/50 uppercase tracking-wide mb-2">Returns mensuels</div>
+                <MonthlyReturnsChart monthly={s.advanced?.monthly_returns ?? []} />
+              </div>
             </GlassCard>
           ))}
         </div>
