@@ -270,12 +270,17 @@ def backtest_pair(
             "direction": setup.direction.value if hasattr(setup.direction, "value") else str(setup.direction),
             "pattern": best.pattern.value if hasattr(best.pattern, "value") else str(best.pattern),
             "entry_at": now,
+            "exit_at": exit_time,
             "hour_utc": now.hour,
             "outcome": outcome,
             "is_win": is_win,
             "pips": pips,
             "pct": pct,
             "rr": rr,
+            "entry_price": setup.entry_price,
+            "stop_loss": setup.stop_loss,
+            "exit_price": exit_price,
+            "risk_pct": risk / setup.entry_price if setup.entry_price > 0 else 0,
         })
         last_at = now
 
