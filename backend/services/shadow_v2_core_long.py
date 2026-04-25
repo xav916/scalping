@@ -308,8 +308,97 @@ def list_setups(
     return [dict(r) for r in rows]
 
 
+def _compute_advanced_kpis(setups_resolved: list[dict]) -> dict[str, Any]:
+    """Calcule Sharpe annualisé, Calmar, maxDD%, monthly returns, equity curve
+    sur la liste de setups résolus (pnl_eur != NULL).
+
+    Capital fixé à sizing_capital_eur (10k€ par défaut).
+    """
+    if not setups_resolved:
+        return {
+            "sharpe": None, "calmar": None, "max_dd_pct": None,
+            "monthly_returns": [], "equity_curve": [],
+            "annualized_return_pct": None, "n_months": 0,
+        }
+
+    capital = setups_resolved[0].get("sizing_capital_eur") or 10_000.0
+
+    # Tri chronologique sur entry
+    sorted_setups = sorted(
+        setups_resolved,
+        key=lambda t: t["bar_timestamp"]
+    )
+
+    # Equity curve par setup (cumul du PnL en €, capital fixe pas de capitalisation)
+    equity = capital
+    curve: list[dict[str, Any]] = []
+    peak = capital
+    max_dd_eur = 0.0
+    for t in sorted_setups:
+        pnl = t.get("pnl_eur") or 0
+        equity += pnl
+        if equity > peak:
+            peak = equity
+        dd = (peak - equity) / peak if peak > 0 else 0
+        if dd > max_dd_eur:
+            max_dd_eur = dd
+        curve.append({
+            "ts": t["bar_timestamp"],
+            "equity_eur": round(equity, 2),
+            "pnl_eur": round(pnl, 2),
+        })
+
+    # Monthly returns (PnL en € / capital initial, pas de capitalisation)
+    from collections import defaultdict
+    monthly: dict[str, float] = defaultdict(float)
+    for t in sorted_setups:
+        bar_ts = t["bar_timestamp"]
+        # bar_timestamp est en ISO 'YYYY-MM-DDThh:mm:ss+00:00' — on prend YYYY-MM
+        month = bar_ts[:7] if "T" in bar_ts else bar_ts[:7]
+        monthly[month] += (t.get("pnl_eur") or 0)
+
+    monthly_list = sorted([
+        {"month": m, "pnl_eur": round(p, 2), "return_pct": round(p / capital * 100, 3)}
+        for m, p in monthly.items()
+    ], key=lambda x: x["month"])
+
+    # Sharpe annualisé sur les monthly returns
+    from statistics import mean, stdev
+    from math import sqrt
+    rets = [m["return_pct"] for m in monthly_list]
+    sharpe = None
+    if len(rets) >= 3:
+        sd = stdev(rets)
+        if sd > 0:
+            sharpe = (mean(rets) / sd) * sqrt(12)
+
+    # Calmar : annualized return / |max DD%|
+    n_months = len(monthly_list)
+    total_pnl = equity - capital
+    total_return_pct = (total_pnl / capital) * 100
+    annualized_return_pct = (total_return_pct * 12 / n_months) if n_months > 0 else None
+    calmar = None
+    if max_dd_eur > 0 and annualized_return_pct is not None:
+        calmar = annualized_return_pct / (max_dd_eur * 100)
+
+    return {
+        "sharpe": round(sharpe, 2) if sharpe is not None else None,
+        "calmar": round(calmar, 2) if calmar is not None else None,
+        "max_dd_pct": round(max_dd_eur * 100, 1),
+        "monthly_returns": monthly_list,
+        "equity_curve": curve,
+        "annualized_return_pct": round(annualized_return_pct, 1) if annualized_return_pct is not None else None,
+        "total_return_pct": round(total_return_pct, 1),
+        "n_months": n_months,
+    }
+
+
 def summary() -> dict[str, Any]:
-    """KPIs synthétiques sur les shadow setups."""
+    """KPIs synthétiques sur les shadow setups.
+
+    Retourne par système : counts + PF + WR + Sharpe annualisé + Calmar +
+    maxDD% + monthly returns + equity curve.
+    """
     ensure_schema()
     with sqlite3.connect(DB_PATH) as c:
         c.row_factory = sqlite3.Row
@@ -330,11 +419,25 @@ def summary() -> dict[str, Any]:
              GROUP BY system_id
         """).fetchall()
 
+        # Pour KPIs avancés, charger les setups résolus par système
+        resolved_by_system: dict[str, list[dict]] = {}
+        for r in rows:
+            sys_id = r["system_id"]
+            resolved_rows = c.execute("""
+                SELECT bar_timestamp, pnl_eur, sizing_capital_eur
+                  FROM shadow_setups
+                 WHERE system_id = ? AND outcome IS NOT NULL
+                 ORDER BY bar_timestamp ASC
+            """, (sys_id,)).fetchall()
+            resolved_by_system[sys_id] = [dict(rr) for rr in resolved_rows]
+
     out_systems = []
     for r in rows:
         d = dict(r)
         d["pf"] = (d["gross_win_eur"] / d["gross_loss_eur"]) if d["gross_loss_eur"] else None
         d["wr_pct"] = (d["n_tp1"] / max(d["n_tp1"] + d["n_sl"], 1)) * 100 if (d["n_tp1"] + d["n_sl"]) > 0 else None
+        # KPIs avancés
+        d["advanced"] = _compute_advanced_kpis(resolved_by_system.get(d["system_id"], []))
         out_systems.append(d)
 
     return {"systems": out_systems}
