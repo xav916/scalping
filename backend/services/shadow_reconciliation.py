@@ -156,7 +156,12 @@ async def reconcile_pending_setups(
         ).fetchall()
 
     if not rows:
-        return {"resolved": 0, "skipped_no_data": 0, "errors": 0, "pending_remaining": 0}
+        # Pas de pending résolvable, mais peut-être des pending pas encore au timeout
+        with sqlite3.connect(DB_PATH) as c:
+            remaining = c.execute(
+                "SELECT COUNT(*) FROM shadow_setups WHERE outcome IS NULL"
+            ).fetchone()[0]
+        return {"resolved": 0, "skipped_no_data": 0, "errors": 0, "pending_remaining": remaining}
 
     stats = {"resolved": 0, "skipped_no_data": 0, "errors": 0}
 
