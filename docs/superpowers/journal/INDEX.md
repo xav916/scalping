@@ -10,6 +10,7 @@ Ordre chronologique, par track. Mettre à jour à chaque clôture d'expérience.
 | 4 | 2026-04-25 | A | [V2_CORE_LONG combiné XAU+XAG H4](2026-04-25-track-a-v2-core-long.md) | closed-positive | XAU PF 1.41-1.58, XAG PF 1.59-1.93, 4/4 cibles atteintes — **premier candidat shadow log** |
 | 5 | 2026-04-25 | C | [MVP TF systématique XAU/XAG H4](2026-04-25-track-c-mvp-tf-systematique.md) | closed-positive | XAU LONG PF 2.32 / XAG LONG PF 2.47 — **bat Track A** (+0.88 PF, -72pts maxDD), edge concentré métaux |
 | 6 | 2026-04-25 | A∩C | [Intersection A ∩ C](2026-04-25-track-inter-a-c.md) | closed-positive | Asset-dépendant : XAG synergie (+0.60 PF maxDD÷2) ; XAU redondance — système asset-spécifique |
+| 7 | 2026-04-25 | B | [Pipeline data macro Phase 1](2026-04-25-track-b-phase1-data-pipeline.md) | closed-positive | 5/5 symboles fetchés (VIX/DXY/SPX/TNX/BTC), 8643 obs daily 6y, features non-look-ahead OK — **pipeline opérationnel** |
 
 ## Conventions
 
@@ -29,9 +30,10 @@ Ordre chronologique, par track. Mettre à jour à chaque clôture d'expérience.
 - **Décision J1 (2026-04-25) : Phase 3 close avec succès partiel.** Phase 4 = shadow log live XAU+XAG H4 V2_CORE_LONG sur 4-8 semaines avant le gate S6.
 
 ### Track B — Alt-data + cross-asset
-- Expériences fermées : 0
-- Signal détecté : —
-- Décision intermédiaire : —
+- Expériences fermées : 1 (infrastructure)
+- **Phase 1 close — pipeline data opérationnel** : 5 symboles macro (VIX/DXY/SPX/TNX/BTC), 6 ans d'history daily, cache local SQLite, no look-ahead.
+- Signal détecté (edge) : pas encore — Phase 2 = re-extraction features + re-train ML.
+- Décision intermédiaire (J1) : Phase 2 demain ou plus tard. Étendre `scripts/ml_extract_features.py` pour ajouter les features macro, re-runner training, comparer AUC vs 0.526 V1.
 
 ### Track C — Trend-following systématique
 - Expériences fermées : 1
