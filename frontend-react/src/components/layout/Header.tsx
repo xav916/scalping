@@ -60,6 +60,7 @@ const NAV_LINKS = [
   { to: '/cockpit', label: 'Cockpit' },
   { to: '/analytics', label: 'Analytics' },
   { to: '/trades', label: 'Trades' },
+  { to: '/shadow-log', label: 'Shadow' },
 ];
 
 export function Header() {
