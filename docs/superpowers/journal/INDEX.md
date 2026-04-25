@@ -11,6 +11,7 @@ Ordre chronologique, par track. Mettre à jour à chaque clôture d'expérience.
 | 5 | 2026-04-25 | C | [MVP TF systématique XAU/XAG H4](2026-04-25-track-c-mvp-tf-systematique.md) | closed-positive | XAU LONG PF 2.32 / XAG LONG PF 2.47 — **bat Track A** (+0.88 PF, -72pts maxDD), edge concentré métaux |
 | 6 | 2026-04-25 | A∩C | [Intersection A ∩ C](2026-04-25-track-inter-a-c.md) | closed-positive | Asset-dépendant : XAG synergie (+0.60 PF maxDD÷2) ; XAU redondance — système asset-spécifique |
 | 7 | 2026-04-25 | B | [Pipeline data macro Phase 1](2026-04-25-track-b-phase1-data-pipeline.md) | closed-positive | 5/5 symboles fetchés (VIX/DXY/SPX/TNX/BTC), 8643 obs daily 6y, features non-look-ahead OK — **pipeline opérationnel** |
+| 8 | 2026-04-25 | B | [Macro buckets V2_CORE_LONG](2026-04-25-track-b-exp8-macro-buckets.md) | closed-positive 🔥 | 9/9 dimensions avec spread PF ≥ 0.52, max **+2.06** sur BTC return 5d — **signal macro-conditionnel massif** |
 
 ## Conventions
 
@@ -30,10 +31,12 @@ Ordre chronologique, par track. Mettre à jour à chaque clôture d'expérience.
 - **Décision J1 (2026-04-25) : Phase 3 close avec succès partiel.** Phase 4 = shadow log live XAU+XAG H4 V2_CORE_LONG sur 4-8 semaines avant le gate S6.
 
 ### Track B — Alt-data + cross-asset
-- Expériences fermées : 1 (infrastructure)
+- Expériences fermées : 2
 - **Phase 1 close — pipeline data opérationnel** : 5 symboles macro (VIX/DXY/SPX/TNX/BTC), 6 ans d'history daily, cache local SQLite, no look-ahead.
-- Signal détecté (edge) : pas encore — Phase 2 = re-extraction features + re-train ML.
-- Décision intermédiaire (J1) : Phase 2 demain ou plus tard. Étendre `scripts/ml_extract_features.py` pour ajouter les features macro, re-runner training, comparer AUC vs 0.526 V1.
+- **Phase 2 démarrée avec signal massif** (exp #8) : 9/9 dimensions macro discriminent V2_CORE_LONG, spread max **+2.06** sur BTC return 5d. Lecture économique cohérente (real yields bas → métaux haussiers, BTC décroche → flight to safety, etc.).
+- Buckets stars (PF ≥ 1.80) : btc_return_5d Q1, dxy_dist_sma50 Q2-Q3, tnx_level Q1, spx_dist_sma50 Q2, vix_level Q2.
+- Buckets toxiques (PF ≤ 1.10) : btc_return_5d Q2, spx_return_5d Q4, dxy_dist_sma50 Q1, spx_dist_sma50 Q3-Q4.
+- Décision intermédiaire (J1) : exp #9 = filtre macro ad-hoc sur V2_CORE_LONG avec walk-forward split, cible PF combiné > 2.5 sur n>200.
 
 ### Track C — Trend-following systématique
 - Expériences fermées : 1
