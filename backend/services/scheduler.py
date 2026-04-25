@@ -16,7 +16,7 @@ from backend.services.analysis_engine import (
 from backend.services.forexfactory_service import fetch_economic_events
 from backend.services.macro_context_service import refresh_macro_context
 from backend.services.mataf_service import fetch_volatility_data
-from backend.services import backtest_service, coaching
+from backend.services import backtest_service, coaching, ml_features, ml_predictor
 from backend.services.notification_service import (
     broadcast_cockpit,
     broadcast_signals,
@@ -176,6 +176,18 @@ async def run_analysis_cycle() -> None:
                         setup.verdict_reasons = verdict["reasons"]
                         setup.verdict_warnings = verdict["warnings"]
                         setup.verdict_blockers = verdict["blockers"]
+                        try:
+                            if ml_predictor.is_available():
+                                feats = ml_features.extract_features_for_setup(setup, h1_candles.get(pair, []))
+                                if feats:
+                                    proba = ml_predictor.predict_win_proba(feats)
+                                    logger.info(
+                                        f"ml_proba pair={setup.pair} dir={setup.direction.value} "
+                                        f"pattern={setup.pattern.pattern.value} "
+                                        f"conf_rule={setup.confidence_score:.1f} proba_ml={proba:.3f}"
+                                    )
+                        except Exception as e:
+                            logger.debug(f"ml_proba shadow log failed: {e}")
                         all_trade_setups.append(setup)
 
         # Archive ML-ready : on persiste TOUS les signaux (y compris ceux
