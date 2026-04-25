@@ -79,6 +79,7 @@ Plutôt que :
 ## Règles d'or
 
 1. **Pas de modif sur le live V1** entre maintenant et le gate. Toute modif pollue les expériences. Le live continue de tourner avec ses filtres anti-saigne (cf `project_scalping_algo_tuning_v1.md`).
+   - **Gel explicite des fixes en attente :** le commit `b750fa5` (fix Bug #1 — remplace scraping Mataf par ATR local pour la volatilité) est **mergé sur main mais non déployé**. Il sera déployé au gate S6 si on bascule en mode Observatoire SaaS-only ou si on intègre une track gagnante en prod. Pas de `bash deploy-v2.sh` entre 2026-04-25 et 2026-06-06.
 2. **Critères go/no-go écrits AVANT** d'exécuter. Sinon biais de confirmation.
 3. **Une expérience clôturée = un fichier dans le journal + INDEX.md mis à jour + commit git**. Sans exception.
 4. **Pas de re-écriture rétroactive d'expériences** — si on s'aperçoit qu'une expérience était mal protocolée, on en ouvre une nouvelle qui cite l'ancienne.
