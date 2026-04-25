@@ -9,6 +9,7 @@ Ordre chronologique, par track. Mettre à jour à chaque clôture d'expérience.
 | 3 | 2026-04-25 | A | [Robustesse 24 mois](2026-04-25-track-a-robustness-24m.md) | closed-positive | XAG H4 robuste (1.17), XAU H4 filtré (1.09 baseline), ETH **NON robuste** — **CONFIRMÉE partiel** |
 | 4 | 2026-04-25 | A | [V2_CORE_LONG combiné XAU+XAG H4](2026-04-25-track-a-v2-core-long.md) | closed-positive | XAU PF 1.41-1.58, XAG PF 1.59-1.93, 4/4 cibles atteintes — **premier candidat shadow log** |
 | 5 | 2026-04-25 | C | [MVP TF systématique XAU/XAG H4](2026-04-25-track-c-mvp-tf-systematique.md) | closed-positive | XAU LONG PF 2.32 / XAG LONG PF 2.47 — **bat Track A** (+0.88 PF, -72pts maxDD), edge concentré métaux |
+| 6 | 2026-04-25 | A∩C | [Intersection A ∩ C](2026-04-25-track-inter-a-c.md) | closed-positive | Asset-dépendant : XAG synergie (+0.60 PF maxDD÷2) ; XAU redondance — système asset-spécifique |
 
 ## Conventions
 
