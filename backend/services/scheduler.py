@@ -286,8 +286,7 @@ async def run_analysis_cycle() -> None:
         try:
             from backend.services.shadow_v2_core_long import run_shadow_log
             shadow_counts = await run_shadow_log(h1_candles, cycle_at=now)
-            if any(shadow_counts.values()):
-                logger.info(f"shadow log V2_CORE_LONG: {shadow_counts}")
+            logger.info(f"shadow log V2_CORE_LONG: {shadow_counts}")
         except Exception as e:
             logger.warning(f"shadow log V2_CORE_LONG failed (non-bloquant): {e}")
 
