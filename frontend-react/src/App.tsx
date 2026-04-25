@@ -54,6 +54,9 @@ const AnalyticsPage = lazy(() =>
 const ShadowLogPage = lazy(() =>
   import('@/pages/ShadowLogPage').then((m) => ({ default: m.ShadowLogPage }))
 );
+const SupportsPage = lazy(() =>
+  import('@/pages/SupportsPage').then((m) => ({ default: m.SupportsPage }))
+);
 
 function RouteLoader() {
   return (
@@ -86,6 +89,7 @@ export default function App() {
                 <Route path="/analytics" element={<AnalyticsPage />} />
                 <Route path="/trades" element={<TradesPage />} />
                 <Route path="/shadow-log" element={<ShadowLogPage />} />
+                <Route path="/supports" element={<SupportsPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/admin" element={<AdminPage />} />
               </Route>

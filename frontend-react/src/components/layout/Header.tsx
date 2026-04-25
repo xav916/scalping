@@ -61,6 +61,7 @@ const NAV_LINKS = [
   { to: '/analytics', label: 'Analytics' },
   { to: '/trades', label: 'Trades' },
   { to: '/shadow-log', label: 'Shadow' },
+  { to: '/supports', label: 'Supports' },
 ];
 
 export function Header() {
