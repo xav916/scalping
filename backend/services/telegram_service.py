@@ -16,6 +16,7 @@ import httpx
 
 from backend.models.schemas import ScalpingSignal
 from backend.services import trade_log_service
+from backend.services.shadow_v2_core_long import SHADOW_PAIRS as _STAR_PAIRS
 from datetime import date
 
 from config.settings import (
@@ -33,8 +34,15 @@ TELEGRAM_API = "https://api.telegram.org/bot{token}/sendMessage"
 
 _strength_order = {"weak": 0, "moderate": 1, "strong": 2}
 
+# Filtre paires : on ne pousse Telegram QUE pour les "stars" du portefeuille
+# Phase 4 (XAU/XAG/WTI/ETH/XLI/XLK). Évite la pollution par les setups des
+# 12 autres paires WATCHED_PAIRS (forex/SPX/NDX/BTC) sans edge confirmé.
+_STAR_PAIRS_SET: frozenset[str] = frozenset(_STAR_PAIRS)
+
 
 def _should_send(signal: ScalpingSignal) -> bool:
+    if signal.pair not in _STAR_PAIRS_SET:
+        return False
     min_rank = _strength_order.get(TELEGRAM_MIN_STRENGTH.lower(), 2)
     sig_rank = _strength_order.get(signal.signal_strength.value.lower(), 0)
     return sig_rank >= min_rank
@@ -199,7 +207,9 @@ def _cleanup_old_dedup_keys() -> None:
 
 
 def _should_push_setup(setup) -> bool:
-    """Filtre : verdict dans la liste autorisée + score au-dessus du seuil."""
+    """Filtre : star pair + verdict dans la liste autorisée + score au-dessus du seuil."""
+    if setup.pair not in _STAR_PAIRS_SET:
+        return False
     if not setup.verdict_action:
         return False
     if setup.verdict_action.upper() not in TELEGRAM_SETUP_VERDICTS:
