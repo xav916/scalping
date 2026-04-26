@@ -7,7 +7,22 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
+
 from backend.services import mt5_bridge
+
+
+@pytest.fixture(autouse=True)
+def _disable_star_filter(monkeypatch):
+    """Tests in this module assert behaviour for non-star pairs (EUR/USD,
+    GBP/USD…) relative to BLOCKED_DIRECTIONS / AVOID_HOURS. Neutralize the
+    upstream stars filter so those assertions remain meaningful."""
+    monkeypatch.setattr(
+        mt5_bridge,
+        "_STAR_PAIRS_SET",
+        frozenset({"EUR/USD", "GBP/USD", "USD/JPY", "XAU/USD", "XAG/USD",
+                   "WTI/USD", "ETH/USD", "XLI", "XLK"}),
+    )
 
 
 def _setup(pair="EUR/USD", direction="buy", confidence=80, entry=1.10, sl=1.09, tp=1.11):

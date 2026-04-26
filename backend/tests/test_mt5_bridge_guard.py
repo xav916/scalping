@@ -33,6 +33,21 @@ def _reset_dedup():
     mt5_bridge._sent_setups_today.clear()
 
 
+@pytest.fixture(autouse=True)
+def _disable_star_filter(monkeypatch):
+    """Most existing tests in this module exercise the asset-class guard with
+    EUR/USD, BTC/USD, SPX, etc. Since we now also filter by SHADOW_PAIRS
+    upstream, neutralize that filter here so the asset-class assertions stay
+    on point. The dedicated star-filter behaviour has its own test below."""
+    monkeypatch.setattr(
+        mt5_bridge,
+        "_STAR_PAIRS_SET",
+        frozenset({"EUR/USD", "GBP/USD", "USD/JPY", "EUR/JPY", "BTC/USD",
+                   "SPX", "XAU/USD", "XAG/USD", "WTI/USD", "ETH/USD",
+                   "XLI", "XLK"}),
+    )
+
+
 @pytest.mark.asyncio
 async def test_crypto_skipped_when_not_in_allowed_classes():
     """BTC/USD must be short-circuited when the broker only allows forex+metal."""
@@ -409,3 +424,53 @@ async def test_send_setups_batch_filters_unsupported():
         await mt5_bridge.send_setups(setups)
 
     assert sorted(calls) == ["EUR/USD", "XAU/USD"]
+
+
+@pytest.mark.asyncio
+async def test_send_setups_filters_non_star_pairs(monkeypatch):
+    """send_setups must drop pairs that are not in SHADOW_PAIRS (Phase 4 stars)."""
+    # Restore the real star filter for this test (the autouse fixture relaxes it)
+    monkeypatch.setattr(
+        mt5_bridge,
+        "_STAR_PAIRS_SET",
+        frozenset({"XAU/USD", "XAG/USD", "WTI/USD", "ETH/USD", "XLI", "XLK"}),
+    )
+
+    calls: list[str] = []
+
+    async def _spy(setup):
+        calls.append(setup.pair)
+
+    setups = [
+        _mk_setup("EUR/USD"),     # forex but NOT a star → filtered
+        _mk_setup("BTC/USD"),     # crypto and not a star → filtered
+        _mk_setup("XAU/USD"),     # star metal → kept
+        _mk_setup("ETH/USD"),     # star crypto → kept
+        _mk_setup("WTI/USD"),     # star energy → kept
+    ]
+
+    with patch.object(mt5_bridge, "MT5_BRIDGE_ALLOWED_ASSET_CLASSES",
+                      ["forex", "metal", "energy", "crypto"]), \
+         patch.object(mt5_bridge, "MT5_BRIDGE_ENABLED", True), \
+         patch.object(mt5_bridge, "MT5_BRIDGE_URL", "http://test"), \
+         patch.object(mt5_bridge, "MT5_BRIDGE_API_KEY", "test"), \
+         patch.object(mt5_bridge, "send_setup", _spy):
+        await mt5_bridge.send_setups(setups)
+
+    assert sorted(calls) == ["ETH/USD", "WTI/USD", "XAU/USD"]
+
+
+def test_check_rejection_returns_not_a_star_for_non_stars(monkeypatch):
+    """_check_rejection must return the private reason '_not_a_star' for non-star pairs."""
+    monkeypatch.setattr(
+        mt5_bridge,
+        "_STAR_PAIRS_SET",
+        frozenset({"XAU/USD", "XAG/USD", "WTI/USD", "ETH/USD", "XLI", "XLK"}),
+    )
+    with patch.object(mt5_bridge, "MT5_BRIDGE_ENABLED", True), \
+         patch.object(mt5_bridge, "MT5_BRIDGE_URL", "http://test"), \
+         patch.object(mt5_bridge, "MT5_BRIDGE_API_KEY", "test"):
+        assert mt5_bridge._check_rejection(_mk_setup("EUR/USD")) == "_not_a_star"
+        assert mt5_bridge._check_rejection(_mk_setup("BTC/USD")) == "_not_a_star"
+        # Star pair should not be rejected for that reason (other rejections may apply)
+        assert mt5_bridge._check_rejection(_mk_setup("XAU/USD")) != "_not_a_star"

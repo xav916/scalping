@@ -23,6 +23,7 @@ from datetime import date, datetime, timezone
 import httpx
 
 from backend.services.market_hours import is_market_open_for
+from backend.services.shadow_v2_core_long import SHADOW_PAIRS as _STAR_PAIRS
 from config.settings import (
     MT5_BRIDGE_ENABLED,
     MT5_BRIDGE_URL,
@@ -45,6 +46,12 @@ logger = logging.getLogger(__name__)
 # Dedup in-memory : même setup dans la journée = pas de re-push.
 # Clé : (date_iso, pair, direction, entry_arrondi_5dp).
 _sent_setups_today: set[tuple[str, str, str, str]] = set()
+
+# Filtre auto-exec : on n'envoie au bridge MT5 que les setups dont la paire
+# fait partie du portefeuille stars Phase 4 (XAU/XAG/WTI/ETH/XLI/XLK).
+# Cohérent avec le filtre Telegram. XLI/XLK ne sont pas dans WATCHED_PAIRS
+# côté V1 et n'apparaîtront jamais ici en pratique.
+_STAR_PAIRS_SET: frozenset[str] = frozenset(_STAR_PAIRS)
 
 
 def is_configured() -> bool:
@@ -138,6 +145,8 @@ def _check_rejection(setup) -> str | None:
     """
     if not is_configured():
         return "_not_configured"  # privé, non enregistré
+    if setup.pair not in _STAR_PAIRS_SET:
+        return "_not_a_star"  # privé : filtre auto-exec stars-only, attendu pour 12 paires sur 16
     try:
         from backend.services import kill_switch
         if kill_switch.is_active():
@@ -333,7 +342,11 @@ async def send_setups(setups: list) -> None:
     """Push plusieurs setups en parallèle. No-op si bridge pas configuré."""
     if not is_configured() or not setups:
         return
-    # Pré-filtre sur l'asset class supportée par le broker courant.
+    # Pré-filtre 1 : stars du portefeuille Phase 4 uniquement.
+    setups = [s for s in setups if s.pair in _STAR_PAIRS_SET]
+    if not setups:
+        return
+    # Pré-filtre 2 : asset class supportée par le broker courant.
     setups = [
         s for s in setups
         if asset_class_for(s.pair) in MT5_BRIDGE_ALLOWED_ASSET_CLASSES
