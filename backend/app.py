@@ -1858,6 +1858,60 @@ async def api_shadow_public_summary(token: str = ""):
     return summary()
 
 
+# ─── Endpoints publics shadow log (no auth) ─────────────────────────────────
+# Pour pages publiques /v2/live et /v2/track-record qui affichent le track
+# record en temps réel sans demander de login. Lecture seule, sanitisé
+# (pas de macro_features_json sensible, pas de cycle_at interne).
+
+
+@app.get("/api/public/shadow/summary")
+async def api_public_shadow_summary():
+    """KPIs agrégés des 6 stars en temps réel (sans auth).
+
+    Retourne summary() du shadow_v2_core_long mais filtré pour ne pas
+    exposer de données techniques internes. Utilisé par la page /v2/live.
+    """
+    from backend.services.shadow_v2_core_long import summary
+    raw = summary()
+    return {"systems": raw.get("systems", [])}
+
+
+@app.get("/api/public/shadow/setups")
+async def api_public_shadow_setups(
+    system_id: str | None = None,
+    outcome: str | None = None,
+    limit: int = 100,
+):
+    """Liste des setups shadow récents (sans auth, lecture seule).
+
+    Query params :
+    - system_id : filtre optionnel par système
+    - outcome : filtre par outcome ("pending"|"TP1"|"SL"|"TIMEOUT")
+    - limit : capé à 200 (anti-abus)
+
+    Sanitise : retire macro_features_json + cycle_at + sizing_* internes.
+    Utilisé par la page /v2/track-record.
+    """
+    from backend.services.shadow_v2_core_long import list_setups
+
+    rows = list_setups(
+        system_id=system_id,
+        outcome=outcome,
+        limit=min(limit, 200),
+    )
+
+    sanitized_keys = {
+        "id", "detected_at", "bar_timestamp", "system_id", "pair", "timeframe",
+        "direction", "pattern", "entry_price", "stop_loss",
+        "take_profit_1", "take_profit_2", "risk_pct", "rr",
+        "outcome", "exit_at", "exit_price", "pnl_pct_net", "pnl_eur",
+    }
+    return [
+        {k: v for k, v in r.items() if k in sanitized_keys}
+        for r in rows
+    ]
+
+
 @app.get("/api/shadow/v2_core_long/setups.csv")
 async def api_shadow_setups_csv(
     since: str | None = None,

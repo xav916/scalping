@@ -274,6 +274,17 @@ export const api = {
 
   shadowSummary: () => request<ShadowSummary>('/api/shadow/v2_core_long/summary'),
 
+  // Endpoints publics shadow log (sans auth, pages /v2/live et /v2/track-record)
+  publicShadowSummary: () => request<ShadowSummary>('/api/public/shadow/summary'),
+  publicShadowSetups: (params: { system_id?: string; outcome?: string; limit?: number } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.system_id) qs.set('system_id', params.system_id);
+    if (params.outcome) qs.set('outcome', params.outcome);
+    if (params.limit) qs.set('limit', String(params.limit));
+    const q = qs.toString();
+    return request<ShadowSetup[]>(`/api/public/shadow/setups${q ? `?${q}` : ''}`);
+  },
+
   exposureTimeseries: (since: string, until: string, granularity: Granularity | 'auto' = 'auto') => {
     const qs = new URLSearchParams({ since, until, granularity });
     return request<ExposureTimeseries>(`/api/insights/exposure-timeseries?${qs.toString()}`);

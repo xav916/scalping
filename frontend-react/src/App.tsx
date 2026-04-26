@@ -57,6 +57,13 @@ const ShadowLogPage = lazy(() =>
 const SupportsPage = lazy(() =>
   import('@/pages/SupportsPage').then((m) => ({ default: m.SupportsPage }))
 );
+// Pages publiques marketing (sans login)
+const LivePage = lazy(() =>
+  import('@/pages/LivePage').then((m) => ({ default: m.LivePage }))
+);
+const TrackRecordPage = lazy(() =>
+  import('@/pages/TrackRecordPage').then((m) => ({ default: m.TrackRecordPage }))
+);
 
 function RouteLoader() {
   return (
@@ -79,6 +86,8 @@ export default function App() {
               <Route path="/reset-password" element={<ResetPasswordPage />} />
               <Route path="/verify-email" element={<VerifyEmailPage />} />
               <Route path="/pricing" element={<PricingPage />} />
+              <Route path="/live" element={<LivePage />} />
+              <Route path="/track-record" element={<TrackRecordPage />} />
               <Route element={<AuthGate />}>
                 <Route path="/onboarding" element={<OnboardingPage />} />
               </Route>

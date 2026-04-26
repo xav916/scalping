@@ -124,23 +124,100 @@ export function LandingPage() {
             Alertes Telegram en temps réel.{' '}
             <strong className="text-white/90">Tu trades chez ton broker, on ne touche jamais à tes fonds.</strong>
           </p>
-          <div className="flex items-center justify-center gap-3">
-            <button
-              onClick={() => navigate('/signup')}
-              className="px-6 py-3 rounded-xl bg-gradient-to-br from-cyan-400 to-pink-500 text-slate-900 text-sm font-semibold shadow-lg shadow-cyan-500/20"
+          <div className="flex items-center justify-center gap-3 flex-wrap">
+            <Link
+              to="/live"
+              className="px-6 py-3 rounded-xl bg-gradient-to-br from-cyan-400 to-pink-500 text-slate-900 text-sm font-semibold shadow-lg shadow-cyan-500/20 hover:scale-105 transition-transform"
             >
-              Créer un compte gratuit
-            </button>
+              Voir les setups en direct →
+            </Link>
+            <Link
+              to="/track-record"
+              className="px-6 py-3 rounded-xl border border-white/15 text-white/80 text-sm font-medium hover:bg-white/5"
+            >
+              Track record public
+            </Link>
             <Link
               to="/pricing"
               className="px-6 py-3 rounded-xl border border-white/15 text-white/80 text-sm font-medium hover:bg-white/5"
             >
-              Voir les plans →
+              Tarifs
             </Link>
           </div>
           <p className="text-xs text-white/40 mt-4">
-            Sans carte. 14 jours d'essai Pro inclus.
+            Aucune carte requise pour visualiser le live et le track record.
           </p>
+        </motion.div>
+      </section>
+
+      {/* Dashboard mockup preview */}
+      <section className="relative z-10 max-w-5xl mx-auto px-6 pb-16">
+        <motion.div
+          initial={{ opacity: 0, y: 24 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+          transition={{ duration: 0.6 }}
+        >
+          <GlassCard variant="elevated" className="p-1 overflow-hidden">
+            <div className="rounded-xl bg-slate-950/60 border border-white/5 overflow-hidden">
+              {/* Mock browser chrome */}
+              <div className="px-4 py-2.5 border-b border-white/5 flex items-center gap-2 bg-white/[0.02]">
+                <div className="flex gap-1.5">
+                  <div className="w-2.5 h-2.5 rounded-full bg-rose-500/60" />
+                  <div className="w-2.5 h-2.5 rounded-full bg-amber-500/60" />
+                  <div className="w-2.5 h-2.5 rounded-full bg-emerald-500/60" />
+                </div>
+                <div className="flex-1 text-center">
+                  <span className="text-[10px] font-mono text-white/40">scalping-radar.online/v2/shadow-log</span>
+                </div>
+              </div>
+              {/* Mock dashboard content */}
+              <div className="p-5 space-y-4">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  {[
+                    { label: 'Setups 30j', value: '47', color: 'text-cyan-300' },
+                    { label: 'WR', value: '54.2%', color: 'text-emerald-400' },
+                    { label: 'PF live', value: '1.42', color: 'text-emerald-400' },
+                    { label: 'Sharpe', value: '1.18', color: 'text-cyan-300' },
+                  ].map((kpi) => (
+                    <div key={kpi.label} className="rounded-lg bg-white/[0.03] border border-white/5 px-3 py-2.5">
+                      <div className="text-[10px] uppercase tracking-wider text-white/40 mb-1">{kpi.label}</div>
+                      <div className={`text-2xl font-bold font-mono ${kpi.color}`}>{kpi.value}</div>
+                    </div>
+                  ))}
+                </div>
+                <div className="rounded-lg bg-white/[0.03] border border-white/5 overflow-hidden">
+                  <div className="px-4 py-2 border-b border-white/5 flex items-center justify-between">
+                    <span className="text-xs font-medium text-white/70">Setups récents (6 stars)</span>
+                    <span className="text-[10px] text-emerald-400 flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                      live
+                    </span>
+                  </div>
+                  <div className="text-xs font-mono divide-y divide-white/[0.03]">
+                    {[
+                      { pair: 'XAU/USD', tf: '4H', pattern: 'momentum_up', entry: '2087.42', outcome: 'TP1', pnl: '+1.84%', pnl_color: 'text-emerald-400' },
+                      { pair: 'XAG/USD', tf: '4H', pattern: 'engulfing_bullish', entry: '24.61', outcome: 'TP1', pnl: '+2.31%', pnl_color: 'text-emerald-400' },
+                      { pair: 'XLK', tf: '1D', pattern: 'momentum_up', entry: '215.84', outcome: 'pending', pnl: '—', pnl_color: 'text-white/40' },
+                      { pair: 'WTI/USD', tf: '4H', pattern: 'range_bounce_up', entry: '78.92', outcome: 'SL', pnl: '-0.95%', pnl_color: 'text-rose-400' },
+                      { pair: 'ETH/USD', tf: '1D', pattern: 'breakout_up', entry: '3421', outcome: 'pending', pnl: '—', pnl_color: 'text-white/40' },
+                    ].map((row, i) => (
+                      <div key={i} className="px-4 py-2 grid grid-cols-6 gap-2 items-center">
+                        <span className="text-cyan-300 font-semibold">{row.pair}</span>
+                        <span className="text-white/50">{row.tf}</span>
+                        <span className="text-white/70 col-span-2">{row.pattern}</span>
+                        <span className={`font-semibold ${row.pnl_color}`}>{row.outcome}</span>
+                        <span className={`text-right ${row.pnl_color}`}>{row.pnl}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="text-[10px] text-white/30 text-center">
+                  Données illustratives — voir le vrai live sur /live
+                </div>
+              </div>
+            </div>
+          </GlassCard>
         </motion.div>
       </section>
 
@@ -276,6 +353,194 @@ export function LandingPage() {
         </div>
       </section>
 
+      {/* Comparatif vs concurrents */}
+      <section className="relative z-10 max-w-5xl mx-auto px-6 py-16">
+        <motion.h2
+          initial={{ opacity: 0 }}
+          whileInView={{ opacity: 1 }}
+          viewport={{ once: true }}
+          transition={{ duration: 0.4 }}
+          className="text-3xl font-bold text-center mb-3"
+        >
+          <GradientText>Pourquoi pas un autre outil ?</GradientText>
+        </motion.h2>
+        <p className="text-center text-white/60 mb-10 text-sm max-w-2xl mx-auto">
+          On ne fait pas le même travail. Voici ce qui nous distingue.
+        </p>
+        <GlassCard className="p-0 overflow-hidden">
+          <div className="grid grid-cols-5 gap-0 text-sm">
+            {/* Header */}
+            <div className="px-4 py-3 bg-white/[0.02] border-b border-white/5 col-span-1"></div>
+            <div className="px-3 py-3 bg-white/[0.02] border-b border-white/5 text-center text-xs font-semibold">
+              <span className="text-cyan-300">Scalping Radar</span>
+            </div>
+            <div className="px-3 py-3 bg-white/[0.02] border-b border-white/5 text-center text-xs text-white/50">
+              TradingView
+            </div>
+            <div className="px-3 py-3 bg-white/[0.02] border-b border-white/5 text-center text-xs text-white/50">
+              Discord bots
+            </div>
+            <div className="px-3 py-3 bg-white/[0.02] border-b border-white/5 text-center text-xs text-white/50">
+              MetaSignals
+            </div>
+            {[
+              {
+                feature: 'Setups validés long terme',
+                us: 'Oui — 20 ans backtest',
+                tv: 'Indicateurs purs',
+                dc: 'Variable / opaque',
+                ms: 'Variable',
+              },
+              {
+                feature: 'Méthodologie publique',
+                us: 'Journal 36 expériences',
+                tv: 'N/A',
+                dc: 'Souvent boîte noire',
+                ms: 'Peu détaillée',
+              },
+              {
+                feature: 'Profit Factor mesuré',
+                us: '1.19-1.42 sur 20y',
+                tv: 'À mesurer toi-même',
+                dc: 'Claims marketing',
+                ms: 'Claims marketing',
+              },
+              {
+                feature: 'Track record public',
+                us: 'Oui — page /track-record',
+                tv: 'N/A',
+                dc: 'Capture cherry-picked',
+                ms: 'Variable',
+              },
+              {
+                feature: 'Diversification multi-asset',
+                us: '6 stars décorrélées',
+                tv: 'À toi de configurer',
+                dc: '1-2 paires souvent',
+                ms: 'Souvent forex only',
+              },
+              {
+                feature: 'Auto-exec démo (optionnel)',
+                us: 'Bridge MT5 self-hosted',
+                tv: 'Webhook DIY',
+                dc: 'Variable',
+                ms: 'Souvent inclus',
+              },
+              {
+                feature: 'Tu gardes ton capital',
+                us: 'Toujours, on touche pas',
+                tv: 'Oui',
+                dc: 'Oui',
+                ms: 'Variable',
+              },
+              {
+                feature: 'Prix mensuel',
+                us: '49€ (Pro) / 99€ (Premium)',
+                tv: '15-60€',
+                dc: '20-200€',
+                ms: '50-150€',
+              },
+            ].map((row, i) => (
+              <div key={row.feature} className="contents">
+                <div className={`px-4 py-3 ${i % 2 === 0 ? 'bg-white/[0.01]' : ''} border-b border-white/[0.03] text-white/70 text-xs sm:text-sm`}>
+                  {row.feature}
+                </div>
+                <div className={`px-3 py-3 ${i % 2 === 0 ? 'bg-white/[0.02]' : 'bg-white/[0.01]'} border-b border-white/[0.03] text-center text-xs text-cyan-200 font-medium`}>
+                  {row.us}
+                </div>
+                <div className={`px-3 py-3 ${i % 2 === 0 ? 'bg-white/[0.01]' : ''} border-b border-white/[0.03] text-center text-xs text-white/50`}>
+                  {row.tv}
+                </div>
+                <div className={`px-3 py-3 ${i % 2 === 0 ? 'bg-white/[0.01]' : ''} border-b border-white/[0.03] text-center text-xs text-white/50`}>
+                  {row.dc}
+                </div>
+                <div className={`px-3 py-3 ${i % 2 === 0 ? 'bg-white/[0.01]' : ''} border-b border-white/[0.03] text-center text-xs text-white/50`}>
+                  {row.ms}
+                </div>
+              </div>
+            ))}
+          </div>
+        </GlassCard>
+      </section>
+
+      {/* FAQ */}
+      <section className="relative z-10 max-w-3xl mx-auto px-6 py-16">
+        <motion.h2
+          initial={{ opacity: 0 }}
+          whileInView={{ opacity: 1 }}
+          viewport={{ once: true }}
+          transition={{ duration: 0.4 }}
+          className="text-3xl font-bold text-center mb-10"
+        >
+          <GradientText>Questions fréquentes</GradientText>
+        </motion.h2>
+        <div className="space-y-3">
+          {[
+            {
+              q: 'Combien je peux gagner avec ce système ?',
+              a: 'Honnêtement : sur 20 ans, le Profit Factor moyen est 1.19-1.42 selon la star. À sizing prudent (0.25-0.5%), l\'attente raisonnable est ~10-15%/an cumulé sur le capital alloué. Pas un système miracle, mais un edge méthodologique réel et documenté.',
+            },
+            {
+              q: 'Pourquoi 6 setups et pas 60 ?',
+              a: 'Parce qu\'on a testé 454 combinaisons (57 instruments × 2 timeframes × 4 filtres) et que seulement ces 6 passent un FDR strict cross-régime. Plus de signaux ≠ plus de gains, c\'est généralement plus de bruit.',
+            },
+            {
+              q: 'C\'est différent de TradingView ?',
+              a: 'TradingView te donne des outils pour analyser. On te donne 6 setups validés à exploiter. C\'est complémentaire — beaucoup d\'utilisateurs gardent TradingView pour le chart et utilisent Scalping Radar pour les signaux exploitables.',
+            },
+            {
+              q: 'Vous touchez à mes fonds ?',
+              a: 'Jamais. Tu trades chez ton broker (Pepperstone, IC Markets, Saxo, etc.). On envoie les setups en notification (Telegram + dashboard), tu décides. En option Premium, tu peux connecter un bridge MT5 self-hosted qui exécute automatiquement chez toi.',
+            },
+            {
+              q: 'Garantie de remboursement ?',
+              a: 'Pas formelle. Mais l\'essai Pro 14 jours sans carte te permet de tester avant de payer quoi que ce soit. Si tu paies puis annules au mois N, l\'abonnement reste actif jusqu\'à fin du cycle déjà payé, puis stoppe.',
+            },
+            {
+              q: 'C\'est légal en France ?',
+              a: 'Oui. C\'est un outil de signaux + dashboard analytics, pas un service de conseil en investissement (CIF). Aucune recommandation personnalisée. Tu décides 100% de tes trades. Disclaimer en footer.',
+            },
+            {
+              q: 'Quelle différence Pro vs Premium ?',
+              a: 'Pro (49€) = les 6 setups en temps réel, alertes Telegram, analytics, journal. Premium (99€) ajoute l\'auto-exec MT5 (bridge self-hosted), Discord VIP, onboarding 1:1 mensuel. Pro suffit pour 90% des traders.',
+            },
+            {
+              q: 'Et si une star casse pendant 6 mois ?',
+              a: 'Ça arrive. Sur 20 ans, chaque star a au moins une fenêtre de 1-3 ans avec PF<1. C\'est exactement pourquoi on a 6 stars décorrélées : quand XAU casse, XLI/XLK compensent (et inversement). On est transparents sur les drawdowns.',
+            },
+            {
+              q: 'Je suis débutant, c\'est fait pour moi ?',
+              a: 'Pas vraiment. Les setups sont validés mais l\'exécution demande de comprendre stop-loss, take-profit, sizing. Si tu débutes, commence par lire les docs (gratuites) et trade en démo avant Pro.',
+            },
+            {
+              q: 'Pourquoi le signup est fermé en avril 2026 ?',
+              a: 'On finit la phase d\'observation publique du shadow log (jusqu\'au 6 juin 2026) pour avoir 6 semaines de données live à montrer. Ouverture officielle ensuite. Tu peux suivre le track record en temps réel sur /live.',
+            },
+          ].map((item, i) => (
+            <motion.details
+              key={i}
+              initial={{ opacity: 0 }}
+              whileInView={{ opacity: 1 }}
+              viewport={{ once: true }}
+              transition={{ duration: 0.3, delay: i * 0.03 }}
+              className="group"
+            >
+              <summary className="cursor-pointer list-none">
+                <GlassCard className="p-4 hover:bg-white/[0.04] transition-colors">
+                  <div className="flex items-start gap-3">
+                    <span className="text-cyan-300 text-lg leading-none mt-0.5 group-open:rotate-45 transition-transform">+</span>
+                    <h3 className="font-medium text-sm flex-1">{item.q}</h3>
+                  </div>
+                </GlassCard>
+              </summary>
+              <div className="px-4 py-3 text-sm text-white/60 leading-relaxed">
+                {item.a}
+              </div>
+            </motion.details>
+          ))}
+        </div>
+      </section>
+
       {/* Final CTA */}
       <section className="relative z-10 max-w-3xl mx-auto px-6 py-20 text-center">
         <GlassCard variant="elevated" className="p-10">
@@ -283,14 +548,22 @@ export function LandingPage() {
             <GradientText>Prêt à tester ?</GradientText>
           </h2>
           <p className="text-white/70 mb-6">
-            14 jours d'essai Pro gratuit, sans carte.
+            14 jours d'essai Pro gratuit, sans carte. Ouverture officielle après le 6 juin 2026.
           </p>
-          <button
-            onClick={() => navigate('/signup')}
-            className="px-8 py-3 rounded-xl bg-gradient-to-br from-cyan-400 to-pink-500 text-slate-900 text-sm font-semibold"
-          >
-            Créer mon compte →
-          </button>
+          <div className="flex items-center justify-center gap-3 flex-wrap">
+            <Link
+              to="/live"
+              className="px-8 py-3 rounded-xl bg-gradient-to-br from-cyan-400 to-pink-500 text-slate-900 text-sm font-semibold"
+            >
+              Voir le live →
+            </Link>
+            <Link
+              to="/track-record"
+              className="px-8 py-3 rounded-xl border border-white/15 text-white/80 text-sm font-medium hover:bg-white/5"
+            >
+              Track record public
+            </Link>
+          </div>
         </GlassCard>
       </section>
 
