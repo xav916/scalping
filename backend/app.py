@@ -1949,30 +1949,40 @@ async def api_public_shadow_setups(
 
 @app.get("/api/public/changelog")
 async def api_public_changelog():
-    """Liste les commits récents avec types (feat/fix/research/docs).
+    """Liste les commits récents avec types.
 
-    Lit la sortie git log directement. Chaque entrée :
-    {hash, date, subject, type, scope}.
-
-    Cache 10 min en mémoire (recharge si > 600s).
+    Stratégie :
+    1. Lit `docs/changelog.json` s'il existe (pré-généré au deploy)
+    2. Sinon fallback git log (hors container où .git est dispo)
+    3. Sinon retour vide avec count=0
     """
+    import json
     import re
     import subprocess
     from pathlib import Path
 
-    repo_root = Path("/app") if Path("/app").exists() else Path.cwd()
+    # Stratégie 1 : fichier statique pré-généré
+    for candidate in [Path("docs/changelog.json"), Path("/app/docs/changelog.json")]:
+        if candidate.exists():
+            try:
+                data = json.loads(candidate.read_text(encoding="utf-8"))
+                if isinstance(data, dict) and "commits" in data:
+                    return {**data, "count": len(data.get("commits", []))}
+            except Exception:
+                pass
+
+    # Stratégie 2 : git log direct (dev local avec .git)
     try:
         result = subprocess.run(
             ["git", "log", "--pretty=format:%H|%ad|%s", "--date=iso-strict", "-50"],
-            cwd=str(repo_root),
             capture_output=True,
             text=True,
             timeout=10,
         )
         if result.returncode != 0:
-            return {"commits": [], "error": "git log failed"}
-    except Exception as e:
-        return {"commits": [], "error": str(e)}
+            return {"commits": [], "count": 0}
+    except Exception:
+        return {"commits": [], "count": 0}
 
     commits = []
     for line in result.stdout.split("\n"):
@@ -1982,7 +1992,6 @@ async def api_public_changelog():
         if len(parts) < 3:
             continue
         h, date, subject = parts
-        # Parse conventional commit : type(scope): message
         ct_match = re.match(r"^(\w+)(?:\(([^)]+)\))?(?:!)?:\s*(.+)$", subject)
         if ct_match:
             ctype = ct_match.group(1)

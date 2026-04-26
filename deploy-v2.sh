@@ -18,6 +18,32 @@ set -euo pipefail
 cd /home/ec2-user/scalping
 echo "=== git pull ==="
 sudo git pull
+echo "=== generate changelog.json (.git absent in image) ==="
+sudo python3 - <<'PY'
+import json, re, subprocess
+result = subprocess.run(
+    ["git", "log", "--pretty=format:%H|%ad|%s", "--date=iso-strict", "-50"],
+    capture_output=True, text=True, timeout=10,
+)
+commits = []
+for line in result.stdout.split("\n"):
+    if not line.strip():
+        continue
+    parts = line.split("|", 2)
+    if len(parts) < 3:
+        continue
+    h, date, subject = parts
+    m = re.match(r"^(\w+)(?:\(([^)]+)\))?(?:!)?:\s*(.+)$", subject)
+    if m:
+        ctype, cscope, cmsg = m.group(1), m.group(2), m.group(3)
+    else:
+        ctype, cscope, cmsg = "other", None, subject
+    commits.append({"hash": h[:7], "date": date[:10], "type": ctype,
+                    "scope": cscope, "subject": cmsg[:200]})
+with open("docs/changelog.json", "w", encoding="utf-8") as f:
+    json.dump({"commits": commits}, f, ensure_ascii=False, indent=2)
+print(f"Generated docs/changelog.json with {len(commits)} commits")
+PY
 echo "=== docker build ==="
 sudo docker build -t scalping-radar:latest .
 echo "=== prune dangling ==="
