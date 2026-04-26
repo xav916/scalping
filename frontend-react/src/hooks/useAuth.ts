@@ -25,11 +25,13 @@ export function useAuth() {
       email,
       password,
       accepted_terms,
+      referral_code,
     }: {
       email: string;
       password: string;
       accepted_terms: boolean;
-    }) => api.signup(email, password, accepted_terms),
+      referral_code?: string;
+    }) => api.signup(email, password, accepted_terms, referral_code),
   });
 
   const logout = useMutation({

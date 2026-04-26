@@ -58,10 +58,10 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ username, password }),
     }),
-  signup: (email: string, password: string, accepted_terms: boolean) =>
+  signup: (email: string, password: string, accepted_terms: boolean, referral_code?: string) =>
     request<{ ok: true; user_id: number }>('/api/auth/signup', {
       method: 'POST',
-      body: JSON.stringify({ email, password, accepted_terms }),
+      body: JSON.stringify({ email, password, accepted_terms, referral_code }),
     }),
   forgotPassword: (email: string) =>
     request<{ ok: true }>('/api/auth/forgot-password', {
@@ -298,6 +298,29 @@ export const api = {
       title: string; link: string | null;
       status: string; verdict: string;
     }>; count: number }>('/api/public/research/experiments'),
+
+  publicChangelog: () =>
+    request<{ commits: Array<{
+      hash: string; date: string; type: string;
+      scope: string | null; subject: string;
+    }>; count: number }>('/api/public/changelog'),
+
+  // Programme parrainage
+  referralsMe: () =>
+    request<{
+      code: string | null;
+      share_url: string;
+      n_signups: number;
+      n_converted: number;
+      commission_total_eur: number;
+      commission_paid_eur: number;
+      commission_pending_eur: number;
+    }>('/api/referrals/me'),
+
+  publicReferralsValidate: (code: string) =>
+    request<{ valid: boolean; owner_email_initials?: string; n_signups?: number }>(
+      `/api/public/referrals/validate?code=${encodeURIComponent(code)}`
+    ),
 
   exposureTimeseries: (since: string, until: string, granularity: Granularity | 'auto' = 'auto') => {
     const qs = new URLSearchParams({ since, until, granularity });

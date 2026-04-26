@@ -67,6 +67,15 @@ const TrackRecordPage = lazy(() =>
 const ResearchPage = lazy(() =>
   import('@/pages/ResearchPage').then((m) => ({ default: m.ResearchPage }))
 );
+const ChangelogPage = lazy(() =>
+  import('@/pages/ChangelogPage').then((m) => ({ default: m.ChangelogPage }))
+);
+const AboutPage = lazy(() =>
+  import('@/pages/AboutPage').then((m) => ({ default: m.AboutPage }))
+);
+const ReferralsPage = lazy(() =>
+  import('@/pages/ReferralsPage').then((m) => ({ default: m.ReferralsPage }))
+);
 
 function RouteLoader() {
   return (
@@ -92,6 +101,8 @@ export default function App() {
               <Route path="/live" element={<LivePage />} />
               <Route path="/track-record" element={<TrackRecordPage />} />
               <Route path="/research" element={<ResearchPage />} />
+              <Route path="/changelog" element={<ChangelogPage />} />
+              <Route path="/about" element={<AboutPage />} />
               <Route element={<AuthGate />}>
                 <Route path="/onboarding" element={<OnboardingPage />} />
               </Route>
@@ -105,6 +116,7 @@ export default function App() {
                 <Route path="/supports" element={<SupportsPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/admin" element={<AdminPage />} />
+                <Route path="/referrals" element={<ReferralsPage />} />
               </Route>
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>

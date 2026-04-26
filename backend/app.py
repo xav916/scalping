@@ -679,6 +679,17 @@ async def api_signup(request: Request, payload: dict):
             users_service.mark_email_auto_verified(uid)
         except Exception:
             pass
+
+    # Track parrainage si code fourni (V1 manuel — la commission sera
+    # créditée par admin manuellement à la conversion en payant).
+    referral_code = (payload or {}).get("referral_code", "")
+    if referral_code:
+        try:
+            from backend.services.referrals_service import track_signup
+            track_signup(referral_code, uid, email)
+        except Exception:
+            logger.exception("track_signup a échoué pour code=%s", referral_code)
+
     return {"ok": True, "user_id": uid, "trial_days": users_service.SIGNUP_TRIAL_DAYS}
 
 
@@ -1334,8 +1345,32 @@ async def pwa_service_worker():
 
 @app.get("/robots.txt", include_in_schema=False)
 async def robots_txt():
-    """Disallow indexation (l'app est derriere Basic Auth)."""
+    """Robots.txt — autorise indexation pages publiques marketing,
+    bloque dashboards authentifiés + API."""
     return FileResponse(str(FRONTEND_DIR / "robots.txt"), media_type="text/plain")
+
+
+@app.get("/sitemap.xml", include_in_schema=False)
+async def sitemap_xml():
+    """Sitemap des pages publiques pour SEO."""
+    from fastapi.responses import Response
+    base = "https://scalping-radar.duckdns.org"
+    pages = [
+        ("/v2/", "weekly", "1.0"),
+        ("/v2/live", "hourly", "0.9"),
+        ("/v2/track-record", "daily", "0.9"),
+        ("/v2/research", "weekly", "0.8"),
+        ("/v2/pricing", "monthly", "0.7"),
+        ("/v2/login", "monthly", "0.3"),
+        ("/v2/signup", "monthly", "0.3"),
+    ]
+    today = "2026-04-26"
+    urls = "\n".join(
+        f"  <url>\n    <loc>{base}{path}</loc>\n    <lastmod>{today}</lastmod>\n    <changefreq>{freq}</changefreq>\n    <priority>{prio}</priority>\n  </url>"
+        for path, freq, prio in pages
+    )
+    xml = f'<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n{urls}\n</urlset>\n'
+    return Response(content=xml, media_type="application/xml")
 
 
 # ─── Icônes PNG pour manifest PWA (WebAPK Android exige du raster) ───
@@ -1912,6 +1947,62 @@ async def api_public_shadow_setups(
     ]
 
 
+@app.get("/api/public/changelog")
+async def api_public_changelog():
+    """Liste les commits récents avec types (feat/fix/research/docs).
+
+    Lit la sortie git log directement. Chaque entrée :
+    {hash, date, subject, type, scope}.
+
+    Cache 10 min en mémoire (recharge si > 600s).
+    """
+    import re
+    import subprocess
+    from pathlib import Path
+
+    repo_root = Path("/app") if Path("/app").exists() else Path.cwd()
+    try:
+        result = subprocess.run(
+            ["git", "log", "--pretty=format:%H|%ad|%s", "--date=iso-strict", "-50"],
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode != 0:
+            return {"commits": [], "error": "git log failed"}
+    except Exception as e:
+        return {"commits": [], "error": str(e)}
+
+    commits = []
+    for line in result.stdout.split("\n"):
+        if not line.strip():
+            continue
+        parts = line.split("|", 2)
+        if len(parts) < 3:
+            continue
+        h, date, subject = parts
+        # Parse conventional commit : type(scope): message
+        ct_match = re.match(r"^(\w+)(?:\(([^)]+)\))?(?:!)?:\s*(.+)$", subject)
+        if ct_match:
+            ctype = ct_match.group(1)
+            cscope = ct_match.group(2)
+            cmsg = ct_match.group(3)
+        else:
+            ctype = "other"
+            cscope = None
+            cmsg = subject
+        commits.append({
+            "hash": h[:7],
+            "date": date[:10],
+            "type": ctype,
+            "scope": cscope,
+            "subject": cmsg[:200],
+        })
+
+    return {"commits": commits, "count": len(commits)}
+
+
 @app.get("/api/public/research/experiments")
 async def api_public_research_experiments():
     """Expose le journal de recherche publiquement (36 expériences fermées).
@@ -2001,6 +2092,26 @@ async def api_public_lead_subscribe(request: Request):
     ua = request.headers.get("user-agent", "")[:200]
 
     return add_lead(email=email, source=source, ip=ip, user_agent=ua)
+
+
+@app.get("/api/referrals/me")
+async def api_referrals_me(ctx: AuthContext = Depends(auth_context)):
+    """Retourne le code de parrainage du user + ses stats. Crée si absent."""
+    from backend.services.referrals_service import get_or_create_code, get_my_stats
+
+    if not ctx.user:
+        raise HTTPException(status_code=401, detail="auth required")
+
+    code = get_or_create_code(ctx.user.id, ctx.user.email)
+    stats = get_my_stats(ctx.user.id)
+    return {**stats, "code": code, "share_url": f"https://scalping-radar.duckdns.org/v2/?ref={code}"}
+
+
+@app.get("/api/public/referrals/validate")
+async def api_public_referrals_validate(code: str = ""):
+    """Valide un code de parrainage et retourne info (publique, anonymisé)."""
+    from backend.services.referrals_service import validate_code
+    return validate_code(code)
 
 
 @app.get("/api/admin/leads")

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { useAuth } from '@/hooks/useAuth';
@@ -7,6 +7,7 @@ import { AnimatedMeshGradient } from '@/components/ui/AnimatedMeshGradient';
 import { GradientText } from '@/components/ui/GradientText';
 import { RadarPulse } from '@/components/ui/RadarPulse';
 import { ApiError } from '@/lib/api';
+import { captureRefCodeFromUrl, getStoredRefCode } from '@/lib/referralCode';
 
 const PASSWORD_MIN = 8;
 
@@ -25,6 +26,12 @@ export function SignupPage() {
   // depuis une whitelist d'emails (vérifiée côté backend par SIGNUP_WHITELIST).
   const previewMode = searchParams.get('preview') === '1';
   const signupEnabled = config.data?.signup_enabled ?? false;
+
+  // Capture le code de parrainage depuis URL ou localStorage
+  useEffect(() => {
+    captureRefCodeFromUrl();
+  }, []);
+  const refCode = getStoredRefCode();
   if (config.isFetched && !signupEnabled && !previewMode) {
     return (
       <div className="min-h-screen flex items-center justify-center px-4">
@@ -64,7 +71,7 @@ export function SignupPage() {
       return;
     }
     signup.mutate(
-      { email, password, accepted_terms: true },
+      { email, password, accepted_terms: true, referral_code: refCode || undefined },
       {
         onSuccess: () => {
           // Auto-login après signup réussi.
@@ -123,6 +130,16 @@ export function SignupPage() {
               Créer un compte
             </p>
           </motion.div>
+
+          {refCode && (
+            <motion.div
+              initial={{ opacity: 0, y: -4 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mb-4 px-3 py-2 rounded-lg bg-emerald-400/10 border border-emerald-400/30 text-xs text-emerald-300 text-center"
+            >
+              ✓ Code parrainage <strong className="font-mono">{refCode}</strong> appliqué — early-bird -20% sur 6 mois
+            </motion.div>
+          )}
 
           <motion.form
             initial={{ opacity: 0, y: 8 }}

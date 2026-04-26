@@ -1,2 +1,21 @@
 User-agent: *
-Disallow: /
+Allow: /v2/
+Allow: /v2/live
+Allow: /v2/track-record
+Allow: /v2/research
+Allow: /v2/pricing
+Allow: /v2/login
+Allow: /v2/signup
+Disallow: /v2/dashboard
+Disallow: /v2/cockpit
+Disallow: /v2/analytics
+Disallow: /v2/trades
+Disallow: /v2/shadow-log
+Disallow: /v2/supports
+Disallow: /v2/settings
+Disallow: /v2/admin
+Disallow: /v2/onboarding
+Disallow: /api/
+Disallow: /docs/
+
+Sitemap: https://scalping-radar.duckdns.org/sitemap.xml

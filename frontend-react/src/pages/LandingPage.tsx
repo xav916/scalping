@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { GlassCard } from '@/components/ui/GlassCard';
@@ -6,6 +6,7 @@ import { AnimatedMeshGradient } from '@/components/ui/AnimatedMeshGradient';
 import { GradientText } from '@/components/ui/GradientText';
 import { RadarPulse } from '@/components/ui/RadarPulse';
 import { api } from '@/lib/api';
+import { captureRefCodeFromUrl, getStoredRefCode } from '@/lib/referralCode';
 
 /**
  * Page marketing publique : pitch, features, pricing CTA.
@@ -68,6 +69,12 @@ const PRICING_PREVIEW = [
 ];
 
 export function LandingPage() {
+  // Capture le code de parrainage depuis ?ref=CODE et store 30j
+  useEffect(() => {
+    captureRefCodeFromUrl();
+  }, []);
+  const refCode = getStoredRefCode();
+
   return (
     <div className="min-h-screen">
       <AnimatedMeshGradient />
@@ -119,6 +126,17 @@ export function LandingPage() {
               6 setups · validés sur 20 ans
             </span>
           </div>
+          {refCode && (
+            <motion.div
+              initial={{ opacity: 0, y: -4 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="inline-flex items-center gap-2 mb-4 px-3 py-1.5 rounded-full bg-emerald-400/10 border border-emerald-400/30"
+            >
+              <span className="text-xs text-emerald-300">
+                ✓ Code parrainage <strong className="font-mono">{refCode}</strong> · early-bird -20% sur 6 mois Pro
+              </span>
+            </motion.div>
+          )}
           <h1 className="text-5xl md:text-6xl font-bold tracking-tight mb-5 leading-tight">
             <GradientText>Trade comme un quant.</GradientText>
             <br />
@@ -578,7 +596,20 @@ export function LandingPage() {
 
       {/* Footer */}
       <footer className="relative z-10 max-w-6xl mx-auto px-6 py-10 text-center text-xs text-white/40 space-y-3">
-        <div className="flex items-center justify-center gap-4 flex-wrap">
+        <div className="flex items-center justify-center gap-3 flex-wrap">
+          <Link to="/live" className="hover:text-white/70">Live</Link>
+          <span>·</span>
+          <Link to="/track-record" className="hover:text-white/70">Track record</Link>
+          <span>·</span>
+          <Link to="/research" className="hover:text-white/70">Recherche</Link>
+          <span>·</span>
+          <Link to="/changelog" className="hover:text-white/70">Changelog</Link>
+          <span>·</span>
+          <Link to="/about" className="hover:text-white/70">À propos</Link>
+          <span>·</span>
+          <Link to="/pricing" className="hover:text-white/70">Tarifs</Link>
+        </div>
+        <div className="flex items-center justify-center gap-3 flex-wrap">
           <a href="/docs/cgu.html" target="_blank" rel="noopener noreferrer" className="hover:text-white/70">CGU</a>
           <span>·</span>
           <a href="/docs/cgv.html" target="_blank" rel="noopener noreferrer" className="hover:text-white/70">CGV</a>
