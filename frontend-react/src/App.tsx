@@ -64,6 +64,9 @@ const LivePage = lazy(() =>
 const TrackRecordPage = lazy(() =>
   import('@/pages/TrackRecordPage').then((m) => ({ default: m.TrackRecordPage }))
 );
+const ResearchPage = lazy(() =>
+  import('@/pages/ResearchPage').then((m) => ({ default: m.ResearchPage }))
+);
 
 function RouteLoader() {
   return (
@@ -88,6 +91,7 @@ export default function App() {
               <Route path="/pricing" element={<PricingPage />} />
               <Route path="/live" element={<LivePage />} />
               <Route path="/track-record" element={<TrackRecordPage />} />
+              <Route path="/research" element={<ResearchPage />} />
               <Route element={<AuthGate />}>
                 <Route path="/onboarding" element={<OnboardingPage />} />
               </Route>

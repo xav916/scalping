@@ -1,9 +1,11 @@
-import { Link, useNavigate } from 'react-router-dom';
+import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { GlassCard } from '@/components/ui/GlassCard';
 import { AnimatedMeshGradient } from '@/components/ui/AnimatedMeshGradient';
 import { GradientText } from '@/components/ui/GradientText';
 import { RadarPulse } from '@/components/ui/RadarPulse';
+import { api } from '@/lib/api';
 
 /**
  * Page marketing publique : pitch, features, pricing CTA.
@@ -66,8 +68,6 @@ const PRICING_PREVIEW = [
 ];
 
 export function LandingPage() {
-  const navigate = useNavigate();
-
   return (
     <div className="min-h-screen">
       <AnimatedMeshGradient />
@@ -78,12 +78,24 @@ export function LandingPage() {
           <RadarPulse size={32} />
           <span className="font-semibold tracking-tight">Scalping Radar</span>
         </div>
-        <nav className="flex items-center gap-5">
+        <nav className="flex items-center gap-4 sm:gap-5">
+          <Link
+            to="/live"
+            className="text-sm text-white/60 hover:text-white transition-colors hidden sm:inline"
+          >
+            Live
+          </Link>
+          <Link
+            to="/research"
+            className="text-sm text-white/60 hover:text-white transition-colors hidden sm:inline"
+          >
+            Recherche
+          </Link>
           <Link
             to="/pricing"
             className="text-sm text-white/60 hover:text-white transition-colors"
           >
-            Pricing
+            Tarifs
           </Link>
           <Link
             to="/login"
@@ -91,12 +103,6 @@ export function LandingPage() {
           >
             Connexion
           </Link>
-          <button
-            onClick={() => navigate('/signup')}
-            className="px-4 py-2 rounded-xl bg-gradient-to-br from-cyan-400 to-pink-500 text-slate-900 text-sm font-semibold"
-          >
-            Démarrer
-          </button>
         </nav>
       </header>
 
@@ -541,6 +547,9 @@ export function LandingPage() {
         </div>
       </section>
 
+      {/* Email capture beta closed */}
+      <BetaSignupSection />
+
       {/* Final CTA */}
       <section className="relative z-10 max-w-3xl mx-auto px-6 py-20 text-center">
         <GlassCard variant="elevated" className="p-10">
@@ -584,5 +593,103 @@ export function LandingPage() {
         </p>
       </footer>
     </div>
+  );
+}
+
+/**
+ * Email capture pendant la phase beta closed (avant ouverture signup
+ * 2026-06-07). Capture les emails intéressés pour notification d'ouverture.
+ * POST /api/public/leads/subscribe — idempotent.
+ */
+function BetaSignupSection() {
+  const [email, setEmail] = useState('');
+  const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const [message, setMessage] = useState('');
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email.includes('@')) {
+      setStatus('error');
+      setMessage('Email invalide');
+      return;
+    }
+    setStatus('loading');
+    try {
+      const res = await api.publicLeadSubscribe(email, 'landing');
+      if (res.ok) {
+        setStatus('success');
+        setMessage(res.message || 'Tu es sur la liste.');
+        setEmail('');
+      } else {
+        setStatus('error');
+        setMessage(res.message || 'Erreur, réessaie');
+      }
+    } catch {
+      setStatus('error');
+      setMessage('Erreur réseau, réessaie');
+    }
+  };
+
+  return (
+    <section className="relative z-10 max-w-3xl mx-auto px-6 py-16">
+      <motion.div
+        initial={{ opacity: 0, y: 16 }}
+        whileInView={{ opacity: 1, y: 0 }}
+        viewport={{ once: true }}
+        transition={{ duration: 0.5 }}
+      >
+        <GlassCard variant="elevated" className="p-8 sm:p-10 text-center">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-400/10 border border-amber-400/30 mb-5">
+            <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+            <span className="text-xs uppercase tracking-wider text-amber-300">
+              Beta fermée jusqu'au 2026-06-07
+            </span>
+          </div>
+          <h2 className="text-2xl sm:text-3xl font-bold mb-3">
+            <GradientText>Sois prévenu à l'ouverture</GradientText>
+          </h2>
+          <p className="text-white/70 mb-6 max-w-xl mx-auto">
+            Le signup ouvre après le gate Phase 4 (6 juin 2026). Laisse ton email,
+            on te prévient avec un code <strong className="text-white/90">early-bird -20%</strong>{' '}
+            sur les 6 premiers mois Pro.
+          </p>
+          <form
+            onSubmit={submit}
+            className="flex flex-col sm:flex-row gap-2 max-w-md mx-auto"
+          >
+            <input
+              type="email"
+              autoComplete="email"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="ton@email.com"
+              className="flex-1 px-4 py-3 rounded-xl bg-white/5 border border-glass-soft focus:border-cyan-400/50 focus:bg-white/[0.07] focus:outline-none focus:ring-2 focus:ring-cyan-400/20 transition-all font-mono text-sm"
+              disabled={status === 'loading' || status === 'success'}
+            />
+            <button
+              type="submit"
+              disabled={status === 'loading' || status === 'success'}
+              className="px-6 py-3 rounded-xl bg-gradient-to-br from-cyan-400 to-pink-500 text-slate-900 text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+            >
+              {status === 'loading' ? 'Envoi…' : status === 'success' ? '✓ Ajouté' : "M'inscrire"}
+            </button>
+          </form>
+          {message && (
+            <motion.p
+              initial={{ opacity: 0, y: -4 }}
+              animate={{ opacity: 1, y: 0 }}
+              className={`text-xs mt-3 ${status === 'success' ? 'text-emerald-400' : 'text-rose-400'}`}
+            >
+              {message}
+            </motion.p>
+          )}
+          <p className="text-xs text-white/40 mt-5">
+            Pas de spam. Pas de revente d'email. Juste un mail à l'ouverture + une éventuelle relance
+            au moment du gate Phase 5 (octobre 2026).
+          </p>
+        </GlassCard>
+      </motion.div>
+    </section>
   );
 }

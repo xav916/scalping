@@ -285,6 +285,20 @@ export const api = {
     return request<ShadowSetup[]>(`/api/public/shadow/setups${q ? `?${q}` : ''}`);
   },
 
+  publicLeadSubscribe: (email: string, source: string) =>
+    request<{ ok: boolean; message: string }>('/api/public/leads/subscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, source }),
+    }),
+
+  publicResearchExperiments: () =>
+    request<{ experiments: Array<{
+      num: string; date: string; track: string;
+      title: string; link: string | null;
+      status: string; verdict: string;
+    }>; count: number }>('/api/public/research/experiments'),
+
   exposureTimeseries: (since: string, until: string, granularity: Granularity | 'auto' = 'auto') => {
     const qs = new URLSearchParams({ since, until, granularity });
     return request<ExposureTimeseries>(`/api/insights/exposure-timeseries?${qs.toString()}`);

@@ -1912,6 +1912,111 @@ async def api_public_shadow_setups(
     ]
 
 
+@app.get("/api/public/research/experiments")
+async def api_public_research_experiments():
+    """Expose le journal de recherche publiquement (36 expériences fermées).
+
+    Lit `docs/superpowers/journal/INDEX.md` et parse la table markdown des
+    expériences pour la rendre disponible côté page /v2/research. Cache
+    mémoire 5 min (le journal change rarement).
+    """
+    import re
+    from pathlib import Path
+
+    INDEX_PATH = Path("docs/superpowers/journal/INDEX.md")
+    if not INDEX_PATH.exists():
+        # Container path
+        INDEX_PATH = Path("/app/docs/superpowers/journal/INDEX.md")
+
+    if not INDEX_PATH.exists():
+        return {"experiments": [], "error": "INDEX.md non trouvé"}
+
+    text = INDEX_PATH.read_text(encoding="utf-8")
+    lines = text.split("\n")
+
+    experiments = []
+    table_started = False
+    for line in lines:
+        line = line.strip()
+        # Détecter début de table
+        if line.startswith("| #"):
+            table_started = True
+            continue
+        if not table_started:
+            continue
+        # Skip séparateur markdown
+        if line.startswith("|---") or not line.startswith("|"):
+            if line and not line.startswith("|"):
+                # Fin de la table
+                break
+            continue
+        # Parse row : | num | date | track | title | status | verdict |
+        cells = [c.strip() for c in line.split("|")[1:-1]]
+        if len(cells) < 6:
+            continue
+        num, date, track, title_md, status, verdict = cells[:6]
+        # Extract title from markdown link [text](url)
+        link_match = re.match(r"\[([^\]]+)\]\(([^)]+)\)", title_md)
+        title = link_match.group(1) if link_match else title_md
+        link = link_match.group(2) if link_match else None
+
+        # Strip emoji et badges du verdict
+        verdict_clean = re.sub(r"\*\*([^*]+)\*\*", r"\1", verdict)
+
+        experiments.append({
+            "num": num,
+            "date": date,
+            "track": track,
+            "title": title,
+            "link": link,
+            "status": status,
+            "verdict": verdict_clean[:300],
+        })
+
+    return {
+        "experiments": experiments,
+        "count": len(experiments),
+    }
+
+
+@app.post("/api/public/leads/subscribe")
+async def api_public_lead_subscribe(request: Request):
+    """Inscription email à la liste beta (avant ouverture signup 2026-06-07).
+
+    Body JSON : {"email": "x@y.com", "source": "landing"}
+    Réponse : {"ok": true|false, "message": "..."}
+
+    Idempotent (email dupliqué ne crée pas d'erreur).
+    """
+    from backend.services.leads_service import add_lead
+
+    try:
+        body = await request.json()
+    except Exception:
+        return {"ok": False, "message": "JSON invalide"}
+
+    email = (body.get("email") or "").strip()
+    source = body.get("source")
+    ip = request.client.host if request.client else None
+    ua = request.headers.get("user-agent", "")[:200]
+
+    return add_lead(email=email, source=source, ip=ip, user_agent=ua)
+
+
+@app.get("/api/admin/leads")
+async def api_admin_leads(ctx: AuthContext = Depends(auth_context)):
+    """Liste les leads (admin uniquement)."""
+    from backend.services.leads_service import list_leads, count_leads
+
+    if not ctx.user or ctx.user.email not in ADMIN_EMAILS:
+        raise HTTPException(status_code=403, detail="admin only")
+
+    return {
+        "total": count_leads(),
+        "leads": list_leads(limit=500),
+    }
+
+
 @app.get("/api/shadow/v2_core_long/setups.csv")
 async def api_shadow_setups_csv(
     since: str | None = None,
