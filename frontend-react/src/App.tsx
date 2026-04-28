@@ -42,8 +42,11 @@ const AdminPage = lazy(() =>
 const ControlTowerPage = lazy(() =>
   import('@/pages/ControlTowerPage').then((m) => ({ default: m.ControlTowerPage }))
 );
-const V1LegacyPage = lazy(() =>
-  import('@/pages/V1LegacyPage').then((m) => ({ default: m.V1LegacyPage }))
+const V1HubPage = lazy(() =>
+  import('@/pages/V1HubPage').then((m) => ({ default: m.V1HubPage }))
+);
+const CandidatesPage = lazy(() =>
+  import('@/pages/CandidatesPage').then((m) => ({ default: m.CandidatesPage }))
 );
 const TradesPage = lazy(() =>
   import('@/pages/TradesPage').then((m) => ({ default: m.TradesPage }))
@@ -116,11 +119,13 @@ export default function App() {
                 <Route path="/analytics" element={<AnalyticsPage />} />
                 <Route path="/trades" element={<TradesPage />} />
                 <Route path="/shadow-log" element={<ShadowLogPage />} />
+                <Route path="/candidates" element={<CandidatesPage />} />
                 <Route path="/supports" element={<SupportsPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/admin" element={<AdminPage />} />
                 <Route path="/control-tower" element={<ControlTowerPage />} />
-                <Route path="/v1-legacy" element={<V1LegacyPage />} />
+                <Route path="/v1" element={<V1HubPage />} />
+                <Route path="/v1-legacy" element={<Navigate to="/v1" replace />} />
                 <Route path="/referrals" element={<ReferralsPage />} />
               </Route>
               <Route path="*" element={<Navigate to="/" replace />} />
