@@ -266,9 +266,20 @@ async def _push_to_destination(setup, dest) -> None:
     key = _dedup_key(setup, dest.destination_id)
     if key in _sent_setups_today:
         return
-    _sent_setups_today.add(key)
+    # Dedup atomique en DB (UNIQUE constraint INSERT OR IGNORE) — source de
+    # vérité partagée multi-process. Le set in-memory reste en parallèle pour
+    # rétro-compat des tests existants. Best-effort : si la DB est
+    # inaccessible, le service retourne True (fallback safe).
+    from backend.services import mt5_pushes_service
 
+    push_date = key[0]
     direction = _direction_value(setup)
+    entry_5dp = f"{setup.entry_price:.5f}"
+    if not mt5_pushes_service.try_register_push(
+        dest.destination_id, push_date, setup.pair, direction, entry_5dp
+    ):
+        return
+    _sent_setups_today.add(key)
     # Sizing dynamique : base = RISK_PER_TRADE_PCT du capital, module par
     # la confiance du signal (0.5x a 1.5x) et par le PnL recent (0.5x si
     # en drawdown sur 7j, sinon 1.0x). Voir sizing.compute_risk_money.
@@ -306,6 +317,10 @@ async def _push_to_destination(setup, dest) -> None:
             r = await client.post(url, json=payload, headers=headers)
             if r.status_code == 200:
                 data = r.json()
+                mt5_pushes_service.update_push_result(
+                    dest.destination_id, push_date, setup.pair, direction, entry_5dp,
+                    ok=True, response=data,
+                )
                 logger.info(
                     f"MT5 bridge[{dest.destination_id}] → {setup.pair} {direction} "
                     f"risk=${risk_money} "
@@ -338,8 +353,11 @@ async def _push_to_destination(setup, dest) -> None:
                     user_id=dest.user_id,
                 )
                 # Si l'ordre a été rejeté par le bridge, on retire de la dedup
-                # pour qu'un cycle suivant puisse retenter.
+                # (mémoire + DB) pour qu'un cycle suivant puisse retenter.
                 _sent_setups_today.discard(key)
+                mt5_pushes_service.discard_push(
+                    dest.destination_id, push_date, setup.pair, direction, entry_5dp
+                )
     except httpx.TimeoutException:
         logger.info(
             f"MT5 bridge[{dest.destination_id}] timeout — skip {setup.pair}"
@@ -352,6 +370,9 @@ async def _push_to_destination(setup, dest) -> None:
             user_id=dest.user_id,
         )
         _sent_setups_today.discard(key)  # retente au cycle suivant
+        mt5_pushes_service.discard_push(
+            dest.destination_id, push_date, setup.pair, direction, entry_5dp
+        )
     except Exception as e:
         logger.warning(
             f"MT5 bridge[{dest.destination_id}] exception pour {setup.pair}: {e}"
@@ -365,6 +386,9 @@ async def _push_to_destination(setup, dest) -> None:
             user_id=dest.user_id,
         )
         _sent_setups_today.discard(key)
+        mt5_pushes_service.discard_push(
+            dest.destination_id, push_date, setup.pair, direction, entry_5dp
+        )
 
 
 async def send_setup(setup) -> None:
