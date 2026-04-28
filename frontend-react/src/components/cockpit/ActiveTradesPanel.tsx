@@ -25,13 +25,16 @@ export function ActiveTradesPanel({ trades }: { trades: ActiveTrade[] }) {
         </span>
       </div>
       {/* Légende colonnes — uniquement desktop */}
-      <div className="hidden sm:grid grid-cols-[100px_60px_1fr_90px_90px_90px] items-center gap-4 pb-2 mb-2 px-3 text-[9px] uppercase tracking-[0.2em] text-white/30 font-mono">
+      <div className="hidden sm:grid grid-cols-[100px_60px_1fr_90px_80px_80px_90px] items-center gap-4 pb-2 mb-2 px-3 text-[9px] uppercase tracking-[0.2em] text-white/30 font-mono">
         <LabelWithInfo label="Paire" tip={TIPS.trade.pair} />
         <LabelWithInfo label="Sens" tip={TIPS.trade.direction} />
         <LabelWithInfo
           label="Entry → Now"
           tip={`${TIPS.trade.entryPrice} · ${TIPS.trade.currentPrice}`}
         />
+        <span className="text-right">
+          <LabelWithInfo label="Engagé" tip={TIPS.trade.notional} />
+        </span>
         <span className="text-right">
           <LabelWithInfo label="Dist. SL" tip={TIPS.trade.distanceSl} />
         </span>
@@ -65,7 +68,7 @@ function ActiveTradeRow({ trade }: { trade: ActiveTrade }) {
         trade.near_sl ? 'border-rose-400/30 bg-rose-400/5' : 'border-glass-soft bg-white/[0.02]'
       )}
     >
-      <div className="grid grid-cols-2 sm:grid-cols-[100px_60px_1fr_90px_90px_90px] items-center gap-2 sm:gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-[100px_60px_1fr_90px_80px_80px_90px] items-center gap-2 sm:gap-4">
         <div className="flex items-center gap-2 min-w-0 col-span-2 sm:col-span-1">
           <Tooltip content={TIPS.trade.pair}>
             <span className="font-mono text-sm font-semibold truncate">{trade.pair}</span>
@@ -95,6 +98,13 @@ function ActiveTradeRow({ trade }: { trade: ActiveTrade }) {
                 <span className="text-white/80">{formatPrice(trade.current_price)}</span>
               </>
             )}
+          </div>
+        </Tooltip>
+        <Tooltip content={TIPS.trade.notional}>
+          <div className="text-xs font-mono tabular-nums text-right text-white/70">
+            {trade.notional !== null && trade.notional !== undefined
+              ? `${trade.notional.toLocaleString('fr-FR', { maximumFractionDigits: 0 })} €`
+              : '—'}
           </div>
         </Tooltip>
         <Tooltip content={trade.near_sl ? TIPS.trade.nearSl : TIPS.trade.distanceSl}>
