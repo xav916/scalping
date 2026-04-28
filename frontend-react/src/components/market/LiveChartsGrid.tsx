@@ -6,24 +6,19 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { Tooltip, LabelWithInfo } from '@/components/ui/Tooltip';
 import { useAllCandles } from '@/hooks/useCandles';
 import { formatPrice } from '@/lib/format';
+import { STAR_PAIRS_LIVE } from '@/lib/constants';
 
-/** Paires principales affichées dans la grille live (ordre = visibilité).
- *  Limité à 8 pour ne pas surcharger le dashboard mobile. */
-const MAIN_PAIRS = [
-  'EUR/USD',
-  'GBP/USD',
-  'USD/JPY',
-  'XAU/USD',
-  'BTC/USD',
-  'ETH/USD',
-  'SPX',
-  'NDX',
-];
-
-/** Grille de 8 mini-sparklines montrant les paires principales en temps réel.
- *  "Heartbeat" du marché — un coup d'œil pour sentir la vitalité globale,
- *  indépendamment des setups en cours. */
-export function LiveChartsGrid() {
+/** Grille de mini-sparklines pour le "heartbeat" marché.
+ *
+ *  Par défaut affiche les 4 stars du portefeuille V2 (cockpit). Pour la page
+ *  admin /v2/v1-legacy on lui passe la liste des anciens supports V1. */
+export function LiveChartsGrid({
+  pairs = STAR_PAIRS_LIVE as readonly string[],
+  title,
+}: {
+  pairs?: readonly string[];
+  title?: string;
+} = {}) {
   const { data: allCandles, isLoading } = useAllCandles();
 
   if (isLoading) {
@@ -38,15 +33,15 @@ export function LiveChartsGrid() {
     <GlassCard className="p-5">
       <div className="flex items-center justify-between mb-4">
         <LabelWithInfo
-          label={<h2 className="text-sm font-semibold tracking-tight uppercase tracking-[0.2em] text-white/70">Prix live</h2>}
-          tip="Prix des paires principales en temps réel. Sparkline = 30 dernières bougies 5 minutes. Variation = delta entre la première et la dernière close sur la fenêtre. Utile comme heartbeat du marché, indépendamment des setups actifs."
+          label={<h2 className="text-sm font-semibold tracking-tight uppercase tracking-[0.2em] text-white/70">{title ?? 'Prix live'}</h2>}
+          tip="Prix des paires affichées en temps réel. Sparkline = 30 dernières bougies 5 minutes. Variation = delta entre la première et la dernière close sur la fenêtre. Utile comme heartbeat du marché, indépendamment des setups actifs."
         />
         <span className="text-[9px] text-white/40 font-mono uppercase tracking-wider">
           5m · 30 bougies
         </span>
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {MAIN_PAIRS.map((pair, i) => (
+        {pairs.map((pair, i) => (
           <LiveChartTile
             key={pair}
             pair={pair}

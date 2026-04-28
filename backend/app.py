@@ -2137,6 +2137,37 @@ async def api_admin_leads(ctx: AuthContext = Depends(auth_context)):
     }
 
 
+@app.get("/api/admin/control-tower")
+async def api_admin_control_tower(_ctx: AuthContext = Depends(require_admin)):
+    """Forward du status JSON depuis bridge_monitor (port 8090 sur Tailscale EC2).
+
+    Sert la page /v2/control-tower : 8 sondes (bridges, systemd, radar_cycle,
+    disk, tailscale) + historique des recovery actions. Reachable depuis EC2
+    via Tailscale local (l'app radar tourne sur la même instance).
+    """
+    import os
+    import httpx
+
+    monitor_url = os.getenv(
+        "MONITOR_STATUS_URL", "http://100.103.107.75:8090/status.json"
+    )
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(monitor_url)
+            r.raise_for_status()
+            return r.json()
+    except httpx.RequestError as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Monitor unreachable: {type(e).__name__}",
+        )
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Monitor returned {e.response.status_code}",
+        )
+
+
 @app.get("/api/shadow/v2_core_long/setups.csv")
 async def api_shadow_setups_csv(
     since: str | None = None,

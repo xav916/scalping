@@ -27,7 +27,7 @@ export function HomeRoute() {
   }
 
   if (whoami.isSuccess && whoami.data) {
-    return <Navigate to="/dashboard" replace />;
+    return <Navigate to="/cockpit" replace />;
   }
 
   return (

@@ -42,6 +42,12 @@ const SettingsPage = lazy(() =>
 const AdminPage = lazy(() =>
   import('@/pages/AdminPage').then((m) => ({ default: m.AdminPage }))
 );
+const ControlTowerPage = lazy(() =>
+  import('@/pages/ControlTowerPage').then((m) => ({ default: m.ControlTowerPage }))
+);
+const V1LegacyPage = lazy(() =>
+  import('@/pages/V1LegacyPage').then((m) => ({ default: m.V1LegacyPage }))
+);
 const TradesPage = lazy(() =>
   import('@/pages/TradesPage').then((m) => ({ default: m.TradesPage }))
 );
@@ -108,7 +114,7 @@ export default function App() {
               </Route>
               <Route path="/" element={<HomeRoute />} />
               <Route element={<AuthGate requireOnboarded />}>
-                <Route path="/dashboard" element={<DashboardPage />} />
+                <Route path="/dashboard" element={<Navigate to="/cockpit" replace />} />
                 <Route path="/cockpit" element={<CockpitPage />} />
                 <Route path="/analytics" element={<AnalyticsPage />} />
                 <Route path="/trades" element={<TradesPage />} />
@@ -116,6 +122,8 @@ export default function App() {
                 <Route path="/supports" element={<SupportsPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/admin" element={<AdminPage />} />
+                <Route path="/control-tower" element={<ControlTowerPage />} />
+                <Route path="/v1-legacy" element={<V1LegacyPage />} />
                 <Route path="/referrals" element={<ReferralsPage />} />
               </Route>
               <Route path="*" element={<Navigate to="/" replace />} />
