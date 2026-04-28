@@ -358,7 +358,12 @@ function renderRiskCard(id: string, data: CockpitSnapshot): ReactNode {
         </div>
       );
     case 'active-trades':
-      return <ActiveTradesPanel trades={data.active_trades.items} />;
+      return (
+        <ActiveTradesPanel
+          trades={data.active_trades.items}
+          capital={data.today_stats.capital}
+        />
+      );
     default:
       return null;
   }
