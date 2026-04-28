@@ -6,14 +6,17 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { Tooltip, LabelWithInfo } from '@/components/ui/Tooltip';
 import { useAllCandles } from '@/hooks/useCandles';
 import { formatPrice } from '@/lib/format';
-import { STAR_PAIRS_LIVE } from '@/lib/constants';
+import { STAR_PAIRS_FULL } from '@/lib/constants';
 
 /** Grille de mini-sparklines pour le "heartbeat" marché.
  *
- *  Par défaut affiche les 4 stars du portefeuille V2 (cockpit). Pour la page
- *  admin /v2/v1-legacy on lui passe la liste des anciens supports V1. */
+ *  Par défaut affiche les 6 stars du portefeuille V2 (cockpit). Note : XLI
+ *  et XLK ne sont pas dans WATCHED_PAIRS V1 et n'ont donc pas de candles
+ *  côté `/api/candles` — leurs tuiles afficheront "Pas de données" tant que
+ *  le pipeline candles n'est pas étendu. Pour la page admin /v2/v1-legacy
+ *  on lui passe la liste des anciens supports V1. */
 export function LiveChartsGrid({
-  pairs = STAR_PAIRS_LIVE as readonly string[],
+  pairs = STAR_PAIRS_FULL as readonly string[],
   title,
 }: {
   pairs?: readonly string[];
@@ -40,7 +43,7 @@ export function LiveChartsGrid({
           5m · 30 bougies
         </span>
       </div>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         {pairs.map((pair, i) => (
           <LiveChartTile
             key={pair}

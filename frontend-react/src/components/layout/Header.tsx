@@ -56,12 +56,20 @@ function statusTip(s: SystemStatus): React.ReactNode {
 }
 
 const NAV_LINKS = [
-  { to: '/dashboard', label: 'Dashboard' },
   { to: '/cockpit', label: 'Cockpit' },
   { to: '/analytics', label: 'Analytics' },
   { to: '/trades', label: 'Trades' },
   { to: '/shadow-log', label: 'Shadow' },
   { to: '/supports', label: 'Supports' },
+];
+
+/** Liens admin only — gated côté backend (403 si non admin). Affichés
+ *  pour tous, mais cliquer renverra vers une page d'accès refusé pour
+ *  les non-admins. Acceptable tant qu'on n'a pas exposé is_admin dans
+ *  /api/me (~5 min de modif backend, à faire si bruit utilisateur). */
+const ADMIN_NAV_LINKS = [
+  { to: '/v1-legacy', label: 'V1' },
+  { to: '/control-tower', label: 'Infra' },
 ];
 
 export function Header() {
@@ -100,6 +108,25 @@ export function Header() {
                     ? 'bg-white/10 text-white'
                     : 'text-white/50 hover:text-white/90 hover:bg-white/5'
                 )}
+              >
+                {l.label}
+              </Link>
+            );
+          })}
+          <span className="w-px h-4 bg-white/10 mx-1" aria-hidden />
+          {ADMIN_NAV_LINKS.map((l) => {
+            const active = location.pathname === l.to;
+            return (
+              <Link
+                key={l.to}
+                to={l.to}
+                className={clsx(
+                  'text-[11px] px-2 py-1 rounded-md transition-colors font-mono uppercase tracking-wider',
+                  active
+                    ? 'bg-amber-400/15 text-amber-200 border border-amber-400/30'
+                    : 'text-amber-300/70 hover:text-amber-200 hover:bg-amber-400/10 border border-transparent'
+                )}
+                title="Admin only"
               >
                 {l.label}
               </Link>
