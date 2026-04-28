@@ -136,6 +136,25 @@ export function SettingsPage() {
     },
   });
 
+  // ─── Auto-exec toggle (Phase D du multi-tenant bridge routing) ──
+  const [demoConfirmed, setDemoConfirmed] = useState(false);
+  const [autoExecError, setAutoExecError] = useState<string | null>(null);
+
+  const autoExecMut = useMutation({
+    mutationFn: (enabled: boolean) =>
+      api.userBrokerAutoExec(enabled, enabled ? demoConfirmed : undefined),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['user', 'broker'] });
+      setDemoConfirmed(false);
+      setAutoExecError(null);
+    },
+    onError: (err) => {
+      setAutoExecError(
+        err instanceof ApiError ? err.message || 'Erreur' : 'Erreur'
+      );
+    },
+  });
+
   // ─── Change password section ──────────────────────────────────
   const [pwOpen, setPwOpen] = useState(false);
   const [pwCurrent, setPwCurrent] = useState('');
@@ -447,6 +466,78 @@ export function SettingsPage() {
 
               {saveBridgeMut.isSuccess && (
                 <p className="text-xs text-emerald-400">Bridge enregistré ✓</p>
+              )}
+
+              {/* ─── Auto-exec toggle ─── */}
+              {brokerQ.data?.api_key_set && (
+                <div className="mt-5 pt-5 border-t border-white/10 space-y-3">
+                  <div className="flex items-start justify-between gap-3 flex-wrap">
+                    <div>
+                      <h3 className="text-sm font-semibold flex items-center gap-2">
+                        Auto-exécution
+                        <span
+                          className={`px-2 py-0.5 rounded-full text-[10px] uppercase tracking-wider ${
+                            brokerQ.data.auto_exec_enabled
+                              ? 'bg-emerald-400/20 text-emerald-300 border border-emerald-400/30'
+                              : 'bg-white/10 text-white/60 border border-white/15'
+                          }`}
+                        >
+                          {brokerQ.data.auto_exec_enabled ? 'ON' : 'OFF'}
+                        </span>
+                      </h3>
+                      <p className="text-xs text-white/50 mt-1">
+                        {brokerQ.data.auto_exec_enabled
+                          ? 'Les setups éligibles sont poussés à ton bridge en temps réel.'
+                          : 'Bridge configuré mais ordres pas encore envoyés.'}
+                      </p>
+                    </div>
+                    {brokerQ.data.auto_exec_enabled ? (
+                      <button
+                        onClick={() => autoExecMut.mutate(false)}
+                        disabled={autoExecMut.isPending}
+                        className="px-4 py-2 rounded-xl border border-rose-400/30 text-rose-300 text-sm hover:bg-rose-400/10 disabled:opacity-40"
+                      >
+                        {autoExecMut.isPending ? 'Désactivation…' : 'Désactiver'}
+                      </button>
+                    ) : null}
+                  </div>
+
+                  {!brokerQ.data.auto_exec_enabled && (
+                    <div className="rounded-xl border border-amber-400/30 bg-amber-400/10 p-3 space-y-2">
+                      <p className="text-xs text-amber-200 leading-relaxed">
+                        ⚠️ Activer l'auto-exec va déclencher des ordres réels
+                        sur le compte associé à ton bridge MT5. Vérifie que
+                        c'est bien un <strong>compte DÉMO</strong> avant la
+                        première activation.
+                      </p>
+                      <label className="flex items-start gap-2 text-xs text-white/80 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={demoConfirmed}
+                          onChange={(e) => setDemoConfirmed(e.target.checked)}
+                          className="mt-0.5 accent-cyan-400"
+                        />
+                        <span>
+                          Je confirme que ce bridge pointe vers un compte
+                          <strong> démo</strong> (j'accepte les risques sinon).
+                        </span>
+                      </label>
+                      <button
+                        onClick={() => autoExecMut.mutate(true)}
+                        disabled={!demoConfirmed || autoExecMut.isPending}
+                        className="w-full py-2 rounded-xl bg-gradient-to-br from-amber-400 to-pink-500 text-slate-900 text-sm font-semibold disabled:opacity-40"
+                      >
+                        {autoExecMut.isPending
+                          ? 'Activation…'
+                          : 'Activer l\'auto-exec'}
+                      </button>
+                    </div>
+                  )}
+
+                  {autoExecError && (
+                    <p className="text-xs text-rose-400">{autoExecError}</p>
+                  )}
+                </div>
               )}
             </motion.div>
           )}
