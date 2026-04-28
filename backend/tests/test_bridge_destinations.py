@@ -2,13 +2,17 @@
 
 Phase A.1 du chantier multi-tenant bridge routing — V1 ne résout qu'admin
 legacy depuis l'env. Phase C ajoutera la résolution des users Premium.
+
+Les patches sont appliqués sur ``mt5_bridge`` parce que
+``_admin_legacy_destination()`` lit la config legacy via ce module (lazy
+import) — voir le module bridge_destinations pour le rationale.
 """
 import dataclasses
 from unittest.mock import MagicMock
 
 import pytest
 
-from backend.services import bridge_destinations
+from backend.services import bridge_destinations, mt5_bridge
 
 
 def _mk_setup(pair: str = "EUR/USD") -> MagicMock:
@@ -19,20 +23,26 @@ def _mk_setup(pair: str = "EUR/USD") -> MagicMock:
     return s
 
 
+def _set_admin_env(monkeypatch, **overrides):
+    """Helper : force la config admin legacy via patches sur mt5_bridge."""
+    defaults = {
+        "MT5_BRIDGE_ENABLED": True,
+        "MT5_BRIDGE_URL": "http://admin-bridge:8787",
+        "MT5_BRIDGE_API_KEY": "x" * 32,
+        "MT5_BRIDGE_MIN_CONFIDENCE": 55.0,
+        "MT5_BRIDGE_ALLOWED_ASSET_CLASSES": ["forex", "metal"],
+    }
+    defaults.update(overrides)
+    for name, value in defaults.items():
+        monkeypatch.setattr(mt5_bridge, name, value)
+
+
 # ─── admin_legacy résolu correctement ─────────────────────────────────
 
 
 def test_admin_legacy_returned_when_env_set(monkeypatch):
     """Admin legacy doit être présent quand ENABLED + URL + KEY sont set."""
-    monkeypatch.setattr(bridge_destinations, "MT5_BRIDGE_ENABLED", True)
-    monkeypatch.setattr(bridge_destinations, "MT5_BRIDGE_URL", "http://admin-bridge:8787")
-    monkeypatch.setattr(bridge_destinations, "MT5_BRIDGE_API_KEY", "x" * 32)
-    monkeypatch.setattr(bridge_destinations, "MT5_BRIDGE_MIN_CONFIDENCE", 55.0)
-    monkeypatch.setattr(
-        bridge_destinations,
-        "MT5_BRIDGE_ALLOWED_ASSET_CLASSES",
-        ["forex", "metal"],
-    )
+    _set_admin_env(monkeypatch)
 
     dests = bridge_destinations.resolve_destinations(_mk_setup())
 
@@ -49,11 +59,7 @@ def test_admin_legacy_returned_when_env_set(monkeypatch):
 
 def test_admin_legacy_strips_trailing_slash(monkeypatch):
     """``bridge_url`` ne doit pas avoir de slash final."""
-    monkeypatch.setattr(bridge_destinations, "MT5_BRIDGE_ENABLED", True)
-    monkeypatch.setattr(
-        bridge_destinations, "MT5_BRIDGE_URL", "http://admin-bridge:8787/"
-    )
-    monkeypatch.setattr(bridge_destinations, "MT5_BRIDGE_API_KEY", "x" * 32)
+    _set_admin_env(monkeypatch, MT5_BRIDGE_URL="http://admin-bridge:8787/")
 
     dests = bridge_destinations.resolve_destinations(_mk_setup())
 
@@ -62,9 +68,7 @@ def test_admin_legacy_strips_trailing_slash(monkeypatch):
 
 def test_bridge_config_is_frozen(monkeypatch):
     """Une ``BridgeConfig`` doit être immuable (frozen=True)."""
-    monkeypatch.setattr(bridge_destinations, "MT5_BRIDGE_ENABLED", True)
-    monkeypatch.setattr(bridge_destinations, "MT5_BRIDGE_URL", "http://admin-bridge:8787")
-    monkeypatch.setattr(bridge_destinations, "MT5_BRIDGE_API_KEY", "x" * 32)
+    _set_admin_env(monkeypatch)
 
     dests = bridge_destinations.resolve_destinations(_mk_setup())
 
@@ -77,9 +81,7 @@ def test_bridge_config_is_frozen(monkeypatch):
 
 def test_no_destinations_when_disabled(monkeypatch):
     """``MT5_BRIDGE_ENABLED=False`` → aucune destination admin_legacy."""
-    monkeypatch.setattr(bridge_destinations, "MT5_BRIDGE_ENABLED", False)
-    monkeypatch.setattr(bridge_destinations, "MT5_BRIDGE_URL", "http://admin-bridge:8787")
-    monkeypatch.setattr(bridge_destinations, "MT5_BRIDGE_API_KEY", "x" * 32)
+    _set_admin_env(monkeypatch, MT5_BRIDGE_ENABLED=False)
 
     dests = bridge_destinations.resolve_destinations(_mk_setup())
 
@@ -88,9 +90,7 @@ def test_no_destinations_when_disabled(monkeypatch):
 
 def test_no_destinations_when_url_missing(monkeypatch):
     """URL vide → admin pas dans la liste."""
-    monkeypatch.setattr(bridge_destinations, "MT5_BRIDGE_ENABLED", True)
-    monkeypatch.setattr(bridge_destinations, "MT5_BRIDGE_URL", "")
-    monkeypatch.setattr(bridge_destinations, "MT5_BRIDGE_API_KEY", "x" * 32)
+    _set_admin_env(monkeypatch, MT5_BRIDGE_URL="")
 
     dests = bridge_destinations.resolve_destinations(_mk_setup())
 
@@ -99,11 +99,7 @@ def test_no_destinations_when_url_missing(monkeypatch):
 
 def test_no_destinations_when_api_key_missing(monkeypatch):
     """API key vide → admin pas dans la liste."""
-    monkeypatch.setattr(bridge_destinations, "MT5_BRIDGE_ENABLED", True)
-    monkeypatch.setattr(
-        bridge_destinations, "MT5_BRIDGE_URL", "http://admin-bridge:8787"
-    )
-    monkeypatch.setattr(bridge_destinations, "MT5_BRIDGE_API_KEY", "")
+    _set_admin_env(monkeypatch, MT5_BRIDGE_API_KEY="")
 
     dests = bridge_destinations.resolve_destinations(_mk_setup())
 
@@ -119,7 +115,7 @@ def test_no_user_destinations_in_v1(monkeypatch):
     Ce test évoluera en Phase C : il deviendra
     ``test_premium_users_in_destinations`` quand on connectera ``users_service``.
     """
-    monkeypatch.setattr(bridge_destinations, "MT5_BRIDGE_ENABLED", False)
+    _set_admin_env(monkeypatch, MT5_BRIDGE_ENABLED=False)
     # admin_legacy off ⇒ seule source possible serait _user_destinations()
 
     dests = bridge_destinations.resolve_destinations(_mk_setup())

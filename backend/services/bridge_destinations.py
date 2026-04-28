@@ -13,19 +13,17 @@ Phase C en enrichissant ``_user_destinations()`` — sans toucher à
 ``mt5_bridge.send_setup()``.
 
 Voir ``docs/superpowers/specs/2026-04-28-multi-tenant-bridge-routing.md``.
+
+Note design : la résolution lit la config legacy via ``mt5_bridge`` (lazy
+import) et non via ``config.settings`` directement, pour que les tests
+existants qui patchent ``mt5_bridge.MT5_BRIDGE_*`` propagent leurs valeurs
+ici sans modification. Pas de cycle d'import au chargement (lazy import
+dans la fonction).
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
-
-from config.settings import (
-    MT5_BRIDGE_ALLOWED_ASSET_CLASSES,
-    MT5_BRIDGE_API_KEY,
-    MT5_BRIDGE_ENABLED,
-    MT5_BRIDGE_MIN_CONFIDENCE,
-    MT5_BRIDGE_URL,
-)
 
 
 @dataclass(frozen=True)
@@ -62,16 +60,22 @@ class BridgeConfig:
 
 
 def _admin_legacy_destination() -> BridgeConfig | None:
-    """Retourne la config admin legacy depuis l'env, ou ``None`` si absente."""
-    if not (MT5_BRIDGE_ENABLED and MT5_BRIDGE_URL and MT5_BRIDGE_API_KEY):
+    """Retourne la config admin legacy depuis l'env, ou ``None`` si absente.
+
+    Lit via ``mt5_bridge`` (lazy import) pour respecter les patches des
+    tests existants qui font ``patch.object(mt5_bridge, "MT5_BRIDGE_URL", ...)``.
+    """
+    from backend.services import mt5_bridge as mb
+
+    if not (mb.MT5_BRIDGE_ENABLED and mb.MT5_BRIDGE_URL and mb.MT5_BRIDGE_API_KEY):
         return None
     return BridgeConfig(
         destination_id="admin_legacy",
         user_id=None,
-        bridge_url=MT5_BRIDGE_URL.rstrip("/"),
-        bridge_api_key=MT5_BRIDGE_API_KEY,
-        min_confidence=float(MT5_BRIDGE_MIN_CONFIDENCE),
-        allowed_asset_classes=frozenset(MT5_BRIDGE_ALLOWED_ASSET_CLASSES),
+        bridge_url=mb.MT5_BRIDGE_URL.rstrip("/"),
+        bridge_api_key=mb.MT5_BRIDGE_API_KEY,
+        min_confidence=float(mb.MT5_BRIDGE_MIN_CONFIDENCE),
+        allowed_asset_classes=frozenset(mb.MT5_BRIDGE_ALLOWED_ASSET_CLASSES),
         auto_exec_enabled=True,
     )
 

@@ -63,12 +63,20 @@ def _direction_value(setup) -> str:
     return d.value if hasattr(d, "value") else str(d)
 
 
-def _dedup_key(setup) -> tuple[str, str, str, str]:
+def _dedup_key(setup, dest_id: str = "admin_legacy") -> tuple[str, str, str, str, str]:
+    """Clé de dedup étendue avec ``dest_id`` pour le multi-tenant routing.
+
+    L'ordre est ``(date, pair, direction, entry, dest_id)`` — pair en
+    position [1] est figé pour ne pas casser les tests legacy qui font
+    ``k[0]==today and k[1]==pair``. ``dest_id`` en queue permet à plusieurs
+    destinations de pousser le même setup sans collision.
+    """
     return (
         date.today().isoformat(),
         setup.pair,
         _direction_value(setup),
         f"{setup.entry_price:.5f}",
+        dest_id,
     )
 
 
@@ -137,13 +145,18 @@ def _count_open_trades_for_pair(pair: str) -> int:
         return 0
 
 
-def _check_rejection(setup) -> str | None:
+def _check_rejection(setup, dest=None) -> str | None:
     """Retourne None si le setup peut être pushé, sinon un reason_code parmi
     ceux définis dans `rejection_service.REASON_LABELS_FR`. Seuls les cas qui
     représentent un "ordre perdu" sont loggés — pas les early-returns purement
     techniques (bridge non configuré, dedup, etc.).
+
+    Si ``dest`` (``BridgeConfig``) est fourni, utilise ``dest.min_confidence``
+    en remplacement du ``MT5_BRIDGE_MIN_CONFIDENCE`` global et skip le check
+    ``is_configured()`` (la résolution garantit déjà la config). Sans ``dest``,
+    comportement legacy mono-tenant inchangé.
     """
-    if not is_configured():
+    if dest is None and not is_configured():
         return "_not_configured"  # privé, non enregistré
     if setup.pair not in _STAR_PAIRS_SET:
         return "_not_a_star"  # privé : filtre auto-exec stars-only, attendu pour 12 paires sur 16
@@ -177,7 +190,8 @@ def _check_rejection(setup) -> str | None:
         if sl_pct < min_pct:
             return "sl_too_close"
     score = getattr(setup, "confidence_score", None) or 0
-    if score < MT5_BRIDGE_MIN_CONFIDENCE:
+    min_conf = dest.min_confidence if dest is not None else MT5_BRIDGE_MIN_CONFIDENCE
+    if score < min_conf:
         return "below_confidence"
     # Filtre direction par pair (diagnostic 2026-04-24 : les BUY ont 18%
     # winrate vs 42% pour les SELL sur notre dataset post-fix pipeline).
@@ -210,12 +224,16 @@ def _should_push(setup) -> bool:
     return _check_rejection(setup) is None
 
 
-async def send_setup(setup) -> None:
-    """Push un trade_setup vers le bridge MT5 local si toutes les conditions
-    sont remplies (verdict TAKE, seuil, dedup)."""
+async def _push_to_destination(setup, dest) -> None:
+    """Push un setup vers UNE destination (``BridgeConfig``).
+
+    Tous les filtres / dedup / HTTP sont paramétrés par ``dest``. Cette
+    fonction est l'évolution V2 du corps historique de ``send_setup`` —
+    cf. `docs/superpowers/specs/2026-04-28-multi-tenant-bridge-routing.md`.
+    """
     from backend.services.rejection_service import record_rejection
 
-    rejection = _check_rejection(setup)
+    rejection = _check_rejection(setup, dest)
     if rejection is not None:
         # Les reason codes privés (commencent par "_") ne sont pas loggés
         if not rejection.startswith("_"):
@@ -224,25 +242,28 @@ async def send_setup(setup) -> None:
                 direction=_direction_value(setup),
                 confidence=getattr(setup, "confidence_score", None),
                 reason_code=rejection,
+                user_id=dest.user_id,
             )
         return
-    # Guard asset class : broker actuel ne supporte pas toutes les classes
+    # Guard asset class : broker de cette destination ne supporte pas
+    # toutes les classes. Per-destination en V2 (avant : global env).
     asset_class = asset_class_for(setup.pair)
-    if asset_class not in MT5_BRIDGE_ALLOWED_ASSET_CLASSES:
+    if asset_class not in dest.allowed_asset_classes:
         logger.debug(
-            f"mt5_bridge: skipping {setup.pair} ({asset_class}) — "
-            f"broker supports only {MT5_BRIDGE_ALLOWED_ASSET_CLASSES}"
+            f"mt5_bridge[{dest.destination_id}]: skipping {setup.pair} "
+            f"({asset_class}) — broker supports only {sorted(dest.allowed_asset_classes)}"
         )
         record_rejection(
             pair=setup.pair,
             direction=_direction_value(setup),
             confidence=getattr(setup, "confidence_score", None),
             reason_code="asset_class_blocked",
-            details={"asset_class": asset_class, "allowed": list(MT5_BRIDGE_ALLOWED_ASSET_CLASSES)},
+            details={"asset_class": asset_class, "allowed": sorted(dest.allowed_asset_classes)},
+            user_id=dest.user_id,
         )
         return
     _cleanup_old_keys()
-    key = _dedup_key(setup)
+    key = _dedup_key(setup, dest.destination_id)
     if key in _sent_setups_today:
         return
     _sent_setups_today.add(key)
@@ -251,6 +272,7 @@ async def send_setup(setup) -> None:
     # Sizing dynamique : base = RISK_PER_TRADE_PCT du capital, module par
     # la confiance du signal (0.5x a 1.5x) et par le PnL recent (0.5x si
     # en drawdown sur 7j, sinon 1.0x). Voir sizing.compute_risk_money.
+    # Note V1 : sizing reste global (pas per-user). À adresser en V2.
     from backend.services import sizing
     sz = sizing.compute_risk_money(setup)
     risk_money = sz["risk_money"]
@@ -273,9 +295,9 @@ async def send_setup(setup) -> None:
         "sizing_detail": sz,
     }
 
-    url = MT5_BRIDGE_URL.rstrip("/") + "/order"
+    url = dest.bridge_url + "/order"
     headers = {
-        "X-API-Key": MT5_BRIDGE_API_KEY,
+        "X-API-Key": dest.bridge_api_key,
         "Content-Type": "application/json",
     }
 
@@ -285,7 +307,7 @@ async def send_setup(setup) -> None:
             if r.status_code == 200:
                 data = r.json()
                 logger.info(
-                    f"MT5 bridge → {setup.pair} {direction} "
+                    f"MT5 bridge[{dest.destination_id}] → {setup.pair} {direction} "
                     f"risk=${risk_money} "
                     f"(conf={sz['conf_mult']}x pnl={sz['pnl_mult']}x "
                     f"session={sz['session']}:{sz['session_mult']}x "
@@ -296,8 +318,8 @@ async def send_setup(setup) -> None:
                 )
             else:
                 logger.warning(
-                    f"MT5 bridge a répondu {r.status_code} pour {setup.pair}: "
-                    f"{r.text[:200]}"
+                    f"MT5 bridge[{dest.destination_id}] a répondu {r.status_code} "
+                    f"pour {setup.pair}: {r.text[:200]}"
                 )
                 # Catégorise la rejection bridge pour la viz dédiée
                 body_text = r.text or ""
@@ -313,29 +335,54 @@ async def send_setup(setup) -> None:
                     confidence=getattr(setup, "confidence_score", None),
                     reason_code=reason,
                     details={"status": r.status_code, "body": body_text[:200]},
+                    user_id=dest.user_id,
                 )
                 # Si l'ordre a été rejeté par le bridge, on retire de la dedup
                 # pour qu'un cycle suivant puisse retenter.
                 _sent_setups_today.discard(key)
     except httpx.TimeoutException:
-        logger.info(f"MT5 bridge timeout (PC éteint ?) — skip {setup.pair}")
+        logger.info(
+            f"MT5 bridge[{dest.destination_id}] timeout — skip {setup.pair}"
+        )
         record_rejection(
             pair=setup.pair,
             direction=direction,
             confidence=getattr(setup, "confidence_score", None),
             reason_code="bridge_timeout",
+            user_id=dest.user_id,
         )
         _sent_setups_today.discard(key)  # retente au cycle suivant
     except Exception as e:
-        logger.warning(f"MT5 bridge exception pour {setup.pair}: {e}")
+        logger.warning(
+            f"MT5 bridge[{dest.destination_id}] exception pour {setup.pair}: {e}"
+        )
         record_rejection(
             pair=setup.pair,
             direction=direction,
             confidence=getattr(setup, "confidence_score", None),
             reason_code="bridge_error",
             details={"exception": str(e)[:200]},
+            user_id=dest.user_id,
         )
         _sent_setups_today.discard(key)
+
+
+async def send_setup(setup) -> None:
+    """Push un trade_setup vers chaque destination active.
+
+    V1 : 1 destination max (``admin_legacy`` depuis l'env). Phase C
+    élargira pour inclure les users Premium auto-exec via
+    ``bridge_destinations.resolve_destinations()``.
+    """
+    from backend.services.bridge_destinations import resolve_destinations
+
+    destinations = resolve_destinations(setup)
+    if not destinations:
+        return
+    await asyncio.gather(
+        *(_push_to_destination(setup, dest) for dest in destinations),
+        return_exceptions=True,
+    )
 
 
 async def send_setups(setups: list) -> None:
