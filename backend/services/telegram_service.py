@@ -146,23 +146,15 @@ async def send_text(text: str, parse_mode: str = "Markdown") -> None:
 
 
 async def send_signal(signal: ScalpingSignal) -> None:
-    """Envoie un signal a chaque destinataire Telegram configure.
-
-    Chaque user a son propre mode silencieux : si Ced est KO aujourd'hui,
-    seul Ced ne recoit pas, Xav continue de recevoir normalement.
+    """DEPRECIE — le path "signal-based" Telegram pollue le canal :
+    il filtre uniquement par signal_strength (weak/moderate/strong) sans
+    vérifier le confidence_score, ce qui produit des messages STRONG à
+    51/100 que le bridge n'exécute jamais (seuil bridge = 65). Le path
+    `send_setup` (setup-based) gère correctement le filtrage par score
+    + verdict + dedup. Ce path reste comme no-op pour ne pas casser les
+    appels existants depuis le scheduler.
     """
-    if not is_configured() or not _should_send(signal):
-        return
-
-    destinataires = _destinataires()
-    if not destinataires:
-        return
-
-    for user, chat_id in destinataires:
-        if user != "__any__" and trade_log_service.silent_mode_active_for_user(user):
-            logger.info(f"Mode silencieux actif pour {user}, signal {signal.pair} skip")
-            continue
-        await _send_to(chat_id, signal, who=user)
+    return  # no-op — voir send_setup()
 
 
 async def send_signals(signals: list[ScalpingSignal]) -> None:
@@ -221,34 +213,50 @@ def _should_push_setup(setup) -> bool:
 
 
 def _format_setup(setup) -> str:
-    """Format Telegram Markdown pour un trade_setup (distinct du signal)."""
-    verdict_icon = {"TAKE": "✅", "WAIT": "⏳", "SKIP": "⛔"}.get(setup.verdict_action or "", "📊")
-    dir_value = setup.direction.value if hasattr(setup.direction, "value") else str(setup.direction)
+    """Format Telegram compact, action-first.
+
+    Le verdict (icône + action) ouvre le message, le score est dans le
+    titre, les niveaux sur 2 lignes alignées, contexte (tendance/vol)
+    et reasons/warnings condensés à la fin. Pas de double-affichage du
+    score, pas de jargon redondant.
+    """
+    from datetime import datetime, timezone, timedelta
+
+    verdict_icon = {"TAKE": "✅", "WAIT": "⏳", "SKIP": "⛔"}.get(
+        setup.verdict_action or "", "📊"
+    )
+    dir_value = (
+        setup.direction.value if hasattr(setup.direction, "value") else str(setup.direction)
+    )
     dir_label = "ACHAT 🟢" if dir_value == "buy" else "VENTE 🔴"
     score = getattr(setup, "confidence_score", 0) or 0
 
-    lines = [
-        f"{verdict_icon} *SETUP {setup.verdict_action}* — `{setup.pair}` · *{dir_label}*",
-        f"Confiance : *{score:.0f}/100*",
-        "",
-        f"Entry : `{setup.entry_price:.5f}`",
-        f"SL : `{setup.stop_loss:.5f}` ({setup.risk_pips:.1f} pts)",
-        f"TP1 : `{setup.take_profit_1:.5f}` (R:R {setup.risk_reward_1:.1f})",
-        f"TP2 : `{setup.take_profit_2:.5f}` (R:R {setup.risk_reward_2:.1f})",
-    ]
+    # Heure Paris — approximation simple sans pytz (CEST UTC+2)
+    paris_now = datetime.now(timezone.utc) + timedelta(hours=2)
+    time_str = paris_now.strftime("%H:%M")
 
-    if getattr(setup, "verdict_summary", None):
-        lines.append(f"\n_{setup.verdict_summary}_")
+    lines = [
+        f"{verdict_icon} *{setup.pair}* {dir_label} · {score:.0f} · {time_str} Paris",
+        "",
+        f"Entry  `{setup.entry_price:.5f}`",
+        f"SL     `{setup.stop_loss:.5f}`  ({setup.risk_pips:.1f} pts)",
+        f"TP1    `{setup.take_profit_1:.5f}`  (R:R {setup.risk_reward_1:.1f})",
+        f"TP2    `{setup.take_profit_2:.5f}`  (R:R {setup.risk_reward_2:.1f})",
+    ]
 
     reasons = getattr(setup, "verdict_reasons", None) or []
     warnings = getattr(setup, "verdict_warnings", None) or []
+    context_bits = []
     if reasons:
-        lines.append("\n👍 " + " | ".join(reasons[:3]))
+        context_bits.append("👍 " + " · ".join(reasons[:2]))
     if warnings:
-        lines.append("⚠️ " + " | ".join(warnings[:3]))
+        context_bits.append("⚠️ " + " · ".join(warnings[:2]))
+    if context_bits:
+        lines.append("")
+        lines.extend(context_bits)
 
     if getattr(setup, "validity_minutes", None):
-        lines.append(f"\n⏱ Valide {setup.validity_minutes} min")
+        lines.append(f"\n⏱ valide {setup.validity_minutes} min")
 
     return "\n".join(lines)
 
