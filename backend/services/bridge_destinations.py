@@ -83,11 +83,54 @@ def _admin_legacy_destination() -> BridgeConfig | None:
 def _user_destinations(setup: Any) -> list[BridgeConfig]:
     """Retourne les destinations users (Premium tier) pour ce setup.
 
-    V1 retourne ``[]``. Phase C élargira en interrogeant ``users_service``
-    pour lister les Premium avec auto-exec activé et la pair dans leur
-    watchlist.
+    Phase C : interroge ``users_service.list_premium_auto_exec_users()``
+    pour récupérer les users éligibles, puis filtre par
+    ``setup.pair in user.watched_pairs``.
+
+    V1 du multi-user : ``min_confidence`` et ``allowed_asset_classes`` sont
+    hérités du global env (admin_legacy) — pas d'override per-user. À
+    adresser en V2 si besoin.
+
+    Best-effort : toute erreur (DB, parsing) est silencieuse et retourne
+    ``[]`` pour la destination user fautive.
     """
-    return []
+    pair = getattr(setup, "pair", None)
+    if not pair:
+        return []
+
+    # Lazy imports : évite cycle au chargement et permet aux tests de
+    # patcher mt5_bridge.* / users_service.* sans setup top-level.
+    from backend.services import mt5_bridge as mb
+    from backend.services import users_service
+
+    try:
+        candidates = users_service.list_premium_auto_exec_users()
+    except Exception:
+        return []
+
+    destinations: list[BridgeConfig] = []
+    for user in candidates:
+        if pair not in user["watched_pairs"]:
+            continue
+        cfg = user["broker_config"]
+        try:
+            destinations.append(
+                BridgeConfig(
+                    destination_id=f"user:{user['id']}",
+                    user_id=int(user["id"]),
+                    bridge_url=cfg["bridge_url"].rstrip("/"),
+                    bridge_api_key=cfg["bridge_api_key"],
+                    min_confidence=float(mb.MT5_BRIDGE_MIN_CONFIDENCE),
+                    allowed_asset_classes=frozenset(
+                        mb.MT5_BRIDGE_ALLOWED_ASSET_CLASSES
+                    ),
+                    auto_exec_enabled=True,
+                )
+            )
+        except (KeyError, TypeError, ValueError):
+            # broker_config malformé pour ce user — skip silencieux
+            continue
+    return destinations
 
 
 def resolve_destinations(setup: Any) -> list[BridgeConfig]:

@@ -557,6 +557,87 @@ def update_broker_config(
         )
 
 
+def update_auto_exec_enabled(user_id: int, enabled: bool) -> None:
+    """Toggle ``auto_exec_enabled`` dans ``broker_config`` sans toucher au reste.
+
+    Préserve les autres champs (``bridge_url``, ``bridge_api_key``,
+    ``broker_name``). Si ``broker_config`` est vide, crée un dict minimal
+    avec juste ce champ — l'user devra compléter via le wizard pour que
+    le toggle ait un effet (cf. ``list_premium_auto_exec_users``).
+    """
+    cfg = get_broker_config(user_id)
+    cfg["auto_exec_enabled"] = bool(enabled)
+    with _conn() as c:
+        c.execute(
+            "UPDATE users SET broker_config = ? WHERE id = ?",
+            (json.dumps(cfg), user_id),
+        )
+
+
+def list_premium_auto_exec_users() -> list[dict]:
+    """Retourne les users éligibles pour l'auto-exec multi-tenant.
+
+    Filtres (cumulatifs) :
+    - ``tier='premium'`` (effective tier, pas le stored — un user 'premium' avec
+      sub Stripe expirée tombe en 'free' et doit être exclu)
+    - ``broker_config`` JSON parse-able
+    - ``auto_exec_enabled=True``
+    - ``bridge_url`` non vide ET contient ``://``
+    - ``bridge_api_key`` non vide ET ≥ 16 chars
+    - ``watched_pairs`` JSON parse-able (liste de strings)
+
+    Returns
+    -------
+    list[dict]
+        Chaque dict contient ``id``, ``email``, ``broker_config`` (parsed),
+        ``watched_pairs`` (list[str]). L'appelant filtre ensuite par
+        ``setup.pair in watched_pairs`` au moment de pousser un setup
+        spécifique.
+    """
+    with _conn() as c:
+        rows = c.execute(
+            """
+            SELECT id, email, tier, stripe_subscription_id, trial_ends_at,
+                   broker_config, watched_pairs
+              FROM users
+             WHERE tier = 'premium' AND broker_config IS NOT NULL
+            """
+        ).fetchall()
+
+    result = []
+    for row in rows:
+        user_dict = dict(row)
+        if effective_tier(user_dict) != "premium":
+            continue  # downgrade silencieux (trial expiré)
+        try:
+            cfg = json.loads(user_dict["broker_config"])
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(cfg, dict):
+            continue
+        if not cfg.get("auto_exec_enabled"):
+            continue
+        url = (cfg.get("bridge_url") or "").strip()
+        key = (cfg.get("bridge_api_key") or "").strip()
+        if not url or "://" not in url or len(key) < 16:
+            continue
+        try:
+            pairs = json.loads(user_dict["watched_pairs"]) if user_dict["watched_pairs"] else []
+        except (json.JSONDecodeError, TypeError):
+            pairs = []
+        if not isinstance(pairs, list):
+            pairs = []
+        result.append(
+            {
+                "id": user_dict["id"],
+                "email": user_dict["email"],
+                "broker_config": cfg,
+                "watched_pairs": pairs,
+            }
+        )
+    return result
+
+
 def get_watched_pairs(user_id: int) -> list[str]:
     """Liste des paires surveillées par le user. [] si non configuré."""
     user = get_user_by_id(user_id)

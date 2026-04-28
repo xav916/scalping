@@ -109,15 +109,131 @@ def test_no_destinations_when_api_key_missing(monkeypatch):
 # ─── placeholder Phase C ──────────────────────────────────────────────
 
 
-def test_no_user_destinations_in_v1(monkeypatch):
-    """Phase A.1 : ``_user_destinations()`` retourne ``[]``.
-
-    Ce test évoluera en Phase C : il deviendra
-    ``test_premium_users_in_destinations`` quand on connectera ``users_service``.
-    """
+def test_no_destinations_when_admin_off_and_no_users(monkeypatch):
+    """Admin off + aucun user éligible → liste vide."""
     _set_admin_env(monkeypatch, MT5_BRIDGE_ENABLED=False)
-    # admin_legacy off ⇒ seule source possible serait _user_destinations()
+    monkeypatch.setattr(
+        "backend.services.users_service.list_premium_auto_exec_users",
+        lambda: [],
+    )
 
     dests = bridge_destinations.resolve_destinations(_mk_setup())
 
     assert dests == []
+
+
+# ─── Phase C : user destinations ──────────────────────────────────────
+
+
+def _stub_premium_user(
+    user_id: int = 42,
+    bridge_url: str = "http://user-bridge:8787",
+    bridge_api_key: str = "u" * 32,
+    watched_pairs: list[str] | None = None,
+) -> dict:
+    return {
+        "id": user_id,
+        "email": "test@example.com",
+        "broker_config": {
+            "bridge_url": bridge_url,
+            "bridge_api_key": bridge_api_key,
+            "auto_exec_enabled": True,
+        },
+        "watched_pairs": watched_pairs if watched_pairs is not None else ["EUR/USD"],
+    }
+
+
+def test_premium_user_returned_when_pair_in_watchlist(monkeypatch):
+    """Premium user + auto_exec + pair in watchlist → BridgeConfig avec user:id."""
+    _set_admin_env(monkeypatch, MT5_BRIDGE_ENABLED=False)  # admin off pour isoler
+    monkeypatch.setattr(
+        "backend.services.users_service.list_premium_auto_exec_users",
+        lambda: [_stub_premium_user(user_id=42)],
+    )
+
+    dests = bridge_destinations.resolve_destinations(_mk_setup("EUR/USD"))
+
+    assert len(dests) == 1
+    user_dest = dests[0]
+    assert user_dest.destination_id == "user:42"
+    assert user_dest.user_id == 42
+    assert user_dest.bridge_url == "http://user-bridge:8787"
+    assert user_dest.bridge_api_key == "u" * 32
+    assert user_dest.auto_exec_enabled is True
+
+
+def test_premium_user_excluded_when_pair_not_in_watchlist(monkeypatch):
+    """Pair pas dans watched_pairs du user → exclu."""
+    _set_admin_env(monkeypatch, MT5_BRIDGE_ENABLED=False)
+    monkeypatch.setattr(
+        "backend.services.users_service.list_premium_auto_exec_users",
+        lambda: [_stub_premium_user(watched_pairs=["XAU/USD"])],
+    )
+
+    dests = bridge_destinations.resolve_destinations(_mk_setup("EUR/USD"))
+
+    assert dests == []
+
+
+def test_admin_and_user_returned_in_order(monkeypatch):
+    """Admin + user Premium → admin en premier (rétro-compat), user après."""
+    _set_admin_env(monkeypatch)  # admin actif
+    monkeypatch.setattr(
+        "backend.services.users_service.list_premium_auto_exec_users",
+        lambda: [_stub_premium_user(user_id=42)],
+    )
+
+    dests = bridge_destinations.resolve_destinations(_mk_setup("EUR/USD"))
+
+    assert len(dests) == 2
+    assert dests[0].destination_id == "admin_legacy"
+    assert dests[1].destination_id == "user:42"
+
+
+def test_multiple_users_returned(monkeypatch):
+    """Deux users Premium éligibles → deux destinations."""
+    _set_admin_env(monkeypatch, MT5_BRIDGE_ENABLED=False)
+    monkeypatch.setattr(
+        "backend.services.users_service.list_premium_auto_exec_users",
+        lambda: [
+            _stub_premium_user(user_id=42),
+            _stub_premium_user(user_id=43),
+        ],
+    )
+
+    dests = bridge_destinations.resolve_destinations(_mk_setup("EUR/USD"))
+
+    assert {d.destination_id for d in dests} == {"user:42", "user:43"}
+
+
+def test_user_destinations_resilient_to_users_service_error(monkeypatch):
+    """Si users_service raise, retomber sur [] (pas de crash global)."""
+    _set_admin_env(monkeypatch, MT5_BRIDGE_ENABLED=False)
+
+    def boom():
+        raise RuntimeError("DB unreachable")
+
+    monkeypatch.setattr(
+        "backend.services.users_service.list_premium_auto_exec_users", boom
+    )
+
+    dests = bridge_destinations.resolve_destinations(_mk_setup("EUR/USD"))
+
+    assert dests == []  # safe fallback
+
+
+def test_user_destination_skipped_on_malformed_broker_config(monkeypatch):
+    """broker_config sans bridge_url → ce user-là est skip, les autres passent."""
+    _set_admin_env(monkeypatch, MT5_BRIDGE_ENABLED=False)
+    bad = _stub_premium_user(user_id=99)
+    bad["broker_config"] = {"auto_exec_enabled": True}  # manque url + key
+    good = _stub_premium_user(user_id=42)
+    monkeypatch.setattr(
+        "backend.services.users_service.list_premium_auto_exec_users",
+        lambda: [bad, good],
+    )
+
+    dests = bridge_destinations.resolve_destinations(_mk_setup("EUR/USD"))
+
+    # Seul le user bien configuré passe
+    assert {d.destination_id for d in dests} == {"user:42"}
