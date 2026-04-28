@@ -12,9 +12,6 @@ import { Skeleton } from '@/components/ui/Skeleton';
  *  TTI sur mobile / connexion lente. Les transitions AnimatePresence (fade
  *  + slide) de AuthGate servent aussi de "loader" naturel pendant le fetch
  *  du chunk — donc pas besoin de Skeleton visible en général. */
-const DashboardPage = lazy(() =>
-  import('@/pages/DashboardPage').then((m) => ({ default: m.DashboardPage }))
-);
 const LoginPage = lazy(() =>
   import('@/pages/LoginPage').then((m) => ({ default: m.LoginPage }))
 );
