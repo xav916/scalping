@@ -543,12 +543,18 @@ def update_broker_config(
     if not bridge_api_key or len(bridge_api_key) < 16:
         raise ValueError("bridge_api_key trop court (16 caractères min)")
 
+    # Préserver auto_exec_enabled existant (Phase D — sinon un PUT broker_config
+    # ré-écraserait le toggle silencieusement et désactiverait l'auto-exec sans
+    # action explicite du user).
+    existing = get_broker_config(user_id)
     payload = {
         "bridge_url": bridge_url.rstrip("/"),
         "bridge_api_key": bridge_api_key,
     }
     if broker_name:
         payload["broker_name"] = broker_name
+    if "auto_exec_enabled" in existing:
+        payload["auto_exec_enabled"] = existing["auto_exec_enabled"]
 
     with _conn() as c:
         c.execute(

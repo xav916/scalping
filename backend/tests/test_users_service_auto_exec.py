@@ -152,3 +152,24 @@ def test_toggle_auto_exec_on_empty_config_creates_minimal_dict(db):
     users_service.update_auto_exec_enabled(uid, True)
     cfg = users_service.get_broker_config(uid)
     assert cfg == {"auto_exec_enabled": True}
+
+
+def test_update_broker_config_preserves_auto_exec(db):
+    """Phase D safety : un PUT broker_config ne doit pas écraser auto_exec.
+
+    Régression possible : avant Phase D, update_broker_config remplaçait
+    le dict entier → toggle auto_exec=True silencieusement perdu après
+    chaque modif d'URL ou de clé.
+    """
+    uid = users_service.create_user("alice@test.com", "password123")
+    users_service.update_broker_config(
+        uid, bridge_url="http://b1:8787", bridge_api_key="key_first_one_xx" * 2
+    )
+    users_service.update_auto_exec_enabled(uid, True)
+    # Maintenant l'user change son URL (ex: nouveau VPS)
+    users_service.update_broker_config(
+        uid, bridge_url="http://b2:8787", bridge_api_key="key_second_one_x" * 2
+    )
+    cfg = users_service.get_broker_config(uid)
+    assert cfg["bridge_url"] == "http://b2:8787"
+    assert cfg["auto_exec_enabled"] is True  # préservé !
