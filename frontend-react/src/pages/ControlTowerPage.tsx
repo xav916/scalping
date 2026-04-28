@@ -1,11 +1,12 @@
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { Link, Navigate } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { Header } from '@/components/layout/Header';
 import { MeshGradient } from '@/components/ui/MeshGradient';
 import { GlassCard } from '@/components/ui/GlassCard';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { ApiError } from '@/lib/api';
+import { useAuth } from '@/hooks/useAuth';
 
 type Confirmed = 'UP' | 'DOWN' | 'UNKNOWN';
 
@@ -277,21 +278,42 @@ function RecoveryHistoryRow({ entry }: { entry: RecoveryEntry }) {
 }
 
 export function ControlTowerPage() {
+  const { whoami } = useAuth();
+  const isAdmin = whoami.data?.is_admin === true;
+
+  // Tous les hooks sont appelés inconditionnellement (règle React).
+  // Le fetch est gated via `enabled` pour ne pas spammer l'endpoint admin
+  // quand on sait déjà que le user n'est pas admin.
   const { data, isLoading, error, dataUpdatedAt } = useQuery({
     queryKey: ['admin', 'control-tower'],
     queryFn: fetchControlTower,
     refetchInterval: 15_000,
     staleTime: 5_000,
     retry: 1,
+    enabled: isAdmin,
   });
+
+  // Page admin only depuis 2026-04-28 — redirect propre vers cockpit
+  // pour les non-admins, plutôt que d'afficher un dead-end "accès refusé".
+  // Le backend gate aussi /api/admin/control-tower (403 si non admin).
+  if (whoami.isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <Skeleton className="w-48 h-8" />
+      </div>
+    );
+  }
+  if (!isAdmin) {
+    return <Navigate to="/cockpit" replace />;
+  }
 
   if (error instanceof ApiError && error.status === 403) {
     return (
       <div className="min-h-screen flex items-center justify-center px-4">
         <GlassCard className="p-8 max-w-sm text-center">
           <p className="text-white/80 mb-4">Accès admin requis.</p>
-          <Link to="/dashboard" className="text-cyan-400 hover:text-cyan-300 text-sm">
-            ← Retour au dashboard
+          <Link to="/cockpit" className="text-cyan-400 hover:text-cyan-300 text-sm">
+            ← Retour au cockpit
           </Link>
         </GlassCard>
       </div>

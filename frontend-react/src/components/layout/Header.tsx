@@ -58,13 +58,13 @@ function statusTip(s: SystemStatus): React.ReactNode {
 const NAV_LINKS = [
   { to: '/cockpit', label: 'Cockpit' },
   { to: '/candidates', label: 'Candidats' },
-  { to: '/control-tower', label: 'Infra' },
 ];
 
 /** Liens visibles uniquement pour les admins (whoami.is_admin = true).
  *  Gated côté backend aussi (les endpoints API correspondants renvoient
  *  403 pour les non-admins, défense en profondeur). */
 const ADMIN_NAV_LINKS = [
+  { to: '/control-tower', label: 'Infra' },
   { to: '/v1', label: 'V1' },
 ];
 
