@@ -27,10 +27,32 @@ def _mk_setup(pair: str) -> MagicMock:
 
 @pytest.fixture(autouse=True)
 def _reset_dedup():
-    """Make sure each test starts with a clean dedup cache."""
+    """Make sure each test starts with a clean dedup state (memory + DB).
+
+    Phase B added a DB-side dedup via mt5_pushes_service. The shared
+    cwd-relative trades.db can leak between tests, so we wipe both layers.
+    """
     mt5_bridge._sent_setups_today.clear()
+    try:
+        import sqlite3
+
+        from backend.services.trade_log_service import _DB_PATH
+
+        with sqlite3.connect(_DB_PATH) as c:
+            c.execute("DELETE FROM mt5_pushes")
+    except Exception:
+        pass  # DB pas encore créée, pas grave
     yield
     mt5_bridge._sent_setups_today.clear()
+    try:
+        import sqlite3
+
+        from backend.services.trade_log_service import _DB_PATH
+
+        with sqlite3.connect(_DB_PATH) as c:
+            c.execute("DELETE FROM mt5_pushes")
+    except Exception:
+        pass
 
 
 @pytest.fixture(autouse=True)

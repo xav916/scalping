@@ -82,9 +82,18 @@ export const api = {
     ),
 
   userBrokerGet: () =>
-    request<{ bridge_url: string; broker_name: string; api_key_set: boolean }>(
-      '/api/user/broker'
-    ),
+    request<{
+      bridge_url: string;
+      broker_name: string;
+      api_key_set: boolean;
+      auto_exec_enabled: boolean;
+    }>('/api/user/broker'),
+
+  userBrokerAutoExec: (enabled: boolean, demo_confirmed?: boolean) =>
+    request<{ auto_exec_enabled: boolean }>('/api/user/broker/auto-exec', {
+      method: 'POST',
+      body: JSON.stringify({ enabled, demo_confirmed }),
+    }),
 
   userBrokerPut: (bridge_url: string, bridge_api_key: string, broker_name?: string) =>
     request<{ ok: true }>('/api/user/broker', {

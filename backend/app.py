@@ -465,7 +465,44 @@ async def api_user_broker_get(ctx: AuthContext = Depends(auth_context)):
         "bridge_url": cfg.get("bridge_url", ""),
         "broker_name": cfg.get("broker_name", ""),
         "api_key_set": bool(cfg.get("bridge_api_key")),
+        "auto_exec_enabled": bool(cfg.get("auto_exec_enabled", False)),
     }
+
+
+@app.post("/api/user/broker/auto-exec")
+async def api_user_broker_auto_exec(
+    payload: dict,
+    ctx: AuthContext = Depends(auth_context),
+):
+    """Active/désactive l'auto-exec MT5 pour ce user.
+
+    Body : ``{enabled: bool, demo_confirmed?: bool}``.
+
+    Safety check : pour passer ``enabled=True``, le user DOIT envoyer
+    ``demo_confirmed=true`` — confirmation explicite que le bridge cible
+    un compte démo. Empêche un toggle accidentel qui ferait passer des
+    ordres réels avec une config mal posée.
+
+    Désactiver (enabled=false) ne demande pas de confirmation.
+    """
+    if ctx.user_id is None:
+        raise HTTPException(status_code=400, detail="user legacy env, pas de broker_config DB")
+    enabled = bool((payload or {}).get("enabled"))
+    if enabled:
+        if not (payload or {}).get("demo_confirmed"):
+            raise HTTPException(
+                status_code=400,
+                detail="demo_confirmed requis pour activer l'auto-exec",
+            )
+        # Le user doit avoir un bridge configuré avant d'activer
+        cfg = users_service.get_broker_config(ctx.user_id)
+        if not cfg.get("bridge_url") or not cfg.get("bridge_api_key"):
+            raise HTTPException(
+                status_code=400,
+                detail="bridge_url + bridge_api_key requis avant activation",
+            )
+    users_service.update_auto_exec_enabled(ctx.user_id, enabled)
+    return {"auto_exec_enabled": enabled}
 
 
 @app.put("/api/user/broker")
