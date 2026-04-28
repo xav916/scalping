@@ -1,11 +1,11 @@
-import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { Link, Navigate } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { Header } from '@/components/layout/Header';
 import { ReactiveMeshGradient } from '@/components/ui/ReactiveMeshGradient';
 import { GlassCard } from '@/components/ui/GlassCard';
+import { Skeleton } from '@/components/ui/Skeleton';
 import { LiveChartsGrid } from '@/components/market/LiveChartsGrid';
-import { api, ApiError } from '@/lib/api';
+import { useAuth } from '@/hooks/useAuth';
 import { V1_LEGACY_PAIRS } from '@/lib/constants';
 
 interface HubLink {
@@ -53,16 +53,23 @@ const V1_TOOLS: HubLink[] = [
  * (forex/BTC/SPX/NDX) coupés du portefeuille actif depuis le 2026-04-26.
  */
 export function V1HubPage() {
-  // L'admin gating est appliqué uniquement à la section "anciens supports"
-  // — les outils V1 (Analytics, Trades, Shadow, Supports) restent
-  // accessibles à tous les users authentifiés.
-  const { error: adminError } = useQuery({
-    queryKey: ['admin', 'gate-check', 'v1-hub'],
-    queryFn: api.adminUsers,
-    retry: 0,
-    staleTime: 60_000,
-  });
-  const isAdmin = !(adminError instanceof ApiError && adminError.status === 403);
+  const { whoami } = useAuth();
+
+  // Page entière admin only (depuis 2026-04-28). Les non-admins sont
+  // redirigés vers le cockpit. Les routes individuelles
+  // (/v2/analytics, /v2/trades, /v2/shadow-log, /v2/supports) restent
+  // accessibles directement par URL pour les non-admins.
+  if (whoami.isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <Skeleton className="w-48 h-8" />
+      </div>
+    );
+  }
+  if (!whoami.data?.is_admin) {
+    return <Navigate to="/cockpit" replace />;
+  }
+  const isAdmin = true;
 
   return (
     <>

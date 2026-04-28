@@ -798,9 +798,18 @@ async def login_page(request: Request):
 
 
 @app.get("/api/me")
-async def whoami(user: str = Depends(verify_credentials)):
-    """Retourne l'utilisateur authentifie et son nom d'affichage."""
-    return {"username": user, "display_name": display_name_for(user)}
+async def whoami(ctx: AuthContext = Depends(auth_context)):
+    """Retourne l'utilisateur authentifie, nom d'affichage, et flag is_admin.
+
+    Le flag `is_admin` permet au frontend de conditionner l'affichage de
+    liens menu admin only (V1 hub, etc.) sans tenter un appel /api/admin
+    qui retournerait 403.
+    """
+    return {
+        "username": ctx.username,
+        "display_name": display_name_for(ctx.username),
+        "is_admin": _is_admin(ctx),
+    }
 
 
 @app.get("/api/health")

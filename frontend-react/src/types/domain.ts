@@ -97,6 +97,8 @@ export interface InsightsPerformance {
 export interface User {
   username: string;
   email?: string;
+  display_name?: string;
+  is_admin?: boolean;
 }
 
 export interface PersonalTrade {

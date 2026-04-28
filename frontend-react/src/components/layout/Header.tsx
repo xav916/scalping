@@ -59,6 +59,12 @@ const NAV_LINKS = [
   { to: '/cockpit', label: 'Cockpit' },
   { to: '/candidates', label: 'Candidats' },
   { to: '/control-tower', label: 'Infra' },
+];
+
+/** Liens visibles uniquement pour les admins (whoami.is_admin = true).
+ *  Gated côté backend aussi (les endpoints API correspondants renvoient
+ *  403 pour les non-admins, défense en profondeur). */
+const ADMIN_NAV_LINKS = [
   { to: '/v1', label: 'V1' },
 ];
 
@@ -103,6 +109,25 @@ export function Header() {
               </Link>
             );
           })}
+          {whoami.data?.is_admin &&
+            ADMIN_NAV_LINKS.map((l) => {
+              const active = location.pathname === l.to;
+              return (
+                <Link
+                  key={l.to}
+                  to={l.to}
+                  className={clsx(
+                    'text-[11px] px-2 py-1 rounded-md transition-colors font-mono uppercase tracking-wider',
+                    active
+                      ? 'bg-amber-400/15 text-amber-200 border border-amber-400/30'
+                      : 'text-amber-300/70 hover:text-amber-200 hover:bg-amber-400/10 border border-transparent'
+                  )}
+                  title="Admin only"
+                >
+                  {l.label}
+                </Link>
+              );
+            })}
         </nav>
       </div>
       <div className="flex items-center gap-2 sm:gap-5 text-sm text-white/70">
