@@ -1,0 +1,3 @@
+MetaTrader5>=5.0.5735
+Flask==3.0.3
+python-dotenv==1.0.1

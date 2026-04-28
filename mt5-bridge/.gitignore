@@ -1,0 +1,8 @@
+# Secrets — ne JAMAIS committer
+.env
+*.log
+
+# Python
+venv/
+__pycache__/
+*.pyc
