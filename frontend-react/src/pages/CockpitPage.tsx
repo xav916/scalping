@@ -19,6 +19,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { Tooltip } from '@/components/ui/Tooltip';
 import { EquityCurveMini } from '@/components/performance/EquityCurveMini';
 import { LiveChartsGrid } from '@/components/market/LiveChartsGrid';
+import { LiveEquityCard } from '@/components/cockpit/LiveEquityCard';
 import { PeriodMetricsCard } from '@/components/cockpit/PeriodMetricsCard';
 import { PnlCalendarCard } from '@/components/cockpit/PnlCalendarCard';
 import { RejectionsCard } from '@/components/cockpit/RejectionsCard';
@@ -165,6 +166,9 @@ function CockpitPageInner() {
 
         {/* Courbes live par support — heartbeat marché toujours visible */}
         <LiveChartsGrid />
+
+        {/* Capital MT5 live (admin only — endpoint gated, render no-op si 403) */}
+        <LiveEquityCard />
 
         {/* Sticky section nav + reset layout */}
         <nav className="sticky top-[56px] z-30 -mx-4 sm:-mx-6 px-4 sm:px-6 py-2 bg-[#050810]/80 backdrop-blur-md border-y border-white/5">

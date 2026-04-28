@@ -2137,6 +2137,73 @@ async def api_admin_leads(ctx: AuthContext = Depends(auth_context)):
     }
 
 
+@app.get("/api/admin/equity-live")
+async def api_admin_equity_live(
+    points: int = 200,
+    _ctx: AuthContext = Depends(require_admin),
+):
+    """Courbe equity/balance MT5 en quasi temps réel.
+
+    Source : tail du JSONL `bridge_monitor.log` (1 ligne par cycle ≈ 60s).
+    Pour chaque ligne, on extrait `probes.bridge_vps.account.{balance,
+    equity, profit, positions_count}` plus le timestamp. Si bridge_vps
+    n'a pas répondu sur ce cycle, on skip.
+
+    points : 200 par défaut = ~3h20 d'historique. Max 5000 (~83h).
+    """
+    import json as _json
+    import subprocess
+
+    points = max(10, min(points, 5000))
+    log_path = "/var/log/scalping/bridge_monitor.log"
+
+    try:
+        # On lit large (3x demandé) pour absorber les cycles où bridge_vps
+        # était DOWN — on filtrera après.
+        r = subprocess.run(
+            ["tail", "-n", str(points * 3), log_path],
+            capture_output=True,
+            text=True,
+            timeout=8,
+        )
+    except subprocess.SubprocessError as e:
+        raise HTTPException(status_code=502, detail=f"tail failed: {e}")
+    except FileNotFoundError:
+        raise HTTPException(status_code=502, detail="bridge_monitor.log absent")
+
+    series: list[dict] = []
+    for line in r.stdout.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = _json.loads(line)
+        except _json.JSONDecodeError:
+            continue
+        ts = rec.get("ts")
+        bridge = (rec.get("probes") or {}).get("bridge_vps") or {}
+        acc = bridge.get("account") or {}
+        if not ts or not acc or "equity" not in acc:
+            continue
+        series.append(
+            {
+                "ts": ts,
+                "balance_eur": acc.get("balance"),
+                "equity_eur": acc.get("equity"),
+                "profit_eur": acc.get("profit"),
+                "positions_count": acc.get("positions_count"),
+            }
+        )
+
+    # Garde les N derniers points avec data valide
+    series = series[-points:]
+    return {
+        "points": series,
+        "count": len(series),
+        "source": "bridge_monitor.log",
+    }
+
+
 @app.get("/api/admin/control-tower")
 async def api_admin_control_tower(_ctx: AuthContext = Depends(require_admin)):
     """Forward du status JSON depuis bridge_monitor (port 8090 sur Tailscale EC2).
