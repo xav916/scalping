@@ -306,6 +306,48 @@ async def _push_to_destination(setup, dest) -> None:
         "sizing_detail": sz,
     }
 
+    # ─── Routing dispatch (Phase MQL.C) ──────────────────────────────
+    # admin_legacy (user_id=None) : push HTTP synchrone vers le bridge admin.
+    # user destinations (user_id=int) : enqueue dans mt5_pending_orders.
+    # L'EA MQL5 du user récupère via GET /api/ea/pending toutes les ~30s.
+    if dest.user_id is not None:
+        from backend.services import mt5_pending_orders_service
+
+        try:
+            order_id = mt5_pending_orders_service.enqueue(
+                user_id=dest.user_id,
+                api_key=dest.bridge_api_key,
+                payload=payload,
+            )
+            mt5_pushes_service.update_push_result(
+                dest.destination_id, push_date, setup.pair, direction, entry_5dp,
+                ok=True,
+                response={"enqueued_order_id": order_id, "via": "ea_queue"},
+            )
+            logger.info(
+                f"MT5 ea_queue[{dest.destination_id}] enqueued "
+                f"order_id={order_id} {setup.pair} {direction} risk=${risk_money}"
+            )
+        except Exception as e:
+            logger.warning(
+                f"MT5 ea_queue[{dest.destination_id}] enqueue failed for "
+                f"{setup.pair}: {e}"
+            )
+            record_rejection(
+                pair=setup.pair,
+                direction=direction,
+                confidence=getattr(setup, "confidence_score", None),
+                reason_code="bridge_error",
+                details={"exception": str(e)[:200]},
+                user_id=dest.user_id,
+            )
+            _sent_setups_today.discard(key)
+            mt5_pushes_service.discard_push(
+                dest.destination_id, push_date, setup.pair, direction, entry_5dp
+            )
+        return
+
+    # admin_legacy : path HTTP synchrone, comportement V1 inchangé.
     url = dest.bridge_url + "/order"
     headers = {
         "X-API-Key": dest.bridge_api_key,
