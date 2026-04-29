@@ -525,6 +525,78 @@ async def api_user_broker_put(
     return {"ok": True}
 
 
+# ─── EA MQL5 endpoints (Phase MQL.B du pivot bridge Python → EA) ─────
+# Ces endpoints sont appelés par l'EA tournant chez le user (dans MT5
+# Desktop). Auth via api_key en query param ou body — pas de cookie session
+# (l'EA ne gère pas de session).
+
+
+@app.get("/api/ea/pending")
+async def api_ea_pending(api_key: str = ""):
+    """Retourne les ordres PENDING pour cet api_key, marqués SENT atomiquement.
+
+    L'EA poll cet endpoint toutes les ~30s. Retourne max 5 ordres pour
+    limiter le payload. Heartbeat implicite : chaque poll met à jour
+    ``last_ea_heartbeat``.
+    """
+    user = users_service.find_user_by_bridge_api_key(api_key)
+    if not user:
+        raise HTTPException(status_code=401, detail="api_key invalide")
+    if users_service.effective_tier(user) != "premium":
+        raise HTTPException(
+            status_code=403, detail="Premium tier requis pour l'auto-exec"
+        )
+    users_service.update_ea_heartbeat(user["id"])
+
+    from backend.services import mt5_pending_orders_service
+
+    orders = mt5_pending_orders_service.fetch_for_api_key(api_key, limit=5)
+    return {"orders": orders}
+
+
+@app.post("/api/ea/result")
+async def api_ea_result(payload: dict):
+    """L'EA confirme l'exécution d'un order.
+
+    Body : ``{api_key, order_id, ok, mt5_ticket?, error?}``.
+    """
+    api_key = (payload or {}).get("api_key", "")
+    order_id = (payload or {}).get("order_id")
+    if not api_key or order_id is None:
+        raise HTTPException(
+            status_code=400, detail="api_key et order_id requis"
+        )
+    user = users_service.find_user_by_bridge_api_key(api_key)
+    if not user:
+        raise HTTPException(status_code=401, detail="api_key invalide")
+
+    from backend.services import mt5_pending_orders_service
+
+    success = mt5_pending_orders_service.record_result(
+        int(order_id),
+        api_key,
+        ok=bool(payload.get("ok")),
+        mt5_ticket=payload.get("mt5_ticket"),
+        error=payload.get("error"),
+    )
+    return {"acked": success}
+
+
+@app.post("/api/ea/heartbeat")
+async def api_ea_heartbeat(api_key: str = ""):
+    """L'EA signale qu'il est vivant. Optionnel — le pull /pending fait
+    déjà heartbeat implicite.
+
+    Utile si l'EA n'a pas eu d'ordre à fetch mais veut signaler son
+    activité (typiquement toutes les 5-10 min).
+    """
+    user = users_service.find_user_by_bridge_api_key(api_key)
+    if not user:
+        raise HTTPException(status_code=401, detail="api_key invalide")
+    users_service.update_ea_heartbeat(user["id"])
+    return {"ok": True}
+
+
 @app.post("/api/user/broker/test")
 async def api_user_broker_test(payload: dict, _ctx: AuthContext = Depends(auth_context)):
     """Teste la connexion à un bridge arbitraire (depuis l'onboarding wizard).

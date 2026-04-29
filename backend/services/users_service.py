@@ -580,6 +580,50 @@ def update_auto_exec_enabled(user_id: int, enabled: bool) -> None:
         )
 
 
+def find_user_by_bridge_api_key(api_key: str) -> Optional[dict]:
+    """Cherche un user dont ``broker_config.bridge_api_key == api_key``.
+
+    Utilisé par les endpoints EA (Phase MQL.B) pour résoudre le user à
+    partir du api_key envoyé en query param. Full table scan + JSON
+    parse — acceptable pour V1 avec ≤ 10 users Premium. À indexer en V2
+    si volume.
+
+    Returns
+    -------
+    dict | None
+        Le user complet (cf. ``get_user_by_id``) ou ``None`` si pas trouvé.
+    """
+    if not api_key or len(api_key) < 16:
+        return None
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT * FROM users WHERE tier = 'premium' AND broker_config IS NOT NULL"
+        ).fetchall()
+    for row in rows:
+        try:
+            cfg = json.loads(row["broker_config"])
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if isinstance(cfg, dict) and cfg.get("bridge_api_key") == api_key:
+            return dict(row)
+    return None
+
+
+def update_ea_heartbeat(user_id: int) -> None:
+    """Met à jour ``broker_config.last_ea_heartbeat`` au timestamp now.
+
+    Permet à l'admin de voir quels users ont leur EA actif (dernier poll).
+    Si pas de heartbeat depuis > 1h, considérer l'EA offline.
+    """
+    cfg = get_broker_config(user_id)
+    cfg["last_ea_heartbeat"] = datetime.now(timezone.utc).isoformat()
+    with _conn() as c:
+        c.execute(
+            "UPDATE users SET broker_config = ? WHERE id = ?",
+            (json.dumps(cfg), user_id),
+        )
+
+
 def list_premium_auto_exec_users() -> list[dict]:
     """Retourne les users éligibles pour l'auto-exec multi-tenant.
 
