@@ -503,6 +503,14 @@ export function SettingsPage() {
                   N'oublie pas d'ajouter <code className="text-white/70">https://app.scalping-radar.online</code> dans
                   Tools → Options → Expert Advisors → Allow WebRequest.
                 </p>
+                <a
+                  href="/docs/ea-setup.html"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-block text-xs text-cyan-400 hover:text-cyan-300 underline underline-offset-2"
+                >
+                  Voir le guide d'installation détaillé →
+                </a>
               </div>
 
               {/* Étape 3 — Statut + toggle */}

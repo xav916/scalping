@@ -2,40 +2,53 @@
 
 > **5 minutes**, aucun code à exécuter, fonctionne sur Windows et Mac (MT5 a
 > une version Mac officielle Pepperstone).
+>
+> **Version web du guide** : https://app.scalping-radar.online/docs/ea-setup.html
 
 ## Prérequis
 
 - MT5 Desktop installé et connecté à ton compte broker (démo recommandé pour
   les premiers tests)
 - Tu as un compte Premium sur https://app.scalping-radar.online
-- Tu as ton api_key (Settings → Auto-exec MT5 → "Voir mon api_key")
+- Tu as généré ton api_key (Settings → Auto-exec MT5 → "Générer mon API key").
+  La valeur n'est affichée qu'une fois — copie-la avant de fermer.
 
 ## Étape 1 — Récupérer le fichier EA
 
-Soit :
-- Depuis le SaaS : Settings → Auto-exec MT5 → "Télécharger ScalpingRadarEA.ex5"
-- Depuis GitHub : https://github.com/xav916/scalping/blob/main/mt5-bridge/ScalpingRadarEA.mq5
-  (tu devras le compiler dans MetaEditor → menu File → Compile)
+Settings → Auto-exec MT5 → **"Télécharger ScalpingRadarEA.mq5"** (~50 Ko de
+source MQL5 — tu vas le compiler à l'étape 3).
 
 ## Étape 2 — Drop dans MT5
 
 1. Dans MT5, menu File → **Open Data Folder**
 2. Une fenêtre Explorer s'ouvre — navigue dans `MQL5/Experts/`
-3. Glisse `ScalpingRadarEA.ex5` dans ce dossier
-4. Retour à MT5, F5 ou clic droit "Refresh" sur le panel Navigator (Ctrl+N
-   si pas visible)
-5. Dans Navigator → Expert Advisors → tu vois "ScalpingRadarEA"
+3. Glisse `ScalpingRadarEA.mq5` dans ce dossier
 
-## Étape 3 — Autoriser les requêtes HTTP du EA
+## Étape 3 — Compiler dans MetaEditor
+
+MT5 lit du `.ex5` compilé, pas du `.mq5`. La compilation prend 1 seconde :
+
+1. Dans MT5, ouvre **MetaEditor** (menu Tools, ou raccourci F4)
+2. Dans Navigator → Experts → double-clic sur **ScalpingRadarEA.mq5**
+3. Clique **Compile** (ou F7)
+4. Tu dois voir `0 errors, 0 warnings` en bas
+
+Un fichier `ScalpingRadarEA.ex5` est généré à côté du source.
+
+5. Retour à MT5, F5 ou clic droit "Refresh" sur le panel Navigator (Ctrl+N
+   si pas visible)
+6. Dans Navigator → Expert Advisors → tu vois "ScalpingRadarEA"
+
+## Étape 4 — Autoriser les requêtes HTTP du EA
 
 MT5 bloque les requêtes externes par défaut. Pour autoriser :
 
 1. **Tools → Options → Expert Advisors**
 2. Coche **"Allow WebRequest for listed URL"**
-3. Clic dans la zone, ajoute `https://app.scalping-radar.online`
+3. Clic dans la zone, ajoute `https://app.scalping-radar.online` (sans slash final)
 4. OK
 
-## Étape 4 — Drag l'EA sur un chart
+## Étape 5 — Drag l'EA sur un chart
 
 1. Drag l'EA depuis Navigator vers n'importe quel chart (peu importe la
    pair, il fonctionne en background sur tous les ordres reçus)
@@ -52,7 +65,7 @@ MT5 bloque les requêtes externes par défaut. Pour autoriser :
 3. Onglet "Common" → coche **Allow Algo Trading** + **Allow live trading**
 4. OK
 
-## Étape 5 — Activer AutoTrading
+## Étape 6 — Activer AutoTrading
 
 Dans la barre d'outils MT5, clic sur le bouton **AutoTrading** (ou Ctrl+E).
 Il doit passer **vert**. C'est le master-switch global de MT5 — sans ça

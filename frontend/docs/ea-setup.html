@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Installer l'Expert Advisor MT5 — Scalping Radar</title>
+  <meta name="description" content="Guide d'installation de l'Expert Advisor MQL5 Scalping Radar dans MetaTrader 5. 5 minutes, fonctionne sur Windows et Mac." />
+  <style>
+    :root {
+      --bg: #0b0f1a;
+      --surface: rgba(255, 255, 255, 0.04);
+      --border: rgba(255, 255, 255, 0.08);
+      --text: rgba(255, 255, 255, 0.92);
+      --text-dim: rgba(255, 255, 255, 0.6);
+      --text-faint: rgba(255, 255, 255, 0.4);
+      --cyan: #22d3ee;
+      --pink: #ec4899;
+      --emerald: #34d399;
+      --amber: #fbbf24;
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      background: radial-gradient(circle at 20% 0%, rgba(34, 211, 238, 0.12), transparent 40%),
+                  radial-gradient(circle at 80% 100%, rgba(236, 72, 153, 0.1), transparent 40%);
+      pointer-events: none;
+      z-index: 0;
+    }
+    header, main, footer { position: relative; z-index: 1; }
+    header {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 20px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    header a { color: var(--text-dim); text-decoration: none; font-size: 14px; }
+    header a:hover { color: var(--text); }
+    .brand { font-weight: 600; letter-spacing: -0.01em; }
+    main {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 40px 24px 80px;
+    }
+    h1 {
+      font-size: clamp(2rem, 4vw, 2.75rem);
+      background: linear-gradient(135deg, var(--cyan), var(--pink));
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+    }
+    .lead {
+      color: var(--text-dim);
+      font-size: 1.05rem;
+      margin-bottom: 40px;
+    }
+    h2 {
+      font-size: 1.5rem;
+      margin: 48px 0 16px;
+      letter-spacing: -0.01em;
+    }
+    h2 .num {
+      display: inline-block;
+      width: 40px;
+      height: 40px;
+      border-radius: 12px;
+      background: rgba(34, 211, 238, 0.15);
+      color: var(--cyan);
+      text-align: center;
+      line-height: 40px;
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: 0.85rem;
+      margin-right: 10px;
+      vertical-align: middle;
+    }
+    h3 { font-size: 1.1rem; margin: 24px 0 8px; }
+    p, li { color: var(--text); }
+    a { color: var(--cyan); }
+    a:hover { color: var(--pink); }
+    code {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 1px 6px;
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: 0.88em;
+      color: var(--amber);
+    }
+    pre {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px 18px;
+      overflow-x: auto;
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: 0.88rem;
+      line-height: 1.55;
+    }
+    pre code {
+      background: transparent;
+      border: 0;
+      padding: 0;
+      color: var(--text);
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 22px 26px;
+      margin: 20px 0;
+    }
+    .callout {
+      background: rgba(251, 191, 36, 0.08);
+      border: 1px solid rgba(251, 191, 36, 0.3);
+      border-radius: 12px;
+      padding: 16px 20px;
+      margin: 20px 0;
+    }
+    .callout .tag {
+      color: var(--amber);
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+    .callout-ok {
+      background: rgba(52, 211, 153, 0.08);
+      border-color: rgba(52, 211, 153, 0.3);
+    }
+    .callout-ok .tag { color: var(--emerald); }
+    ul { padding-left: 22px; }
+    ul li { margin-bottom: 6px; }
+    .btn {
+      display: inline-block;
+      padding: 10px 20px;
+      border-radius: 10px;
+      background: linear-gradient(135deg, var(--cyan), var(--pink));
+      color: #0b0f1a;
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 0.9rem;
+      margin-top: 4px;
+    }
+    .btn:hover { color: #0b0f1a; opacity: 0.9; }
+    .table-of-contents {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px 20px;
+      margin: 32px 0;
+    }
+    .table-of-contents strong {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--text-faint);
+    }
+    .table-of-contents ol { margin: 10px 0 0; padding-left: 22px; }
+    footer {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 30px 24px;
+      border-top: 1px solid var(--border);
+      color: var(--text-faint);
+      font-size: 0.8rem;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <span class="brand">Scalping Radar · Docs</span>
+    <a href="/v2/">← Retour à l'app</a>
+  </header>
+
+  <main>
+    <h1>Installer l'Expert Advisor MT5</h1>
+    <p class="lead">
+      L'EA est un petit programme MQL5 qui tourne <em>dans</em> ton terminal
+      MT5 et exécute les setups générés par Scalping Radar. <strong>5 minutes</strong>
+      pour tout configurer, fonctionne sur Windows et Mac (MT5 a une version
+      Mac officielle Pepperstone).
+    </p>
+
+    <div class="table-of-contents">
+      <strong>Sommaire</strong>
+      <ol>
+        <li><a href="#prereqs">Prérequis</a></li>
+        <li><a href="#step-key">Générer ton API key</a></li>
+        <li><a href="#step-download">Télécharger l'EA</a></li>
+        <li><a href="#step-compile">Compiler dans MetaEditor</a></li>
+        <li><a href="#step-webrequest">Autoriser les requêtes HTTP</a></li>
+        <li><a href="#step-attach">Attacher l'EA à un chart</a></li>
+        <li><a href="#step-verify">Vérifier que ça tourne</a></li>
+        <li><a href="#troubleshoot">Dépannage</a></li>
+      </ol>
+    </div>
+
+    <h2 id="prereqs"><span class="num">00</span>Prérequis</h2>
+    <div class="card">
+      <ul>
+        <li>MT5 Desktop installé et connecté à ton compte broker — <strong>compte démo
+          recommandé</strong> pour les premiers tests</li>
+        <li>Un compte <strong>Premium</strong> sur Scalping Radar
+          (<a href="/v2/pricing">voir les plans</a>)</li>
+        <li>~5 minutes</li>
+      </ul>
+    </div>
+
+    <div class="callout">
+      <div class="tag">Pas besoin de</div>
+      Python, Tailscale, VPS Windows, ou pair-RDP. Tout se passe dans MT5
+      directement.
+    </div>
+
+    <h2 id="step-key"><span class="num">01</span>Générer ton API key</h2>
+    <p>
+      L'EA s'authentifie auprès de Scalping Radar avec une <strong>API key</strong>
+      personnelle. Pour la générer :
+    </p>
+    <ul>
+      <li>Va sur <a href="/v2/settings">Settings → Auto-exec MT5</a></li>
+      <li>Clique <strong>"Générer mon API key"</strong></li>
+      <li><strong>Copie immédiatement la valeur affichée</strong> — elle ne
+        sera plus visible après fermeture (par sécurité). Si tu la perds,
+        tu pourras en régénérer une nouvelle, mais l'ancienne sera invalidée.</li>
+    </ul>
+
+    <h2 id="step-download"><span class="num">02</span>Télécharger l'EA</h2>
+    <p>
+      Toujours sur <a href="/v2/settings">Settings → Auto-exec MT5</a>,
+      clique <strong>"Télécharger ScalpingRadarEA.mq5"</strong>. Tu récupères
+      un fichier source (~50 Ko) que tu vas compiler à l'étape suivante.
+    </p>
+    <p>
+      Place-le dans le dossier <strong>Experts</strong> de MT5 :
+    </p>
+    <ul>
+      <li>Dans MT5 : menu <strong>File → Open Data Folder</strong></li>
+      <li>Une fenêtre s'ouvre — navigue dans <code>MQL5/Experts/</code></li>
+      <li>Glisse <code>ScalpingRadarEA.mq5</code> dans ce dossier</li>
+    </ul>
+
+    <h2 id="step-compile"><span class="num">03</span>Compiler dans MetaEditor</h2>
+    <p>
+      MT5 lit du <code>.ex5</code> compilé, pas du <code>.mq5</code>. La
+      compilation prend 1 seconde :
+    </p>
+    <ul>
+      <li>Dans MT5, ouvre <strong>MetaEditor</strong> (menu Tools, ou raccourci F4)</li>
+      <li>Dans Navigator → Experts → double-clic sur <strong>ScalpingRadarEA.mq5</strong></li>
+      <li>Clique <strong>Compile</strong> (ou F7)</li>
+      <li>Tu dois voir <code>0 errors, 0 warnings</code> en bas</li>
+    </ul>
+    <p>Un fichier <code>ScalpingRadarEA.ex5</code> est généré à côté du source.</p>
+
+    <h2 id="step-webrequest"><span class="num">04</span>Autoriser les requêtes HTTP</h2>
+    <p>
+      Par défaut, MT5 bloque toute requête réseau émise par un EA. Il faut
+      explicitement whitelister l'URL de Scalping Radar :
+    </p>
+    <ul>
+      <li><strong>Tools → Options → Expert Advisors</strong></li>
+      <li>Coche <strong>Allow WebRequest for listed URL</strong></li>
+      <li>Dans la zone de texte, ajoute <code>https://app.scalping-radar.online</code>
+        (sans slash final, exactement comme ça)</li>
+      <li>OK</li>
+    </ul>
+
+    <div class="callout">
+      <div class="tag">Important</div>
+      Si tu loupes cette étape, l'EA tourne mais ne reçoit jamais les
+      ordres — tu verras <code>WebRequest 4060</code> dans les logs.
+    </div>
+
+    <h2 id="step-attach"><span class="num">05</span>Attacher l'EA à un chart</h2>
+    <ul>
+      <li>De retour dans MT5, F5 ou clic droit "Refresh" sur le panel Navigator
+        → Expert Advisors → tu vois <strong>ScalpingRadarEA</strong></li>
+      <li>Drag l'EA sur n'importe quel chart (peu importe la pair, l'EA
+        tourne en background pour tous les ordres reçus)</li>
+      <li>La popup d'inputs s'ouvre. Renseigne :
+        <ul>
+          <li><strong>InpApiKey</strong> : ta clé copiée à l'étape 1</li>
+          <li><strong>InpServerUrl</strong> : <code>https://app.scalping-radar.online</code> (laisse défaut)</li>
+          <li><strong>InpPollingIntervalSec</strong> : <code>30</code> (peut descendre à 10 si tu veux plus de réactivité)</li>
+          <li><strong>InpDefaultLot</strong> : <code>0.01</code> (V1 size fixe)</li>
+          <li><strong>InpMagicNumber</strong> : laisse défaut (identifie tes trades EA dans History)</li>
+          <li><strong>InpDeviationPoints</strong> : <code>20</code> (slippage max accepté)</li>
+          <li><strong>InpDryRun</strong> : <strong><code>true</code> au premier essai</strong>, puis <code>false</code> une fois que tu as vu un cycle complet</li>
+        </ul>
+      </li>
+      <li>Onglet <strong>Common</strong> → coche <strong>Allow Algo Trading</strong> + <strong>Allow live trading</strong></li>
+      <li>OK</li>
+    </ul>
+
+    <p>
+      Active enfin <strong>AutoTrading</strong> dans la barre d'outils MT5
+      (ou Ctrl+E). Le bouton doit passer <strong>vert</strong>. C'est le
+      master-switch global — sans lui aucun EA ne peut trader.
+    </p>
+
+    <h2 id="step-verify"><span class="num">06</span>Vérifier que ça tourne</h2>
+    <p>
+      Onglet <strong>Experts</strong> en bas de MT5 (à côté de Trade,
+      History, etc.) — tu dois voir des logs type :
+    </p>
+    <pre><code>ScalpingRadarEA initialized — server=https://app.scalping-radar.online polling=30s default_lot=0.01 magic=20260429 dry_run=true</code></pre>
+
+    <p>Toutes les 10 minutes :</p>
+    <pre><code>ScalpingRadarEA alive — polls=20 exec=0 fail=0</code></pre>
+
+    <p>Quand un ordre est exécuté :</p>
+    <pre><code>ScalpingRadarEA order_id=42 EXECUTED ticket=123456789 EURUSD buy</code></pre>
+
+    <p>
+      Côté Scalping Radar, sur <a href="/v2/settings">Settings → Auto-exec MT5</a>,
+      l'indicateur <strong>Statut EA</strong> doit passer <strong>vert · Actif</strong>
+      dans les 30 secondes après lancement (heartbeat implicite à chaque poll).
+    </p>
+
+    <div class="callout callout-ok">
+      <div class="tag">Premier cycle réussi ?</div>
+      Repasse <code>InpDryRun</code> à <code>false</code> dans les inputs de
+      l'EA (clic droit sur le chart → Expert Advisors → Properties), puis
+      active <strong>Auto-exec ON</strong> côté Scalping Radar. À partir de
+      là, les setups éligibles passent automatiquement sur ton compte démo.
+    </div>
+
+    <h2 id="troubleshoot"><span class="num">07</span>Dépannage</h2>
+
+    <h3>"WebRequest 4060" / "URL non whitelistée"</h3>
+    <ul>
+      <li>Étape 4 manquée. Tools → Options → Expert Advisors → ajoute exactement <code>https://app.scalping-radar.online</code> à la liste</li>
+    </ul>
+
+    <h3>"HttpGet 401 — api_key invalide"</h3>
+    <ul>
+      <li>Vérifie que tu as collé la clé entière (≥ 16 caractères, sans espace ni saut de ligne)</li>
+      <li>Si tu as régénéré ta clé après l'avoir saisie dans l'EA : remets la nouvelle. L'ancienne est invalidée immédiatement après régénération</li>
+    </ul>
+
+    <h3>"HttpGet 403 — Premium tier requis"</h3>
+    <ul>
+      <li>Ton compte n'est pas Premium. Subscribe via <a href="/v2/pricing">/pricing</a></li>
+    </ul>
+
+    <h3>L'EA tourne mais 0 ordre depuis 1h</h3>
+    <ul>
+      <li>C'est normalement normal — le radar génère un setup éligible quand le scoring déclenche, pas en continu</li>
+      <li>Vérifie que <strong>Auto-exec</strong> est bien <strong>ON</strong> côté Scalping Radar (Settings → Auto-exec MT5)</li>
+      <li>Vérifie que tes paires watchlist sont activement scannées par Scalping Radar (Cockpit)</li>
+    </ul>
+
+    <h3>"OrderSend FAILED retcode=10016 INVALID_STOPS"</h3>
+    <ul>
+      <li>Le SL ou TP est trop proche du prix actuel (slippage de timing).
+        Scalping Radar filtre déjà ce cas en amont, mais le marché peut
+        bouger entre génération et exécution. Skip et attends le prochain
+        setup — pas d'action requise</li>
+    </ul>
+
+    <h3>L'EA est attaché mais le statut Settings reste "Jamais vu"</h3>
+    <ul>
+      <li>Vérifie que AutoTrading global est <strong>vert</strong> (Ctrl+E dans MT5)</li>
+      <li>Vérifie que la coche "Allow Algo Trading" est cochée dans les properties de l'EA (clic droit sur le chart → Expert Advisors → Properties → Common)</li>
+      <li>Regarde l'onglet Experts : si tu n'as aucun log "ScalpingRadarEA initialized", l'EA n'a pas démarré</li>
+    </ul>
+
+    <h3>Autre problème ?</h3>
+    <p>
+      Écris à <a href="mailto:support@scalping-radar.com">support@scalping-radar.com</a>
+      avec une capture des logs Experts et une description du comportement.
+      Réponse sous 24h en semaine.
+    </p>
+
+    <h2 id="security">Sécurité</h2>
+    <ul>
+      <li>L'API key transite uniquement en HTTPS</li>
+      <li>L'EA ne place que des ordres au lot fixe <code>InpDefaultLot</code>
+        (0.01 par défaut). Pas de levier supplémentaire ni de pyramiding</li>
+      <li>L'EA ignore les positions ouvertes manuellement (magic_number
+        différent → invisibles pour l'EA)</li>
+      <li>Tu peux désactiver AutoTrading dans MT5 à tout moment (kill switch côté terminal)</li>
+      <li>Côté Scalping Radar, le toggle <strong>Auto-exec OFF</strong> coupe l'enqueuing
+        sans rien toucher à ton MT5 (kill switch côté serveur)</li>
+    </ul>
+  </main>
+
+  <footer>
+    © 2026 Scalping Radar ·
+    <a href="/v2/pricing">Pricing</a> ·
+    <a href="/v2/">App</a>
+  </footer>
+</body>
+</html>
