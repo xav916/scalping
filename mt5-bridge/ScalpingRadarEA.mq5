@@ -296,8 +296,11 @@ void ProcessSingleOrder(const string order_json)
         return;
     }
 
-    // Execute via OrderSend natif
-    int ticket = ExecuteOrderSend(symbol, direction, sl, tp, comment, order_id);
+    // Execute via OrderSend natif. ExecuteOrderSend remplit out_retcode
+    // dans tous les cas (succès comme échec) pour qu'on l'envoie dans
+    // l'ack — utile pour le debug à distance via mt5_pending_orders.mt5_error.
+    uint out_retcode = 0;
+    int ticket = ExecuteOrderSend(symbol, direction, sl, tp, comment, order_id, out_retcode);
     if(ticket > 0)
     {
         g_orders_executed++;
@@ -307,10 +310,30 @@ void ProcessSingleOrder(const string order_json)
     else
     {
         g_orders_failed++;
-        string err = "OrderSend failed retcode=" + IntegerToString(GetLastError());
+        string err = "OrderSend failed retcode=" + IntegerToString(out_retcode);
         AckResult(order_id, false, 0, err);
         Print("[ScalpingRadarEA] order_id=", order_id, " FAILED ", err, " ", symbol, " ", direction);
     }
+}
+
+//+------------------------------------------------------------------+
+//| DetermineFilling — choisit le filling mode supporté par le symbole|
+//|                                                                  |
+//| Bug fix MQL.E review : hardcoder ORDER_FILLING_IOC ne marche pas |
+//| avec tous les brokers (Pepperstone, IC Markets, etc. peuvent     |
+//| n'autoriser que FOK ou RETURN selon le symbole). MT5 expose la   |
+//| bitmask SYMBOL_FILLING_MODE pour query les modes autorisés ;     |
+//| sans cette détection dynamique, l'EA enverrait des ordres avec   |
+//| retcode 10030 INVALID_FILL et zéro trade ne passerait.           |
+//+------------------------------------------------------------------+
+ENUM_ORDER_TYPE_FILLING DetermineFilling(const string symbol)
+{
+    long modes = SymbolInfoInteger(symbol, SYMBOL_FILLING_MODE);
+    // SYMBOL_FILLING_FOK = 1, SYMBOL_FILLING_IOC = 2 (bitmask).
+    // Préférence IOC (partial fills tolérés) > FOK (all-or-nothing) > RETURN.
+    if((modes & SYMBOL_FILLING_IOC) != 0) return ORDER_FILLING_IOC;
+    if((modes & SYMBOL_FILLING_FOK) != 0) return ORDER_FILLING_FOK;
+    return ORDER_FILLING_RETURN;  // fallback (instant exec, partial OK)
 }
 
 //+------------------------------------------------------------------+
@@ -322,12 +345,14 @@ int ExecuteOrderSend(
     const double sl,
     const double tp,
     const string comment,
-    const int order_id
+    const int order_id,
+    uint &out_retcode
 )
 {
     if(!SymbolSelect(symbol, true))
     {
         Print("[ScalpingRadarEA] symbol non disponible : ", symbol);
+        out_retcode = 0;
         return 0;
     }
 
@@ -347,21 +372,24 @@ int ExecuteOrderSend(
     request.deviation = InpDeviationPoints;
     request.magic = InpMagicNumber;
     string short_comment = "scalping-radar-" + IntegerToString(order_id);
-    request.comment = (StringLen(short_comment) <= 32) ? short_comment : StringSubstr(short_comment, 0, 32);
-    request.type_filling = ORDER_FILLING_IOC;
+    request.comment = (StringLen(short_comment) <= 31) ? short_comment : StringSubstr(short_comment, 0, 31);
+    request.type_filling = DetermineFilling(symbol);
 
     if(!OrderSend(request, result))
     {
+        out_retcode = result.retcode;
         Print("[ScalpingRadarEA] OrderSend FAILED retcode=", result.retcode,
               " comment=", result.comment);
         return 0;
     }
     if(result.retcode != TRADE_RETCODE_DONE && result.retcode != TRADE_RETCODE_PLACED)
     {
+        out_retcode = result.retcode;
         Print("[ScalpingRadarEA] OrderSend retcode=", result.retcode,
               " comment=", result.comment);
         return 0;
     }
+    out_retcode = result.retcode;
     return (int)result.order;
 }
 
