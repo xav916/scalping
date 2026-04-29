@@ -457,15 +457,31 @@ async def api_onboarding_status(ctx: AuthContext = Depends(auth_context)):
 
 @app.get("/api/user/broker")
 async def api_user_broker_get(ctx: AuthContext = Depends(auth_context)):
-    """Retourne la config broker du user (sans exposer l'API key)."""
+    """Retourne la config broker du user (sans exposer l'API key).
+
+    Champ ``mode`` :
+    - ``"ea"`` : api_key set, mode EA MQL5 (architecture cible MQL.E)
+    - ``"bridge"`` : api_key + bridge_url set, mode legacy Python (admin)
+    - ``"none"`` : rien configuré
+    """
     if ctx.user_id is None:
         raise HTTPException(status_code=400, detail="user legacy env, pas de broker_config DB")
     cfg = users_service.get_broker_config(ctx.user_id)
+    api_key_set = bool(cfg.get("bridge_api_key"))
+    bridge_url = cfg.get("bridge_url", "")
+    if api_key_set and bridge_url:
+        mode = "bridge"
+    elif api_key_set:
+        mode = "ea"
+    else:
+        mode = "none"
     return {
-        "bridge_url": cfg.get("bridge_url", ""),
+        "bridge_url": bridge_url,
         "broker_name": cfg.get("broker_name", ""),
-        "api_key_set": bool(cfg.get("bridge_api_key")),
+        "api_key_set": api_key_set,
         "auto_exec_enabled": bool(cfg.get("auto_exec_enabled", False)),
+        "last_ea_heartbeat": cfg.get("last_ea_heartbeat"),
+        "mode": mode,
     }
 
 
@@ -494,12 +510,14 @@ async def api_user_broker_auto_exec(
                 status_code=400,
                 detail="demo_confirmed requis pour activer l'auto-exec",
             )
-        # Le user doit avoir un bridge configuré avant d'activer
+        # MQL.E : un api_key suffit (mode EA). bridge_url est optionnel
+        # — il n'existe que pour les comptes legacy qui pilotent encore
+        # le bridge Python.
         cfg = users_service.get_broker_config(ctx.user_id)
-        if not cfg.get("bridge_url") or not cfg.get("bridge_api_key"):
+        if not cfg.get("bridge_api_key"):
             raise HTTPException(
                 status_code=400,
-                detail="bridge_url + bridge_api_key requis avant activation",
+                detail="api_key requis avant activation (génère-la dans Settings)",
             )
     users_service.update_auto_exec_enabled(ctx.user_id, enabled)
     return {"auto_exec_enabled": enabled}
@@ -595,6 +613,55 @@ async def api_ea_heartbeat(api_key: str = ""):
         raise HTTPException(status_code=401, detail="api_key invalide")
     users_service.update_ea_heartbeat(user["id"])
     return {"ok": True}
+
+
+# ─── EA distribution + api_key generation (Phase MQL.E) ──────────────
+
+
+_EA_SOURCE_PATH = Path(__file__).parent.parent / "mt5-bridge" / "ScalpingRadarEA.mq5"
+
+
+@app.get("/api/ea/download")
+async def api_ea_download(_ctx: AuthContext = Depends(require_min_tier("premium"))):
+    """Sert le source MQL5 ``ScalpingRadarEA.mq5`` au user.
+
+    Phase MQL.E. Le user le drop dans ``<MT5 Data Folder>/MQL5/Experts/``,
+    le compile via MetaEditor (F7), puis attache l'EA à un chart en
+    saisissant son api_key dans les inputs.
+
+    Source plutôt que .ex5 compilé : la version compilée dépend du build
+    MT5 du user. Source = portable. Un seul clic dans MetaEditor pour
+    compiler.
+    """
+    if not _EA_SOURCE_PATH.exists():
+        raise HTTPException(
+            status_code=500,
+            detail=f"EA source introuvable côté serveur ({_EA_SOURCE_PATH.name})",
+        )
+    return FileResponse(
+        path=_EA_SOURCE_PATH,
+        filename="ScalpingRadarEA.mq5",
+        media_type="text/plain",
+    )
+
+
+@app.post("/api/user/broker/generate-api-key")
+async def api_user_broker_generate_api_key(
+    ctx: AuthContext = Depends(require_min_tier("premium")),
+):
+    """Génère un nouvel api_key et l'écrit en DB. Retourne la valeur en clair UNE FOIS.
+
+    Phase MQL.E. Le user copie le key dans son EA (input `ApiKey`), puis
+    on n'expose plus la valeur (cf. ``GET /api/user/broker`` qui retourne
+    seulement ``api_key_set``). S'il perd le key il regenère — l'ancien
+    devient invalide immédiatement (auth via valeur exacte en DB).
+    """
+    if ctx.user_id is None:
+        raise HTTPException(
+            status_code=400, detail="user legacy env, pas de broker_config DB"
+        )
+    api_key = users_service.generate_api_key_for_user(ctx.user_id)
+    return {"api_key": api_key, "api_key_set": True}
 
 
 @app.post("/api/user/broker/test")

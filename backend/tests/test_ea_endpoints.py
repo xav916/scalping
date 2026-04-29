@@ -229,3 +229,33 @@ async def test_heartbeat_rejects_invalid_api_key(db):
     with pytest.raises(HTTPException) as exc:
         await app_module.api_ea_heartbeat(api_key="invalid_xxxxxxxxxxxxxxxxxxx")
     assert exc.value.status_code == 401
+
+
+# ─── GET /api/ea/download (Phase MQL.E) ───────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_download_returns_ea_source_file(db):
+    """Le endpoint sert bien le .mq5 du repo."""
+    from backend.auth import AuthContext
+    from fastapi.responses import FileResponse
+
+    ctx = AuthContext(username="legacy", user_id=None)  # legacy = passe le tier gate
+    response = await app_module.api_ea_download(_ctx=ctx)
+    assert isinstance(response, FileResponse)
+    assert response.filename == "ScalpingRadarEA.mq5"
+    served_path = Path(response.path)
+    assert served_path.name == "ScalpingRadarEA.mq5"
+    assert served_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_download_missing_file_returns_500(db, monkeypatch):
+    from fastapi import HTTPException
+    from backend.auth import AuthContext
+
+    monkeypatch.setattr(app_module, "_EA_SOURCE_PATH", Path("/nope/missing.mq5"))
+    ctx = AuthContext(username="legacy", user_id=None)
+    with pytest.raises(HTTPException) as exc:
+        await app_module.api_ea_download(_ctx=ctx)
+    assert exc.value.status_code == 500

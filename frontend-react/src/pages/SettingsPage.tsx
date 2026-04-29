@@ -97,44 +97,40 @@ export function SettingsPage() {
     (selected.size !== pairsQ.data.pairs.length ||
       Array.from(selected).some((p) => !pairsQ.data!.pairs.includes(p)));
 
-  // ─── Section Bridge (optionnelle, repliable) ────────────────────
+  // ─── Section Auto-exec EA MQL5 (Phase MQL.E) ─────────────────────
   const brokerQ = useQuery({
     queryKey: ['user', 'broker'],
     queryFn: api.userBrokerGet,
     retry: 0,
     staleTime: 60_000,
   });
-  const [bridgeOpen, setBridgeOpen] = useState(false);
-  const [bridgeUrl, setBridgeUrl] = useState('');
-  const [bridgeApiKey, setBridgeApiKey] = useState('');
-  const [bridgeTestResult, setBridgeTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [eaOpen, setEaOpen] = useState(false);
+  const [revealedApiKey, setRevealedApiKey] = useState<string | null>(null);
+  const [showRegenWarning, setShowRegenWarning] = useState(false);
+  const [copiedKey, setCopiedKey] = useState(false);
 
-  // Hydrate bridgeUrl depuis la query quand elle répond.
-  useEffect(() => {
-    if (brokerQ.data?.bridge_url && !bridgeUrl) {
-      setBridgeUrl(brokerQ.data.bridge_url);
-    }
-  }, [brokerQ.data, bridgeUrl]);
-
-  const testBridgeMut = useMutation({
-    mutationFn: () => api.userBrokerTest(bridgeUrl, bridgeApiKey),
+  const generateApiKeyMut = useMutation({
+    mutationFn: () => api.userBrokerGenerateApiKey(),
     onSuccess: (data) => {
-      if (data.ok && data.reachable) {
-        setBridgeTestResult({ ok: true, msg: 'Bridge joignable ✓' });
-      } else {
-        setBridgeTestResult({ ok: false, msg: data.error || 'Bridge injoignable' });
-      }
+      setRevealedApiKey(data.api_key);
+      setShowRegenWarning(false);
+      setCopiedKey(false);
+      qc.invalidateQueries({ queryKey: ['user', 'broker'] });
     },
-    onError: () => setBridgeTestResult({ ok: false, msg: 'Erreur de test' }),
   });
 
-  const saveBridgeMut = useMutation({
-    mutationFn: () => api.userBrokerPut(bridgeUrl, bridgeApiKey),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['user', 'broker'] });
-      setBridgeApiKey(''); // clear after save
-    },
-  });
+  // Heartbeat indicator : "actif" < 5 min, "récent" < 1 h, "offline" sinon.
+  const heartbeatStatus = (() => {
+    const ts = brokerQ.data?.last_ea_heartbeat;
+    if (!ts) return { label: 'Jamais vu', color: 'text-white/40', dot: 'bg-white/20' };
+    const ageSec = (Date.now() - new Date(ts).getTime()) / 1000;
+    if (ageSec < 300) return { label: 'Actif', color: 'text-emerald-300', dot: 'bg-emerald-400 animate-pulse' };
+    if (ageSec < 3600) {
+      const mins = Math.round(ageSec / 60);
+      return { label: `Vu il y a ${mins} min`, color: 'text-amber-300', dot: 'bg-amber-400' };
+    }
+    return { label: 'Hors ligne', color: 'text-rose-300', dot: 'bg-rose-400' };
+  })();
 
   // ─── Auto-exec toggle (Phase D du multi-tenant bridge routing) ──
   const [demoConfirmed, setDemoConfirmed] = useState(false);
@@ -375,10 +371,10 @@ export function SettingsPage() {
           )}
         </GlassCard>
 
-        {/* ─── Bridge MT5 (optionnel, Premium) ─── */}
+        {/* ─── Auto-exec EA MQL5 (Phase MQL.E) ─── */}
         <GlassCard className="p-6">
           <button
-            onClick={() => setBridgeOpen((o) => !o)}
+            onClick={() => setEaOpen((o) => !o)}
             className="w-full flex items-start justify-between text-left"
           >
             <div>
@@ -391,123 +387,163 @@ export function SettingsPage() {
               </h2>
               <p className="text-sm text-white/50 mt-1">
                 {brokerQ.data?.api_key_set
-                  ? `Bridge configuré : ${brokerQ.data.bridge_url}`
-                  : 'Connecte ton bridge MT5 pour auto-exécuter les setups directement sur ton compte.'}
+                  ? `EA configuré · ${heartbeatStatus.label}`
+                  : 'Auto-exécute les setups dans MetaTrader 5 via un Expert Advisor (5 min de setup).'}
               </p>
             </div>
             <span className="text-white/40 text-xl ml-4 shrink-0">
-              {bridgeOpen ? '−' : '+'}
+              {eaOpen ? '−' : '+'}
             </span>
           </button>
 
-          {bridgeOpen && (
+          {eaOpen && (
             <motion.div
               initial={{ opacity: 0, height: 0 }}
               animate={{ opacity: 1, height: 'auto' }}
-              className="mt-5 pt-5 border-t border-white/10 space-y-3"
+              className="mt-5 pt-5 border-t border-white/10 space-y-5"
             >
-              <p className="text-sm text-white/60">
-                Installation requise : <a href="/docs/bridge-setup.html" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:text-cyan-300 underline">voir le guide</a>.
-                Tu as besoin de Tailscale + MetaTrader 5 + le bridge Windows sur un PC ou VPS 24/5.
-              </p>
-              <div>
-                <label className="block text-xs uppercase tracking-wider text-white/50 mb-1.5">
-                  URL du bridge
-                </label>
-                <input
-                  type="url"
-                  value={bridgeUrl}
-                  onChange={(e) => {
-                    setBridgeUrl(e.target.value);
-                    setBridgeTestResult(null);
-                  }}
-                  placeholder="http://100.x.y.z:8787"
-                  className="w-full px-4 py-2.5 rounded-xl bg-white/5 border border-glass-soft focus:border-cyan-400/50 focus:outline-none font-mono text-sm"
-                />
-              </div>
-              <div>
-                <label className="block text-xs uppercase tracking-wider text-white/50 mb-1.5">
-                  API key
-                </label>
-                <input
-                  type="password"
-                  value={bridgeApiKey}
-                  onChange={(e) => {
-                    setBridgeApiKey(e.target.value);
-                    setBridgeTestResult(null);
-                  }}
-                  placeholder={brokerQ.data?.api_key_set ? '•••••••• (laisser vide pour ne pas changer)' : 'min 16 caractères'}
-                  className="w-full px-4 py-2.5 rounded-xl bg-white/5 border border-glass-soft focus:border-pink-400/50 focus:outline-none font-mono text-sm"
-                />
-              </div>
+              {/* Étape 1 — API key */}
+              <div className="space-y-2">
+                <h3 className="text-sm font-semibold text-white/80">
+                  1. Génère ton API key
+                </h3>
+                {!brokerQ.data?.api_key_set ? (
+                  <button
+                    onClick={() => generateApiKeyMut.mutate()}
+                    disabled={generateApiKeyMut.isPending}
+                    className="w-full py-2.5 rounded-xl bg-gradient-to-br from-cyan-400 to-pink-500 text-slate-900 text-sm font-semibold disabled:opacity-40"
+                  >
+                    {generateApiKeyMut.isPending ? 'Génération…' : 'Générer mon API key'}
+                  </button>
+                ) : (
+                  <div className="flex items-center justify-between gap-3 p-3 rounded-xl bg-emerald-400/10 border border-emerald-400/20">
+                    <span className="text-xs text-emerald-200">
+                      ✓ API key configurée
+                    </span>
+                    <button
+                      onClick={() => setShowRegenWarning(true)}
+                      className="text-xs text-white/60 hover:text-white/90 underline underline-offset-2"
+                    >
+                      Régénérer
+                    </button>
+                  </div>
+                )}
 
-              {bridgeTestResult && (
-                <p className={`text-sm ${bridgeTestResult.ok ? 'text-emerald-400' : 'text-rose-400'}`}>
-                  {bridgeTestResult.msg}
-                </p>
-              )}
-
-              <div className="flex gap-3 pt-2">
-                <button
-                  onClick={() => testBridgeMut.mutate()}
-                  disabled={testBridgeMut.isPending || !bridgeUrl || bridgeApiKey.length < 16}
-                  className="flex-1 py-2 rounded-xl border border-cyan-400/30 text-cyan-300 text-sm font-medium disabled:opacity-40 hover:bg-cyan-400/10"
-                >
-                  {testBridgeMut.isPending ? 'Test…' : 'Tester'}
-                </button>
-                <button
-                  onClick={() => saveBridgeMut.mutate()}
-                  disabled={saveBridgeMut.isPending || !bridgeTestResult?.ok}
-                  className="flex-1 py-2 rounded-xl bg-gradient-to-br from-cyan-400 to-pink-500 text-slate-900 text-sm font-semibold disabled:opacity-40"
-                >
-                  {saveBridgeMut.isPending ? 'Enregistrement…' : 'Enregistrer'}
-                </button>
-              </div>
-
-              {saveBridgeMut.isSuccess && (
-                <p className="text-xs text-emerald-400">Bridge enregistré ✓</p>
-              )}
-
-              {/* ─── Auto-exec toggle ─── */}
-              {brokerQ.data?.api_key_set && (
-                <div className="mt-5 pt-5 border-t border-white/10 space-y-3">
-                  <div className="flex items-start justify-between gap-3 flex-wrap">
-                    <div>
-                      <h3 className="text-sm font-semibold flex items-center gap-2">
-                        Auto-exécution
-                        <span
-                          className={`px-2 py-0.5 rounded-full text-[10px] uppercase tracking-wider ${
-                            brokerQ.data.auto_exec_enabled
-                              ? 'bg-emerald-400/20 text-emerald-300 border border-emerald-400/30'
-                              : 'bg-white/10 text-white/60 border border-white/15'
-                          }`}
-                        >
-                          {brokerQ.data.auto_exec_enabled ? 'ON' : 'OFF'}
-                        </span>
-                      </h3>
-                      <p className="text-xs text-white/50 mt-1">
-                        {brokerQ.data.auto_exec_enabled
-                          ? 'Les setups éligibles sont poussés à ton bridge en temps réel.'
-                          : 'Bridge configuré mais ordres pas encore envoyés.'}
-                      </p>
-                    </div>
-                    {brokerQ.data.auto_exec_enabled ? (
+                {showRegenWarning && (
+                  <div className="rounded-xl border border-amber-400/30 bg-amber-400/10 p-3 space-y-2">
+                    <p className="text-xs text-amber-200">
+                      ⚠️ Régénérer va invalider l'ancienne clé immédiatement.
+                      Tu devras mettre à jour l'input <code>ApiKey</code> de
+                      l'EA dans MT5 sinon les ordres ne passeront plus.
+                    </p>
+                    <div className="flex gap-2">
                       <button
-                        onClick={() => autoExecMut.mutate(false)}
-                        disabled={autoExecMut.isPending}
-                        className="px-4 py-2 rounded-xl border border-rose-400/30 text-rose-300 text-sm hover:bg-rose-400/10 disabled:opacity-40"
+                        onClick={() => generateApiKeyMut.mutate()}
+                        disabled={generateApiKeyMut.isPending}
+                        className="flex-1 py-2 rounded-lg bg-amber-500/30 border border-amber-400/40 text-amber-100 text-xs font-semibold disabled:opacity-40"
                       >
-                        {autoExecMut.isPending ? 'Désactivation…' : 'Désactiver'}
+                        Confirmer la régénération
                       </button>
-                    ) : null}
+                      <button
+                        onClick={() => setShowRegenWarning(false)}
+                        className="px-4 py-2 rounded-lg border border-white/15 text-white/60 text-xs"
+                      >
+                        Annuler
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {revealedApiKey && (
+                  <div className="rounded-xl border border-cyan-400/40 bg-cyan-400/10 p-3 space-y-2">
+                    <p className="text-xs text-cyan-100">
+                      Copie cette clé maintenant — elle ne sera plus affichée :
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <code className="flex-1 px-3 py-2 rounded-lg bg-slate-900/60 font-mono text-xs text-white break-all">
+                        {revealedApiKey}
+                      </code>
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(revealedApiKey);
+                          setCopiedKey(true);
+                          setTimeout(() => setCopiedKey(false), 2000);
+                        }}
+                        className="px-3 py-2 rounded-lg bg-cyan-400/20 border border-cyan-400/40 text-cyan-200 text-xs font-medium"
+                      >
+                        {copiedKey ? 'Copié ✓' : 'Copier'}
+                      </button>
+                    </div>
+                    <button
+                      onClick={() => setRevealedApiKey(null)}
+                      className="w-full py-1.5 rounded-lg text-xs text-white/60 hover:text-white/90"
+                    >
+                      J'ai sauvegardé la clé, fermer
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Étape 2 — Download */}
+              <div className="space-y-2">
+                <h3 className="text-sm font-semibold text-white/80">
+                  2. Télécharge l'Expert Advisor
+                </h3>
+                <a
+                  href="/api/ea/download"
+                  download="ScalpingRadarEA.mq5"
+                  className="block w-full py-2.5 rounded-xl border border-cyan-400/30 text-cyan-300 text-sm font-medium text-center hover:bg-cyan-400/10"
+                >
+                  📥 Télécharger ScalpingRadarEA.mq5
+                </a>
+                <p className="text-xs text-white/50 leading-relaxed">
+                  Place le fichier dans <code className="text-white/70">{'<MT5 Data Folder>/MQL5/Experts/'}</code>,
+                  compile-le dans MetaEditor (F7), puis attache l'EA à un
+                  chart en saisissant ton API key dans les inputs.
+                  N'oublie pas d'ajouter <code className="text-white/70">https://app.scalping-radar.online</code> dans
+                  Tools → Options → Expert Advisors → Allow WebRequest.
+                </p>
+              </div>
+
+              {/* Étape 3 — Statut + toggle */}
+              {brokerQ.data?.api_key_set && (
+                <div className="space-y-3">
+                  <h3 className="text-sm font-semibold text-white/80">
+                    3. Active l'auto-exec
+                  </h3>
+
+                  <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10">
+                    <div className="flex items-center gap-2">
+                      <span className={`w-2 h-2 rounded-full ${heartbeatStatus.dot}`} />
+                      <span className={`text-xs ${heartbeatStatus.color}`}>
+                        Statut EA · {heartbeatStatus.label}
+                      </span>
+                    </div>
+                    <span
+                      className={`px-2 py-0.5 rounded-full text-[10px] uppercase tracking-wider ${
+                        brokerQ.data.auto_exec_enabled
+                          ? 'bg-emerald-400/20 text-emerald-300 border border-emerald-400/30'
+                          : 'bg-white/10 text-white/60 border border-white/15'
+                      }`}
+                    >
+                      Auto-exec {brokerQ.data.auto_exec_enabled ? 'ON' : 'OFF'}
+                    </span>
                   </div>
 
-                  {!brokerQ.data.auto_exec_enabled && (
+                  {brokerQ.data.auto_exec_enabled ? (
+                    <button
+                      onClick={() => autoExecMut.mutate(false)}
+                      disabled={autoExecMut.isPending}
+                      className="w-full py-2 rounded-xl border border-rose-400/30 text-rose-300 text-sm hover:bg-rose-400/10 disabled:opacity-40"
+                    >
+                      {autoExecMut.isPending ? 'Désactivation…' : 'Désactiver l\'auto-exec'}
+                    </button>
+                  ) : (
                     <div className="rounded-xl border border-amber-400/30 bg-amber-400/10 p-3 space-y-2">
                       <p className="text-xs text-amber-200 leading-relaxed">
-                        ⚠️ Activer l'auto-exec va déclencher des ordres réels
-                        sur le compte associé à ton bridge MT5. Vérifie que
-                        c'est bien un <strong>compte DÉMO</strong> avant la
+                        ⚠️ Activer va déclencher des ordres réels sur le
+                        compte MT5 où l'EA est attaché. Vérifie qu'il s'agit
+                        bien d'un <strong>compte DÉMO</strong> pour ta
                         première activation.
                       </p>
                       <label className="flex items-start gap-2 text-xs text-white/80 cursor-pointer">
@@ -518,7 +554,7 @@ export function SettingsPage() {
                           className="mt-0.5 accent-cyan-400"
                         />
                         <span>
-                          Je confirme que ce bridge pointe vers un compte
+                          Je confirme que l'EA tourne sur un compte
                           <strong> démo</strong> (j'accepte les risques sinon).
                         </span>
                       </label>
@@ -527,9 +563,7 @@ export function SettingsPage() {
                         disabled={!demoConfirmed || autoExecMut.isPending}
                         className="w-full py-2 rounded-xl bg-gradient-to-br from-amber-400 to-pink-500 text-slate-900 text-sm font-semibold disabled:opacity-40"
                       >
-                        {autoExecMut.isPending
-                          ? 'Activation…'
-                          : 'Activer l\'auto-exec'}
+                        {autoExecMut.isPending ? 'Activation…' : 'Activer l\'auto-exec'}
                       </button>
                     </div>
                   )}
@@ -538,6 +572,14 @@ export function SettingsPage() {
                     <p className="text-xs text-rose-400">{autoExecError}</p>
                   )}
                 </div>
+              )}
+
+              {brokerQ.data?.mode === 'bridge' && (
+                <p className="text-xs text-white/50 italic border-t border-white/10 pt-3">
+                  ℹ️ Compte legacy : bridge Python encore configuré
+                  ({brokerQ.data.bridge_url}). L'EA utilise la même API key —
+                  tu peux désinstaller le bridge Python quand tu veux.
+                </p>
               )}
             </motion.div>
           )}

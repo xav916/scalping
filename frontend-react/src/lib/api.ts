@@ -87,6 +87,8 @@ export const api = {
       broker_name: string;
       api_key_set: boolean;
       auto_exec_enabled: boolean;
+      last_ea_heartbeat: string | null;
+      mode: 'ea' | 'bridge' | 'none';
     }>('/api/user/broker'),
 
   userBrokerAutoExec: (enabled: boolean, demo_confirmed?: boolean) =>
@@ -95,19 +97,10 @@ export const api = {
       body: JSON.stringify({ enabled, demo_confirmed }),
     }),
 
-  userBrokerPut: (bridge_url: string, bridge_api_key: string, broker_name?: string) =>
-    request<{ ok: true }>('/api/user/broker', {
-      method: 'PUT',
-      body: JSON.stringify({ bridge_url, bridge_api_key, broker_name }),
-    }),
-
-  userBrokerTest: (bridge_url: string, bridge_api_key: string) =>
-    request<{ ok: boolean; reachable: boolean; error?: string; version?: string }>(
-      '/api/user/broker/test',
-      {
-        method: 'POST',
-        body: JSON.stringify({ bridge_url, bridge_api_key }),
-      }
+  userBrokerGenerateApiKey: () =>
+    request<{ api_key: string; api_key_set: true }>(
+      '/api/user/broker/generate-api-key',
+      { method: 'POST' }
     ),
 
   userWatchedPairsGet: () =>

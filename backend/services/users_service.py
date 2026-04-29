@@ -624,6 +624,27 @@ def update_ea_heartbeat(user_id: int) -> None:
         )
 
 
+def generate_api_key_for_user(user_id: int) -> str:
+    """Génère un nouvel api_key (32 chars URL-safe) et l'écrit dans broker_config.
+
+    Préserve les autres champs de ``broker_config`` (auto_exec_enabled,
+    bridge_url legacy, broker_name, last_ea_heartbeat). Retourne le key
+    généré pour que le caller puisse l'afficher au user — c'est la SEULE
+    occasion où la valeur en clair quitte le serveur.
+
+    Phase MQL.E. Utilisé par ``POST /api/user/broker/generate-api-key``.
+    """
+    api_key = secrets.token_urlsafe(24)
+    cfg = get_broker_config(user_id)
+    cfg["bridge_api_key"] = api_key
+    with _conn() as c:
+        c.execute(
+            "UPDATE users SET broker_config = ? WHERE id = ?",
+            (json.dumps(cfg), user_id),
+        )
+    return api_key
+
+
 def list_premium_auto_exec_users() -> list[dict]:
     """Retourne les users éligibles pour l'auto-exec multi-tenant.
 
