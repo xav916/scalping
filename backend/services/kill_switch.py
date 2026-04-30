@@ -134,6 +134,15 @@ def set_global_rafale_pause(reason: str, duration_min: int) -> dict:
     logger.warning(
         f"kill_switch: GLOBAL rafale_pause ON reason={reason!r} expires_at={expires.isoformat()}"
     )
+    # History event (best-effort, ne casse pas si la table n'est pas dispo)
+    try:
+        from backend.services import rafale_history
+        rafale_history.log_pause_set(
+            scope="global", pair=None, reason=reason,
+            triggered_at=state["global_rafale_pause"]["triggered_at"],
+        )
+    except Exception:
+        pass
     return state["global_rafale_pause"]
 
 
@@ -231,6 +240,16 @@ def set_pair_rafale_pause(
         f"reason={reason!r} min_resume={min_resume_at.isoformat()} "
         f"max_resume={max_resume_at.isoformat()}"
     )
+    try:
+        from backend.services import rafale_history
+        rafale_history.log_pause_set(
+            scope="pair", pair=pair, reason=reason,
+            failed_pattern=failed_pattern,
+            failed_direction=failed_direction,
+            triggered_at=info["triggered_at"],
+        )
+    except Exception:
+        pass
     return info
 
 

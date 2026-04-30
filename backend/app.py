@@ -2511,6 +2511,26 @@ async def api_admin_watchdog_state(_ctx: AuthContext = Depends(require_admin)):
     }
 
 
+@app.get("/api/admin/watchdog/history")
+async def api_admin_watchdog_history(
+    days: int = 7,
+    limit: int = 100,
+    _ctx: AuthContext = Depends(require_admin),
+):
+    """Historique des events watchdog (PAUSE_SET / RESUME) sur les N derniers
+    jours + stats agrégées (durée moyenne, distribution par pair, ratio
+    SMART_RESUME / FORCE_RESUME).
+
+    Sert à la card UI pour visualiser le passé et tuner les seuils.
+    """
+    from backend.services import rafale_history
+
+    return {
+        "events": rafale_history.list_recent_events(days=days, limit=limit),
+        "stats": rafale_history.stats_for_window(days=days),
+    }
+
+
 @app.post("/api/admin/watchdog/unpause")
 async def api_admin_watchdog_unpause(
     body: dict, _ctx: AuthContext = Depends(require_admin)
@@ -2541,9 +2561,24 @@ async def api_admin_watchdog_unpause(
 
     pair = body.get("pair")
     if pair and isinstance(pair, str):
+        # Capture l'info avant clear pour pouvoir logger l'event
+        _before_active, before_info = kill_switch.is_pair_rafale_paused(pair)
+        # is_pair_rafale_paused retourne aussi info si présente (même si expirée)
+        _state = kill_switch._load_state()
+        before_info_full = _state.get("rafale_paused_pairs", {}).get(pair)
         ok = kill_switch.clear_pair_rafale_pause(pair)
         if ok:
             cleared["pairs"].append(pair)
+            try:
+                from backend.services import rafale_history
+                rafale_history.log_resume(
+                    scope="pair", pair=pair, decision="MANUAL",
+                    triggered_at=(before_info_full or {}).get("triggered_at"),
+                    reason=(before_info_full or {}).get("reason"),
+                    failed_pattern=(before_info_full or {}).get("failed_pattern"),
+                )
+            except Exception:
+                pass
         else:
             raise HTTPException(
                 status_code=404,

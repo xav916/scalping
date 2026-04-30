@@ -231,8 +231,168 @@ export function WatchdogCard() {
           </div>
         </div>
       )}
+
+      {/* Historique 7j — section déplaçable */}
+      <HistorySection />
     </GlassCard>
   );
+}
+
+function HistorySection() {
+  const { data, isLoading } = useQuery({
+    queryKey: ['admin', 'watchdog', 'history'],
+    queryFn: () => api.adminWatchdogHistory(7, 100),
+    retry: 0,
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  });
+
+  if (isLoading) return <Skeleton className="w-full h-24" />;
+  if (!data) return null;
+
+  const { stats, events } = data;
+  const hasHistory = stats.pause_set_count > 0 || stats.resume_count > 0;
+
+  return (
+    <div className="border-t border-white/10 pt-3 space-y-3">
+      <h4 className="text-[11px] uppercase tracking-wider text-white/40">
+        Historique 7 derniers jours
+      </h4>
+
+      {!hasHistory ? (
+        <p className="text-[11px] text-white/40 italic">
+          Aucune rafale détectée sur les 7 derniers jours. Watchdog en veille.
+        </p>
+      ) : (
+        <>
+          {/* Stats top row */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[11px]">
+            <StatBlock label="Pauses" value={stats.pause_set_count} />
+            <StatBlock label="Resumes" value={stats.resume_count} />
+            <StatBlock
+              label="Durée moy."
+              value={fmtDuration(stats.avg_duration_seconds)}
+            />
+            <StatBlock
+              label="Durée max"
+              value={fmtDuration(stats.max_duration_seconds)}
+            />
+          </div>
+
+          {/* Distribution par pair */}
+          {stats.by_pair.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {stats.by_pair.slice(0, 6).map((row) => (
+                <span
+                  key={row.pair}
+                  className="px-2 py-0.5 rounded-full text-[10px] bg-white/5
+                             border border-white/10 text-white/70"
+                >
+                  {row.pair} · {row.count}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {/* Ratio par decision */}
+          {Object.keys(stats.by_decision).length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {Object.entries(stats.by_decision).map(([dec, count]) => (
+                <span
+                  key={dec}
+                  className={`px-2 py-0.5 rounded-full text-[10px] border ${
+                    dec === 'SMART_RESUME'
+                      ? 'bg-emerald-500/10 border-emerald-400/30 text-emerald-300'
+                      : dec === 'FORCE_RESUME'
+                        ? 'bg-rose-500/10 border-rose-400/30 text-rose-300'
+                        : 'bg-white/5 border-white/10 text-white/60'
+                  }`}
+                >
+                  {dec} · {count}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {/* Timeline events (5 derniers) */}
+          {events.length > 0 && (
+            <div className="space-y-1 max-h-48 overflow-y-auto">
+              {events.slice(0, 8).map((ev) => (
+                <div
+                  key={ev.id}
+                  className="flex items-center justify-between gap-2 text-[10px]
+                             px-2 py-1 rounded bg-white/5"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span
+                      className={
+                        ev.event_type === 'PAUSE_SET'
+                          ? 'text-amber-300 shrink-0'
+                          : ev.resume_decision === 'SMART_RESUME'
+                            ? 'text-emerald-300 shrink-0'
+                            : ev.resume_decision === 'FORCE_RESUME'
+                              ? 'text-rose-300 shrink-0'
+                              : 'text-white/60 shrink-0'
+                      }
+                    >
+                      {ev.event_type === 'PAUSE_SET' ? '⏸' : '▶'}
+                    </span>
+                    <span className="text-white/70 shrink-0">
+                      {ev.scope === 'global' ? 'GLOBAL' : ev.pair || '?'}
+                    </span>
+                    {ev.failed_pattern && (
+                      <span className="text-white/40 truncate">
+                        {ev.failed_pattern}
+                      </span>
+                    )}
+                    {ev.resume_decision && (
+                      <span className="text-white/40 shrink-0">
+                        ({ev.resume_decision})
+                      </span>
+                    )}
+                  </div>
+                  <span className="font-mono text-white/40 text-[9px] shrink-0">
+                    {fmtTimeAgo(ev.created_at)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function StatBlock({ label, value }: { label: string; value: number | string }) {
+  return (
+    <div className="px-2 py-1 rounded bg-white/5 border border-white/10">
+      <div className="text-[9px] uppercase tracking-wider text-white/40">{label}</div>
+      <div className="text-sm font-semibold text-white/90 mt-0.5">{value}</div>
+    </div>
+  );
+}
+
+function fmtDuration(seconds: number | null | undefined): string {
+  if (seconds === null || seconds === undefined) return '—';
+  if (seconds < 60) return `${seconds}s`;
+  const m = Math.floor(seconds / 60);
+  if (m < 60) return `${m}min`;
+  const h = Math.floor(m / 60);
+  const rm = m % 60;
+  return rm ? `${h}h${rm}` : `${h}h`;
+}
+
+function fmtTimeAgo(iso: string): string {
+  try {
+    const diff = (Date.now() - new Date(iso).getTime()) / 1000;
+    if (diff < 60) return `${Math.floor(diff)}s`;
+    if (diff < 3600) return `${Math.floor(diff / 60)}min`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}h`;
+    return `${Math.floor(diff / 86400)}j`;
+  } catch {
+    return '?';
+  }
 }
 
 function fmtIso(iso: string | null | undefined): string {

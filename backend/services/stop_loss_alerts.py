@@ -473,12 +473,17 @@ async def check_and_alert() -> dict[str, Any]:
 
         # ─ Étape 0a : auto-resume global expiré (filet de sécu) ─
         try:
-            from backend.services import kill_switch
+            from backend.services import kill_switch, rafale_history
 
             expired_global = kill_switch.consume_expired_global_rafale_pause()
             if expired_global:
                 await _send_global_resume_notification(expired_global)
                 global_pause_resumed = True
+                rafale_history.log_resume(
+                    scope="global", pair=None, decision="EXPIRED",
+                    triggered_at=expired_global.get("triggered_at"),
+                    reason=expired_global.get("reason"),
+                )
         except Exception as e:
             logger.warning(f"stop_loss_alerts: global expired check failed: {e}")
 
@@ -488,7 +493,7 @@ async def check_and_alert() -> dict[str, Any]:
         # le smart_resume_decision les classe en FORCE_RESUME et envoie le
         # Telegram dédié avant de clear.
         try:
-            from backend.services import kill_switch
+            from backend.services import kill_switch, rafale_history
 
             for pair, pause_info in list(kill_switch.list_all_pair_pauses_raw().items()):
                 decision, ctx = _smart_resume_decision(pair, pause_info, now)
@@ -497,6 +502,12 @@ async def check_and_alert() -> dict[str, Any]:
                     kill_switch.clear_pair_rafale_pause(pair)
                     await _send_pair_resume_notification(pair, snapshot, decision, ctx)
                     pairs_resumed.append(pair)
+                    rafale_history.log_resume(
+                        scope="pair", pair=pair, decision=decision,
+                        triggered_at=snapshot.get("triggered_at"),
+                        reason=snapshot.get("reason"),
+                        failed_pattern=snapshot.get("failed_pattern"),
+                    )
                 else:
                     # KEEP_COOL_OFF / KEEP_V1_STILL_TRYING → debug log seul
                     logger.debug(

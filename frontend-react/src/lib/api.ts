@@ -247,6 +247,32 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
+  adminWatchdogHistory: (days = 7, limit = 100) =>
+    request<{
+      events: Array<{
+        id: number;
+        created_at: string;
+        event_type: 'PAUSE_SET' | 'RESUME';
+        scope: 'pair' | 'global';
+        pair: string | null;
+        reason: string | null;
+        failed_pattern: string | null;
+        failed_direction: string | null;
+        triggered_at: string | null;
+        resume_decision: string | null;
+        duration_seconds: number | null;
+      }>;
+      stats: {
+        window_days: number;
+        pause_set_count: number;
+        resume_count: number;
+        avg_duration_seconds: number | null;
+        max_duration_seconds: number | null;
+        by_pair: Array<{ pair: string; count: number }>;
+        by_decision: Record<string, number>;
+      };
+    }>(`/api/admin/watchdog/history?days=${days}&limit=${limit}`),
+
   macro: async () => {
     const raw = await request<{ status: string; snapshot: MacroSnapshot | null }>(
       '/api/macro'
