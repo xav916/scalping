@@ -162,7 +162,12 @@ def _check_rejection(setup, dest=None) -> str | None:
         return "_not_a_star"  # privé : filtre auto-exec stars-only, attendu pour 12 paires sur 16
     try:
         from backend.services import kill_switch
-        if kill_switch.is_active():
+        # Passe le pair pour que les pauses per-pair (rafale chirurgicale)
+        # soient prises en compte en plus des triggers globaux.
+        if kill_switch.is_active(pair=setup.pair):
+            # Sub-typing pour traçabilité dans les logs/rejections
+            if kill_switch.is_pair_rafale_paused(setup.pair)[0]:
+                return "kill_switch_pair_paused"
             return "kill_switch"
     except Exception as e:
         logger.debug(f"mt5_bridge: kill_switch check failed: {e}")

@@ -139,31 +139,49 @@ On a **trois ères qui coexistent** parce qu'on est dans une transition :
 L'archi finale visée (~2026-06-15+) : **Track A signal → EA queue → Pepperstone démo**.
 Trois couches simplifiées, V1 et bridge Python tous deux deprecated.
 
-## Circuit breaker — auto-pause/auto-resume sur rafale SL
+## Circuit breaker — auto-pause/auto-resume per-pair sur rafale SL
 
 **Activé depuis 2026-04-30** (env `RAFALE_AUTO_PAUSE_ENABLED=true`, default).
 
-Le watchdog `stop_loss_alerts` tourne toutes les 5 min et :
+Le watchdog `stop_loss_alerts` tourne toutes les 5 min avec **3 niveaux de
+détection** :
 
-1. **Détecte les rafales** :
-   - Globale : ≥ 5 SL auto-exec en 1h → Telegram + **auto-pause**
-   - Par pattern : ≥ 3 SL même pattern en 1h → Telegram seul (pas de pause)
-2. **Auto-pause** (rafale globale uniquement) : appelle `kill_switch.set_rafale_pause()`
-   qui bloque l'envoi de nouveaux ordres au bridge MT5 pendant
-   `RAFALE_PAUSE_DURATION_MIN` minutes (default 120 = 2h).
-3. **Auto-resume** : à chaque cycle 5 min, `consume_expired_rafale_pause()`
-   vérifie si la pause a expiré ; si oui, clear automatique + Telegram
-   "Auto-resume" envoyé.
+| Détection | Seuil | Action |
+|---|---|---|
+| **Par pair** (chirurgical) | ≥ 3 SL même pair en 1h | ⛔ Pause **cette pair seule** 2h. Les autres pairs continuent. |
+| **Globale** (filet sécu) | ≥ 10 SL toutes pairs en 1h | 🛑 Pause **TOUT** l'auto-exec 2h. Pour incident systémique. |
+| **Par pattern** (info) | ≥ 3 SL même pattern en 1h | 📢 Telegram seul, pas de pause. Aide à décider de désactiver un pattern. |
+
+**Conception per-pair** : un cluster de SL sur XAU déclenche une pause sur
+XAU uniquement. XAG, ETH, WTI continuent à trader normalement. Chaque pair
+a son propre timer d'auto-resume indépendant. Pas d'effet domino sur des
+supports sains.
+
+**Auto-resume** : à chaque cycle 5 min, le watchdog appelle
+`consume_expired_pair_rafale_pauses()` et `consume_expired_global_rafale_pause()`
+qui clear les pauses expirées et déclenchent les Telegrams "Auto-resume"
+(un par pair resumée).
+
+**Vérification per-pair côté `mt5_bridge._should_push`** :
+```python
+if kill_switch.is_active(pair=setup.pair):
+    if kill_switch.is_pair_rafale_paused(setup.pair)[0]:
+        return "kill_switch_pair_paused"  # rejection_code dédié
+    return "kill_switch"
+```
 
 **Effet sur les couches** :
-- Couche 1 (signal) : continue de générer (analytics non affectées)
-- Couche 2 (exec) : nouveaux ordres bloqués, **trades ouverts continuent**
-  jusqu'à leur SL/TP naturel (pas de fermeture forcée)
+- Couche 1 (signal) : continue de générer pour TOUTES les pairs (analytics intactes)
+- Couche 2 (exec) : ordres bloqués pour les pairs paused uniquement, **trades
+  ouverts continuent** jusqu'à leur SL/TP naturel (pas de fermeture forcée)
 - Couche 3 (broker) : aucun changement
 
+**Endpoint d'observation** : `/api/status` → bloc `kill_switch.paused_pairs`
+liste les pairs actuellement en pause avec leur info (reason, expires_at).
+
 **Désactivation** : `RAFALE_AUTO_PAUSE_ENABLED=false` dans `.env` puis
-restart. Ou clear manuel : `kill_switch.clear_rafale_pause()` via shell
-Python dans le container (rare cas).
+restart. Ou clear manuel d'une pair :
+`kill_switch.clear_pair_rafale_pause("XAU/USD")` via shell Python.
 
 ## Liens utiles
 

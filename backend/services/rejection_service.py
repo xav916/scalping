@@ -31,6 +31,7 @@ from typing import Any
 
 REASON_LABELS_FR = {
     "kill_switch": "Kill switch actif",
+    "kill_switch_pair_paused": "Pair en pause rafale SL",
     "event_blackout": "Blackout event macro",
     "simulated_data": "Données simulées",
     "verdict_blocker": "Verdict bloqué",
