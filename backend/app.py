@@ -2420,6 +2420,150 @@ async def api_admin_control_tower(_ctx: AuthContext = Depends(require_admin)):
         )
 
 
+@app.get("/api/admin/watchdog/state")
+async def api_admin_watchdog_state(_ctx: AuthContext = Depends(require_admin)):
+    """État du watchdog SL : pauses actives + rafales détectées 24h + last 10 SL.
+
+    Sert la card Watchdog dans /v2/admin pour visualiser le circuit breaker
+    en temps réel et débloquer manuellement une pair si nécessaire.
+    """
+    import sqlite3
+    from datetime import datetime, timedelta, timezone
+
+    from backend.services import kill_switch
+    from backend.services.trade_log_service import _DB_PATH
+
+    now = datetime.now(timezone.utc)
+    since_24h = (now - timedelta(hours=24)).isoformat()
+
+    # Pauses actuellement actives (filtrées : non expirées)
+    paused_pairs = kill_switch.list_paused_pairs()
+    global_active, global_info = kill_switch.is_global_rafale_paused()
+
+    # Stats SL des dernières 24h (pour visualiser l'activité)
+    with sqlite3.connect(str(_DB_PATH)) as c:
+        # Count SL par pair
+        rows = c.execute(
+            """
+            SELECT pair, signal_pattern, COUNT(*) AS cnt, SUM(pnl) AS total_pnl
+              FROM personal_trades
+             WHERE status = 'CLOSED'
+               AND close_reason = 'SL'
+               AND is_auto = 1
+               AND closed_at >= ?
+             GROUP BY pair, signal_pattern
+             ORDER BY cnt DESC
+            """,
+            (since_24h,),
+        ).fetchall()
+        sl_breakdown = [
+            {"pair": r[0], "pattern": r[1], "count": r[2], "pnl_total": r[3]}
+            for r in rows
+        ]
+
+        # Last 10 SL trades
+        rows2 = c.execute(
+            """
+            SELECT id, pair, direction, signal_pattern, pnl, closed_at
+              FROM personal_trades
+             WHERE status = 'CLOSED'
+               AND close_reason = 'SL'
+               AND is_auto = 1
+             ORDER BY closed_at DESC
+             LIMIT 10
+            """,
+        ).fetchall()
+        last_sl = [
+            {
+                "id": r[0], "pair": r[1], "direction": r[2],
+                "pattern": r[3], "pnl": r[4], "closed_at": r[5],
+            }
+            for r in rows2
+        ]
+
+        # Count des rejections kill_switch_pair_paused (= V1 a essayé sur pair paused) 24h
+        rows3 = c.execute(
+            """
+            SELECT pair, json_extract(details, '$.signal_pattern') AS pattern,
+                   COUNT(*) AS cnt
+              FROM signal_rejections
+             WHERE reason_code = 'kill_switch_pair_paused'
+               AND created_at >= ?
+             GROUP BY pair, pattern
+             ORDER BY cnt DESC
+            """,
+            (since_24h,),
+        ).fetchall()
+        rejected_attempts = [
+            {"pair": r[0], "pattern": r[1], "count": r[2]} for r in rows3
+        ]
+
+    return {
+        "now": now.isoformat(),
+        "global_rafale_pause_active": global_active,
+        "global_rafale_pause_info": global_info if global_active else None,
+        "paused_pairs": paused_pairs,
+        "paused_pairs_count": len(paused_pairs),
+        "sl_breakdown_24h": sl_breakdown,
+        "total_sl_24h": sum(r["count"] for r in sl_breakdown),
+        "last_sl_trades": last_sl,
+        "rejected_attempts_24h": rejected_attempts,
+    }
+
+
+@app.post("/api/admin/watchdog/unpause")
+async def api_admin_watchdog_unpause(
+    body: dict, _ctx: AuthContext = Depends(require_admin)
+):
+    """Unpause manuel d'une pair ou de la pause globale.
+
+    Body :
+    - ``{"pair": "XAU/USD"}`` → clear cette pair seule
+    - ``{"global": true}`` → clear la pause globale (filet de sécu)
+    - ``{"all": true}`` → clear toutes les pauses (urgence)
+
+    Retourne l'état post-clear pour confirmation côté UI.
+    """
+    from backend.services import kill_switch
+
+    cleared: dict = {"pairs": [], "global": False}
+
+    if body.get("global"):
+        kill_switch.clear_global_rafale_pause()
+        cleared["global"] = True
+
+    if body.get("all"):
+        for pair in list(kill_switch.list_all_pair_pauses_raw().keys()):
+            kill_switch.clear_pair_rafale_pause(pair)
+            cleared["pairs"].append(pair)
+        kill_switch.clear_global_rafale_pause()
+        cleared["global"] = True
+
+    pair = body.get("pair")
+    if pair and isinstance(pair, str):
+        ok = kill_switch.clear_pair_rafale_pause(pair)
+        if ok:
+            cleared["pairs"].append(pair)
+        else:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Pair '{pair}' n'est pas en pause",
+            )
+
+    if not cleared["pairs"] and not cleared["global"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Body must contain 'pair', 'global', or 'all'",
+        )
+
+    logger.warning(f"admin watchdog unpause: cleared={cleared}")
+    return {
+        "ok": True,
+        "cleared": cleared,
+        "state": kill_switch.status(),
+    }
+
+
 @app.get("/api/shadow/v2_core_long/setups.csv")
 async def api_shadow_setups_csv(
     since: str | None = None,

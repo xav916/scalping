@@ -6,6 +6,7 @@ import { api, ApiError } from '@/lib/api';
 import { GlassCard } from '@/components/ui/GlassCard';
 import { GradientText } from '@/components/ui/GradientText';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { WatchdogCard } from '@/components/admin/WatchdogCard';
 
 /**
  * /v2/admin — Backoffice privé :
@@ -75,6 +76,9 @@ export function AdminPage() {
             Vue interne : users, trials, MRR. Refresh toutes les 30s.
           </p>
         </div>
+
+        {/* Circuit breaker watchdog : visualisation + unpause manuel */}
+        <WatchdogCard />
 
         {isLoading && <Skeleton className="w-full h-48" />}
 

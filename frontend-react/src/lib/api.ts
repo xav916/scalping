@@ -193,6 +193,60 @@ export const api = {
       method: 'DELETE',
     }),
 
+  adminWatchdogState: () =>
+    request<{
+      now: string;
+      global_rafale_pause_active: boolean;
+      global_rafale_pause_info: {
+        triggered_at: string;
+        min_resume_at?: string;
+        max_resume_at?: string;
+        expires_at?: string;
+        reason: string;
+        trigger_type: string;
+      } | null;
+      paused_pairs: Record<string, {
+        triggered_at: string;
+        min_resume_at?: string;
+        max_resume_at?: string;
+        expires_at?: string;
+        reason: string;
+        failed_pattern?: string;
+        failed_direction?: string;
+      }>;
+      paused_pairs_count: number;
+      sl_breakdown_24h: Array<{
+        pair: string;
+        pattern: string | null;
+        count: number;
+        pnl_total: number | null;
+      }>;
+      total_sl_24h: number;
+      last_sl_trades: Array<{
+        id: number;
+        pair: string;
+        direction: string;
+        pattern: string | null;
+        pnl: number | null;
+        closed_at: string;
+      }>;
+      rejected_attempts_24h: Array<{
+        pair: string;
+        pattern: string | null;
+        count: number;
+      }>;
+    }>('/api/admin/watchdog/state'),
+
+  adminWatchdogUnpause: (body: { pair?: string; global?: boolean; all?: boolean }) =>
+    request<{
+      ok: boolean;
+      cleared: { pairs: string[]; global: boolean };
+      state: Record<string, unknown>;
+    }>('/api/admin/watchdog/unpause', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
   macro: async () => {
     const raw = await request<{ status: string; snapshot: MacroSnapshot | null }>(
       '/api/macro'
