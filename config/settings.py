@@ -281,9 +281,15 @@ MIN_CONFIDENCE_SCORE = float(os.getenv("MIN_CONFIDENCE_SCORE", "75"))  # Score m
 DAILY_LOSS_LIMIT_PCT = float(os.getenv("DAILY_LOSS_LIMIT_PCT", "3.0"))
 
 # Watchdog rafale stops loss : si True, le watchdog déclenche une pause
-# auto-exec quand un seuil de SL est franchi. Auto-resume après duree.
+# auto-exec quand un seuil de SL est franchi. Smart resume basé sur
+# l'activité réelle de V1 plutôt qu'un countdown fixe.
 RAFALE_AUTO_PAUSE_ENABLED = os.getenv("RAFALE_AUTO_PAUSE_ENABLED", "true").lower() == "true"
-RAFALE_PAUSE_DURATION_MIN = int(os.getenv("RAFALE_PAUSE_DURATION_MIN", "120"))  # 2h par défaut
+# Cool-off minimum après pause avant de considérer un resume (anti-flapping)
+RAFALE_MIN_COOL_OFF_MIN = int(os.getenv("RAFALE_MIN_COOL_OFF_MIN", "30"))
+# Fenêtre d'observation : si V1 ne tente plus le pattern depuis X min → safe to resume
+RAFALE_QUIET_WINDOW_MIN = int(os.getenv("RAFALE_QUIET_WINDOW_MIN", "15"))
+# Plafond max : force resume après cette durée même si V1 essaie encore
+RAFALE_MAX_PAUSE_HOURS = int(os.getenv("RAFALE_MAX_PAUSE_HOURS", "6"))
 
 # Email summary quotidien (SMTP)
 EMAIL_SMTP_HOST = os.getenv("EMAIL_SMTP_HOST", "")

@@ -187,24 +187,49 @@ def consume_expired_global_rafale_pause() -> dict | None:
 # ─── Pause rafale PER-PAIR (chirurgical) ──────────────────────────────
 
 
-def set_pair_rafale_pause(pair: str, reason: str, duration_min: int) -> dict:
-    """Active une pause auto-exec pour UNE pair spécifique. Les autres pairs
-    continuent à trader. Auto-resume après duration_min."""
+def set_pair_rafale_pause(
+    pair: str,
+    reason: str,
+    min_cool_off_min: int,
+    max_pause_hours: int,
+    failed_pattern: str | None = None,
+    failed_direction: str | None = None,
+) -> dict:
+    """Active une pause auto-exec pour UNE pair spécifique avec smart resume.
+
+    Sémantique :
+    - ``min_resume_at`` (= now + min_cool_off_min) : le watchdog ne resume
+      jamais avant ce timestamp, même si V1 a lâché (anti-flapping).
+    - ``max_resume_at`` (= now + max_pause_hours) : force resume après ce
+      timestamp même si V1 essaie encore (plafond de sécurité).
+    - Entre les deux, le watchdog vérifie cycliquement si V1 tente encore
+      le pattern défaillant. Si quiet → resume. Si V1 essaie → garde paused.
+
+    ``failed_pattern`` / ``failed_direction`` : contexte du pattern qui a
+    causé la rafale, utilisé par le watchdog pour tester la convalescence.
+    """
     state = _load_state()
     now = datetime.now(timezone.utc)
-    expires = now + timedelta(minutes=duration_min)
+    min_resume_at = now + timedelta(minutes=min_cool_off_min)
+    max_resume_at = now + timedelta(hours=max_pause_hours)
     info = {
         "active": True,
         "triggered_at": now.isoformat(),
-        "expires_at": expires.isoformat(),
+        "min_resume_at": min_resume_at.isoformat(),
+        "max_resume_at": max_resume_at.isoformat(),
+        # expires_at conservé pour rétrocompat (alias = max_resume_at)
+        "expires_at": max_resume_at.isoformat(),
         "reason": reason,
         "trigger_type": f"pair:{pair}",
+        "failed_pattern": failed_pattern,
+        "failed_direction": failed_direction,
     }
     state["rafale_paused_pairs"][pair] = info
     _save_state(state)
     logger.warning(
-        f"kill_switch: PAIR rafale_pause ON pair={pair!r} reason={reason!r} "
-        f"expires_at={expires.isoformat()}"
+        f"kill_switch: PAIR rafale_pause ON pair={pair!r} pattern={failed_pattern!r} "
+        f"reason={reason!r} min_resume={min_resume_at.isoformat()} "
+        f"max_resume={max_resume_at.isoformat()}"
     )
     return info
 
@@ -251,12 +276,31 @@ def consume_expired_pair_rafale_pauses() -> dict[str, dict]:
 
 
 def list_paused_pairs() -> dict[str, dict]:
-    """Retourne dict {pair: info} des pairs actuellement en pause non expirée."""
+    """Retourne dict {pair: info} des pairs actuellement en pause non expirée
+    (utilisé par /api/status pour l'UI : on n'affiche que les pauses qui
+    bloquent encore l'exec)."""
     state = _load_state()
     out: dict[str, dict] = {}
     for pair, info in state.get("rafale_paused_pairs", {}).items():
         active_now, _ = _is_pause_info_active_now(info)
         if active_now:
+            out[pair] = info
+    return out
+
+
+def list_all_pair_pauses_raw() -> dict[str, dict]:
+    """Retourne TOUTES les entrées rafale_paused_pairs avec ``active=True``,
+    y compris celles dont ``max_resume_at`` est dans le passé.
+
+    Utilisé par le watchdog stop_loss_alerts pour itérer même les pauses
+    dont le plafond max est dépassé, afin de détecter FORCE_RESUME et
+    envoyer la notification Telegram appropriée. mt5_bridge ne doit
+    PAS utiliser cette fonction (lui doit voir les pauses expirées
+    comme inactives via is_pair_rafale_paused)."""
+    state = _load_state()
+    out: dict[str, dict] = {}
+    for pair, info in state.get("rafale_paused_pairs", {}).items():
+        if info.get("active"):
             out[pair] = info
     return out
 

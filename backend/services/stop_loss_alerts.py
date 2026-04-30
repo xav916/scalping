@@ -24,12 +24,29 @@ sur ``range_bounce_down`` short XAU/XAG en 5h. Cf. journal
   pas de pause. Sert de signal informatif pour décider manuellement de
   désactiver un pattern.
 
-## Auto-pause / auto-resume
+## Auto-pause + SMART resume (vs blind countdown)
 
 Si ``RAFALE_AUTO_PAUSE_ENABLED=true`` (env, default true), les rafales par
-pair et globale déclenchent les pauses kill_switch. À chaque cycle, les
-pauses expirées sont auto-clearées via ``consume_expired_*`` et un
-Telegram resume est envoyé.
+pair et globale déclenchent les pauses kill_switch. La libération
+n'est **pas un countdown bête** : le watchdog vérifie cycliquement si V1
+essaie encore d'émettre le pattern défaillant sur la pair paused.
+
+État/timing d'une pause par pair :
+
+- ``min_resume_at`` (= triggered_at + ``RAFALE_MIN_COOL_OFF_MIN``, default 30 min) :
+  cool-off anti-flapping, jamais de resume avant
+- ``max_resume_at`` (= triggered_at + ``RAFALE_MAX_PAUSE_HOURS``, default 6h) :
+  plafond max, force resume après même si V1 essaie encore
+- Entre les deux : check toutes les 5 min via ``signal_rejections``
+  (count des rejections ``kill_switch_pair_paused`` avec le même
+  ``signal_pattern`` dans la fenêtre ``RAFALE_QUIET_WINDOW_MIN``, default 15 min)
+  - V1 essaie encore (count > 0) → keep paused
+  - V1 quiet (count = 0) → SMART_RESUME
+
+3 raisons possibles de resume avec Telegram dédié :
+- ``SMART_RESUME`` : V1 a lâché le pattern, libération propre
+- ``FORCE_RESUME`` : plafond max atteint, action humaine recommandée
+- (legacy) auto-resume sur expires_at pour les pauses pré-V2
 
 ## Précisions
 
@@ -38,6 +55,7 @@ Telegram resume est envoyé.
 - Idempotence : si une pair est déjà paused, le timer ne se reset pas
   à chaque cycle (évite de prolonger indéfiniment sur cluster persistant).
 - Manual trades (``is_auto=0``) ignorés : l'humain est censé savoir.
+- Le filet de sécu globale garde un timing simple (``max_pause_hours`` *60).
 """
 
 from __future__ import annotations
@@ -201,17 +219,48 @@ def _in_cooldown(key: str, now: datetime) -> bool:
 # ─── Auto-pause helpers ─────────────────────────────────────────────────
 
 
-def _pause_enabled() -> tuple[bool, int]:
-    """Read env via config.settings (rafale_auto_pause_enabled, duration_min)."""
+def _pause_settings() -> tuple[bool, int, int, int]:
+    """Read env : (enabled, min_cool_off_min, quiet_window_min, max_pause_hours)."""
     try:
-        from config.settings import RAFALE_AUTO_PAUSE_ENABLED, RAFALE_PAUSE_DURATION_MIN
-        return bool(RAFALE_AUTO_PAUSE_ENABLED), int(RAFALE_PAUSE_DURATION_MIN)
+        from config.settings import (
+            RAFALE_AUTO_PAUSE_ENABLED,
+            RAFALE_MAX_PAUSE_HOURS,
+            RAFALE_MIN_COOL_OFF_MIN,
+            RAFALE_QUIET_WINDOW_MIN,
+        )
+        return (
+            bool(RAFALE_AUTO_PAUSE_ENABLED),
+            int(RAFALE_MIN_COOL_OFF_MIN),
+            int(RAFALE_QUIET_WINDOW_MIN),
+            int(RAFALE_MAX_PAUSE_HOURS),
+        )
     except Exception:
-        return False, 120
+        return False, 30, 15, 6
 
 
-def _maybe_set_pair_pause(pair: str, reason: str) -> dict | None:
-    enabled, duration_min = _pause_enabled()
+def _dominant_pattern(trades: list[dict[str, Any]]) -> tuple[str | None, str | None]:
+    """Identifie le pattern + direction dominants dans une liste de SLs.
+
+    Si plusieurs patterns à égalité, prend le 1er. Retourne (pattern, direction).
+    """
+    by_pattern: dict[str, int] = {}
+    by_direction: dict[str, int] = {}
+    for t in trades:
+        p = t.get("signal_pattern")
+        if p:
+            by_pattern[p] = by_pattern.get(p, 0) + 1
+        d = t.get("direction")
+        if d:
+            by_direction[d] = by_direction.get(d, 0) + 1
+    top_p = max(by_pattern.items(), key=lambda x: x[1])[0] if by_pattern else None
+    top_d = max(by_direction.items(), key=lambda x: x[1])[0] if by_direction else None
+    return top_p, top_d
+
+
+def _maybe_set_pair_pause(
+    pair: str, reason: str, failed_pattern: str | None, failed_direction: str | None
+) -> dict | None:
+    enabled, min_cool_off_min, _quiet, max_pause_hours = _pause_settings()
     if not enabled:
         return None
     try:
@@ -219,14 +268,21 @@ def _maybe_set_pair_pause(pair: str, reason: str) -> dict | None:
         already, _ = kill_switch.is_pair_rafale_paused(pair)
         if already:
             return None  # idempotent
-        return kill_switch.set_pair_rafale_pause(pair, reason, duration_min)
+        return kill_switch.set_pair_rafale_pause(
+            pair=pair,
+            reason=reason,
+            min_cool_off_min=min_cool_off_min,
+            max_pause_hours=max_pause_hours,
+            failed_pattern=failed_pattern,
+            failed_direction=failed_direction,
+        )
     except Exception as e:
         logger.warning(f"stop_loss_alerts: pair pause set failed for {pair}: {e}")
         return None
 
 
 def _maybe_set_global_pause(reason: str) -> dict | None:
-    enabled, duration_min = _pause_enabled()
+    enabled, _min, _quiet, max_pause_hours = _pause_settings()
     if not enabled:
         return None
     try:
@@ -234,29 +290,141 @@ def _maybe_set_global_pause(reason: str) -> dict | None:
         already, _ = kill_switch.is_global_rafale_paused()
         if already:
             return None
-        return kill_switch.set_global_rafale_pause(reason, duration_min)
+        # Pour le filet global on garde un timing simple : durée = max_pause_hours
+        return kill_switch.set_global_rafale_pause(
+            reason=reason, duration_min=max_pause_hours * 60,
+        )
     except Exception as e:
         logger.warning(f"stop_loss_alerts: global pause set failed: {e}")
         return None
 
 
+# ─── Smart resume — détection d'activité V1 sur la pair paused ─────────
+
+
+def _v1_still_attempting(pair: str, pattern: str, since_iso: str) -> int:
+    """Count des rejections kill_switch_pair_paused pour (pair, pattern) depuis since.
+
+    Si > 0, V1 est toujours en train d'émettre le pattern défaillant pour
+    cette pair → on garde paused. Si 0 → V1 a lâché → safe to resume.
+    """
+    try:
+        with sqlite3.connect(_db_path()) as c:
+            row = c.execute(
+                """
+                SELECT COUNT(*) FROM signal_rejections
+                 WHERE pair = ?
+                   AND reason_code = 'kill_switch_pair_paused'
+                   AND json_extract(details, '$.signal_pattern') = ?
+                   AND created_at >= ?
+                """,
+                (pair, pattern, since_iso),
+            ).fetchone()
+            return int(row[0] or 0)
+    except Exception as e:
+        logger.warning(f"stop_loss_alerts: v1_still_attempting query failed: {e}")
+        return 0
+
+
+def _smart_resume_decision(
+    pair: str, pause_info: dict, now: datetime
+) -> tuple[str, dict[str, Any]]:
+    """Décide pour une pair paused : KEEP / RESUME / FORCE_RESUME.
+
+    Retourne (decision, context_dict pour message Telegram).
+    """
+    _, min_cool_off_min, quiet_window_min, max_pause_hours = _pause_settings()
+
+    triggered_at = pause_info.get("triggered_at")
+    min_resume_at_iso = pause_info.get("min_resume_at")
+    max_resume_at_iso = pause_info.get("max_resume_at") or pause_info.get("expires_at")
+    failed_pattern = pause_info.get("failed_pattern")
+
+    # Sécurité : si données manquent (pause pré-V2), fallback sur expires_at
+    try:
+        max_resume_at = datetime.fromisoformat(max_resume_at_iso) if max_resume_at_iso else None
+    except Exception:
+        max_resume_at = None
+    try:
+        min_resume_at = datetime.fromisoformat(min_resume_at_iso) if min_resume_at_iso else None
+    except Exception:
+        min_resume_at = None
+
+    # ─ FORCE_RESUME : plafond dépassé ─
+    if max_resume_at and now >= max_resume_at:
+        return "FORCE_RESUME", {"max_pause_hours": max_pause_hours, "pattern": failed_pattern}
+
+    # ─ KEEP : encore dans le min cool-off (anti-flapping) ─
+    if min_resume_at and now < min_resume_at:
+        remaining = max(0, int((min_resume_at - now).total_seconds() / 60))
+        return "KEEP_COOL_OFF", {"remaining_min": remaining, "pattern": failed_pattern}
+
+    # ─ Pas de pattern connu → simple expiration time-based ─
+    if not failed_pattern:
+        # Si pas de pattern stocké (legacy pause) on attend juste max_resume_at
+        return "KEEP_COOL_OFF", {"remaining_min": "?", "pattern": None}
+
+    # ─ Window de check : V1 a-t-il essayé ce pattern récemment ? ─
+    quiet_since = (now - timedelta(minutes=quiet_window_min)).isoformat()
+    attempts = _v1_still_attempting(pair, failed_pattern, quiet_since)
+    if attempts > 0:
+        return "KEEP_V1_STILL_TRYING", {
+            "attempts": attempts,
+            "window_min": quiet_window_min,
+            "pattern": failed_pattern,
+        }
+
+    # ─ V1 quiet sur ce pattern → safe resume ─
+    return "SMART_RESUME", {
+        "window_min": quiet_window_min,
+        "pattern": failed_pattern,
+    }
+
+
 # ─── Resume notifications ───────────────────────────────────────────────
 
 
-async def _send_pair_resume_notification(pair: str, info: dict) -> None:
+async def _send_pair_resume_notification(
+    pair: str, info: dict, decision: str, context: dict | None = None
+) -> None:
     triggered_at = info.get("triggered_at", "?")
     reason = info.get("reason", "?")
+    pattern = info.get("failed_pattern") or "?"
+    ctx = context or {}
+
+    if decision == "SMART_RESUME":
+        title = f"🔓 *Smart resume — {pair}*"
+        body = (
+            f"V1 a arrêté de tenter `{pattern}` sur {pair} depuis "
+            f"{ctx.get('window_min', '?')} min.\n"
+            f"Le watchdog libère {pair} car le mode failure semble fini."
+        )
+    elif decision == "FORCE_RESUME":
+        title = f"⚠️ *Force resume — {pair}* (plafond {ctx.get('max_pause_hours', '?')}h atteint)"
+        body = (
+            f"La pair {pair} était paused depuis {ctx.get('max_pause_hours', '?')}h "
+            "(plafond max). Force resume engagé.\n"
+            f"Pattern défaillant : `{pattern}`.\n"
+            "**Action humaine recommandée** : analyser pourquoi V1 essayait encore."
+        )
+    else:
+        # Fallback générique (pause legacy sans contexte smart)
+        title = f"🔓 *Auto-resume — {pair}*"
+        body = (
+            f"La pause sur {pair} déclenchée à {triggered_at} a expiré.\n"
+            f"Raison initiale : {reason}"
+        )
+
     msg = (
-        f"🔓 *Auto-resume — {pair}*\n"
-        f"La pause sur {pair} déclenchée à {triggered_at} a expiré.\n"
-        f"Raison initiale : {reason}\n"
+        f"{title}\n"
+        f"{body}\n"
         f"L'auto-exec MT5 reprend pour {pair}. Les autres pairs n'ont pas été affectées."
     )
     try:
         from backend.services.telegram_service import is_configured, send_text
         if is_configured():
             await send_text(msg, parse_mode="Markdown")
-            logger.warning(f"stop_loss_alerts: pair auto-resume notifié {pair}")
+            logger.warning(f"stop_loss_alerts: pair auto-resume notifié {pair} ({decision})")
     except Exception as e:
         logger.warning(f"stop_loss_alerts: pair resume notification failed: {e}")
 
@@ -303,7 +471,7 @@ async def check_and_alert() -> dict[str, Any]:
         global_pause_set = False
         global_pause_resumed = False
 
-        # ─ Étape 0 : check expirations → auto-resume + Telegram ─
+        # ─ Étape 0a : auto-resume global expiré (filet de sécu) ─
         try:
             from backend.services import kill_switch
 
@@ -311,13 +479,31 @@ async def check_and_alert() -> dict[str, Any]:
             if expired_global:
                 await _send_global_resume_notification(expired_global)
                 global_pause_resumed = True
-
-            expired_pairs = kill_switch.consume_expired_pair_rafale_pauses()
-            for pair, info in expired_pairs.items():
-                await _send_pair_resume_notification(pair, info)
-                pairs_resumed.append(pair)
         except Exception as e:
-            logger.warning(f"stop_loss_alerts: consume expired check failed: {e}")
+            logger.warning(f"stop_loss_alerts: global expired check failed: {e}")
+
+        # ─ Étape 0b : smart resume per-pair (basé sur activité V1, pas countdown bête) ─
+        # On itère list_all_pair_pauses_raw (pas list_paused_pairs) pour aussi
+        # voir les pauses dont max_resume_at est dans le passé entre 2 cycles —
+        # le smart_resume_decision les classe en FORCE_RESUME et envoie le
+        # Telegram dédié avant de clear.
+        try:
+            from backend.services import kill_switch
+
+            for pair, pause_info in list(kill_switch.list_all_pair_pauses_raw().items()):
+                decision, ctx = _smart_resume_decision(pair, pause_info, now)
+                if decision in ("SMART_RESUME", "FORCE_RESUME"):
+                    snapshot = dict(pause_info)
+                    kill_switch.clear_pair_rafale_pause(pair)
+                    await _send_pair_resume_notification(pair, snapshot, decision, ctx)
+                    pairs_resumed.append(pair)
+                else:
+                    # KEEP_COOL_OFF / KEEP_V1_STILL_TRYING → debug log seul
+                    logger.debug(
+                        f"stop_loss_alerts: keep paused {pair} reason={decision} ctx={ctx}"
+                    )
+        except Exception as e:
+            logger.warning(f"stop_loss_alerts: smart resume check failed: {e}")
 
         # ─ Group by pair / pattern ─
         by_pair: dict[str, list[dict[str, Any]]] = {}
@@ -328,7 +514,7 @@ async def check_and_alert() -> dict[str, Any]:
             p = t.get("signal_pattern") or "unknown"
             by_pattern.setdefault(p, []).append(t)
 
-        # ─ Détection 1 : rafale par PAIR (chirurgical) ─
+        # ─ Détection 1 : rafale par PAIR (chirurgical, smart resume) ─
         for pair, trades in by_pair.items():
             if len(trades) < PAIR_THRESHOLD:
                 continue
@@ -337,16 +523,25 @@ async def check_and_alert() -> dict[str, Any]:
                 alerts_suppressed.append(key)
                 continue
             msg = _format_pair_message(pair, trades)
+            # Identifie le pattern dominant pour le smart resume check
+            failed_pattern, failed_direction = _dominant_pattern(trades)
             pause_state = _maybe_set_pair_pause(
                 pair=pair,
                 reason=f"{len(trades)} SL en {WINDOW_HOURS}h",
+                failed_pattern=failed_pattern,
+                failed_direction=failed_direction,
             )
             if pause_state:
                 pairs_paused.append(pair)
-                expires_at = pause_state.get("expires_at", "?")
+                min_resume_at = pause_state.get("min_resume_at", "?")
                 msg += (
-                    f"\n\n⛔ *AUTO-PAUSE {pair}* jusqu'à {expires_at}.\n"
-                    "Les autres pairs continuent à trader. Resume automatique."
+                    f"\n\n⛔ *AUTO-PAUSE {pair}*\n"
+                    f"Pattern défaillant : `{failed_pattern or 'N/A'}` "
+                    f"({failed_direction or 'N/A'})\n"
+                    f"Cool-off min jusqu'à {min_resume_at}.\n"
+                    "Smart resume : le watchdog vérifiera ensuite si V1 essaie "
+                    "encore ce pattern. Si quiet pendant 15 min → resume. "
+                    "Sinon pause prolongée jusqu'à 6h max."
                 )
             if await _send_alert(key, msg, now):
                 alerts_sent.append(key)

@@ -21,7 +21,9 @@ def db(tmp_path, monkeypatch):
 
     from config import settings as _cfg
     monkeypatch.setattr(_cfg, "RAFALE_AUTO_PAUSE_ENABLED", False)
-    monkeypatch.setattr(_cfg, "RAFALE_PAUSE_DURATION_MIN", 120)
+    monkeypatch.setattr(_cfg, "RAFALE_MIN_COOL_OFF_MIN", 30)
+    monkeypatch.setattr(_cfg, "RAFALE_QUIET_WINDOW_MIN", 15)
+    monkeypatch.setattr(_cfg, "RAFALE_MAX_PAUSE_HOURS", 6)
 
     yield str(db_file)
     stop_loss_alerts._last_alert_at.clear()
@@ -32,7 +34,9 @@ def db_with_auto_pause(db, monkeypatch):
     """Variante avec RAFALE_AUTO_PAUSE_ENABLED=True."""
     from config import settings as _cfg
     monkeypatch.setattr(_cfg, "RAFALE_AUTO_PAUSE_ENABLED", True)
-    monkeypatch.setattr(_cfg, "RAFALE_PAUSE_DURATION_MIN", 120)
+    monkeypatch.setattr(_cfg, "RAFALE_MIN_COOL_OFF_MIN", 30)
+    monkeypatch.setattr(_cfg, "RAFALE_QUIET_WINDOW_MIN", 15)
+    monkeypatch.setattr(_cfg, "RAFALE_MAX_PAUSE_HOURS", 6)
     return db
 
 
@@ -278,18 +282,22 @@ async def test_pair_pause_idempotent_during_active_window(db_with_auto_pause):
 
 
 @pytest.mark.asyncio
-async def test_pair_auto_resume_when_expired(db_with_auto_pause):
-    """Pause expirée → auto-clear + Telegram resume."""
+async def test_pair_force_resume_when_max_pause_reached(db_with_auto_pause):
+    """Plafond max_resume_at dépassé → FORCE_RESUME + Telegram dédié."""
     db = db_with_auto_pause
-    past = datetime.now(timezone.utc) - timedelta(minutes=5)
-    very_past = datetime.now(timezone.utc) - timedelta(hours=3)
+    now = datetime.now(timezone.utc)
+    very_past = now - timedelta(hours=7)  # > max_pause_hours=6
     state = kill_switch._load_state()
     state["rafale_paused_pairs"]["XAU/USD"] = {
         "active": True,
         "triggered_at": very_past.isoformat(),
-        "expires_at": past.isoformat(),
+        "min_resume_at": (very_past + timedelta(minutes=30)).isoformat(),
+        "max_resume_at": (very_past + timedelta(hours=6)).isoformat(),
+        "expires_at": (very_past + timedelta(hours=6)).isoformat(),
         "reason": "test pause",
         "trigger_type": "pair:XAU/USD",
+        "failed_pattern": "range_bounce_down",
+        "failed_direction": "sell",
     }
     kill_switch._save_state(state)
 
@@ -301,31 +309,102 @@ async def test_pair_auto_resume_when_expired(db_with_auto_pause):
     paused, _ = kill_switch.is_pair_rafale_paused("XAU/USD")
     assert paused is False
     msg = mock_send.call_args_list[0][0][0]
-    assert "Auto-resume" in msg
-    assert "XAU/USD" in msg
+    assert "Force resume" in msg or "force resume" in msg.lower()
 
 
 @pytest.mark.asyncio
-async def test_multiple_pairs_resume_independently(db_with_auto_pause):
-    """Plusieurs pairs paused, certaines expirées → notifications indépendantes."""
+async def test_pair_smart_resume_when_v1_quiet(db_with_auto_pause):
+    """V1 ne tente plus le pattern depuis quiet_window_min → SMART_RESUME."""
     db = db_with_auto_pause
     now = datetime.now(timezone.utc)
-
-    # XAU expirée (passé), XAG encore active (futur)
+    # Pause ancienne ; on est passé du min_resume_at, pas du max
+    triggered = now - timedelta(minutes=45)  # > min_cool_off=30
     state = kill_switch._load_state()
     state["rafale_paused_pairs"]["XAU/USD"] = {
         "active": True,
-        "triggered_at": (now - timedelta(hours=3)).isoformat(),
-        "expires_at": (now - timedelta(minutes=10)).isoformat(),
-        "reason": "expirée",
+        "triggered_at": triggered.isoformat(),
+        "min_resume_at": (triggered + timedelta(minutes=30)).isoformat(),
+        "max_resume_at": (triggered + timedelta(hours=6)).isoformat(),
+        "expires_at": (triggered + timedelta(hours=6)).isoformat(),
+        "reason": "test",
         "trigger_type": "pair:XAU/USD",
+        "failed_pattern": "range_bounce_down",
+        "failed_direction": "sell",
     }
-    state["rafale_paused_pairs"]["XAG/USD"] = {
+    kill_switch._save_state(state)
+
+    # Aucune rejection signal → V1 quiet → smart resume
+
+    with patch("backend.services.telegram_service.send_text", new=AsyncMock()) as mock_send:
+        with patch("backend.services.telegram_service.is_configured", return_value=True):
+            out = await stop_loss_alerts.check_and_alert()
+
+    assert "XAU/USD" in out["pairs_resumed"]
+    msg = mock_send.call_args_list[0][0][0]
+    assert "Smart resume" in msg
+
+
+@pytest.mark.asyncio
+async def test_pair_keep_paused_when_v1_still_attempting(db_with_auto_pause):
+    """V1 essaie encore le pattern → keep paused (pas de resume)."""
+    db = db_with_auto_pause
+    from backend.services import rejection_service
+    rejection_service._ensure_schema()
+
+    now = datetime.now(timezone.utc)
+    triggered = now - timedelta(minutes=45)
+    state = kill_switch._load_state()
+    state["rafale_paused_pairs"]["XAU/USD"] = {
         "active": True,
-        "triggered_at": now.isoformat(),
-        "expires_at": (now + timedelta(hours=1)).isoformat(),
-        "reason": "active",
-        "trigger_type": "pair:XAG/USD",
+        "triggered_at": triggered.isoformat(),
+        "min_resume_at": (triggered + timedelta(minutes=30)).isoformat(),
+        "max_resume_at": (triggered + timedelta(hours=6)).isoformat(),
+        "expires_at": (triggered + timedelta(hours=6)).isoformat(),
+        "reason": "test",
+        "trigger_type": "pair:XAU/USD",
+        "failed_pattern": "range_bounce_down",
+        "failed_direction": "sell",
+    }
+    kill_switch._save_state(state)
+
+    # Insérer une rejection kill_switch_pair_paused récente sur XAU avec
+    # le même pattern → V1 essaie encore
+    rejection_service.record_rejection(
+        pair="XAU/USD",
+        direction="sell",
+        confidence=66.0,
+        reason_code="kill_switch_pair_paused",
+        details={"signal_pattern": "range_bounce_down"},
+    )
+
+    with patch("backend.services.telegram_service.send_text", new=AsyncMock()):
+        with patch("backend.services.telegram_service.is_configured", return_value=True):
+            out = await stop_loss_alerts.check_and_alert()
+
+    # XAU PAS resumed
+    assert "XAU/USD" not in out["pairs_resumed"]
+    paused, _ = kill_switch.is_pair_rafale_paused("XAU/USD")
+    assert paused is True
+
+
+@pytest.mark.asyncio
+async def test_pair_keep_paused_during_min_cool_off(db_with_auto_pause):
+    """Encore dans le min cool-off → keep paused (anti-flapping)."""
+    db = db_with_auto_pause
+    now = datetime.now(timezone.utc)
+    # Triggered il y a seulement 5 min, min_cool_off = 30 min
+    triggered = now - timedelta(minutes=5)
+    state = kill_switch._load_state()
+    state["rafale_paused_pairs"]["XAU/USD"] = {
+        "active": True,
+        "triggered_at": triggered.isoformat(),
+        "min_resume_at": (triggered + timedelta(minutes=30)).isoformat(),
+        "max_resume_at": (triggered + timedelta(hours=6)).isoformat(),
+        "expires_at": (triggered + timedelta(hours=6)).isoformat(),
+        "reason": "test",
+        "trigger_type": "pair:XAU/USD",
+        "failed_pattern": "range_bounce_down",
+        "failed_direction": "sell",
     }
     kill_switch._save_state(state)
 
@@ -333,13 +412,9 @@ async def test_multiple_pairs_resume_independently(db_with_auto_pause):
         with patch("backend.services.telegram_service.is_configured", return_value=True):
             out = await stop_loss_alerts.check_and_alert()
 
-    # XAU resumed, XAG still active
-    assert "XAU/USD" in out["pairs_resumed"]
-    assert "XAG/USD" not in out["pairs_resumed"]
-    paused_xau, _ = kill_switch.is_pair_rafale_paused("XAU/USD")
-    paused_xag, _ = kill_switch.is_pair_rafale_paused("XAG/USD")
-    assert paused_xau is False
-    assert paused_xag is True
+    assert "XAU/USD" not in out["pairs_resumed"]
+    paused, _ = kill_switch.is_pair_rafale_paused("XAU/USD")
+    assert paused is True
 
 
 @pytest.mark.asyncio
@@ -364,7 +439,14 @@ async def test_auto_pause_disabled_means_no_pause(db):
 
 def test_is_active_pair_isolated(db):
     """is_active(pair=X) ne déclenche pas si une AUTRE pair est paused."""
-    kill_switch.set_pair_rafale_pause("XAU/USD", "test", 60)
+    kill_switch.set_pair_rafale_pause(
+        pair="XAU/USD",
+        reason="test",
+        min_cool_off_min=30,
+        max_pause_hours=2,
+        failed_pattern="range_bounce_down",
+        failed_direction="sell",
+    )
     assert kill_switch.is_active(pair="XAU/USD") is True
     assert kill_switch.is_active(pair="XAG/USD") is False
     assert kill_switch.is_active() is False  # no pair = global only

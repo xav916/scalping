@@ -242,11 +242,24 @@ async def _push_to_destination(setup, dest) -> None:
     if rejection is not None:
         # Les reason codes privés (commencent par "_") ne sont pas loggés
         if not rejection.startswith("_"):
+            # Inclut signal_pattern dans details pour les rejections
+            # kill_switch_pair_paused : le watchdog stop_loss_alerts s'en
+            # sert pour détecter si V1 essaie encore le pattern défaillant
+            # (smart resume). Inutile pour les autres reason_codes mais
+            # peu cher à porter, donc on log universellement.
+            try:
+                _p = getattr(setup, "pattern", None)
+                _pp = getattr(_p, "pattern", None) if _p else None
+                _pattern_str = _pp.value if hasattr(_pp, "value") else (str(_pp) if _pp else None)
+            except Exception:
+                _pattern_str = None
+            details = {"signal_pattern": _pattern_str}
             record_rejection(
                 pair=setup.pair,
                 direction=_direction_value(setup),
                 confidence=getattr(setup, "confidence_score", None),
                 reason_code=rejection,
+                details=details,
                 user_id=dest.user_id,
             )
         return

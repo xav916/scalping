@@ -157,10 +157,29 @@ XAU uniquement. XAG, ETH, WTI continuent à trader normalement. Chaque pair
 a son propre timer d'auto-resume indépendant. Pas d'effet domino sur des
 supports sains.
 
-**Auto-resume** : à chaque cycle 5 min, le watchdog appelle
-`consume_expired_pair_rafale_pauses()` et `consume_expired_global_rafale_pause()`
-qui clear les pauses expirées et déclenchent les Telegrams "Auto-resume"
-(un par pair resumée).
+**Smart resume** (vs blind countdown) : à chaque cycle 5 min, pour chaque
+pair en pause, le watchdog évalue 3 décisions possibles :
+
+- `KEEP_COOL_OFF` : `now < min_resume_at` (default cool-off 30 min,
+  `RAFALE_MIN_COOL_OFF_MIN`) → anti-flapping, garde paused
+- `KEEP_V1_STILL_TRYING` : V1 a tenté le pattern défaillant via
+  `signal_rejections.kill_switch_pair_paused` dans la fenêtre
+  `RAFALE_QUIET_WINDOW_MIN` (default 15 min) → garde paused, V1 est
+  toujours en boucle
+- `SMART_RESUME` : V1 quiet sur le pattern depuis 15 min → resume
+  propre, libération du flag + Telegram "V1 a lâché"
+- `FORCE_RESUME` : `now >= max_resume_at` (plafond 6h
+  `RAFALE_MAX_PAUSE_HOURS`) → resume forcé même si V1 essaie encore +
+  Telegram "Action humaine recommandée"
+
+Les rejections incluent `signal_pattern` dans `details` (JSON) pour
+permettre la query `JSON_EXTRACT(details, '$.signal_pattern')` côté
+watchdog.
+
+**Auto-resume global** (filet de sécu) : timing simple, expire après
+`RAFALE_MAX_PAUSE_HOURS * 60` minutes via
+`consume_expired_global_rafale_pause()`. Pas de smart logic car un
+incident systémique justifie une revue humaine.
 
 **Vérification per-pair côté `mt5_bridge._should_push`** :
 ```python
