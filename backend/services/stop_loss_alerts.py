@@ -1,4 +1,4 @@
-"""Alertes Telegram sur rafales de stops loss auto-exec.
+"""Alertes Telegram + circuit breaker sur rafales de stops loss auto-exec.
 
 Complément de ``rejection_alerts`` : ce dernier surveille les setups
 **bloqués avant exécution** (kill_switch, sl_too_close, bridge_timeout, etc.).
@@ -11,6 +11,8 @@ existante ne s'est déclenchée car les ordres passaient les filtres
 pré-exécution (les SL placés étaient acceptés par le broker, juste très
 serrés). Cf. ``docs/superpowers/journal/2026-04-30-v1-drawdown-observation.md``.
 
+## Comportements
+
 Deux détections en parallèle, cooldowns indépendants :
 
 - **Rafale globale** : ≥ ``GLOBAL_THRESHOLD`` SL auto-exec en ``WINDOW_HOURS`` h
@@ -18,6 +20,23 @@ Deux détections en parallèle, cooldowns indépendants :
 - **Rafale par pattern** : ≥ ``PATTERN_THRESHOLD`` SL sur le même
   ``signal_pattern`` en ``WINDOW_HOURS`` h. Détecte un mode de défaillance
   pattern-spécifique (V1 qui rejoue la même idée).
+
+## Circuit breaker (auto-pause + auto-resume)
+
+Si ``RAFALE_AUTO_PAUSE_ENABLED=true`` (env), une rafale globale détectée
+déclenche en plus ``kill_switch.set_rafale_pause()`` qui bloque l'envoi de
+NOUVEAUX ordres au bridge MT5 pour ``RAFALE_PAUSE_DURATION_MIN`` minutes
+(default 2h). Les trades ouverts continuent jusqu'à leur SL/TP.
+
+À chaque cycle, ``consume_expired_rafale_pause()`` vérifie si une pause a
+expiré ; si oui, l'auto-resume se matérialise (clear du flag) et un
+Telegram de notification est envoyé.
+
+Note : seules les **rafales globales** déclenchent l'auto-pause. Les
+rafales par pattern envoient une alerte mais ne pausent pas (pour ne
+pas geler le système au moindre cluster pattern-spécifique). Pour
+bloquer un pattern précis sans tout couper, désactiver le pattern
+manuellement.
 
 Tourne périodiquement (scheduler 5 min). Tous les SL comptés sont issus
 de trades ``is_auto=1`` (auto-exec) — les trades manuels ne déclenchent
@@ -169,8 +188,58 @@ def _in_cooldown(key: str, now: datetime) -> bool:
     return bool(last and (now - last) < timedelta(minutes=COOLDOWN_MINUTES))
 
 
+async def _maybe_auto_pause(reason: str, trigger_type: str) -> dict | None:
+    """Active la pause kill_switch si activée par config. Retourne le state ou None."""
+    try:
+        from config.settings import RAFALE_AUTO_PAUSE_ENABLED, RAFALE_PAUSE_DURATION_MIN
+    except Exception:
+        return None
+
+    if not RAFALE_AUTO_PAUSE_ENABLED:
+        logger.info(f"stop_loss_alerts: auto-pause disabled, skip ({trigger_type})")
+        return None
+
+    try:
+        from backend.services import kill_switch
+
+        # Si déjà paused (rafale précédente non expirée), ne pas re-set pour
+        # ne pas reset le timer expires_at à chaque cycle.
+        already_paused, _info = kill_switch.is_rafale_paused()
+        if already_paused:
+            return None
+        return kill_switch.set_rafale_pause(reason, RAFALE_PAUSE_DURATION_MIN, trigger_type)
+    except Exception as e:
+        logger.warning(f"stop_loss_alerts: auto-pause set failed: {e}")
+        return None
+
+
+async def _send_resume_notification(expired_info: dict, now: datetime) -> None:
+    """Notifie Telegram qu'une pause auto a expiré et que l'auto-exec reprend."""
+    try:
+        triggered_at = expired_info.get("triggered_at", "?")
+        trigger_type = expired_info.get("trigger_type", "?")
+        reason = expired_info.get("reason", "?")
+        msg = (
+            "🔓 *Auto-resume — fin de pause rafale*\n"
+            f"La pause déclenchée à {triggered_at} ({trigger_type}) a expiré.\n"
+            f"Raison initiale : {reason}\n"
+            "L'auto-exec MT5 reprend automatiquement. "
+            "Surveiller les prochains trades — si la rafale revient, "
+            "le watchdog re-déclenchera une pause."
+        )
+        from backend.services.telegram_service import is_configured, send_text
+        if is_configured():
+            await send_text(msg, parse_mode="Markdown")
+            logger.warning(
+                f"stop_loss_alerts: auto-resume notifié ({trigger_type})"
+            )
+    except Exception as e:
+        logger.warning(f"stop_loss_alerts: resume notification failed: {e}")
+
+
 async def check_and_alert() -> dict[str, Any]:
-    """Job scheduler : check rafales SL global + par pattern, envoie Telegram.
+    """Job scheduler : check rafales SL global + par pattern, déclenche
+    auto-pause + auto-resume, envoie Telegram.
 
     Best-effort : toute erreur est loggée, pas propagée (ne doit pas planter
     le scheduler).
@@ -184,6 +253,18 @@ async def check_and_alert() -> dict[str, Any]:
 
         alerts_sent: list[str] = []
         alerts_suppressed: list[str] = []
+        auto_pause_set = False
+        auto_resume_notified = False
+
+        # --- Étape 0 : check si une pause a expiré → auto-resume + Telegram ---
+        try:
+            from backend.services import kill_switch
+            expired_info = kill_switch.consume_expired_rafale_pause()
+            if expired_info is not None:
+                await _send_resume_notification(expired_info, now)
+                auto_resume_notified = True
+        except Exception as e:
+            logger.warning(f"stop_loss_alerts: consume expired check failed: {e}")
 
         # --- Détection 1 : rafale globale ---
         if total_count >= GLOBAL_THRESHOLD:
@@ -191,11 +272,23 @@ async def check_and_alert() -> dict[str, Any]:
                 alerts_suppressed.append("global")
             else:
                 msg = _format_global_message(sl_trades)
+                # Auto-pause AVANT l'envoi du message pour qu'on puisse
+                # informer du status pause dans le même Telegram
+                pause_state = await _maybe_auto_pause(
+                    reason=f"{total_count} SL en {WINDOW_HOURS}h",
+                    trigger_type="global",
+                )
+                if pause_state:
+                    auto_pause_set = True
+                    expires_at = pause_state.get("expires_at", "?")
+                    msg += (
+                        f"\n\n⛔ *AUTO-PAUSE activée* — auto-exec gelé jusqu'à {expires_at}. "
+                        "Resume automatique."
+                    )
                 if await _send_alert("global", msg, now):
                     alerts_sent.append("global")
 
-        # --- Détection 2 : rafale par pattern ---
-        # Group by pattern
+        # --- Détection 2 : rafale par pattern (alerte seule, pas de pause) ---
         by_pattern: dict[str, list[dict[str, Any]]] = {}
         for t in sl_trades:
             p = t.get("signal_pattern") or "unknown"
@@ -218,6 +311,8 @@ async def check_and_alert() -> dict[str, Any]:
             "by_pattern_counts": {p: len(trades) for p, trades in by_pattern.items()},
             "alerts_sent": alerts_sent,
             "alerts_suppressed_cooldown": alerts_suppressed,
+            "auto_pause_set": auto_pause_set,
+            "auto_resume_notified": auto_resume_notified,
         }
 
     except Exception:

@@ -280,6 +280,11 @@ MIN_CONFIDENCE_SCORE = float(os.getenv("MIN_CONFIDENCE_SCORE", "75"))  # Score m
 # Limite de perte journaliere : au-dela, mode silencieux (pas de bip, pas de telegram)
 DAILY_LOSS_LIMIT_PCT = float(os.getenv("DAILY_LOSS_LIMIT_PCT", "3.0"))
 
+# Watchdog rafale stops loss : si True, le watchdog déclenche une pause
+# auto-exec quand un seuil de SL est franchi. Auto-resume après duree.
+RAFALE_AUTO_PAUSE_ENABLED = os.getenv("RAFALE_AUTO_PAUSE_ENABLED", "true").lower() == "true"
+RAFALE_PAUSE_DURATION_MIN = int(os.getenv("RAFALE_PAUSE_DURATION_MIN", "120"))  # 2h par défaut
+
 # Email summary quotidien (SMTP)
 EMAIL_SMTP_HOST = os.getenv("EMAIL_SMTP_HOST", "")
 EMAIL_SMTP_PORT = int(os.getenv("EMAIL_SMTP_PORT", "465"))

@@ -5,19 +5,36 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from backend.services import stop_loss_alerts, trade_log_service
+from backend.services import kill_switch, stop_loss_alerts, trade_log_service
 
 
 @pytest.fixture
 def db(tmp_path, monkeypatch):
+    """Fixture isole DB + kill_switch state per test.
+
+    Sans isolation kill_switch, les tests qui déclenchent un global rafale
+    écrivent dans le vrai ``kill_switch.json`` du repo (pollution + non
+    déterminisme). On redirige _STATE_PATH vers tmp_path.
+    """
     db_file = tmp_path / "trades.db"
     sqlite3.connect(db_file).close()
-    # trade_log_service expose _DB_PATH (utilisé par stop_loss_alerts._db_path)
     monkeypatch.setattr(trade_log_service, "_DB_PATH", db_file)
-    # init schema (fonction privée s'appelle _init_schema dans ce module)
     trade_log_service._init_schema()
+
+    # Isolation kill_switch — chaque test a son propre fichier state.
+    ks_file = tmp_path / "kill_switch.json"
+    monkeypatch.setattr(kill_switch, "_STATE_PATH", ks_file)
+
+    # Auto-pause OFF par défaut dans les tests pour ne pas perturber
+    # ceux qui ne testent pas le circuit breaker. Tests dédiés
+    # ré-activent explicitement via monkeypatch sur l'attribut.
+    # Note : config.settings est lu à l'import → on patch l'attribut
+    # plutôt que la variable d'env.
+    from config import settings as _cfg
+    monkeypatch.setattr(_cfg, "RAFALE_AUTO_PAUSE_ENABLED", False)
+    monkeypatch.setattr(_cfg, "RAFALE_PAUSE_DURATION_MIN", 120)
+
     yield str(db_file)
-    # Reset state inter-test
     stop_loss_alerts._last_alert_at.clear()
 
 
@@ -231,6 +248,165 @@ async def test_telegram_not_configured_skips_send(db):
     assert mock_send.call_count == 0
     # Mais alerts_sent reste vide car le send a été skip
     assert out["alerts_sent"] == []
+
+
+@pytest.fixture
+def db_with_auto_pause(db, monkeypatch):
+    """Variante de la fixture db avec RAFALE_AUTO_PAUSE_ENABLED=True."""
+    from config import settings as _cfg
+    monkeypatch.setattr(_cfg, "RAFALE_AUTO_PAUSE_ENABLED", True)
+    monkeypatch.setattr(_cfg, "RAFALE_PAUSE_DURATION_MIN", 120)
+    return db
+
+
+@pytest.mark.asyncio
+async def test_auto_pause_triggered_on_global_rafale(db_with_auto_pause):
+    db = db_with_auto_pause
+    now = datetime.now(timezone.utc)
+    patterns = ["momentum_up", "engulfing_bullish", "breakout_up",
+                "momentum_down", "doji_reversal", "pin_bar_up"]
+    for i, p in enumerate(patterns):
+        _insert_sl_trade(db, (now - timedelta(minutes=i * 5)).isoformat(), pattern=p)
+
+    with patch("backend.services.telegram_service.send_text", new=AsyncMock()) as mock_send:
+        with patch("backend.services.telegram_service.is_configured", return_value=True):
+            out = await stop_loss_alerts.check_and_alert()
+
+    # Auto-pause set
+    assert out["auto_pause_set"] is True
+    # Kill switch effectivement actif
+    paused, info = kill_switch.is_rafale_paused()
+    assert paused is True
+    assert info is not None
+    assert info["trigger_type"] == "global"
+    assert "6 SL" in info["reason"]
+    # Message Telegram contient mention auto-pause
+    msg = mock_send.call_args_list[0][0][0]
+    assert "AUTO-PAUSE" in msg
+
+
+@pytest.mark.asyncio
+async def test_auto_pause_disabled_doesnt_trigger(db):
+    """Avec RAFALE_AUTO_PAUSE_ENABLED=false (default fixture), pas de pause."""
+    now = datetime.now(timezone.utc)
+    patterns = ["momentum_up", "engulfing_bullish", "breakout_up",
+                "momentum_down", "doji_reversal", "pin_bar_up"]
+    for i, p in enumerate(patterns):
+        _insert_sl_trade(db, (now - timedelta(minutes=i * 5)).isoformat(), pattern=p)
+
+    with patch("backend.services.telegram_service.send_text", new=AsyncMock()):
+        with patch("backend.services.telegram_service.is_configured", return_value=True):
+            out = await stop_loss_alerts.check_and_alert()
+
+    assert out["auto_pause_set"] is False
+    paused, _ = kill_switch.is_rafale_paused()
+    assert paused is False
+
+
+@pytest.mark.asyncio
+async def test_auto_pause_idempotent_during_active_window(db_with_auto_pause):
+    """Si déjà paused, un 2ᵉ check ne re-set pas le timer (pour pas le rallonger indéfiniment)."""
+    db = db_with_auto_pause
+    now = datetime.now(timezone.utc)
+    patterns = ["momentum_up", "engulfing_bullish", "breakout_up",
+                "momentum_down", "doji_reversal", "pin_bar_up"]
+    for i, p in enumerate(patterns):
+        _insert_sl_trade(db, (now - timedelta(minutes=i * 5)).isoformat(), pattern=p)
+
+    with patch("backend.services.telegram_service.send_text", new=AsyncMock()):
+        with patch("backend.services.telegram_service.is_configured", return_value=True):
+            await stop_loss_alerts.check_and_alert()
+            paused1, info1 = kill_switch.is_rafale_paused()
+            expires1 = info1["expires_at"]
+
+            # 2ᵉ check immédiat — déjà dans cooldown alert + déjà paused
+            out2 = await stop_loss_alerts.check_and_alert()
+            paused2, info2 = kill_switch.is_rafale_paused()
+            expires2 = info2["expires_at"]
+
+    # Toujours paused, mais expires_at INCHANGÉ (pas reset à chaque cycle)
+    assert paused1 is True and paused2 is True
+    assert expires1 == expires2
+    assert out2["auto_pause_set"] is False
+
+
+@pytest.mark.asyncio
+async def test_auto_resume_triggers_telegram_when_pause_expires(db_with_auto_pause):
+    """Une pause ayant expiré dans le passé doit auto-resume + envoyer Telegram."""
+    db = db_with_auto_pause
+    # Set un kill switch state avec expires_at déjà dans le passé
+    past = datetime.now(timezone.utc) - timedelta(minutes=5)
+    very_past = datetime.now(timezone.utc) - timedelta(hours=3)
+    state = kill_switch._load_state()
+    state["rafale_pause"] = {
+        "active": True,
+        "triggered_at": very_past.isoformat(),
+        "expires_at": past.isoformat(),
+        "reason": "test pause",
+        "trigger_type": "global",
+    }
+    kill_switch._save_state(state)
+
+    # Pas de SL récents → pas de re-déclenchement
+    # (sinon le test pourrait re-pauser dans la même call et masquer la transition)
+
+    with patch("backend.services.telegram_service.send_text", new=AsyncMock()) as mock_send:
+        with patch("backend.services.telegram_service.is_configured", return_value=True):
+            out = await stop_loss_alerts.check_and_alert()
+
+    # Transition détectée
+    assert out["auto_resume_notified"] is True
+    # Pause clearée
+    paused, _ = kill_switch.is_rafale_paused()
+    assert paused is False
+    # Telegram envoyé
+    msg = mock_send.call_args_list[0][0][0]
+    assert "Auto-resume" in msg
+    assert "test pause" in msg
+
+
+@pytest.mark.asyncio
+async def test_no_auto_resume_if_pause_still_active(db_with_auto_pause):
+    """Pause toujours dans sa fenêtre → pas de notif resume."""
+    db = db_with_auto_pause
+    future = datetime.now(timezone.utc) + timedelta(hours=1)
+    state = kill_switch._load_state()
+    state["rafale_pause"] = {
+        "active": True,
+        "triggered_at": datetime.now(timezone.utc).isoformat(),
+        "expires_at": future.isoformat(),
+        "reason": "test active pause",
+        "trigger_type": "global",
+    }
+    kill_switch._save_state(state)
+
+    with patch("backend.services.telegram_service.send_text", new=AsyncMock()):
+        with patch("backend.services.telegram_service.is_configured", return_value=True):
+            out = await stop_loss_alerts.check_and_alert()
+
+    assert out["auto_resume_notified"] is False
+    paused, _ = kill_switch.is_rafale_paused()
+    assert paused is True  # Toujours active
+
+
+@pytest.mark.asyncio
+async def test_pattern_rafale_does_not_trigger_auto_pause(db_with_auto_pause):
+    """Une rafale par pattern envoie une alerte mais ne déclenche pas la pause."""
+    db = db_with_auto_pause
+    now = datetime.now(timezone.utc)
+    # 3 SL même pattern (franchit pattern threshold mais pas global threshold=5)
+    for i in range(3):
+        _insert_sl_trade(db, (now - timedelta(minutes=i * 5)).isoformat(),
+                         pattern="range_bounce_down")
+
+    with patch("backend.services.telegram_service.send_text", new=AsyncMock()):
+        with patch("backend.services.telegram_service.is_configured", return_value=True):
+            out = await stop_loss_alerts.check_and_alert()
+
+    assert out["auto_pause_set"] is False
+    assert "pattern:range_bounce_down" in out["alerts_sent"]
+    paused, _ = kill_switch.is_rafale_paused()
+    assert paused is False
 
 
 @pytest.mark.asyncio

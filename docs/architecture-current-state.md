@@ -139,6 +139,32 @@ On a **trois ères qui coexistent** parce qu'on est dans une transition :
 L'archi finale visée (~2026-06-15+) : **Track A signal → EA queue → Pepperstone démo**.
 Trois couches simplifiées, V1 et bridge Python tous deux deprecated.
 
+## Circuit breaker — auto-pause/auto-resume sur rafale SL
+
+**Activé depuis 2026-04-30** (env `RAFALE_AUTO_PAUSE_ENABLED=true`, default).
+
+Le watchdog `stop_loss_alerts` tourne toutes les 5 min et :
+
+1. **Détecte les rafales** :
+   - Globale : ≥ 5 SL auto-exec en 1h → Telegram + **auto-pause**
+   - Par pattern : ≥ 3 SL même pattern en 1h → Telegram seul (pas de pause)
+2. **Auto-pause** (rafale globale uniquement) : appelle `kill_switch.set_rafale_pause()`
+   qui bloque l'envoi de nouveaux ordres au bridge MT5 pendant
+   `RAFALE_PAUSE_DURATION_MIN` minutes (default 120 = 2h).
+3. **Auto-resume** : à chaque cycle 5 min, `consume_expired_rafale_pause()`
+   vérifie si la pause a expiré ; si oui, clear automatique + Telegram
+   "Auto-resume" envoyé.
+
+**Effet sur les couches** :
+- Couche 1 (signal) : continue de générer (analytics non affectées)
+- Couche 2 (exec) : nouveaux ordres bloqués, **trades ouverts continuent**
+  jusqu'à leur SL/TP naturel (pas de fermeture forcée)
+- Couche 3 (broker) : aucun changement
+
+**Désactivation** : `RAFALE_AUTO_PAUSE_ENABLED=false` dans `.env` puis
+restart. Ou clear manuel : `kill_switch.clear_rafale_pause()` via shell
+Python dans le container (rare cas).
+
 ## Liens utiles
 
 - Verdict V1 : [`docs/superpowers/specs/2026-04-22-backtest-v1-findings.md`](superpowers/specs/2026-04-22-backtest-v1-findings.md)
