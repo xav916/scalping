@@ -594,6 +594,21 @@ def start_scheduler() -> AsyncIOScheduler:
         replace_existing=True,
     )
 
+    # Alertes rafales de stops loss : toutes les 5 min, surveille les
+    # SL auto-exec de la derniere heure. Envoie Telegram si >= 5 SL global
+    # (cooldown 30 min) ou >= 3 SL meme pattern (cooldown 30 min par pattern).
+    # Comple le watchdog rejection_alerts qui ne couvre que les setups
+    # bloques avant execution. Cf. journal 2026-04-30-v1-drawdown-observation.
+    from backend.services import stop_loss_alerts as _sl_alerts
+    _scheduler.add_job(
+        _sl_alerts.check_and_alert,
+        "interval",
+        minutes=5,
+        id="stop_loss_alerts_check",
+        name="Check rafales stops loss + Telegram",
+        replace_existing=True,
+    )
+
     # Sync COT reports hebdo. La CFTC publie le vendredi 15h30 ET
     # (~20h30 UTC). On tourne samedi 01h UTC pour avoir les donnees
     # fraiches. Pas critique si ca loupe une semaine : la prochaine
