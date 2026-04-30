@@ -201,6 +201,7 @@
       <strong>Sommaire</strong>
       <ol>
         <li><a href="#prereqs">Prérequis</a></li>
+        <li><a href="#mac">Sur Mac — différences à connaître</a></li>
         <li><a href="#step-key">Générer ton API key</a></li>
         <li><a href="#step-download">Télécharger l'EA</a></li>
         <li><a href="#step-compile">Compiler dans MetaEditor</a></li>
@@ -227,6 +228,101 @@
       Python, Tailscale, VPS Windows, ou pair-RDP. Tout se passe dans MT5
       directement.
     </div>
+
+    <h2 id="mac"><span class="num">M</span>Sur Mac — différences à connaître</h2>
+    <p>
+      Si tu es sur Mac, la procédure est <strong>identique à 95 %</strong>, mais
+      quelques points diffèrent. Lis cette section avant de commencer, puis
+      suis les étapes 01 → 06 normalement.
+    </p>
+
+    <h3>Installer MT5 Mac</h3>
+    <ul>
+      <li>Télécharge MT5 Mac depuis le site Pepperstone :
+        <a href="https://pepperstone.com/en/trading-platforms/metatrader-5/" target="_blank" rel="noopener">pepperstone.com/.../metatrader-5</a>
+        (bouton "Download for Mac"), ou directement chez MetaQuotes :
+        <a href="https://www.metatrader5.com/en/download" target="_blank" rel="noopener">metatrader5.com/.../download</a></li>
+      <li>Le <code>.dmg</code> contient un installer auto-suffisant (Wine
+        intégré géré par MetaQuotes — pas besoin d'installer Wine séparément)</li>
+      <li><strong>Apple Silicon (M1/M2/M3/M4) supporté nativement</strong> depuis 2023,
+        pas besoin de Rosetta</li>
+      <li>Première ouverture : <strong>clic droit sur l'icône MT5</strong> dans
+        Applications → "Ouvrir" (macOS demande confirmation pour app non App Store)</li>
+      <li>À la 1<sup>ère</sup> connexion réseau, macOS demande "MT5 souhaite
+        accepter les connexions entrantes" → <strong>autoriser</strong>,
+        sinon WebRequest ne fonctionnera pas</li>
+    </ul>
+
+    <h3>Différences de menus</h3>
+    <table style="width:100%; border-collapse:collapse; margin: 12px 0; font-size: 0.92rem;">
+      <thead>
+        <tr style="border-bottom: 1px solid var(--border);">
+          <th style="text-align:left; padding: 8px 12px;">Étape</th>
+          <th style="text-align:left; padding: 8px 12px;">Windows</th>
+          <th style="text-align:left; padding: 8px 12px;">Mac</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr style="border-bottom: 1px solid var(--border);">
+          <td style="padding: 8px 12px;">Options / Settings</td>
+          <td style="padding: 8px 12px;"><code>Tools → Options</code></td>
+          <td style="padding: 8px 12px;"><code>MetaTrader 5 → Settings</code> (menu app, en haut à gauche de l'écran)</td>
+        </tr>
+        <tr style="border-bottom: 1px solid var(--border);">
+          <td style="padding: 8px 12px;">MetaEditor</td>
+          <td style="padding: 8px 12px;"><code>Tools → MetaQuotes Language Editor</code> ou F4</td>
+          <td style="padding: 8px 12px;">F4 (le menu Tools n'existe pas en haut, il est dans le menu app)</td>
+        </tr>
+        <tr style="border-bottom: 1px solid var(--border);">
+          <td style="padding: 8px 12px;">AutoTrading toggle</td>
+          <td style="padding: 8px 12px;">Ctrl+E ou bouton barre d'outils</td>
+          <td style="padding: 8px 12px;">⌘+E ou bouton barre d'outils</td>
+        </tr>
+        <tr>
+          <td style="padding: 8px 12px;">Properties EA</td>
+          <td style="padding: 8px 12px;">F7 sur le chart</td>
+          <td style="padding: 8px 12px;">F7 sur le chart (identique)</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>Data Folder Mac</h3>
+    <p>
+      Quand tu fais <code>File → Open Data Folder</code>, MT5 ouvre Finder à
+      l'emplacement correct, qui ressemble à :
+    </p>
+    <pre><code>~/Library/Application Support/net.metaquotes.wine.metatrader5/drive_c/Program Files/MetaTrader 5/</code></pre>
+    <p>
+      Tu n'as <strong>pas</strong> à connaître ce chemin par cœur — laisse MT5
+      l'ouvrir pour toi via le menu. Navigue ensuite dans <code>MQL5/Experts/</code>
+      et glisse-dépose <code>ScalpingRadarEA.mq5</code> depuis Téléchargements.
+    </p>
+
+    <div class="callout">
+      <div class="tag">Astuce Mac</div>
+      Ne <strong>double-clique pas</strong> sur le <code>.mq5</code> dans le
+      Finder — macOS va essayer de l'ouvrir avec un éditeur de texte au lieu
+      de le déposer dans MT5. Drag &amp; drop uniquement.
+    </div>
+
+    <h3>Pièges spécifiques Mac</h3>
+    <ul>
+      <li><strong>WebRequest qui timeout silencieusement</strong> : sur Wine,
+        le DNS Mac peut ne pas se propager correctement. Si tu vois
+        <code>fail &gt; 0</code> dans le log <code>alive</code>, ouvre
+        Terminal et tape <code>ping app.scalping-radar.online</code>. Si ping
+        OK mais EA fail → redémarre MT5 (souvent ça suffit)</li>
+      <li><strong>MT5 freeze à l'ouverture</strong> : signe d'install Wine
+        corrompue. Drag MT5 vers Corbeille puis réinstalle (5 min, résout 95 %
+        des cas)</li>
+      <li><strong>Drag &amp; drop dans Navigator MT5 ne marche pas</strong> :
+        après avoir déposé le fichier dans <code>MQL5/Experts/</code> via
+        Finder, fais <strong>F5</strong> (refresh) dans le panneau Navigator
+        de MT5 — l'EA apparaît</li>
+      <li><strong>Pare-feu macOS qui bloque</strong> : Préférences Système →
+        Sécurité &amp; Confidentialité → Pare-feu → vérifier que MT5 n'est
+        pas bloqué pour les connexions sortantes</li>
+    </ul>
 
     <h2 id="step-key"><span class="num">01</span>Générer ton API key</h2>
     <p>
