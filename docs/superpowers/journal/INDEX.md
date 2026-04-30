@@ -30,6 +30,7 @@ Ordre chronologique, par track. Mettre à jour à chaque clôture d'expérience.
 | 34 | 2026-04-26 | Ext | [Extensions NatGas/Crypto/MXN](2026-04-26-exp34-extensions-natgas-crypto-mxn.md) | closed-positive | **ETH/USD Daily** retenu (3/4 fenêtres PF ≥ 1.15) ; BTC, USD/MXN rejetés ; NatGas non-testable TD Grow |
 | 35 | 2026-04-26 | Scan | [Scan systématique 57 instruments](2026-04-26-exp35-systematic-scan-57-instruments.md) | closed-positive | **454 cellules pre-screen + 60 deep dive → 28 retenus strict** ; reco shadow log : ajouter **XLI 1d V2_TIGHT_LONG** + **XLK 1d V2_WTI_OPTIMAL** |
 | 36 | 2026-04-26 | Validation | [Validation 20 ans des 6 stars](2026-04-26-exp36-stars-validation-20y.md) | closed-mixed | Edge tient long terme (PF 1.19-1.42 ALL_20y) mais **cassures régime-spécifiques systématiques** ; **PF long terme 30-50% plus modeste** que fenêtre récente 12M ; sizing prudent confirmé |
+| obs-1 | 2026-04-30 | hors-track | [Drawdown V1 cluster range_bounce_down](2026-04-30-v1-drawdown-observation.md) | closed-negative | 9 SL consécutifs XAU/XAG short (-185.65€ en 5h) ; pattern unique répété sans cooldown ; **anticipable structurellement, pas spécifiquement** — confirme verdict V1 sans edge |
 
 ## Conventions
 
