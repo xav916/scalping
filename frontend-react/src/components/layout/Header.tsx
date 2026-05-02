@@ -64,6 +64,7 @@ const NAV_LINKS = [
  *  Gated côté backend aussi (les endpoints API correspondants renvoient
  *  403 pour les non-admins, défense en profondeur). */
 const ADMIN_NAV_LINKS = [
+  { to: '/admin', label: 'Admin' },
   { to: '/control-tower', label: 'Infra' },
   { to: '/v1', label: 'V1' },
 ];
