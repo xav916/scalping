@@ -52,6 +52,37 @@ echo "=== prune dangling ==="
 # ~509MB d'image <none>:<none> → remplit les 8GB d'EBS en ~15 deploys.
 sudo docker image prune -f
 sudo docker builder prune -f --filter "until=24h"
+
+echo "=== sync assets archive (preserves old chunks for stale tabs) ==="
+# Onglets ouverts avant le deploy gardent l'ancien index.js qui référence
+# des chunks lazy avec un hash obsolète. Sans archive, ces chunks sont
+# 404 → page blanche → l'utilisateur doit refresh. Le volume monté ro
+# accumule TOUS les chunks (content-hashed → no collisions), avec 14j
+# de rétention pour borner la croissance.
+sudo mkdir -p /opt/scalping/v2-assets
+TMP_CTN=$(sudo docker create scalping-radar:latest)
+sudo docker cp -L "$TMP_CTN":/app/frontend-react/dist/assets/. /opt/scalping/v2-assets-tmp/
+sudo docker rm "$TMP_CTN" >/dev/null
+# cp -n = no-clobber : ne réécrit pas un fichier déjà présent (préserve
+# les chunks des anciens deploys ; collisions impossibles car content-hash).
+sudo cp -rn /opt/scalping/v2-assets-tmp/. /opt/scalping/v2-assets/
+sudo rm -rf /opt/scalping/v2-assets-tmp
+# Retention : 14j (suffit pour onglets oubliés ; 30 deploys × 30 chunks × 50KB ≈ 45MB).
+sudo find /opt/scalping/v2-assets -type f -mtime +14 -delete 2>/dev/null || true
+ASSETS_COUNT=$(sudo find /opt/scalping/v2-assets -type f | wc -l)
+ASSETS_SIZE=$(sudo du -sh /opt/scalping/v2-assets | cut -f1)
+echo "  -> archive : $ASSETS_COUNT files, $ASSETS_SIZE"
+
+echo "=== ensure systemd mounts archive volume (idempotent) ==="
+SYSTEMD_FILE=/etc/systemd/system/scalping.service
+if ! sudo grep -q "/opt/scalping/v2-assets" "$SYSTEMD_FILE"; then
+  sudo sed -i 's|-p 127\.0\.0\.1:8000:8000|-v /opt/scalping/v2-assets:/app/frontend-react/dist/assets:ro -p 127.0.0.1:8000:8000|' "$SYSTEMD_FILE"
+  sudo systemctl daemon-reload
+  echo "  -> systemd unit patched + daemon-reload"
+else
+  echo "  -> volume already mounted, skip"
+fi
+
 echo "=== systemd restart ==="
 sudo systemctl restart scalping
 sleep 3
