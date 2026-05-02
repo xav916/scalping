@@ -6,6 +6,7 @@ import { api, ApiError } from '@/lib/api';
 import { useAuth } from '@/hooks/useAuth';
 import { GlassCard } from '@/components/ui/GlassCard';
 import { GradientText } from '@/components/ui/GradientText';
+import { Header } from '@/components/layout/Header';
 
 /**
  * /v2/settings — gestion du compte user :
@@ -201,7 +202,9 @@ export function SettingsPage() {
   };
 
   return (
-    <div className="min-h-screen py-10 px-4">
+    <>
+      <Header />
+      <div className="min-h-screen py-10 px-4">
       <motion.div
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
@@ -752,6 +755,7 @@ export function SettingsPage() {
           Scalping Radar v2 · 2026.04
         </p>
       </motion.div>
-    </div>
+      </div>
+    </>
   );
 }

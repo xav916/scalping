@@ -7,6 +7,7 @@ import { GlassCard } from '@/components/ui/GlassCard';
 import { GradientText } from '@/components/ui/GradientText';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { WatchdogCard } from '@/components/admin/WatchdogCard';
+import { Header } from '@/components/layout/Header';
 
 /**
  * /v2/admin — Backoffice privé :
@@ -49,19 +50,24 @@ export function AdminPage() {
 
   if (error instanceof ApiError && error.status === 403) {
     return (
-      <div className="min-h-screen flex items-center justify-center px-4">
-        <GlassCard className="p-8 max-w-sm text-center">
-          <p className="text-white/80 mb-4">Accès admin requis.</p>
-          <Link to="/dashboard" className="text-cyan-400 hover:text-cyan-300 text-sm">
-            ← Retour au dashboard
-          </Link>
-        </GlassCard>
-      </div>
+      <>
+        <Header />
+        <div className="min-h-screen flex items-center justify-center px-4">
+          <GlassCard className="p-8 max-w-sm text-center">
+            <p className="text-white/80 mb-4">Accès admin requis.</p>
+            <Link to="/dashboard" className="text-cyan-400 hover:text-cyan-300 text-sm">
+              ← Retour au dashboard
+            </Link>
+          </GlassCard>
+        </div>
+      </>
     );
   }
 
   return (
-    <div className="min-h-screen py-10 px-4">
+    <>
+      <Header />
+      <div className="min-h-screen py-10 px-4">
       <motion.div
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
@@ -211,7 +217,8 @@ export function AdminPage() {
           </>
         )}
       </motion.div>
-    </div>
+      </div>
+    </>
   );
 }
 
