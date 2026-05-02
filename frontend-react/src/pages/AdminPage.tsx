@@ -7,6 +7,7 @@ import { GlassCard } from '@/components/ui/GlassCard';
 import { GradientText } from '@/components/ui/GradientText';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { WatchdogCard } from '@/components/admin/WatchdogCard';
+import { AutoExecHealthCard } from '@/components/admin/AutoExecHealthCard';
 import { Header } from '@/components/layout/Header';
 
 /**
@@ -85,6 +86,9 @@ export function AdminPage() {
 
         {/* Circuit breaker watchdog : visualisation + unpause manuel */}
         <WatchdogCard />
+
+        {/* Santé du pipeline auto-exec EA : heartbeat + orders 24h + zombies */}
+        <AutoExecHealthCard />
 
         {isLoading && <Skeleton className="w-full h-48" />}
 

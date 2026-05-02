@@ -273,6 +273,59 @@ export const api = {
       };
     }>(`/api/admin/watchdog/history?days=${days}&limit=${limit}`),
 
+  adminAutoExecHealth: () =>
+    request<{
+      users: Array<{
+        user_id: number;
+        email: string;
+        auto_exec_enabled: boolean;
+        api_key_set: boolean;
+        heartbeat: {
+          last: string | null;
+          age_seconds: number | null;
+          status: 'LIVE' | 'STALE' | 'OFFLINE';
+        };
+        orders_24h: {
+          total: number;
+          by_status: Partial<Record<
+            'PENDING' | 'SENT' | 'EXECUTED' | 'FAILED' | 'EXPIRED',
+            number
+          >>;
+          executed_rate: number | null;
+        };
+        zombies: {
+          sent_stale: number;
+          pending_overdue: number;
+          total: number;
+        };
+        last_order: {
+          id: number | null;
+          pair: string | null;
+          direction: string | null;
+          status: string;
+          mt5_ticket: number | null;
+          mt5_error: string | null;
+          created_at: string | null;
+          executed_at: string | null;
+        } | null;
+      }>;
+      totals: {
+        users_with_auto_exec: number;
+        users_live: number;
+        users_stale: number;
+        users_offline: number;
+        orders_24h: number;
+        executed_rate_24h: number | null;
+        zombies_total: number;
+      };
+      thresholds: {
+        heartbeat_live_max_sec: number;
+        heartbeat_stale_max_sec: number;
+        sent_stale_min_sec: number;
+        pending_overdue_pct: number;
+      };
+    }>('/api/admin/auto-exec/health'),
+
   macro: async () => {
     const raw = await request<{ status: string; snapshot: MacroSnapshot | null }>(
       '/api/macro'

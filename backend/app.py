@@ -2599,6 +2599,205 @@ async def api_admin_watchdog_unpause(
     }
 
 
+@app.get("/api/admin/auto-exec/health")
+async def api_admin_auto_exec_health(
+    _ctx: AuthContext = Depends(require_admin),
+):
+    """Santé du pipeline auto-exec EA pour tous les users actifs.
+
+    Pour chaque user avec ``auto_exec_enabled=true`` :
+    - heartbeat : LIVE (<5min) / STALE (5-30min) / OFFLINE (>30min ou null)
+    - breakdown des ordres 24h par status (PENDING/SENT/EXECUTED/FAILED/EXPIRED)
+    - executed_rate (EXECUTED / total résolu)
+    - zombies : SENT > 5min sans result, PENDING approchant son TTL
+    - last_order : aperçu du dernier ordre (pair, direction, status, ticket)
+
+    + agrégés globaux pour la card de dashboard.
+    """
+    import json as _json
+    import sqlite3
+    from datetime import datetime, timedelta, timezone
+
+    from backend.services.trade_log_service import _DB_PATH
+
+    HEARTBEAT_LIVE_MAX = 300
+    HEARTBEAT_STALE_MAX = 1800
+    SENT_STALE_MIN = 300
+    PENDING_OVERDUE_PCT = 0.8
+
+    now = datetime.now(timezone.utc)
+    cutoff_24h = (now - timedelta(hours=24)).isoformat()
+    sent_stale_cutoff = (now - timedelta(seconds=SENT_STALE_MIN)).isoformat()
+
+    auto_exec_users: list[tuple[dict, dict]] = []
+    for u in users_service.list_all_users():
+        cfg = users_service.get_broker_config(u["id"])
+        if cfg.get("auto_exec_enabled"):
+            auto_exec_users.append((u, cfg))
+
+    thresholds = {
+        "heartbeat_live_max_sec": HEARTBEAT_LIVE_MAX,
+        "heartbeat_stale_max_sec": HEARTBEAT_STALE_MAX,
+        "sent_stale_min_sec": SENT_STALE_MIN,
+        "pending_overdue_pct": PENDING_OVERDUE_PCT,
+    }
+
+    if not auto_exec_users:
+        return {
+            "users": [],
+            "totals": {
+                "users_with_auto_exec": 0,
+                "users_live": 0,
+                "users_stale": 0,
+                "users_offline": 0,
+                "orders_24h": 0,
+                "executed_rate_24h": None,
+                "zombies_total": 0,
+            },
+            "thresholds": thresholds,
+        }
+
+    user_ids = [u["id"] for u, _ in auto_exec_users]
+    placeholders = ",".join("?" * len(user_ids))
+    with sqlite3.connect(str(_DB_PATH)) as c:
+        c.row_factory = sqlite3.Row
+        rows_24h = c.execute(
+            f"SELECT id, user_id, status, created_at, fetched_at, "
+            f"executed_at, expires_at, mt5_ticket, mt5_error, payload "
+            f"FROM mt5_pending_orders "
+            f"WHERE user_id IN ({placeholders}) AND created_at >= ? "
+            f"ORDER BY created_at DESC",
+            user_ids + [cutoff_24h],
+        ).fetchall()
+
+    orders_by_user: dict[int, list[dict]] = {uid: [] for uid in user_ids}
+    for row in rows_24h:
+        orders_by_user[row["user_id"]].append(dict(row))
+
+    enriched_users: list[dict] = []
+    totals_orders_24h = 0
+    totals_zombies = 0
+    totals_live = 0
+    totals_stale = 0
+    totals_offline = 0
+    totals_executed = 0
+    totals_resolved = 0
+
+    for u, cfg in auto_exec_users:
+        last_hb = cfg.get("last_ea_heartbeat")
+        hb_age: int | None = None
+        hb_status = "OFFLINE"
+        if last_hb:
+            try:
+                hb_dt = datetime.fromisoformat(last_hb.replace("Z", "+00:00"))
+                hb_age = int((now - hb_dt).total_seconds())
+                if hb_age <= HEARTBEAT_LIVE_MAX:
+                    hb_status = "LIVE"
+                elif hb_age <= HEARTBEAT_STALE_MAX:
+                    hb_status = "STALE"
+                else:
+                    hb_status = "OFFLINE"
+            except (ValueError, AttributeError):
+                pass
+
+        if hb_status == "LIVE":
+            totals_live += 1
+        elif hb_status == "STALE":
+            totals_stale += 1
+        else:
+            totals_offline += 1
+
+        orders = orders_by_user[u["id"]]
+        by_status: dict[str, int] = {}
+        sent_stale = 0
+        pending_overdue = 0
+        for o in orders:
+            st = o["status"]
+            by_status[st] = by_status.get(st, 0) + 1
+            if st == "SENT" and o.get("fetched_at"):
+                if o["fetched_at"] < sent_stale_cutoff:
+                    sent_stale += 1
+            elif st == "PENDING" and o.get("created_at") and o.get("expires_at"):
+                try:
+                    cdt = datetime.fromisoformat(o["created_at"].replace("Z", "+00:00"))
+                    edt = datetime.fromisoformat(o["expires_at"].replace("Z", "+00:00"))
+                    ttl = (edt - cdt).total_seconds()
+                    age = (now - cdt).total_seconds()
+                    if ttl > 0 and age / ttl >= PENDING_OVERDUE_PCT:
+                        pending_overdue += 1
+                except (ValueError, AttributeError):
+                    pass
+
+        n_executed = by_status.get("EXECUTED", 0)
+        n_failed = by_status.get("FAILED", 0)
+        n_expired = by_status.get("EXPIRED", 0)
+        n_resolved = n_executed + n_failed + n_expired
+        executed_rate = (n_executed / n_resolved) if n_resolved > 0 else None
+
+        last_order = None
+        if orders:
+            o = orders[0]
+            try:
+                p = _json.loads(o.get("payload") or "{}")
+            except (ValueError, TypeError):
+                p = {}
+            last_order = {
+                "id": o.get("id"),
+                "pair": p.get("pair"),
+                "direction": p.get("direction"),
+                "status": o["status"],
+                "mt5_ticket": o.get("mt5_ticket"),
+                "mt5_error": o.get("mt5_error"),
+                "created_at": o.get("created_at"),
+                "executed_at": o.get("executed_at"),
+            }
+
+        zombies_count = sent_stale + pending_overdue
+        totals_zombies += zombies_count
+        totals_orders_24h += len(orders)
+        totals_executed += n_executed
+        totals_resolved += n_resolved
+
+        enriched_users.append({
+            "user_id": u["id"],
+            "email": u["email"],
+            "auto_exec_enabled": True,
+            "api_key_set": bool(cfg.get("bridge_api_key")),
+            "heartbeat": {
+                "last": last_hb,
+                "age_seconds": hb_age,
+                "status": hb_status,
+            },
+            "orders_24h": {
+                "total": len(orders),
+                "by_status": by_status,
+                "executed_rate": executed_rate,
+            },
+            "zombies": {
+                "sent_stale": sent_stale,
+                "pending_overdue": pending_overdue,
+                "total": zombies_count,
+            },
+            "last_order": last_order,
+        })
+
+    return {
+        "users": enriched_users,
+        "totals": {
+            "users_with_auto_exec": len(auto_exec_users),
+            "users_live": totals_live,
+            "users_stale": totals_stale,
+            "users_offline": totals_offline,
+            "orders_24h": totals_orders_24h,
+            "executed_rate_24h": (
+                (totals_executed / totals_resolved) if totals_resolved > 0 else None
+            ),
+            "zombies_total": totals_zombies,
+        },
+        "thresholds": thresholds,
+    }
+
+
 @app.get("/api/shadow/v2_core_long/setups.csv")
 async def api_shadow_setups_csv(
     since: str | None = None,
