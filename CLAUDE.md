@@ -34,6 +34,25 @@ Le broker actuel (MetaQuotes-Demo / OANDA) ne couvre pas tout.
 - Étendre `MT5_BRIDGE_ALLOWED_ASSET_CLASSES="forex,metal,index,energy,crypto"`
 - Tester d'abord sur compte démo du nouveau broker
 
+#### 3b. Sortir de l'écosystème MT5 pour les vraies bourses (à étudier)
+
+**Constat** : tous les brokers MT5 (Pepperstone & co) ne donnent que des **CFDs synthétiques**. Pas d'accès direct aux bourses (NYSE, NASDAQ, Euronext, Xetra, TSE, LSE…), pas d'actions individuelles, pas d'obligations, pas de DMA. Le broker est ta contrepartie qui hedge, jamais le market.
+
+**Question à trancher en Phase 3** : faut-il rester en CFD MT5, ou réécrire le bridge pour un broker stocks ?
+
+| Option | Couvre | Coût chantier |
+|---|---|---|
+| **MT5 multi-asset** (Pepperstone, etc.) | + indices, + énergie, + crypto altcoins. **Toujours CFD.** | Faible (juste config) |
+| **Interactive Brokers (IBKR)** | NYSE/NASDAQ/Euronext/TSE/LSE en DMA, actions, options, futures, bonds | **Réécrire le bridge** (TWS API ≠ MT5). ~2-3 semaines |
+| **Saxo Bank / Trading 212 / DEGIRO** | Stocks Europe/US en exécution simple, pas DMA | Réécriture bridge selon API du broker |
+
+Décision dépendra de :
+- Validation V2 / Track A — si edge confirmé sur instruments existants, prioriser breadth (MT5 multi-asset) avant de complexifier le bridge
+- Ambition produit — Scalping Radar reste-t-il sur métaux/énergie/crypto, ou ouvre vers actions individuelles (autre modèle, autres horizons) ?
+- Budget temps : 2-3 semaines de réécriture bridge IBKR vs valeur ajoutée produit
+
+À l'ouverture de Phase 3, **réviser cette section** : valider si on étend juste le CFD ou si on bascule vers DMA/stocks.
+
 ### Phase 4 : Scaling infra (si > 30 instruments simultanés)
 
 - Twelve Data : passer du plan Grow (5 000 req/j) au plan Pro (75 000 req/j, ~75 €/mois)
