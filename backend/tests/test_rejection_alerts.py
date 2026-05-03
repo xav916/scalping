@@ -100,6 +100,31 @@ async def test_multiple_reason_codes_independently_alerted(db):
 
 
 @pytest.mark.asyncio
+async def test_market_closed_does_not_trigger_telegram(db):
+    """`market_closed` est un état calendaire normal (week-end, daily break),
+    pas une situation actionnable. Pas de Telegram même au-delà du seuil.
+    Reste loggé pour la card RejectionsCard.
+    """
+    now = datetime.now(timezone.utc)
+    for i in range(15):  # > seuil 10
+        _insert_rejection(
+            db, (now - timedelta(minutes=i)).isoformat(), "market_closed",
+            pair="XAU/USD",
+        )
+
+    with patch("backend.services.telegram_service.send_text", new=AsyncMock()) as mock_send:
+        with patch("backend.services.telegram_service.is_configured", return_value=True):
+            out = await rejection_alerts.check_and_alert()
+
+    assert mock_send.call_count == 0
+    assert out["alerts_sent"] == []
+    # Le compte est bien remonté pour traçabilité (la card RejectionsCard
+    # le rendra), mais classé en "skipped"
+    assert out["counts"].get("market_closed") == 15
+    assert "market_closed" in out["alerts_skipped_silent"]
+
+
+@pytest.mark.asyncio
 async def test_telegram_not_configured_is_no_op(db):
     now = datetime.now(timezone.utc)
     for i in range(15):

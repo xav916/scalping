@@ -24,6 +24,12 @@ WINDOW_HOURS = 1
 # Cooldown par code pour ne pas spammer Telegram
 COOLDOWN_MINUTES = 60
 
+# Reason codes silencieux : trackés dans signal_rejections pour traçabilité
+# (RejectionsCard les rend) mais jamais d'alerte Telegram parce qu'ils
+# reflètent un état calendaire / fonctionnel attendu, pas un incident.
+# - market_closed : marché fermé week-end ou daily break — par design
+SILENT_REASONS: frozenset[str] = frozenset({"market_closed"})
+
 # État en mémoire : reason_code → last_alert_ts. Reset au reboot, peu grave.
 _last_alert_at: dict[str, datetime] = {}
 
@@ -87,9 +93,13 @@ async def check_and_alert() -> dict[str, Any]:
         counts = _count_by_reason(since.isoformat(), now.isoformat())
         alerts_sent: list[str] = []
         alerts_suppressed: list[str] = []
+        alerts_skipped_silent: list[str] = []
 
         for reason, count in counts.items():
             if count < RAFALE_THRESHOLD:
+                continue
+            if reason in SILENT_REASONS:
+                alerts_skipped_silent.append(reason)
                 continue
             last = _last_alert_at.get(reason)
             if last and (now - last) < timedelta(minutes=COOLDOWN_MINUTES):
@@ -119,6 +129,7 @@ async def check_and_alert() -> dict[str, Any]:
             "counts": counts,
             "alerts_sent": alerts_sent,
             "alerts_suppressed_cooldown": alerts_suppressed,
+            "alerts_skipped_silent": alerts_skipped_silent,
         }
 
     except Exception:
