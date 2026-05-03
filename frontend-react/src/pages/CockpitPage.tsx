@@ -408,6 +408,7 @@ function renderSystemCard(id: string, data: CockpitSnapshot): ReactNode {
             secondsSince={data.system_health.seconds_since_last_cycle}
             wsClients={data.system_health.ws_clients}
             sessionLabel={data.session?.label}
+            marketsOpen={data.system_health.markets_open}
           />
           <NextEventsCard events={data.next_events} />
         </div>

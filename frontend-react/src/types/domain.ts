@@ -427,6 +427,7 @@ export interface CockpitSnapshot {
     bridge: { configured: boolean; reachable: boolean; mode: string | null };
     ws_clients: number;
     watched_pairs: number;
+    markets_open: Record<string, boolean>;
   };
   macro: MacroSnapshot | null;
   kill_switch: KillSwitchStatus;

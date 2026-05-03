@@ -12,6 +12,7 @@ export function SystemHealthCard({
   secondsSince,
   wsClients,
   sessionLabel,
+  marketsOpen,
 }: {
   healthy: boolean;
   bridgeReachable: boolean;
@@ -19,7 +20,10 @@ export function SystemHealthCard({
   secondsSince: number | null;
   wsClients: number;
   sessionLabel?: string;
+  marketsOpen?: Record<string, boolean>;
 }) {
+  const marketEntries = marketsOpen ? Object.entries(marketsOpen) : [];
+
   return (
     <GlassCard className="p-5 h-full">
       <div className="flex items-center justify-between mb-3">
@@ -55,6 +59,26 @@ export function SystemHealthCard({
           <li className="flex justify-between">
             <LabelWithInfo label="Session" tip={TIPS.sante.session} />
             <span className="font-mono text-cyan-300">{sessionLabel}</span>
+          </li>
+        )}
+        {marketEntries.length > 0 && (
+          <li className="flex justify-between items-center pt-1.5 mt-1 border-t border-white/5">
+            <LabelWithInfo label="Marchés stars" tip={TIPS.sante.marches} />
+            <span className="flex gap-2 font-mono">
+              {marketEntries.map(([pair, isOpen]) => (
+                <span
+                  key={pair}
+                  className={clsx(
+                    'inline-flex items-center gap-1',
+                    isOpen ? 'text-emerald-300' : 'text-white/40'
+                  )}
+                  title={isOpen ? `${pair} — marché ouvert` : `${pair} — marché fermé`}
+                >
+                  <span>{isOpen ? '🟢' : '⚪'}</span>
+                  <span>{pair.split('/')[0]}</span>
+                </span>
+              ))}
+            </span>
           </li>
         )}
       </ul>

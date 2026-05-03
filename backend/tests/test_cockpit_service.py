@@ -173,3 +173,42 @@ def test_compute_unrealized_pnl_xau_uses_100_units_per_lot():
     # Short XAU, prix monte à 4810 → perte = (4800-4810) * 100 * 0.1 = -100
     pnl = cockpit_service._compute_unrealized_pnl(trade, 4810)
     assert pnl == -100.0
+
+
+@pytest.mark.asyncio
+async def test_build_cockpit_exposes_markets_open_for_stars():
+    """system_health.markets_open expose l'état ouvert/fermé des 4 stars auto-exec."""
+    with (
+        patch.object(cockpit_service.trade_log_service, "list_trades", return_value=[]),
+        patch.object(
+            cockpit_service.trade_log_service,
+            "get_daily_status",
+            return_value={
+                "date": "2026-05-04",
+                "n_trades_today": 0,
+                "n_open": 0,
+                "n_closed_today": 0,
+                "pnl_today": 0.0,
+                "pnl_pct": 0.0,
+                "silent_mode": False,
+                "loss_alert": False,
+                "daily_loss_limit_pct": 3.0,
+                "capital": 100000,
+            },
+        ),
+        patch.object(cockpit_service, "get_latest_overview", return_value=None),
+        patch.object(cockpit_service, "get_last_cycle_at", return_value=None),
+        patch(
+            "backend.services.cockpit_service.mt5_bridge_health_check",
+            return_value={"configured": False},
+        ),
+        patch.object(cockpit_service, "_macro_snapshot", return_value=None),
+    ):
+        snap = await cockpit_service.build_cockpit(user="test")
+
+    markets = snap["system_health"]["markets_open"]
+    assert set(markets.keys()) == {"XAU/USD", "XAG/USD", "WTI/USD", "ETH/USD"}
+    # ETH/USD est crypto → toujours ouvert (24/7)
+    assert markets["ETH/USD"] is True
+    for pair, is_open in markets.items():
+        assert isinstance(is_open, bool), f"{pair} doit être bool"

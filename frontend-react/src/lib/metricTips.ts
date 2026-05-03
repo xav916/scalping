@@ -85,6 +85,7 @@ export const TIPS = {
     bridge: 'État du bridge MT5 (MetaTrader 5, sur VPS Windows) : UP = répond aux pings, DOWN = injoignable (firewall/VPN/process mort), N/A = pas configuré.',
     clientsWs: 'Nombre de tabs/devices connectés en WebSocket (WS). Si tu es seul sur le dashboard, c\'est 1.',
     session: 'Session forex active (Asian / London / NY overlap…). Utilisé dans le calcul du sizing multiplier.',
+    marches: 'État ouvert/fermé des 4 paires auto-exécutables : XAU (or), XAG (argent), WTI (pétrole), ETH (crypto). 🟢 = ouvert, ⚪ = fermé. Crypto (ETH) toujours ouvert. Métaux/énergie ferment 21h-23h UTC chaque jour + week-end.',
   },
 
   /* ─────────── Drift ─────────── */

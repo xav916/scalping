@@ -17,6 +17,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from backend.services import trade_log_service
+from backend.services.market_hours import is_market_open_for
 from backend.services.mt5_bridge import health_check as mt5_bridge_health_check
 from backend.services.notification_service import _connected_clients
 from backend.services.scheduler import (
@@ -26,6 +27,10 @@ from backend.services.scheduler import (
 )
 from backend.services.twelvedata_ws import get_latest_ticks
 from config.settings import TRADING_CAPITAL, WATCHED_PAIRS
+
+# Paires auto-exec stars (XAU/XAG/WTI/ETH) — affichées avec statut marché
+# dans le cockpit. XLI/XLK volontairement exclus : shadow log uniquement.
+_STAR_PAIRS_AUTO_EXEC = ("XAU/USD", "XAG/USD", "WTI/USD", "ETH/USD")
 
 logger = logging.getLogger(__name__)
 
@@ -296,6 +301,9 @@ async def _system_health() -> dict:
         },
         "ws_clients": len(_connected_clients),
         "watched_pairs": len(WATCHED_PAIRS),
+        "markets_open": {
+            pair: is_market_open_for(pair) for pair in _STAR_PAIRS_AUTO_EXEC
+        },
     }
 
 
