@@ -157,6 +157,9 @@ export function SettingsPage() {
   const [pwCurrent, setPwCurrent] = useState('');
   const [pwNew, setPwNew] = useState('');
   const [pwConfirm, setPwConfirm] = useState('');
+  const [showPwCurrent, setShowPwCurrent] = useState(false);
+  const [showPwNew, setShowPwNew] = useState(false);
+  const [showPwConfirm, setShowPwConfirm] = useState(false);
   const [pwError, setPwError] = useState<string | null>(null);
 
   const changePwMut = useMutation({
@@ -180,6 +183,7 @@ export function SettingsPage() {
   // ─── Delete account section ──────────────────────────────────
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deletePw, setDeletePw] = useState('');
+  const [showDeletePw, setShowDeletePw] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState('');
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
@@ -624,41 +628,110 @@ export function SettingsPage() {
                 <label className="block text-xs uppercase tracking-wider text-white/50 mb-1.5">
                   Mot de passe actuel
                 </label>
-                <input
-                  type="password"
-                  autoComplete="current-password"
-                  required
-                  value={pwCurrent}
-                  onChange={(e) => setPwCurrent(e.target.value)}
-                  className="w-full px-4 py-2.5 rounded-xl bg-white/5 border border-glass-soft focus:outline-none font-mono text-sm"
-                />
+                <div className="relative">
+                  <input
+                    type={showPwCurrent ? 'text' : 'password'}
+                    autoComplete="current-password"
+                    required
+                    value={pwCurrent}
+                    onChange={(e) => setPwCurrent(e.target.value)}
+                    className="w-full px-4 py-2.5 pr-11 rounded-xl bg-white/5 border border-glass-soft focus:outline-none font-mono text-sm"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPwCurrent((v) => !v)}
+                    aria-label={showPwCurrent ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
+                    aria-pressed={showPwCurrent}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-white/40 hover:text-cyan-300 hover:bg-white/5 focus:outline-none focus:ring-2 focus:ring-cyan-400/30 transition-colors"
+                  >
+                    {showPwCurrent ? (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M9.88 9.88a3 3 0 1 0 4.24 4.24" />
+                        <path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68" />
+                        <path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61" />
+                        <line x1="2" y1="2" x2="22" y2="22" />
+                      </svg>
+                    ) : (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z" />
+                        <circle cx="12" cy="12" r="3" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
               </div>
               <div>
                 <label className="block text-xs uppercase tracking-wider text-white/50 mb-1.5">
                   Nouveau mot de passe
                 </label>
-                <input
-                  type="password"
-                  autoComplete="new-password"
-                  required
-                  minLength={8}
-                  value={pwNew}
-                  onChange={(e) => setPwNew(e.target.value)}
-                  className="w-full px-4 py-2.5 rounded-xl bg-white/5 border border-glass-soft focus:outline-none font-mono text-sm"
-                />
+                <div className="relative">
+                  <input
+                    type={showPwNew ? 'text' : 'password'}
+                    autoComplete="new-password"
+                    required
+                    minLength={8}
+                    value={pwNew}
+                    onChange={(e) => setPwNew(e.target.value)}
+                    className="w-full px-4 py-2.5 pr-11 rounded-xl bg-white/5 border border-glass-soft focus:outline-none font-mono text-sm"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPwNew((v) => !v)}
+                    aria-label={showPwNew ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
+                    aria-pressed={showPwNew}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-white/40 hover:text-cyan-300 hover:bg-white/5 focus:outline-none focus:ring-2 focus:ring-cyan-400/30 transition-colors"
+                  >
+                    {showPwNew ? (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M9.88 9.88a3 3 0 1 0 4.24 4.24" />
+                        <path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68" />
+                        <path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61" />
+                        <line x1="2" y1="2" x2="22" y2="22" />
+                      </svg>
+                    ) : (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z" />
+                        <circle cx="12" cy="12" r="3" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
               </div>
               <div>
                 <label className="block text-xs uppercase tracking-wider text-white/50 mb-1.5">
                   Confirmer
                 </label>
-                <input
-                  type="password"
-                  autoComplete="new-password"
-                  required
-                  value={pwConfirm}
-                  onChange={(e) => setPwConfirm(e.target.value)}
-                  className="w-full px-4 py-2.5 rounded-xl bg-white/5 border border-glass-soft focus:outline-none font-mono text-sm"
-                />
+                <div className="relative">
+                  <input
+                    type={showPwConfirm ? 'text' : 'password'}
+                    autoComplete="new-password"
+                    required
+                    value={pwConfirm}
+                    onChange={(e) => setPwConfirm(e.target.value)}
+                    className="w-full px-4 py-2.5 pr-11 rounded-xl bg-white/5 border border-glass-soft focus:outline-none font-mono text-sm"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPwConfirm((v) => !v)}
+                    aria-label={showPwConfirm ? 'Masquer la confirmation' : 'Afficher la confirmation'}
+                    aria-pressed={showPwConfirm}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-white/40 hover:text-cyan-300 hover:bg-white/5 focus:outline-none focus:ring-2 focus:ring-cyan-400/30 transition-colors"
+                  >
+                    {showPwConfirm ? (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M9.88 9.88a3 3 0 1 0 4.24 4.24" />
+                        <path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68" />
+                        <path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61" />
+                        <line x1="2" y1="2" x2="22" y2="22" />
+                      </svg>
+                    ) : (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z" />
+                        <circle cx="12" cy="12" r="3" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
               </div>
               {pwError && <p className="text-xs text-rose-400">{pwError}</p>}
               {changePwMut.isSuccess && (
@@ -708,14 +781,37 @@ export function SettingsPage() {
                 <label className="block text-xs uppercase tracking-wider text-white/50 mb-1.5">
                   Mot de passe actuel
                 </label>
-                <input
-                  type="password"
-                  autoComplete="current-password"
-                  required
-                  value={deletePw}
-                  onChange={(e) => setDeletePw(e.target.value)}
-                  className="w-full px-4 py-2.5 rounded-xl bg-white/5 border border-glass-soft focus:outline-none font-mono text-sm"
-                />
+                <div className="relative">
+                  <input
+                    type={showDeletePw ? 'text' : 'password'}
+                    autoComplete="current-password"
+                    required
+                    value={deletePw}
+                    onChange={(e) => setDeletePw(e.target.value)}
+                    className="w-full px-4 py-2.5 pr-11 rounded-xl bg-white/5 border border-glass-soft focus:outline-none font-mono text-sm"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowDeletePw((v) => !v)}
+                    aria-label={showDeletePw ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
+                    aria-pressed={showDeletePw}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-white/40 hover:text-rose-300 hover:bg-white/5 focus:outline-none focus:ring-2 focus:ring-rose-400/30 transition-colors"
+                  >
+                    {showDeletePw ? (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M9.88 9.88a3 3 0 1 0 4.24 4.24" />
+                        <path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68" />
+                        <path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61" />
+                        <line x1="2" y1="2" x2="22" y2="22" />
+                      </svg>
+                    ) : (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z" />
+                        <circle cx="12" cy="12" r="3" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
               </div>
               <div>
                 <label className="block text-xs uppercase tracking-wider text-white/50 mb-1.5">
