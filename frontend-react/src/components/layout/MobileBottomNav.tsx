@@ -10,10 +10,8 @@ import { Link, useLocation } from 'react-router-dom';
  *  décalé dans leur viewBox (Analytics, Trades).
  */
 const NAV_ITEMS = [
-  { to: '/dashboard', label: 'Dashboard', icon: DashboardIcon },
   { to: '/cockpit', label: 'Cockpit', icon: CockpitIcon },
-  { to: '/analytics', label: 'Analytics', icon: AnalyticsIcon },
-  { to: '/trades', label: 'Trades', icon: TradesIcon },
+  { to: '/candidates', label: 'Candidats', icon: CandidatesIcon },
 ];
 
 export function MobileBottomNav() {
@@ -28,7 +26,7 @@ export function MobileBottomNav() {
         'pb-[env(safe-area-inset-bottom,0px)]'
       )}
     >
-      <div className="grid grid-cols-4">
+      <div className="grid grid-cols-2">
         {NAV_ITEMS.map((item) => {
           const active = location.pathname === item.to;
           const Icon = item.icon;
@@ -169,6 +167,25 @@ function TradesIcon({ active }: IconProps) {
       <circle cx="5" cy="12" r="1.3" />
       <circle cx="5" cy="18" r="1.3" />
       <path d="M9 6h11M9 12h11M9 18h11" />
+    </svg>
+  );
+}
+
+function CandidatesIcon({ active }: IconProps) {
+  // Eye icon — Candidats = supports en observation shadow log
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={active ? 2.2 : 1.8}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={iconClass(active)}
+    >
+      <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z" />
+      <circle cx="12" cy="12" r="3" />
     </svg>
   );
 }
