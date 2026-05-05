@@ -18,6 +18,7 @@ Sécurité
 
 import asyncio
 import logging
+import time
 from datetime import date, datetime, timezone
 
 import httpx
@@ -372,9 +373,16 @@ async def _push_to_destination(setup, dest) -> None:
         "Content-Type": "application/json",
     }
 
+    # Mesure de latence end-to-end push admin_legacy : couvre RTT HTTP +
+    # bridge.py processing (symbol_resolve + sizing + audit DB) + MT5 fill.
+    # Le log `latency_ms=N` permet de surveiller le SLA (typique 700-2000ms,
+    # bottleneck = exec broker côté Pepperstone Demo).
+    push_start = time.perf_counter()
+
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             r = await client.post(url, json=payload, headers=headers)
+            latency_ms = int((time.perf_counter() - push_start) * 1000)
             if r.status_code == 200:
                 data = r.json()
                 mt5_pushes_service.update_push_result(
@@ -383,7 +391,7 @@ async def _push_to_destination(setup, dest) -> None:
                 )
                 logger.info(
                     f"MT5 bridge[{dest.destination_id}] → {setup.pair} {direction} "
-                    f"risk=${risk_money} "
+                    f"risk=${risk_money} latency_ms={latency_ms} "
                     f"(conf={sz['conf_mult']}x pnl={sz['pnl_mult']}x "
                     f"session={sz['session']}:{sz['session_mult']}x "
                     f"macro={sz['macro_mult']}x"
@@ -394,7 +402,7 @@ async def _push_to_destination(setup, dest) -> None:
             else:
                 logger.warning(
                     f"MT5 bridge[{dest.destination_id}] a répondu {r.status_code} "
-                    f"pour {setup.pair}: {r.text[:200]}"
+                    f"pour {setup.pair} (latency_ms={latency_ms}): {r.text[:200]}"
                 )
                 # Catégorise la rejection bridge pour la viz dédiée
                 body_text = r.text or ""
