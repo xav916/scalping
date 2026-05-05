@@ -92,26 +92,6 @@ function iconClass(active?: boolean): string {
   );
 }
 
-function DashboardIcon({ active }: IconProps) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={active ? 2.2 : 1.8}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={iconClass(active)}
-    >
-      <rect x="3" y="3" width="7" height="9" rx="1.5" />
-      <rect x="14" y="3" width="7" height="5" rx="1.5" />
-      <rect x="14" y="11" width="7" height="10" rx="1.5" />
-      <rect x="3" y="15" width="7" height="6" rx="1.5" />
-    </svg>
-  );
-}
-
 function CockpitIcon({ active }: IconProps) {
   return (
     <svg
@@ -127,46 +107,6 @@ function CockpitIcon({ active }: IconProps) {
       <circle cx="12" cy="12" r="9" />
       <circle cx="12" cy="12" r="3.5" />
       <path d="M12 3v3M12 18v3M3 12h3M18 12h3" />
-    </svg>
-  );
-}
-
-function AnalyticsIcon({ active }: IconProps) {
-  // viewBox rééquilibré : axes symétriques + courbe centrée
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={active ? 2.2 : 1.8}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={iconClass(active)}
-    >
-      <path d="M4 20V4M4 20h16" />
-      <path d="M7 15l3-3 3 3 5-5" />
-    </svg>
-  );
-}
-
-function TradesIcon({ active }: IconProps) {
-  // Déplacé légèrement vers la gauche pour rééquilibrer le visuel
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={active ? 2.2 : 1.8}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={iconClass(active)}
-    >
-      <circle cx="5" cy="6" r="1.3" />
-      <circle cx="5" cy="12" r="1.3" />
-      <circle cx="5" cy="18" r="1.3" />
-      <path d="M9 6h11M9 12h11M9 18h11" />
     </svg>
   );
 }
