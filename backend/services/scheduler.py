@@ -490,6 +490,40 @@ async def bridge_health_cycle() -> None:
             logger.warning(f"Bridge down alert echec: {e}")
 
 
+async def cache_warmup_cycle() -> None:
+    """Pré-calcule les endpoints "cold-prone" qui prennent 15-45s au 1er
+    appel après restart container (ex. ``/api/shadow/v2_core_long/summary``
+    confirmé à 45s cold, 2ms warm).
+
+    Sans ce job, les users qui visitent Candidats / Analytics / Trades /
+    Admin juste après un deploy attendent l'amortissement des caches
+    Python (lru_cache) + page cache DB. C'est invisible sur Cockpit qui est
+    déjà chauffé par ``cockpit_broadcast_cycle`` toutes les 5s.
+
+    Wrappé en ``run_in_executor`` pour ne pas bloquer l'event loop pendant
+    les premières exécutions cold (sinon toute l'API serait freeze ~45s).
+
+    Best-effort : toute exception est loggée et ignorée -- ce job est
+    purement préventif, ne doit jamais casser le scheduler global.
+    """
+    import asyncio
+    loop = asyncio.get_running_loop()
+    # Endpoints cold-prone identifiés. Ajouter au fil des observations.
+    warmup_targets: list[tuple[str, callable]] = []
+    try:
+        from backend.services.shadow_v2_core_long import summary as _shadow_summary
+        warmup_targets.append(("shadow_v2_core_long.summary", _shadow_summary))
+    except Exception as e:
+        logger.debug(f"cache_warmup: shadow_summary import skip ({e})")
+
+    for name, fn in warmup_targets:
+        try:
+            await loop.run_in_executor(None, fn)
+            logger.debug(f"cache_warmup: {name} OK")
+        except Exception as e:
+            logger.warning(f"cache_warmup: {name} failed -- {e}")
+
+
 def start_scheduler() -> AsyncIOScheduler:
     """Démarre le scheduler périodique."""
     global _scheduler
@@ -642,6 +676,20 @@ def start_scheduler() -> AsyncIOScheduler:
         id="trial_reminders",
         name="Rappels trial J-3 / J-1 (SaaS)",
         replace_existing=True,
+    )
+
+    # Cache warmup pour les endpoints cold-prone (shadow summary surtout) :
+    # exec immédiat au boot via next_run_time + repeat toutes les 5 min pour
+    # garder les caches chauds entre les visites users.
+    from datetime import datetime
+    _scheduler.add_job(
+        cache_warmup_cycle,
+        "interval",
+        minutes=5,
+        id="cache_warmup",
+        name="Cache warmup (cold-prone endpoints)",
+        replace_existing=True,
+        next_run_time=datetime.now(),
     )
 
     _scheduler.start()
