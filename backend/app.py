@@ -2982,6 +2982,7 @@ async def api_admin_auto_exec_health(
             "email": u["email"],
             "auto_exec_enabled": True,
             "api_key_set": bool(cfg.get("bridge_api_key")),
+            "watched_pairs": users_service.get_watched_pairs(u["id"]),
             "heartbeat": {
                 "last": last_hb,
                 "age_seconds": hb_age,
@@ -3003,6 +3004,8 @@ async def api_admin_auto_exec_health(
             "last_order": last_order,
         })
 
+    from config.settings import WATCHED_PAIRS as _ADMIN_WATCHED
+
     return {
         "users": enriched_users,
         "totals": {
@@ -3016,6 +3019,7 @@ async def api_admin_auto_exec_health(
             ),
             "zombies_total": totals_zombies,
         },
+        "admin_watched_pairs": list(_ADMIN_WATCHED),
         "thresholds": thresholds,
     }
 
