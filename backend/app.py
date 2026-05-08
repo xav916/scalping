@@ -2929,6 +2929,30 @@ async def api_admin_auto_exec_health(
         n_resolved = n_executed + n_failed + n_expired
         executed_rate = (n_executed / n_resolved) if n_resolved > 0 else None
 
+        # Breakdown FAILED par pair + sample des 5 derniers mt5_error
+        # pour diagnostiquer les patterns d'échec (filling mode, symbol
+        # not enabled, spread, etc.). Utile au monitoring tenant Premium.
+        failed_by_pair: dict[str, int] = {}
+        executed_by_pair: dict[str, int] = {}
+        recent_errors: list[dict] = []
+        for o in orders:
+            try:
+                p = _json.loads(o.get("payload") or "{}")
+            except (ValueError, TypeError):
+                p = {}
+            pair = p.get("pair") or "?"
+            if o["status"] == "FAILED":
+                failed_by_pair[pair] = failed_by_pair.get(pair, 0) + 1
+                if len(recent_errors) < 5 and o.get("mt5_error"):
+                    recent_errors.append({
+                        "pair": pair,
+                        "direction": p.get("direction"),
+                        "mt5_error": (o.get("mt5_error") or "")[:200],
+                        "created_at": o.get("created_at"),
+                    })
+            elif o["status"] == "EXECUTED":
+                executed_by_pair[pair] = executed_by_pair.get(pair, 0) + 1
+
         last_order = None
         if orders:
             o = orders[0]
@@ -2967,6 +2991,9 @@ async def api_admin_auto_exec_health(
                 "total": len(orders),
                 "by_status": by_status,
                 "executed_rate": executed_rate,
+                "failed_by_pair": failed_by_pair,
+                "executed_by_pair": executed_by_pair,
+                "recent_errors": recent_errors,
             },
             "zombies": {
                 "sent_stale": sent_stale,
