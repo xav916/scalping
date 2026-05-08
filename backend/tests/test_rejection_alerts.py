@@ -40,7 +40,7 @@ async def test_no_alert_if_below_threshold(db):
     for i in range(5):  # < 10
         _insert_rejection(db, (now - timedelta(minutes=i)).isoformat(), "bridge_max_positions")
 
-    with patch("backend.services.telegram_service.send_text", new=AsyncMock()) as mock_send:
+    with patch("backend.services.telegram_service.send_infra_text", new=AsyncMock(return_value=True)) as mock_send:
         with patch("backend.services.telegram_service.is_configured", return_value=True):
             out = await rejection_alerts.check_and_alert()
 
@@ -54,7 +54,7 @@ async def test_alert_sent_when_threshold_crossed(db):
     for i in range(15):  # > 10
         _insert_rejection(db, (now - timedelta(minutes=i)).isoformat(), "bridge_max_positions")
 
-    with patch("backend.services.telegram_service.send_text", new=AsyncMock()) as mock_send:
+    with patch("backend.services.telegram_service.send_infra_text", new=AsyncMock(return_value=True)) as mock_send:
         with patch("backend.services.telegram_service.is_configured", return_value=True):
             out = await rejection_alerts.check_and_alert()
 
@@ -72,7 +72,7 @@ async def test_cooldown_suppresses_duplicate_alerts(db):
     for i in range(15):
         _insert_rejection(db, (now - timedelta(minutes=i)).isoformat(), "bridge_max_positions")
 
-    with patch("backend.services.telegram_service.send_text", new=AsyncMock()) as mock_send:
+    with patch("backend.services.telegram_service.send_infra_text", new=AsyncMock(return_value=True)) as mock_send:
         with patch("backend.services.telegram_service.is_configured", return_value=True):
             # 1er appel : envoie
             await rejection_alerts.check_and_alert()
@@ -91,7 +91,7 @@ async def test_multiple_reason_codes_independently_alerted(db):
     for i in range(12):
         _insert_rejection(db, (now - timedelta(minutes=i)).isoformat(), "sl_too_close", pair="XAU/USD")
 
-    with patch("backend.services.telegram_service.send_text", new=AsyncMock()) as mock_send:
+    with patch("backend.services.telegram_service.send_infra_text", new=AsyncMock(return_value=True)) as mock_send:
         with patch("backend.services.telegram_service.is_configured", return_value=True):
             out = await rejection_alerts.check_and_alert()
 
@@ -112,7 +112,7 @@ async def test_market_closed_does_not_trigger_telegram(db):
             pair="XAU/USD",
         )
 
-    with patch("backend.services.telegram_service.send_text", new=AsyncMock()) as mock_send:
+    with patch("backend.services.telegram_service.send_infra_text", new=AsyncMock(return_value=True)) as mock_send:
         with patch("backend.services.telegram_service.is_configured", return_value=True):
             out = await rejection_alerts.check_and_alert()
 
@@ -130,10 +130,10 @@ async def test_telegram_not_configured_is_no_op(db):
     for i in range(15):
         _insert_rejection(db, (now - timedelta(minutes=i)).isoformat(), "bridge_max_positions")
 
-    with patch("backend.services.telegram_service.send_text", new=AsyncMock()) as mock_send:
-        with patch("backend.services.telegram_service.is_configured", return_value=False):
-            out = await rejection_alerts.check_and_alert()
+    # Si send_infra_text retourne False (INFRA_TELEGRAM_* non configuré),
+    # l'alerte n'est pas marquée envoyée (pas de _last_alert_at update).
+    with patch("backend.services.telegram_service.send_infra_text", new=AsyncMock(return_value=False)) as mock_send:
+        out = await rejection_alerts.check_and_alert()
 
-    assert mock_send.call_count == 0
-    # alerts_sent vide aussi puisque send_text n'a pas été appelé
+    assert mock_send.call_count == 1  # appel tenté, mais retourne False
     assert out["alerts_sent"] == []

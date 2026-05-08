@@ -111,16 +111,20 @@ async def check_and_alert() -> dict[str, Any]:
             msg = _format_message(reason, count, top_pairs)
 
             try:
-                from backend.services.telegram_service import send_text, is_configured
-                if not is_configured():
-                    logger.info(f"rejection_alerts: Telegram non configuré, skip {reason}")
-                else:
-                    await send_text(msg, parse_mode="Markdown")
+                # Bascule 2026-05-08 : route vers le canal infra
+                # (@xav_scalping_infra_bot) au lieu du canal user-facing,
+                # cohérent avec project_telegram_bot_infra.md. Le canal
+                # user-facing reste dédié aux signaux de trading.
+                from backend.services.telegram_service import send_infra_text
+                sent = await send_infra_text(msg, parse_mode="Markdown")
+                if sent:
                     _last_alert_at[reason] = now
                     alerts_sent.append(reason)
                     logger.warning(
-                        f"rejection_alerts: rafale {reason} ({count}/h) — alert envoyée"
+                        f"rejection_alerts: rafale {reason} ({count}/h) — alert infra envoyée"
                     )
+                else:
+                    logger.info(f"rejection_alerts: infra Telegram non configuré, skip {reason}")
             except Exception as e:
                 logger.warning(f"rejection_alerts: send failed pour {reason}: {e}")
 

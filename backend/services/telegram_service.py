@@ -145,6 +145,38 @@ async def send_text(text: str, parse_mode: str = "Markdown") -> None:
             logger.warning(f"Erreur Telegram text {user}: {e}")
 
 
+async def send_infra_text(text: str, parse_mode: str = "Markdown") -> bool:
+    """Envoie un texte vers le canal infra dédié (@xav_scalping_infra_bot).
+
+    Sépare les alertes système (rafales rejections, monitoring infra,
+    routine alerts) du canal user-facing qui est réservé aux signaux de
+    trading. Lit INFRA_TELEGRAM_BOT_TOKEN + INFRA_TELEGRAM_CHAT_ID depuis
+    config.settings — si non configuré, no-op silencieux + log.
+
+    Retourne True si envoyé, False sinon.
+    """
+    from config.settings import INFRA_TELEGRAM_BOT_TOKEN, INFRA_TELEGRAM_CHAT_ID
+    if not INFRA_TELEGRAM_BOT_TOKEN or not INFRA_TELEGRAM_CHAT_ID:
+        logger.info("send_infra_text: INFRA_TELEGRAM_* non configure, skip")
+        return False
+    url = TELEGRAM_API.format(token=INFRA_TELEGRAM_BOT_TOKEN)
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.post(url, json={
+                "chat_id": INFRA_TELEGRAM_CHAT_ID,
+                "text": text[:4000],
+                "parse_mode": parse_mode,
+                "disable_web_page_preview": True,
+            })
+        if r.status_code != 200:
+            logger.warning(f"send_infra_text: HTTP {r.status_code} {r.text[:200]}")
+            return False
+        return True
+    except Exception as e:
+        logger.warning(f"send_infra_text: erreur {e}")
+        return False
+
+
 async def send_signal(signal: ScalpingSignal) -> None:
     """DEPRECIE — le path "signal-based" Telegram pollue le canal :
     il filtre uniquement par signal_strength (weak/moderate/strong) sans
