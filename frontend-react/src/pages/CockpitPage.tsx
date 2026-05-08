@@ -31,6 +31,7 @@ import { TodayStatsCard } from '@/components/cockpit/TodayStatsCard';
 import { CapitalAtRiskCard } from '@/components/cockpit/CapitalAtRiskCard';
 import { AssetClassBreakdownCard } from '@/components/cockpit/AssetClassBreakdownCard';
 import { FearGreedGauge } from '@/components/cockpit/FearGreedGauge';
+import { GeopoliticalCard } from '@/components/cockpit/GeopoliticalCard';
 import { ActiveTradesPanel } from '@/components/cockpit/ActiveTradesPanel';
 import { SystemHealthCard } from '@/components/cockpit/SystemHealthCard';
 import { CotExtremesCard } from '@/components/cockpit/CotExtremesCard';
@@ -352,8 +353,9 @@ function renderRiskCard(id: string, data: CockpitSnapshot): ReactNode {
           <div className="lg:col-span-4 min-w-0">
             <AssetClassBreakdownCard trades={data.active_trades.items} />
           </div>
-          <div className="lg:col-span-3 min-w-0">
+          <div className="lg:col-span-3 min-w-0 flex flex-col gap-6">
             <FearGreedGauge snapshot={data.fear_greed} />
+            <GeopoliticalCard snapshot={data.geopolitical} />
           </div>
         </div>
       );

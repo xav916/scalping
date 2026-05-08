@@ -386,6 +386,24 @@ export interface FearGreedSnapshot {
   classification: 'extreme_fear' | 'fear' | 'neutral' | 'greed' | 'extreme_greed';
 }
 
+export type GeopoliticalStress = 'calm' | 'elevated' | 'high';
+
+export interface GeopoliticalThemeReading {
+  theme: string;
+  avg_tone: number;
+  volume: number;
+  stress_level: GeopoliticalStress;
+  samples: number;
+}
+
+export interface GeopoliticalSnapshot {
+  fetched_at: string;
+  timespan: string;
+  overall_tone: number;
+  overall_stress: GeopoliticalStress;
+  themes: Record<string, GeopoliticalThemeReading>;
+}
+
 export interface CotExtreme {
   pair: string;
   report_date: string;
@@ -435,6 +453,7 @@ export interface CockpitSnapshot {
   blackouts: Array<{ pair: string; reason: string }>;
   cot_extremes: CotExtreme[];
   fear_greed: FearGreedSnapshot | null;
+  geopolitical: GeopoliticalSnapshot | null;
   next_events: Array<{ time: string; currency: string; impact: string; event_name: string }>;
   alerts: CockpitAlert[];
 }
