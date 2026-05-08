@@ -62,6 +62,16 @@ MT5 bloque les requêtes externes par défaut. Pour autoriser :
    - **InpDeviationPoints** : 20 (slippage max accepté)
    - **InpDryRun** : false (mettre true au tout début pour tester sans
      passer d'ordres réels)
+   - **InpSymbolMap** : mapping pair SaaS → symbole broker, séparé par
+     virgules. À renseigner si ton broker nomme certains CFD différemment
+     du SaaS. Recommandé pour Pepperstone et la plupart des retail brokers :
+     ```
+     WTI/USD=USOIL,SPX=SPX500,NDX=NAS100
+     ```
+     Vide = strip-slash par défaut (`EUR/USD` → `EURUSD`, etc.). Si tu vois
+     des FAILED retcode=0 sur un pair, c'est probablement un mapping
+     symbole manquant — ajoute-le ici. Cf. `docs/pepperstone-migration.md`
+     pour la liste complète Pepperstone.
 3. Onglet "Common" → coche **Allow Algo Trading** + **Allow live trading**
 4. OK
 
