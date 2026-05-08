@@ -81,10 +81,22 @@ def test_list_excludes_user_with_short_api_key(db):
     assert users_service.list_premium_auto_exec_users() == []
 
 
-def test_list_excludes_user_with_invalid_url(db):
-    """bridge_url sans schéma → exclu."""
+def test_list_includes_user_without_bridge_url(db):
+    """EA-only user (pas de bridge_url) → inclus, car routing passe par
+    la queue EA qui n'utilise jamais bridge_url. Cf. fix Cédric 2026-05-05.
+    """
+    uid = _create_premium_user("alice@test.com", bridge_url="")
+    users = users_service.list_premium_auto_exec_users()
+    assert len(users) == 1
+    assert users[0]["id"] == uid
+    assert "bridge_url" not in users[0]["broker_config"]
+
+
+def test_list_includes_user_with_invalid_url(db):
+    """bridge_url malformé → toujours inclus (champ ignoré par EA queue)."""
     _create_premium_user("alice@test.com", bridge_url="just-a-host:8787")
-    assert users_service.list_premium_auto_exec_users() == []
+    users = users_service.list_premium_auto_exec_users()
+    assert len(users) == 1
 
 
 def test_list_excludes_non_premium_tier(db):

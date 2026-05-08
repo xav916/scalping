@@ -223,10 +223,10 @@ def test_user_destinations_resilient_to_users_service_error(monkeypatch):
 
 
 def test_user_destination_skipped_on_malformed_broker_config(monkeypatch):
-    """broker_config sans bridge_url → ce user-là est skip, les autres passent."""
+    """broker_config sans bridge_api_key → ce user-là est skip, les autres passent."""
     _set_admin_env(monkeypatch, MT5_BRIDGE_ENABLED=False)
     bad = _stub_premium_user(user_id=99)
-    bad["broker_config"] = {"auto_exec_enabled": True}  # manque url + key
+    bad["broker_config"] = {"auto_exec_enabled": True}  # manque bridge_api_key
     good = _stub_premium_user(user_id=42)
     monkeypatch.setattr(
         "backend.services.users_service.list_premium_auto_exec_users",
@@ -237,3 +237,27 @@ def test_user_destination_skipped_on_malformed_broker_config(monkeypatch):
 
     # Seul le user bien configuré passe
     assert {d.destination_id for d in dests} == {"user:42"}
+
+
+def test_premium_user_ea_only_without_bridge_url(monkeypatch):
+    """EA-only user (broker_config sans bridge_url) → inclus, bridge_url='' dans
+    le BridgeConfig. Le path EA queue (mt5_bridge.send_setup user_id is not None)
+    n'utilise jamais bridge_url, donc pas de crash en aval. Cf. fix Cédric 2026-05-05.
+    """
+    _set_admin_env(monkeypatch, MT5_BRIDGE_ENABLED=False)
+    ea_user = _stub_premium_user(user_id=17)
+    ea_user["broker_config"] = {
+        "auto_exec_enabled": True,
+        "bridge_api_key": "u" * 32,
+        # pas de bridge_url
+    }
+    monkeypatch.setattr(
+        "backend.services.users_service.list_premium_auto_exec_users",
+        lambda: [ea_user],
+    )
+
+    dests = bridge_destinations.resolve_destinations(_mk_setup("EUR/USD"))
+
+    assert len(dests) == 1
+    assert dests[0].destination_id == "user:17"
+    assert dests[0].bridge_url == ""

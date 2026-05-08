@@ -653,9 +653,14 @@ def list_premium_auto_exec_users() -> list[dict]:
       sub Stripe expirée tombe en 'free' et doit être exclu)
     - ``broker_config`` JSON parse-able
     - ``auto_exec_enabled=True``
-    - ``bridge_url`` non vide ET contient ``://``
     - ``bridge_api_key`` non vide ET ≥ 16 chars
     - ``watched_pairs`` JSON parse-able (liste de strings)
+
+    Note routing : ``bridge_url`` n'est PAS requis. Tous les users Premium
+    passent désormais par la queue EA (``mt5_pending_orders``) — cf.
+    ``mt5_bridge.send_setup()`` qui route ``user_id is not None`` vers
+    ``mt5_pending_orders_service.enqueue()`` sans toucher à ``bridge_url``.
+    L'ancien path bridge.py HTTP per-user est mort code depuis MQL.C.
 
     Returns
     -------
@@ -688,9 +693,8 @@ def list_premium_auto_exec_users() -> list[dict]:
             continue
         if not cfg.get("auto_exec_enabled"):
             continue
-        url = (cfg.get("bridge_url") or "").strip()
         key = (cfg.get("bridge_api_key") or "").strip()
-        if not url or "://" not in url or len(key) < 16:
+        if len(key) < 16:
             continue
         try:
             pairs = json.loads(user_dict["watched_pairs"]) if user_dict["watched_pairs"] else []

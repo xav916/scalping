@@ -118,7 +118,10 @@ def _user_destinations(setup: Any) -> list[BridgeConfig]:
                 BridgeConfig(
                     destination_id=f"user:{user['id']}",
                     user_id=int(user["id"]),
-                    bridge_url=cfg["bridge_url"].rstrip("/"),
+                    # bridge_url ignoré pour user destinations (path = EA queue,
+                    # cf. mt5_bridge.send_setup user_id is not None branche).
+                    # Conservé en str pour le dataclass, fallback "" si absent.
+                    bridge_url=(cfg.get("bridge_url") or "").rstrip("/"),
                     bridge_api_key=cfg["bridge_api_key"],
                     min_confidence=float(mb.MT5_BRIDGE_MIN_CONFIDENCE),
                     allowed_asset_classes=frozenset(
