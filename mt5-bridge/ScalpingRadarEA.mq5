@@ -24,7 +24,7 @@
 //+------------------------------------------------------------------+
 #property copyright   "Scalping Radar"
 #property link        "https://app.scalping-radar.online"
-#property version     "1.01"
+#property version     "1.02"
 #property strict
 
 //─── Inputs (modifiables par l'user au drag sur chart) ──────────────
@@ -59,9 +59,9 @@ int OnInit()
         Print("[ScalpingRadarEA] ERREUR : server_url invalide (doit contenir http:// ou https://)");
         return INIT_PARAMETERS_INCORRECT;
     }
-    if(InpPollingIntervalSec < 5 || InpPollingIntervalSec > 300)
+    if(InpPollingIntervalSec < 1 || InpPollingIntervalSec > 300)
     {
-        Print("[ScalpingRadarEA] ERREUR : polling_interval doit être entre 5 et 300s");
+        Print("[ScalpingRadarEA] ERREUR : polling_interval doit être entre 1 et 300s");
         return INIT_PARAMETERS_INCORRECT;
     }
 
