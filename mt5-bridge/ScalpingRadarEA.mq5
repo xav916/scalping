@@ -24,7 +24,7 @@
 //+------------------------------------------------------------------+
 #property copyright   "Scalping Radar"
 #property link        "https://app.scalping-radar.online"
-#property version     "1.00"
+#property version     "1.01"
 #property strict
 
 //─── Inputs (modifiables par l'user au drag sur chart) ──────────────
@@ -35,6 +35,7 @@ input double   InpDefaultLot          = 0.01;                                  /
 input int      InpMagicNumber         = 20260429;                              // Magic number pour identifier les trades EA
 input int      InpDeviationPoints     = 20;                                    // Slippage max accepté (points)
 input bool     InpDryRun              = false;                                 // Si true, log les ordres sans OrderSend (test)
+input string   InpSymbolMap           = "";                                    // Mapping pair→broker_symbol (csv: "WTI/USD=USOIL,SPX=SPX500"). Vide = strip / par défaut
 
 //─── État interne ──────────────────────────────────────────────────
 int g_poll_count = 0;
@@ -284,9 +285,8 @@ void ProcessSingleOrder(const string order_json)
         return;
     }
 
-    // Mapping symbole : EUR/USD → EURUSD (Pepperstone et la plupart des brokers retail)
-    string symbol = pair;
-    StringReplace(symbol, "/", "");
+    // Mapping symbole : d'abord InpSymbolMap user-config (broker-spécifique), sinon strip-slash par défaut.
+    string symbol = MapSymbol(pair);
 
     if(InpDryRun)
     {
@@ -314,6 +314,41 @@ void ProcessSingleOrder(const string order_json)
         AckResult(order_id, false, 0, err);
         Print("[ScalpingRadarEA] order_id=", order_id, " FAILED ", err, " ", symbol, " ", direction);
     }
+}
+
+//+------------------------------------------------------------------+
+//| MapSymbol — traduit le pair SaaS vers le symbole broker          |
+//|                                                                  |
+//| 1. Si InpSymbolMap contient une entrée "<pair>=<broker_symbol>", |
+//|    on retourne le broker_symbol (ex: "WTI/USD=USOIL").           |
+//| 2. Sinon fallback : strip "/" du pair (EUR/USD → EURUSD).        |
+//|                                                                  |
+//| Format InpSymbolMap : "PAIR1=BROKER1,PAIR2=BROKER2,..." (csv).   |
+//| Le parsing est simple — pas de quoting, pas d'espaces tolérés    |
+//| dans les valeurs.                                                |
+//|                                                                  |
+//| Driver : Cédric (Pepperstone) avait 100% FAILED sur WTI/USD car  |
+//| Pepperstone connaît USOIL pas WTIUSD. Avant ce fix l'EA          |
+//| convertissait WTI/USD → WTIUSD aveuglément.                      |
+//+------------------------------------------------------------------+
+string MapSymbol(const string pair)
+{
+    if(InpSymbolMap != "")
+    {
+        string entries[];
+        int n = StringSplit(InpSymbolMap, ',', entries);
+        for(int i = 0; i < n; i++)
+        {
+            int eq = StringFind(entries[i], "=");
+            if(eq <= 0) continue;
+            string key = StringSubstr(entries[i], 0, eq);
+            string val = StringSubstr(entries[i], eq + 1);
+            if(key == pair) return val;
+        }
+    }
+    string fallback = pair;
+    StringReplace(fallback, "/", "");
+    return fallback;
 }
 
 //+------------------------------------------------------------------+
