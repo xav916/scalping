@@ -409,3 +409,162 @@ async def send_setups(setups: list) -> None:
     if not is_configured() or not setups:
         return
     await asyncio.gather(*(send_setup(s) for s in setups), return_exceptions=True)
+
+
+# ─── Notifications de fermeture (TP/SL/TIMEOUT/MANUAL) ──────────────────────
+# Pendant logique : send_setup pousse à l'OUVERTURE d'un setup détecté.
+# send_close pousse à la FERMETURE d'un trade auto-exec (mt5_ticket connu).
+# Dédup ticket-based : un trade ne notifie qu'une fois sa clôture.
+
+_notified_closes: set[int] = set()
+
+
+def _format_close(trade: dict) -> str:
+    """Format pédagogique pour la fermeture d'un trade auto-exec.
+
+    Champs attendus dans `trade` (depuis personal_trades) :
+    - pair, direction, entry_price, exit_price, pnl, close_reason
+    - signal_confidence, mt5_ticket, created_at, closed_at, size_lot
+
+    Sections : Header (outcome + pnl) / Détails / Lecture du résultat.
+    """
+    from datetime import datetime, timezone, timedelta
+
+    pair = trade.get("pair") or "?"
+    pair_label = _PAIR_FR_LABEL.get(pair, pair)
+    direction = (trade.get("direction") or "").lower()
+    dir_label = "ACHAT 🟢" if direction == "buy" else "VENTE 🔴"
+    entry = float(trade.get("entry_price") or 0)
+    exit_price = float(trade.get("exit_price") or 0)
+    pnl = float(trade.get("pnl") or 0)
+    close_reason = (trade.get("close_reason") or "UNKNOWN").upper()
+    score = float(trade.get("signal_confidence") or 0)
+    ticket = trade.get("mt5_ticket") or "—"
+    size_lot = trade.get("size_lot")
+
+    # Outcome icon + verdict text
+    if close_reason in ("TP1", "TP2"):
+        outcome_icon = "✅"
+        outcome_word = f"GAIN ({close_reason} touché)"
+    elif close_reason == "SL":
+        outcome_icon = "❌"
+        outcome_word = "PERTE (Stop Loss touché)"
+    elif close_reason == "TIMEOUT":
+        outcome_icon = "⏱"
+        outcome_word = "FERMÉ AU TEMPS (Timeout — ni TP ni SL touché)"
+    elif close_reason == "MANUAL":
+        outcome_icon = "👋"
+        outcome_word = "FERMÉ MANUELLEMENT"
+    else:
+        outcome_icon = "🔚"
+        outcome_word = f"FERMÉ ({close_reason})"
+
+    # Pts mouvement
+    pts_moved = exit_price - entry if direction == "buy" else entry - exit_price
+
+    # Durée du trade
+    duration_str = "—"
+    try:
+        ca = trade.get("created_at")
+        cb = trade.get("closed_at")
+        if ca and cb:
+            t0 = datetime.fromisoformat(str(ca).replace("Z", "+00:00"))
+            t1 = datetime.fromisoformat(str(cb).replace("Z", "+00:00"))
+            delta = t1 - t0
+            mins = int(delta.total_seconds() / 60)
+            if mins < 60:
+                duration_str = f"{mins} min"
+            elif mins < 24 * 60:
+                duration_str = f"{mins // 60}h{mins % 60:02d}"
+            else:
+                duration_str = f"{mins // (24*60)}j{(mins % (24*60)) // 60}h"
+    except Exception:
+        pass
+
+    paris_now = datetime.now(timezone.utc) + timedelta(hours=2)
+    time_str = paris_now.strftime("%H:%M")
+
+    pnl_sign = "+" if pnl >= 0 else ""
+    pts_sign = "+" if pts_moved >= 0 else ""
+
+    lines = [
+        f"{outcome_icon} *{pair_label}* ({pair}) — {dir_label}",
+        f"*{outcome_word}*",
+        f"PnL : *{pnl_sign}{pnl:.2f} €* · Mouvement : {pts_sign}{pts_moved:.2f} pts · {time_str} Paris",
+        "",
+        "📋 *Détails du trade*",
+        f"Entrée  `{entry:.5f}`",
+        f"Sortie  `{exit_price:.5f}`",
+        f"Durée   {duration_str}",
+    ]
+    if size_lot:
+        lines.append(f"Volume  {size_lot} lot")
+    if score:
+        lines.append(f"Score initial  {score:.0f}/100")
+    lines.append(f"Ticket MT5  `{ticket}`")
+
+    # Lecture pédagogique du résultat
+    lines.extend(["", "📊 *Lecture du résultat*"])
+    if close_reason in ("TP1", "TP2"):
+        lines.append(
+            f"Le marché est allé dans la direction prévue jusqu'à toucher le {close_reason}. "
+            f"Setup gagnant : la thèse du radar (pattern + tendance) s'est confirmée."
+        )
+    elif close_reason == "SL":
+        lines.append(
+            "Le marché s'est inversé contre la position et a touché le Stop Loss. "
+            "Perte limitée comme prévu — le SL a fait son job de protection."
+        )
+    elif close_reason == "TIMEOUT":
+        lines.append(
+            "Ni TP ni SL touchés dans la fenêtre. Le marché a stagné ou bougé "
+            "trop lentement. Sortie au temps écoulé pour libérer le capital."
+        )
+    elif close_reason == "MANUAL":
+        lines.append("Tu as fermé la position manuellement — le radar n'a pas conduit la sortie.")
+    else:
+        lines.append("Sortie de cause inconnue — voir le journal MT5 pour le détail.")
+
+    return "\n".join(lines)
+
+
+async def send_close(trade: dict) -> None:
+    """Push une notification de fermeture sur le canal user-facing.
+
+    Filtre : pair stars-only, ticket non encore notifié, Telegram configuré.
+    Dedup en mémoire par mt5_ticket — reset au reboot (peu grave, pire cas
+    re-notif au redémarrage si un trade vient de fermer).
+    """
+    if not is_configured():
+        return
+    pair = trade.get("pair")
+    if pair not in _STAR_PAIRS_SET:
+        return
+    ticket = trade.get("mt5_ticket")
+    if ticket and int(ticket) in _notified_closes:
+        return
+    if ticket:
+        _notified_closes.add(int(ticket))
+
+    text = _format_close(trade)
+    destinataires = _destinataires()
+    if not destinataires:
+        return
+    url = TELEGRAM_API.format(token=TELEGRAM_BOT_TOKEN)
+    for user, chat_id in destinataires:
+        if user != "__any__" and trade_log_service.silent_mode_active_for_user(user):
+            continue
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.post(url, json={
+                    "chat_id": chat_id,
+                    "text": text,
+                    "parse_mode": "Markdown",
+                    "disable_web_page_preview": True,
+                })
+                if response.status_code != 200:
+                    logger.warning(f"Telegram close erreur {response.status_code} pour {user}: {response.text[:200]}")
+                else:
+                    logger.info(f"Close Telegram envoye a {user} pour {pair} ticket={ticket}")
+        except Exception as e:
+            logger.warning(f"Erreur envoi close Telegram {user}: {e}")

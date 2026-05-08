@@ -2281,6 +2281,77 @@ async def api_admin_test_telegram_pedagogic(token: str = "", pair: str = "XAU/US
     }
 
 
+@app.post("/api/admin/test-telegram-close-pedagogic")
+async def api_admin_test_telegram_close_pedagogic(
+    token: str = "",
+    pair: str = "XAU/USD",
+    outcome: str = "TP1",
+):
+    """Génère une notif fermeture factice et l'envoie sur le bot
+    user-facing pour preview. Auth-by-token. Permet de tester le rendu
+    de chaque type de close (TP1/TP2/SL/TIMEOUT/MANUAL).
+
+    Query params :
+    - pair : XAU/USD, XAG/USD, ETH/USD, WTI/USD
+    - outcome : TP1 | TP2 | SL | TIMEOUT | MANUAL
+    """
+    import hashlib
+    from fastapi import HTTPException
+    from backend.services.telegram_service import _format_close, send_text
+
+    SHADOW_PUBLIC_TOKEN_HASH = "e980b1ed0b45ca6873caa3f2d6ddcf27f4d8a1d0aa87cf9072f6e3e0909b31ec"
+
+    if not token:
+        raise HTTPException(status_code=403, detail="token required")
+    provided_hash = hashlib.sha256(token.encode()).hexdigest()
+    import secrets as _s
+    if not _s.compare_digest(provided_hash, SHADOW_PUBLIC_TOKEN_HASH):
+        raise HTTPException(status_code=403, detail="invalid token")
+
+    presets: dict[str, dict] = {
+        "XAU/USD": {"entry": 4723.35, "tp1": 4814.56, "tp2": 4875.36, "sl": 4672.68, "vol_pts": 50.7},
+        "XAG/USD": {"entry": 73.20, "tp1": 75.82, "tp2": 77.56, "sl": 71.75, "vol_pts": 1.45},
+        "ETH/USD": {"entry": 3850.0, "tp1": 3976.0, "tp2": 4060.0, "sl": 3780.0, "vol_pts": 70.0},
+        "WTI/USD": {"entry": 75.50, "tp1": 78.20, "tp2": 80.00, "sl": 74.00, "vol_pts": 1.50},
+    }
+    p = presets.get(pair, presets["XAU/USD"])
+
+    outcome_to_exit_pnl = {
+        "TP1": (p["tp1"], +91.20),
+        "TP2": (p["tp2"], +152.0),
+        "SL": (p["sl"], -50.93),
+        "TIMEOUT": (p["entry"] + (p["tp1"] - p["entry"]) * 0.3, +14.50),
+        "MANUAL": (p["entry"] + (p["tp1"] - p["entry"]) * 0.5, +27.30),
+    }
+    exit_price, pnl = outcome_to_exit_pnl.get(outcome.upper(), outcome_to_exit_pnl["TP1"])
+
+    fake_trade = {
+        "pair": pair,
+        "direction": "buy",
+        "entry_price": p["entry"],
+        "exit_price": exit_price,
+        "pnl": pnl,
+        "close_reason": outcome.upper(),
+        "signal_confidence": 72,
+        "mt5_ticket": 99999000 + abs(hash(outcome.upper())) % 1000,
+        "created_at": "2026-05-08T10:00:00+00:00",
+        "closed_at": "2026-05-08T16:42:00+00:00",
+        "size_lot": 0.01,
+    }
+
+    text = _format_close(fake_trade)
+    text_with_prefix = "🧪 *[TEST PEDAGOGIQUE — FERMETURE]*\n\n" + text
+    await send_text(text_with_prefix, parse_mode="Markdown")
+
+    return {
+        "sent": True,
+        "pair": pair,
+        "outcome": outcome.upper(),
+        "preview_text": text,
+        "chars": len(text),
+    }
+
+
 @app.post("/api/admin/notify-infra-telegram")
 async def api_admin_notify_infra_telegram(
     payload: dict,

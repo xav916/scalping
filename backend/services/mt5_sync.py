@@ -299,6 +299,36 @@ def _update_closed_trade(row: dict[str, Any]) -> None:
         ))
 
 
+def _fetch_closed_trade_for_notify(ticket: int) -> dict[str, Any] | None:
+    """Charge la ligne personal_trades complète pour préparer une notif
+    Telegram de fermeture. Retourne None si introuvable."""
+    with sqlite3.connect(_db_path()) as c:
+        c.row_factory = sqlite3.Row
+        row = c.execute(
+            "SELECT pair, direction, entry_price, exit_price, pnl, "
+            "close_reason, signal_confidence, mt5_ticket, created_at, "
+            "closed_at, size_lot FROM personal_trades WHERE mt5_ticket=?",
+            (ticket,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+async def _notify_close_telegram(ticket: int) -> None:
+    """Envoie la notif Telegram pédagogique de fermeture pour ce ticket.
+
+    Best-effort : tout échec est loggé, jamais propagé (ne doit pas
+    casser la réconciliation).
+    """
+    try:
+        trade = _fetch_closed_trade_for_notify(ticket)
+        if not trade:
+            return
+        from backend.services.telegram_service import send_close
+        await send_close(trade)
+    except Exception as e:
+        logger.warning(f"mt5_sync: notify_close_telegram ticket={ticket} failed: {e}")
+
+
 def _select_open_auto_tickets() -> set[int]:
     """Retourne les mt5_tickets des personal_trades auto encore OPEN."""
     with sqlite3.connect(_db_path()) as c:
@@ -378,12 +408,14 @@ async def _reconcile_open_trades() -> None:
                 "created_at": data.get("closed_at"),
             })
             n_full += 1
+            await _notify_close_telegram(int(ticket))
         elif data.get("closed") is None:
             logger.warning(
                 f"mt5_sync: ticket {ticket} history introuvable, status=CLOSED sans pnl"
             )
             _mark_ticket_closed_no_deal(ticket)
             n_partial += 1
+            await _notify_close_telegram(int(ticket))
 
     if n_full or n_partial:
         logger.info(
@@ -443,6 +475,9 @@ async def sync_from_bridge() -> None:
         elif status == "closed":
             _update_closed_trade(row)
             new_closed += 1
+            ticket = row.get("ticket")
+            if ticket:
+                await _notify_close_telegram(int(ticket))
 
     if new_open or new_closed:
         logger.info(
