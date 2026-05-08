@@ -406,3 +406,28 @@ GEOPOLITICAL_TIMESPAN = os.getenv("GEOPOLITICAL_TIMESPAN", "24h")  # fenêtre fe
 # retournements n'est pas validée sur 4-6 semaines.
 POLYMARKET_ENABLED = os.getenv("POLYMARKET_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 POLYMARKET_REFRESH_INTERVAL_SEC = int(os.getenv("POLYMARKET_REFRESH_INTERVAL_SEC", "300"))  # 5 min
+
+# ─── Geopolitical veto (hard-rule sur scoring) ─────────────────
+# Bloque les setups dans la mauvaise direction quand un event Polymarket/GDELT
+# signale un risque direct. Ajouté en aval du macro_scoring.apply() dans
+# analysis_engine.enrich_trade_setup. Master switch + 1 flag par règle pour
+# rollback instantané d'une règle individuelle sans toucher au code.
+# Voir backend/services/geopolitical_veto.py pour les règles.
+GEOPOLITICAL_VETO_ENABLED = os.getenv("GEOPOLITICAL_VETO_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+
+# Règle 1 : Iran peace deal prob ≥ X% à <Y jours → veto longs XAU/XAG/WTI.
+GEOPOLITICAL_VETO_IRAN_HORMUZ_ENABLED = os.getenv("GEOPOLITICAL_VETO_IRAN_HORMUZ_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+GEOPOLITICAL_VETO_IRAN_HORMUZ_PROB = float(os.getenv("GEOPOLITICAL_VETO_IRAN_HORMUZ_PROB", "0.30"))
+GEOPOLITICAL_VETO_IRAN_HORMUZ_DAYS = int(os.getenv("GEOPOLITICAL_VETO_IRAN_HORMUZ_DAYS", "14"))
+
+# Règle 2 : Fed rate cut prob ≥ X% à <Y jours → veto positions USD-fort.
+GEOPOLITICAL_VETO_FED_DOVISH_ENABLED = os.getenv("GEOPOLITICAL_VETO_FED_DOVISH_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+GEOPOLITICAL_VETO_FED_DOVISH_PROB = float(os.getenv("GEOPOLITICAL_VETO_FED_DOVISH_PROB", "0.70"))
+GEOPOLITICAL_VETO_FED_DOVISH_DAYS = int(os.getenv("GEOPOLITICAL_VETO_FED_DOVISH_DAYS", "14"))
+
+# Règle 3 : Recession prob ≥ X% → veto longs indices US.
+GEOPOLITICAL_VETO_RECESSION_ENABLED = os.getenv("GEOPOLITICAL_VETO_RECESSION_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+GEOPOLITICAL_VETO_RECESSION_PROB = float(os.getenv("GEOPOLITICAL_VETO_RECESSION_PROB", "0.50"))
+
+# Règle 4 : GDELT stress geopolitical=high → veto longs indices européens.
+GEOPOLITICAL_VETO_GDELT_STRESS_ENABLED = os.getenv("GEOPOLITICAL_VETO_GDELT_STRESS_ENABLED", "true").lower() in ("1", "true", "yes", "on")

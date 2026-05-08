@@ -22,6 +22,7 @@ from backend.models.schemas import (
 )
 from backend.services import macro_context_service, macro_scoring
 from config.settings import (
+    GEOPOLITICAL_VETO_ENABLED,
     MACRO_SCORING_ENABLED,
     MACRO_VETO_ENABLED,
     MIN_CONFIDENCE_SCORE,
@@ -598,6 +599,27 @@ def enrich_trade_setup(
                 logger.warning(f"macro scoring error: {e}")
         else:
             logger.debug("macro: snapshot stale or missing, neutral mode")
+
+    # ── Geopolitical veto (Polymarket + GDELT hard rules) ──────────────
+    # Lazy import : évite les cycles + permet aux tests de patcher poly/gdelt
+    # snapshots sans setup top-level.
+    if GEOPOLITICAL_VETO_ENABLED:
+        try:
+            from backend.services import geopolitical_veto
+            vetoed, reasons, meta = geopolitical_veto.apply(
+                setup.pair, setup.direction.value
+            )
+            if vetoed:
+                setup.verdict_action = "SKIP"
+                blockers = list(setup.verdict_blockers or [])
+                blockers.extend([f"Geopolitical veto: {r}" for r in reasons])
+                setup.verdict_blockers = blockers
+                logger.info(
+                    f"geopolitical_veto pair={setup.pair} dir={setup.direction.value} "
+                    f"matched={meta.get('rules_matched')} reasons={reasons}"
+                )
+        except Exception as e:
+            logger.warning(f"geopolitical_veto error: {e}")
 
     return setup
 
