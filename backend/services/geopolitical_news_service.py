@@ -122,7 +122,10 @@ async def _fetch_theme_tone(
     url = f"{GDELT_ENDPOINT}?{urlencode(params)}"
 
     r = None
-    for attempt in range(3):
+    # 4 attempts (était 3) avec backoff exp 3s/6s/12s : GDELT throttle dur
+    # quand on enchaîne 4 thèmes, et 3 attempts ne suffisent pas si 2 thèmes
+    # consécutifs reçoivent 429.
+    for attempt in range(4):
         try:
             r = await client.get(url, timeout=15.0)
         except Exception as e:
@@ -130,8 +133,8 @@ async def _fetch_theme_tone(
             return None
         if r.status_code == 200:
             break
-        if r.status_code == 429 and attempt < 2:
-            await asyncio.sleep(3 * (2 ** attempt))  # 3s, 6s
+        if r.status_code == 429 and attempt < 3:
+            await asyncio.sleep(3 * (2 ** attempt))  # 3s, 6s, 12s
             continue
         logger.warning(f"geopolitical: {theme} HTTP {r.status_code}")
         return None
@@ -198,19 +201,47 @@ async def refresh_snapshot(timespan: str = "24h") -> Optional[GeopoliticalSnapsh
 
     import asyncio
 
+    # Charge le précédent snapshot persisté pour fallback par thème : si
+    # un thème fail (429 GDELT après 4 retries), on garde la dernière valeur
+    # connue plutôt que de skip silencieusement. Le cache stale ne contamine
+    # qu'un seul cycle (1h) jusqu'au prochain refresh réussi.
+    prev_persisted = _load_latest_persisted()
+    prev_themes_data = (prev_persisted or {}).get("themes") or {}
+
     readings: dict[str, ThemeReading] = {}
+    fallback_used: list[str] = []
     async with httpx.AsyncClient(headers={"User-Agent": "ScalpingRadar/1.0"}) as client:
         themes_list = list(THEMES.items())
         for idx, (theme, query) in enumerate(themes_list):
             reading = await _fetch_theme_tone(client, theme, query, timespan)
             if reading is not None:
                 readings[theme] = reading
+            elif theme in prev_themes_data:
+                # Fallback : reconstruire ThemeReading depuis le précédent
+                # snapshot persisté. Garde la couverture cross-thèmes.
+                prev = prev_themes_data[theme]
+                try:
+                    readings[theme] = ThemeReading(
+                        theme=theme,
+                        avg_tone=float(prev.get("avg_tone", 0)),
+                        volume=int(prev.get("volume", 0)),
+                        stress_level=str(prev.get("stress_level", "calm")),
+                        samples=int(prev.get("samples", 0)),
+                    )
+                    fallback_used.append(theme)
+                except (ValueError, TypeError):
+                    pass
             if idx < len(themes_list) - 1:
                 await asyncio.sleep(1.5)
 
     if not readings:
         logger.warning("geopolitical: refresh failed — all themes empty, keeping previous cache")
         return None
+    if fallback_used:
+        logger.info(
+            f"geopolitical: fallback used for {fallback_used} (GDELT throttle), "
+            f"using last persisted values"
+        )
 
     # Stress global = stress max parmi les thèmes (le thème le plus
     # négatif drive l'attention). Tone global = moyenne simple.
