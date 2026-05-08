@@ -2993,6 +2993,42 @@ async def api_admin_auto_exec_health(
     }
 
 
+@app.get("/api/admin/auto-exec/health-token")
+async def api_admin_auto_exec_health_token(token: str = ""):
+    """Variante auth-by-token de auto-exec/health (emails redacted).
+
+    Pour que les routines RemoteTrigger / scripts externes monitorent la
+    santé du pipeline EA sans cookie session admin. Mêmes thresholds et
+    structure que la version cookie-auth, mais l'email user est
+    masqué (`user_<id>@redacted`) pour ne pas exposer les addresses.
+
+    Token : même hash que public-summary (cf. SHADOW_PUBLIC_TOKEN_HASH).
+    """
+    import hashlib
+    from fastapi import HTTPException
+
+    SHADOW_PUBLIC_TOKEN_HASH = "e980b1ed0b45ca6873caa3f2d6ddcf27f4d8a1d0aa87cf9072f6e3e0909b31ec"
+
+    if not token:
+        raise HTTPException(status_code=403, detail="token required")
+    provided_hash = hashlib.sha256(token.encode()).hexdigest()
+    import secrets as _s
+    if not _s.compare_digest(provided_hash, SHADOW_PUBLIC_TOKEN_HASH):
+        raise HTTPException(status_code=403, detail="invalid token")
+
+    # Réutilise la logique existante en injectant un AuthContext factice
+    # (require_admin n'est pas appelé — on a déjà le token gate ci-dessus).
+    from backend.auth import AuthContext as _AuthCtx
+    fake_ctx = _AuthCtx(username="token-admin", user_id=0)
+    result = await api_admin_auto_exec_health(_ctx=fake_ctx)
+
+    # Redact emails
+    for u in result.get("users", []):
+        uid = u.get("user_id")
+        u["email"] = f"user_{uid}@redacted"
+    return result
+
+
 @app.get("/api/shadow/v2_core_long/setups.csv")
 async def api_shadow_setups_csv(
     since: str | None = None,
