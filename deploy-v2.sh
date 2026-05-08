@@ -46,17 +46,12 @@ print(f"Generated docs/changelog.json with {len(commits)} commits")
 PY
 echo "=== docker build ==="
 sudo docker build -t scalping-radar:latest .
-echo "=== prune dangling ==="
-# Supprime les images orphelines créées par ce build (anciennes layers
-# remplacées par les nouvelles). Sans ce prune, chaque deploy laisse
-# ~509MB-879MB d'image <none>:<none> → remplit les 8GB d'EBS en ~10 deploys.
-# `-a` (était sans avant 2026-05-08) : purge AUSSI les images sans tag qui
-# ont des layers parentes — sinon `<none>:<none>` du deploy précédent reste
-# (vu en prod 2026-05-08 : 879MB orphelin malgré `prune -f`). Le container
-# `scalping-radar` running protège l'image utilisée scalping-radar:latest,
-# donc `-a -f` direct est safe.
-sudo docker image prune -a -f
-sudo docker builder prune -f --filter "until=24h"
+# IMPORTANT : pas de `prune -a -f` ici (entre build et restart), sinon la
+# nouvelle image scalping-radar:latest qu'on vient de tagger n'est référencée
+# par AUCUN container running (le container actuel est sur l'ancienne image)
+# et serait purgée. Bug rencontré 2026-05-08 → recovery manuel par rebuild.
+# Le `prune -a -f` est désormais APRÈS le restart, où la nouvelle image est
+# protégée par le container running et l'ancienne devient orpheline (à purger).
 
 echo "=== sync assets archive (preserves old chunks for stale tabs) ==="
 # Onglets ouverts avant le deploy gardent l'ancien index.js qui référence
@@ -91,6 +86,17 @@ fi
 echo "=== systemd restart ==="
 sudo systemctl restart scalping
 sleep 3
+
+echo "=== prune dangling APRÈS restart ==="
+# Maintenant que le container utilise la nouvelle image scalping-radar:latest,
+# l'ancienne image (qui a perdu son tag au profit de la nouvelle) n'est plus
+# référencée par aucun container running → cible safe pour le prune -a -f.
+# Sans ce prune, chaque deploy laisse ~509MB-879MB d'image <none>:<none> →
+# remplit les 8GB d'EBS en ~10 deploys. (Vu en prod 2026-05-08 : 879MB
+# orphelin avant fix.)
+sudo docker image prune -a -f || true
+sudo docker builder prune -f --filter "until=24h" || true
+
 echo "=== service status ==="
 sudo systemctl status scalping --no-pager | head -15
 echo "=== container status ==="
