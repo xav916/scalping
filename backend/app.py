@@ -2192,6 +2192,95 @@ async def api_shadow_counterfactual(token: str = "", days: int = 30):
     }
 
 
+@app.post("/api/admin/test-telegram-pedagogic")
+async def api_admin_test_telegram_pedagogic(token: str = "", pair: str = "XAU/USD"):
+    """Génère un setup factice et envoie le format pédagogique sur le
+    bot user-facing pour preview. Auth-by-token (même hash).
+
+    Permet de tester visuellement le rendu sans attendre un vrai signal
+    radar. Retourne le texte généré + le statut d'envoi.
+    """
+    import hashlib
+    from fastapi import HTTPException
+    from types import SimpleNamespace
+    from backend.services.telegram_service import _format_setup, send_text
+
+    SHADOW_PUBLIC_TOKEN_HASH = "e980b1ed0b45ca6873caa3f2d6ddcf27f4d8a1d0aa87cf9072f6e3e0909b31ec"
+
+    if not token:
+        raise HTTPException(status_code=403, detail="token required")
+    provided_hash = hashlib.sha256(token.encode()).hexdigest()
+    import secrets as _s
+    if not _s.compare_digest(provided_hash, SHADOW_PUBLIC_TOKEN_HASH):
+        raise HTTPException(status_code=403, detail="invalid token")
+
+    # Setup factice réaliste pour XAU/USD H4 ACHAT
+    presets: dict[str, dict] = {
+        "XAU/USD": {
+            "entry": 4723.35, "sl": 4672.68, "tp1": 4814.56, "tp2": 4875.36,
+            "risk_pips": 50.7, "reward1": 91.2, "reward2": 152.0,
+            "rr1": 1.8, "rr2": 2.5,
+        },
+        "XAG/USD": {
+            "entry": 73.20, "sl": 71.75, "tp1": 75.82, "tp2": 77.56,
+            "risk_pips": 1.45, "reward1": 2.62, "reward2": 4.36,
+            "rr1": 1.8, "rr2": 3.0,
+        },
+        "ETH/USD": {
+            "entry": 3850.0, "sl": 3780.0, "tp1": 3976.0, "tp2": 4060.0,
+            "risk_pips": 70.0, "reward1": 126.0, "reward2": 210.0,
+            "rr1": 1.8, "rr2": 3.0,
+        },
+    }
+    p = presets.get(pair, presets["XAU/USD"])
+
+    fake_pattern = SimpleNamespace(
+        pattern=SimpleNamespace(value="momentum_up"),
+        confidence=0.78,
+    )
+    fake_direction = SimpleNamespace(value="buy")
+    fake_setup = SimpleNamespace(
+        pair=pair,
+        direction=fake_direction,
+        entry_price=p["entry"],
+        stop_loss=p["sl"],
+        take_profit_1=p["tp1"],
+        take_profit_2=p["tp2"],
+        risk_pips=p["risk_pips"],
+        reward_pips_1=p["reward1"],
+        reward_pips_2=p["reward2"],
+        risk_reward_1=p["rr1"],
+        risk_reward_2=p["rr2"],
+        confidence_score=72,
+        pattern=fake_pattern,
+        verdict_action="TAKE",
+        verdict_summary="Tendance haussière confirmée par alignement multi-timeframe.",
+        verdict_reasons=[
+            "Tendance haussière forte (EMA 12 > EMA 48 > EMA 100)",
+            "Volatilité optimale (ATR ratio 1.4x)",
+            "Pattern Momentum haussier validé sur H1 fermé",
+        ],
+        verdict_warnings=[
+            "Spread inhabituel — vérifier coût d'entrée avant de placer l'ordre",
+        ],
+        validity_minutes=15,
+    )
+
+    text = _format_setup(fake_setup)
+
+    # Préfixe de test pour éviter confusion en prod
+    text_with_prefix = "🧪 *[TEST PEDAGOGIQUE]*\n\n" + text
+
+    await send_text(text_with_prefix, parse_mode="Markdown")
+
+    return {
+        "sent": True,
+        "pair": pair,
+        "preview_text": text,
+        "chars": len(text),
+    }
+
+
 @app.post("/api/admin/notify-infra-telegram")
 async def api_admin_notify_infra_telegram(
     payload: dict,

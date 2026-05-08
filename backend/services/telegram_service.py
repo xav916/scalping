@@ -244,13 +244,42 @@ def _should_push_setup(setup) -> bool:
     return True
 
 
-def _format_setup(setup) -> str:
-    """Format Telegram compact, action-first.
+_PAIR_FR_LABEL: dict[str, str] = {
+    "XAU/USD": "Or",
+    "XAG/USD": "Argent",
+    "WTI/USD": "Pétrole WTI",
+    "ETH/USD": "Ethereum",
+    "BTC/USD": "Bitcoin",
+}
 
-    Le verdict (icône + action) ouvre le message, le score est dans le
-    titre, les niveaux sur 2 lignes alignées, contexte (tendance/vol)
-    et reasons/warnings condensés à la fin. Pas de double-affichage du
-    score, pas de jargon redondant.
+_PATTERN_EXPLAIN_FR: dict[str, str] = {
+    "momentum_up": "fort élan haussier — la dernière bougie absorbe la pression vendeuse et accélère vers le haut",
+    "momentum_down": "fort élan baissier — la dernière bougie casse la dynamique acheteuse",
+    "engulfing_bullish": "bougie englobante haussière — un retournement net après une phase baissière",
+    "engulfing_bearish": "bougie englobante baissière — un retournement net après une phase haussière",
+    "breakout_up": "cassure de résistance — le prix franchit un plafond technique avec volume",
+    "breakout_down": "cassure de support — le prix casse un plancher technique avec volume",
+    "range_bounce_up": "rebond sur support — le prix repart d'un plancher dans un range établi",
+    "range_bounce_down": "rejet sur résistance — le prix échoue à casser un plafond dans un range",
+    "pin_bar_up": "pin bar haussière — rejet visible du bas, signal de retournement court terme",
+    "pin_bar_down": "pin bar baissière — rejet visible du haut, signal de retournement court terme",
+}
+
+
+def _format_setup(setup) -> str:
+    """Format Telegram pédagogique : vulgarise l'analyse pour le user-facing.
+
+    Structure :
+    1. Header (pair label FR, direction, score, heure Paris)
+    2. Lecture du radar (pattern explained + verdict_summary si dispo)
+    3. Plan de trade (entry/SL/TP1/TP2 avec gain/perte concrets)
+    4. Comment lire ce R:R (explication chiffrée)
+    5. Forces validant le setup (verdict_reasons)
+    6. Vigilances (verdict_warnings)
+    7. Validité
+
+    Vise les Premium qui veulent comprendre POURQUOI le radar émet, pas
+    juste recevoir des chiffres bruts.
     """
     from datetime import datetime, timezone, timedelta
 
@@ -263,32 +292,72 @@ def _format_setup(setup) -> str:
     dir_label = "ACHAT 🟢" if dir_value == "buy" else "VENTE 🔴"
     score = getattr(setup, "confidence_score", 0) or 0
 
-    # Heure Paris — approximation simple sans pytz (CEST UTC+2)
     paris_now = datetime.now(timezone.utc) + timedelta(hours=2)
     time_str = paris_now.strftime("%H:%M")
 
+    pair_label = _PAIR_FR_LABEL.get(setup.pair, setup.pair)
+
+    # Pattern explanation
+    pattern_obj = getattr(setup, "pattern", None)
+    pattern_value = ""
+    if pattern_obj is not None:
+        ptype = getattr(pattern_obj, "pattern", None)
+        pattern_value = ptype.value if hasattr(ptype, "value") else str(ptype or "")
+    pattern_explain = _PATTERN_EXPLAIN_FR.get(pattern_value, pattern_value or "signal technique détecté")
+
+    risk = float(getattr(setup, "risk_pips", 0) or 0)
+    reward_1 = float(getattr(setup, "reward_pips_1", 0) or 0)
+    reward_2 = float(getattr(setup, "reward_pips_2", 0) or 0)
+    rr1 = float(getattr(setup, "risk_reward_1", 0) or 0)
+    rr2 = float(getattr(setup, "risk_reward_2", 0) or 0)
+
     lines = [
-        f"{verdict_icon} *{setup.pair}* {dir_label} · {score:.0f} · {time_str} Paris",
+        f"{verdict_icon} *{pair_label}* ({setup.pair}) — {dir_label}",
+        f"Score *{score:.0f}/100* · {time_str} Paris",
         "",
-        f"Entry  `{setup.entry_price:.5f}`",
-        f"SL     `{setup.stop_loss:.5f}`  ({setup.risk_pips:.1f} pts)",
-        f"TP1    `{setup.take_profit_1:.5f}`  (R:R {setup.risk_reward_1:.1f})",
-        f"TP2    `{setup.take_profit_2:.5f}`  (R:R {setup.risk_reward_2:.1f})",
+        "🧭 *Lecture du radar*",
+        f"Pattern détecté : *{pattern_explain}*.",
     ]
+
+    verdict_summary = getattr(setup, "verdict_summary", None)
+    if verdict_summary:
+        lines.append(f"_{verdict_summary}_")
+
+    lines.extend([
+        "",
+        "💰 *Plan de trade*",
+        f"Entrée  `{setup.entry_price:.5f}`",
+        f"Stop    `{setup.stop_loss:.5f}`  _(perte si invalidé : {risk:.1f} pts)_",
+        f"TP1     `{setup.take_profit_1:.5f}`  _(+{reward_1:.1f} pts, soit {rr1:.1f}× la perte)_",
+        f"TP2     `{setup.take_profit_2:.5f}`  _(+{reward_2:.1f} pts, soit {rr2:.1f}× la perte)_",
+    ])
+
+    if rr1 > 0:
+        lines.extend([
+            "",
+            "📊 *Comment lire ce trade*",
+            f"Tu risques *{risk:.1f} pts* pour viser *+{reward_1:.1f} pts* (R:R {rr1:.1f}). "
+            f"Avec ce ratio, le trade devient gagnant si tu touches TP1 plus de "
+            f"{int(round(100/(1+rr1)))}% du temps.",
+        ])
 
     reasons = getattr(setup, "verdict_reasons", None) or []
     warnings = getattr(setup, "verdict_warnings", None) or []
-    context_bits = []
     if reasons:
-        context_bits.append("👍 " + " · ".join(reasons[:2]))
-    if warnings:
-        context_bits.append("⚠️ " + " · ".join(warnings[:2]))
-    if context_bits:
         lines.append("")
-        lines.extend(context_bits)
+        lines.append("✅ *Pourquoi entrer*")
+        for r in reasons[:3]:
+            lines.append(f"• {r}")
+    if warnings:
+        lines.append("")
+        lines.append("⚠️ *Vigilance*")
+        for w in warnings[:3]:
+            lines.append(f"• {w}")
 
-    if getattr(setup, "validity_minutes", None):
-        lines.append(f"\n⏱ valide {setup.validity_minutes} min")
+    validity = getattr(setup, "validity_minutes", None)
+    if validity:
+        lines.append("")
+        lines.append(f"⏱ *Validité* {validity} min — passé ce délai, le marché aura bougé, recalculer ou attendre le prochain signal.")
 
     return "\n".join(lines)
 
