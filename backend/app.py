@@ -2192,6 +2192,70 @@ async def api_shadow_counterfactual(token: str = "", days: int = 30):
     }
 
 
+@app.post("/api/admin/notify-infra-telegram")
+async def api_admin_notify_infra_telegram(
+    payload: dict,
+    token: str = "",
+):
+    """Relais Telegram vers le bot infra (auth-by-token).
+
+    Permet aux routines remote (RemoteTrigger) d'envoyer une notif sur le
+    canal infra (`@xav_scalping_infra_bot`) sans embarquer le token bot
+    dans leur prompt. Le token de cet endpoint est partagé avec
+    `public-summary` et `counterfactual` (même hash SHA256).
+
+    Body : `{"title": str, "body": str}` — title est mis en gras Markdown,
+    body suit en clair. La concat finale est tronquée à 4000 chars
+    (limite Telegram = 4096).
+
+    Côté env (EC2) : INFRA_TELEGRAM_BOT_TOKEN + INFRA_TELEGRAM_CHAT_ID.
+    Si non configuré, retourne 503 (pas de fail silencieux).
+    """
+    import hashlib
+    from fastapi import HTTPException
+    import httpx
+    from config.settings import INFRA_TELEGRAM_BOT_TOKEN, INFRA_TELEGRAM_CHAT_ID
+
+    SHADOW_PUBLIC_TOKEN_HASH = "e980b1ed0b45ca6873caa3f2d6ddcf27f4d8a1d0aa87cf9072f6e3e0909b31ec"
+
+    if not token:
+        raise HTTPException(status_code=403, detail="token required")
+    provided_hash = hashlib.sha256(token.encode()).hexdigest()
+    import secrets as _s
+    if not _s.compare_digest(provided_hash, SHADOW_PUBLIC_TOKEN_HASH):
+        raise HTTPException(status_code=403, detail="invalid token")
+
+    if not INFRA_TELEGRAM_BOT_TOKEN or not INFRA_TELEGRAM_CHAT_ID:
+        raise HTTPException(status_code=503, detail="infra telegram not configured on backend")
+
+    title = (payload.get("title") or "").strip()
+    body = (payload.get("body") or "").strip()
+    if not title and not body:
+        raise HTTPException(status_code=400, detail="title or body required")
+
+    text = f"*{title}*\n\n{body}" if title else body
+    text = text[:4000]
+
+    url = f"https://api.telegram.org/bot{INFRA_TELEGRAM_BOT_TOKEN}/sendMessage"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(url, json={
+                "chat_id": INFRA_TELEGRAM_CHAT_ID,
+                "text": text,
+                "parse_mode": "Markdown",
+                "disable_web_page_preview": True,
+            })
+        if response.status_code != 200:
+            raise HTTPException(
+                status_code=502,
+                detail=f"telegram api {response.status_code}: {response.text[:200]}",
+            )
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=502, detail=f"telegram api error: {e}")
+
+    return {"sent": True, "chars": len(text)}
+
+
 # ─── Endpoints publics shadow log (no auth) ─────────────────────────────────
 # Pour pages publiques /v2/live et /v2/track-record qui affichent le track
 # record en temps réel sans demander de login. Lecture seule, sanitisé

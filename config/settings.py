@@ -117,6 +117,12 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 # Force minimum pour qu'un signal soit envoye : weak / moderate / strong
 TELEGRAM_MIN_STRENGTH = os.getenv("TELEGRAM_MIN_STRENGTH", "strong")
 
+# Bot Telegram dédié infra (canal séparé du bot user-facing scalping radar).
+# Utilisé par /api/admin/notify-infra-telegram pour relayer les alertes
+# système (verdict counterfactual, monitoring, etc.) au bot @xav_scalping_infra_bot.
+INFRA_TELEGRAM_BOT_TOKEN = os.getenv("INFRA_TELEGRAM_BOT_TOKEN", "")
+INFRA_TELEGRAM_CHAT_ID = os.getenv("INFRA_TELEGRAM_CHAT_ID", "")
+
 # ─── Bridge MT5 (auto-exec sur MetaTrader 5 desktop local) ──────────
 # URL du bridge MT5 accessible via Tailscale (ex: http://100.122.188.8:8787).
 # Le bridge doit tourner sur le PC Windows de l'utilisateur.
