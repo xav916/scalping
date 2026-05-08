@@ -138,6 +138,11 @@ def ensure_schema() -> None:
                 UNIQUE (system_id, bar_timestamp)
             )
         """)
+        # Migration : ajout geopolitical_features_json (snapshot Polymarket +
+        # GDELT + veto contrefactuel au moment du log). Idempotent.
+        cols = [r[1] for r in c.execute("PRAGMA table_info(shadow_setups)").fetchall()]
+        if "geopolitical_features_json" not in cols:
+            c.execute("ALTER TABLE shadow_setups ADD COLUMN geopolitical_features_json TEXT")
         c.execute(
             "CREATE INDEX IF NOT EXISTS idx_shadow_setups_pair_time "
             "ON shadow_setups (pair, bar_timestamp DESC)"
@@ -150,6 +155,103 @@ def ensure_schema() -> None:
             "CREATE INDEX IF NOT EXISTS idx_shadow_setups_outcome "
             "ON shadow_setups (outcome)"
         )
+
+
+def _capture_geopolitical_snapshot(pair: str, direction: str) -> dict | None:
+    """Capture l'état géopolitique au moment d'un setup Track A.
+
+    Persiste 3 dimensions :
+    - Probabilités Polymarket clés (Iran peace deal, Fed cut, recession)
+    - Stress GDELT (overall + thème géopolitical)
+    - Verdict contrefactuel `geopolitical_veto.apply(pair, direction)` :
+      ce que le veto AURAIT fait sur ce setup, sans toucher Track A
+      (qui est shadow seulement)
+
+    Best-effort : retourne ``None`` si tout échoue, dict partiel sinon.
+    """
+    try:
+        from backend.services import polymarket_service, geopolitical_news_service, geopolitical_veto
+    except Exception as e:
+        logger.debug(f"shadow: import géopol failed: {e}")
+        return None
+
+    snapshot: dict[str, Any] = {
+        "captured_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    # Polymarket : extraire max prob par thème actionable
+    try:
+        poly = polymarket_service.get_current()
+        if poly:
+            geo_markets = (poly.get("themes") or {}).get("geopolitical") or []
+            iran_max = max(
+                (m.get("yes_prob", 0) for m in geo_markets
+                 if "iran" in (m.get("question") or "").lower()
+                 and "peace" in (m.get("question") or "").lower()),
+                default=None,
+            )
+            monetary_markets = (poly.get("themes") or {}).get("monetary") or []
+            fed_cut_max = max(
+                (m.get("yes_prob", 0) for m in monetary_markets
+                 if "rate cut" in (m.get("question") or "").lower()
+                 or ("fed" in (m.get("question") or "").lower() and "cut" in (m.get("question") or "").lower())),
+                default=None,
+            )
+            economy_markets = (poly.get("themes") or {}).get("economy") or []
+            recession_max = max(
+                (m.get("yes_prob", 0) for m in economy_markets
+                 if "recession" in (m.get("question") or "").lower()),
+                default=None,
+            )
+            snapshot["polymarket"] = {
+                "available": True,
+                "fetched_at": poly.get("fetched_at"),
+                "iran_peace_max_prob": iran_max,
+                "fed_cut_max_prob": fed_cut_max,
+                "recession_max_prob": recession_max,
+                "n_matched": poly.get("n_matched"),
+            }
+        else:
+            snapshot["polymarket"] = {"available": False}
+    except Exception as e:
+        logger.debug(f"shadow: polymarket capture failed: {e}")
+        snapshot["polymarket"] = {"available": False, "error": str(e)[:100]}
+
+    # GDELT : overall + theme géopolitical
+    try:
+        gdelt = geopolitical_news_service.get_current()
+        if gdelt:
+            geo_theme = (gdelt.get("themes") or {}).get("geopolitical") or {}
+            mon_theme = (gdelt.get("themes") or {}).get("monetary") or {}
+            snapshot["gdelt"] = {
+                "available": True,
+                "fetched_at": gdelt.get("fetched_at"),
+                "overall_stress": gdelt.get("overall_stress"),
+                "overall_tone": gdelt.get("overall_tone"),
+                "geopolitical_stress": geo_theme.get("stress_level"),
+                "geopolitical_tone": geo_theme.get("avg_tone"),
+                "monetary_stress": mon_theme.get("stress_level"),
+            }
+        else:
+            snapshot["gdelt"] = {"available": False}
+    except Exception as e:
+        logger.debug(f"shadow: gdelt capture failed: {e}")
+        snapshot["gdelt"] = {"available": False, "error": str(e)[:100]}
+
+    # Verdict contrefactuel du veto pour CE setup
+    try:
+        vetoed, reasons, meta = geopolitical_veto.apply(pair, direction)
+        snapshot["veto_evaluated"] = {
+            "would_veto": vetoed,
+            "rules_matched": meta.get("rules_matched", []),
+            "rules_evaluated": meta.get("rules_evaluated", []),
+            "reasons": reasons,
+        }
+    except Exception as e:
+        logger.debug(f"shadow: veto eval failed: {e}")
+        snapshot["veto_evaluated"] = {"error": str(e)[:100]}
+
+    return snapshot
 
 
 # ─── Aggrégation H1 → H4 ────────────────────────────────────────────────────
@@ -241,6 +343,7 @@ def _persist_setup(
     bar_timestamp: datetime,
     cycle_at: datetime,
     macro_features: dict | None = None,
+    geopolitical_features: dict | None = None,
 ) -> bool:
     """Insert idempotent (UNIQUE system_id, bar_timestamp). Retourne True si nouveau."""
     cfg = SHADOW_CONFIG.get(pair, {})
@@ -260,6 +363,7 @@ def _persist_setup(
     sizing_position_eur = sizing_max_loss_eur / risk_pct
 
     macro_json = json.dumps(macro_features) if macro_features else None
+    geopol_json = json.dumps(geopolitical_features) if geopolitical_features else None
 
     with sqlite3.connect(DB_PATH) as c:
         try:
@@ -271,8 +375,8 @@ def _persist_setup(
                     take_profit_1, take_profit_2, risk_pct, rr,
                     sizing_capital_eur, sizing_risk_pct,
                     sizing_position_eur, sizing_max_loss_eur,
-                    macro_features_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    macro_features_json, geopolitical_features_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     cycle_at.isoformat(), bar_timestamp.isoformat(),
@@ -285,7 +389,7 @@ def _persist_setup(
                     risk_pct, rr,
                     DEFAULT_CAPITAL_EUR, risk_pct_for_pair,
                     sizing_position_eur, sizing_max_loss_eur,
-                    macro_json,
+                    macro_json, geopol_json,
                 ),
             )
             return True
@@ -372,9 +476,16 @@ async def run_shadow_log(
             except Exception as e:
                 logger.debug(f"shadow: macro features fetch failed: {e}")
 
+            # Snapshot géopolitique (Polymarket + GDELT + verdict contrefactuel
+            # du veto). Permet l'analyse "le veto aurait-il filtré cet outcome"
+            # quand le setup sera réconcilié.
+            direction_str = setup.direction.value if hasattr(setup.direction, "value") else str(setup.direction)
+            geopolitical_features = _capture_geopolitical_snapshot(pair, direction_str)
+
             if _persist_setup(
                 setup, pair, pattern_name, last_bar_ts, cycle_at,
                 macro_features=macro_features,
+                geopolitical_features=geopolitical_features,
             ):
                 n_new += 1
                 logger.info(

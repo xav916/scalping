@@ -208,3 +208,156 @@ def test_summary_with_resolved_setups(temp_db):
     assert "advanced" in sys_data
     assert sys_data["advanced"]["max_dd_pct"] is not None
     assert len(sys_data["advanced"]["equity_curve"]) == 4
+
+
+# ─── Geopolitical snapshot capture ──────────────────────────────────────────
+
+
+def test_capture_geopolitical_snapshot_with_full_data(monkeypatch):
+    """Snapshot complet : Polymarket + GDELT + verdict veto."""
+    fake_poly = {
+        "fetched_at": "2026-05-08T10:00:00Z",
+        "n_matched": 50,
+        "themes": {
+            "geopolitical": [
+                {"question": "US x Iran permanent peace deal by June 30?",
+                 "yes_prob": 0.52, "end_date": "2026-06-30"},
+            ],
+            "monetary": [
+                {"question": "Will Fed announce a rate cut in May?",
+                 "yes_prob": 0.30, "end_date": "2026-05-15"},
+            ],
+            "economy": [
+                {"question": "US recession in 2026?",
+                 "yes_prob": 0.18, "end_date": "2026-12-31"},
+            ],
+        },
+    }
+    fake_gdelt = {
+        "fetched_at": "2026-05-08T10:00:00Z",
+        "overall_stress": "elevated",
+        "overall_tone": -2.5,
+        "themes": {
+            "geopolitical": {"stress_level": "high", "avg_tone": -8.0},
+            "monetary": {"stress_level": "calm", "avg_tone": -1.0},
+        },
+    }
+    from backend.services import polymarket_service, geopolitical_news_service, geopolitical_veto
+    monkeypatch.setattr(polymarket_service, "get_current", lambda: fake_poly)
+    monkeypatch.setattr(geopolitical_news_service, "get_current", lambda: fake_gdelt)
+    monkeypatch.setattr(geopolitical_veto, "GEOPOLITICAL_VETO_ENABLED", False)  # neutre
+
+    snap = shadow._capture_geopolitical_snapshot("XAU/USD", "buy")
+
+    assert snap is not None
+    assert snap["polymarket"]["available"] is True
+    assert snap["polymarket"]["iran_peace_max_prob"] == 0.52
+    assert snap["polymarket"]["fed_cut_max_prob"] == 0.30
+    assert snap["polymarket"]["recession_max_prob"] == 0.18
+    assert snap["gdelt"]["available"] is True
+    assert snap["gdelt"]["overall_stress"] == "elevated"
+    assert snap["gdelt"]["geopolitical_stress"] == "high"
+    # Veto désactivé → pas de match
+    assert snap["veto_evaluated"]["would_veto"] is False
+    assert "rules_evaluated" in snap["veto_evaluated"]
+
+
+def test_capture_geopolitical_snapshot_handles_missing_sources(monkeypatch):
+    """Pas de Polymarket ni GDELT → snapshot avec available=False, pas d'exception."""
+    from backend.services import polymarket_service, geopolitical_news_service
+    monkeypatch.setattr(polymarket_service, "get_current", lambda: None)
+    monkeypatch.setattr(geopolitical_news_service, "get_current", lambda: None)
+
+    snap = shadow._capture_geopolitical_snapshot("XAU/USD", "buy")
+
+    assert snap is not None
+    assert snap["polymarket"]["available"] is False
+    assert snap["gdelt"]["available"] is False
+    assert "veto_evaluated" in snap
+
+
+def test_persist_setup_stores_geopolitical_features(temp_db):
+    """_persist_setup persiste bien geopolitical_features_json en DB."""
+    from backend.models.schemas import TradeSetup, TradeDirection, PatternDetection, PatternType
+    from datetime import datetime, timezone
+    shadow.ensure_schema()
+
+    bar_ts = datetime(2026, 5, 8, 12, 0, tzinfo=timezone.utc)
+    cycle_ts = datetime(2026, 5, 8, 12, 5, tzinfo=timezone.utc)
+
+    # Stub setup minimal
+    class _S:
+        pair = "XAU/USD"
+        direction = TradeDirection.BUY
+        entry_price = 2000.0
+        stop_loss = 1990.0
+        take_profit_1 = 2020.0
+        take_profit_2 = 2030.0
+
+    geopol = {
+        "captured_at": "2026-05-08T12:05:00Z",
+        "polymarket": {"available": True, "iran_peace_max_prob": 0.52},
+        "veto_evaluated": {"would_veto": True, "rules_matched": ["iran_hormuz"]},
+    }
+
+    inserted = shadow._persist_setup(
+        _S(), "XAU/USD", "momentum_up", bar_ts, cycle_ts,
+        geopolitical_features=geopol,
+    )
+    assert inserted is True
+
+    # Re-lire la DB pour vérifier que le JSON est bien persisté
+    with sqlite3.connect(temp_db) as c:
+        row = c.execute(
+            "SELECT geopolitical_features_json FROM shadow_setups WHERE pair = ?",
+            ("XAU/USD",),
+        ).fetchone()
+    import json as _json
+    assert row is not None
+    parsed = _json.loads(row[0])
+    assert parsed["polymarket"]["iran_peace_max_prob"] == 0.52
+    assert parsed["veto_evaluated"]["would_veto"] is True
+
+
+def test_ensure_schema_idempotent_with_geopol_column(temp_db):
+    """ensure_schema doit ajouter geopolitical_features_json à une table préexistante."""
+    # Crée une table sans la colonne (état pré-migration)
+    with sqlite3.connect(temp_db) as c:
+        c.execute("""
+            CREATE TABLE shadow_setups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                detected_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                cycle_at TIMESTAMP NOT NULL,
+                bar_timestamp TIMESTAMP NOT NULL,
+                system_id TEXT NOT NULL,
+                pair TEXT NOT NULL,
+                timeframe TEXT NOT NULL,
+                direction TEXT NOT NULL,
+                pattern TEXT NOT NULL,
+                entry_price REAL NOT NULL,
+                stop_loss REAL NOT NULL,
+                take_profit_1 REAL NOT NULL,
+                take_profit_2 REAL,
+                risk_pct REAL NOT NULL,
+                rr REAL NOT NULL,
+                sizing_capital_eur REAL NOT NULL DEFAULT 10000,
+                sizing_risk_pct REAL NOT NULL DEFAULT 0.005,
+                sizing_position_eur REAL NOT NULL,
+                sizing_max_loss_eur REAL NOT NULL,
+                macro_features_json TEXT,
+                outcome TEXT,
+                exit_at TIMESTAMP,
+                exit_price REAL,
+                pnl_pct_net REAL,
+                pnl_eur REAL,
+                UNIQUE (system_id, bar_timestamp)
+            )
+        """)
+
+    # ensure_schema doit ajouter la colonne sans erreur
+    shadow.ensure_schema()
+    shadow.ensure_schema()  # 2e appel = no-op (idempotent)
+
+    with sqlite3.connect(temp_db) as c:
+        cols = [r[1] for r in c.execute("PRAGMA table_info(shadow_setups)").fetchall()]
+    assert "geopolitical_features_json" in cols
