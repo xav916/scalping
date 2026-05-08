@@ -1932,6 +1932,27 @@ async def geopolitical_refresh(_=Depends(verify_credentials)):
     return asdict(snap)
 
 
+@app.get("/api/polymarket")
+async def polymarket(_=Depends(verify_credentials)):
+    """Snapshot Polymarket : top markets actifs par thème (monetary,
+    geopolitical, economy, crypto, politics) avec yes_prob + volume24h."""
+    from backend.services import polymarket_service
+    snap = polymarket_service.get_current()
+    return snap or {"available": False}
+
+
+@app.post("/api/polymarket/refresh")
+async def polymarket_refresh(_=Depends(verify_credentials)):
+    """Force un fetch Polymarket. Normalement toutes les 5 min si
+    POLYMARKET_ENABLED=true."""
+    from backend.services import polymarket_service
+    snap = await polymarket_service.refresh_snapshot()
+    if snap is None:
+        return {"available": False}
+    from dataclasses import asdict
+    return asdict(snap)
+
+
 @app.get("/api/kill-switch")
 async def kill_switch_status(_=Depends(verify_credentials)):
     """Etat du kill switch global. Voir backend/services/kill_switch.py."""

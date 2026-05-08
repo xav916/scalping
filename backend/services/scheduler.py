@@ -40,6 +40,8 @@ from config.settings import (
     GEOPOLITICAL_REFRESH_INTERVAL_SEC,
     GEOPOLITICAL_TIMESPAN,
     MACRO_REFRESH_INTERVAL_SEC,
+    POLYMARKET_ENABLED,
+    POLYMARKET_REFRESH_INTERVAL_SEC,
     MACRO_SCORING_ENABLED,
     MATAF_POLL_INTERVAL,
     WATCHED_PAIRS,
@@ -690,6 +692,25 @@ def start_scheduler() -> AsyncIOScheduler:
         logger.info(
             f"geopolitical: refresh job scheduled every {GEOPOLITICAL_REFRESH_INTERVAL_SEC}s "
             f"(timespan={GEOPOLITICAL_TIMESPAN})"
+        )
+
+    # Polymarket prediction markets : refresh 5 min en shadow.
+    if POLYMARKET_ENABLED:
+        from backend.services import polymarket_service as _pm
+
+        async def _pm_refresh():
+            await _pm.refresh_snapshot()
+
+        _scheduler.add_job(
+            _pm_refresh,
+            "interval",
+            seconds=POLYMARKET_REFRESH_INTERVAL_SEC,
+            id="polymarket_sync",
+            name="Sync Polymarket prediction markets (shadow)",
+            replace_existing=True,
+        )
+        logger.info(
+            f"polymarket: refresh job scheduled every {POLYMARKET_REFRESH_INTERVAL_SEC}s"
         )
 
     # SaaS : rappels trial J-3 / J-1 envoyés chaque jour à 9h UTC. Best-effort :

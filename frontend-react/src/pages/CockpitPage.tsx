@@ -32,6 +32,7 @@ import { CapitalAtRiskCard } from '@/components/cockpit/CapitalAtRiskCard';
 import { AssetClassBreakdownCard } from '@/components/cockpit/AssetClassBreakdownCard';
 import { FearGreedGauge } from '@/components/cockpit/FearGreedGauge';
 import { GeopoliticalCard } from '@/components/cockpit/GeopoliticalCard';
+import { PolymarketCard } from '@/components/cockpit/PolymarketCard';
 import { ActiveTradesPanel } from '@/components/cockpit/ActiveTradesPanel';
 import { SystemHealthCard } from '@/components/cockpit/SystemHealthCard';
 import { CotExtremesCard } from '@/components/cockpit/CotExtremesCard';
@@ -60,7 +61,7 @@ const DEFAULT_RISK_IDS = [
   'active-trades',
 ] as const;
 const DEFAULT_PERF_IDS = ['period-metrics', 'pnl-calendar'] as const;
-const DEFAULT_ANALYSE_IDS = ['rejections', 'analyse-row'] as const; // atomic : Equity + Drift
+const DEFAULT_ANALYSE_IDS = ['rejections', 'analyse-row', 'polymarket'] as const; // atomic : Equity + Drift, then prediction markets
 const DEFAULT_SYSTEM_IDS = ['system-row', 'cot-extremes'] as const; // atomic : SystemHealth + NextEvents
 
 /** Détecte si on est en viewport "desktop" (≥ md). Réactif au resize. */
@@ -288,7 +289,7 @@ function CockpitPageInner() {
                   <div className="space-y-6">
                     {analyse.order.map((id) => (
                       <SortableCard key={id} id={id} disabled={!isDesktop}>
-                        {renderAnalyseCard(id)}
+                        {renderAnalyseCard(id, data)}
                       </SortableCard>
                     ))}
                   </div>
@@ -382,7 +383,7 @@ function renderPerfCard(id: string): ReactNode {
   }
 }
 
-function renderAnalyseCard(id: string): ReactNode {
+function renderAnalyseCard(id: string, data: CockpitSnapshot): ReactNode {
   switch (id) {
     case 'rejections':
       return <RejectionsCard />;
@@ -393,6 +394,8 @@ function renderAnalyseCard(id: string): ReactNode {
           <DriftCard />
         </div>
       );
+    case 'polymarket':
+      return <PolymarketCard snapshot={data.polymarket} />;
     default:
       return null;
   }

@@ -404,6 +404,25 @@ export interface GeopoliticalSnapshot {
   themes: Record<string, GeopoliticalThemeReading>;
 }
 
+export interface PolymarketReading {
+  question: string;
+  slug: string;
+  yes_prob: number;
+  no_prob: number;
+  volume_24h: number;
+  liquidity: number;
+  end_date: string | null;
+  matched_themes: string[];
+}
+
+export interface PolymarketSnapshot {
+  fetched_at: string;
+  n_total_fetched: number;
+  n_matched: number;
+  themes: Record<string, PolymarketReading[]>;
+  top_volume: PolymarketReading[];
+}
+
 export interface CotExtreme {
   pair: string;
   report_date: string;
@@ -454,6 +473,7 @@ export interface CockpitSnapshot {
   cot_extremes: CotExtreme[];
   fear_greed: FearGreedSnapshot | null;
   geopolitical: GeopoliticalSnapshot | null;
+  polymarket: PolymarketSnapshot | null;
   next_events: Array<{ time: string; currency: string; impact: string; event_name: string }>;
   alerts: CockpitAlert[];
 }

@@ -397,3 +397,12 @@ MACRO_DXY_VETO_SIGMA = float(os.getenv("MACRO_DXY_VETO_SIGMA", "2.0"))
 GEOPOLITICAL_NEWS_ENABLED = os.getenv("GEOPOLITICAL_NEWS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 GEOPOLITICAL_REFRESH_INTERVAL_SEC = int(os.getenv("GEOPOLITICAL_REFRESH_INTERVAL_SEC", "3600"))  # 1h
 GEOPOLITICAL_TIMESPAN = os.getenv("GEOPOLITICAL_TIMESPAN", "24h")  # fenêtre fetch GDELT
+
+# ─── Polymarket prediction markets (shadow only) ────────────────
+# Branche le service `polymarket_service` qui fetch toutes les 5 min les top
+# marchés actifs sur Polymarket Gamma API. Donne des probabilités chiffrées
+# sur les événements géopolitiques/macro (Fed, Iran, Hormuz, BTC, élections).
+# Shadow only : pas branché au scoring tant que la corrélation avec les
+# retournements n'est pas validée sur 4-6 semaines.
+POLYMARKET_ENABLED = os.getenv("POLYMARKET_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+POLYMARKET_REFRESH_INTERVAL_SEC = int(os.getenv("POLYMARKET_REFRESH_INTERVAL_SEC", "300"))  # 5 min

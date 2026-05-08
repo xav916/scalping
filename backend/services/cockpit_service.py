@@ -413,6 +413,15 @@ async def build_cockpit(user: str, user_id: int | None = None) -> dict:
     except Exception:
         geopolitical = None
 
+    # Polymarket prediction markets : top marches actifs avec yes_prob.
+    # Donne des probabilites chiffrees sur evenements geopolitiques/macro.
+    # Shadow only.
+    from backend.services import polymarket_service as _pm
+    try:
+        polymarket = _pm.get_current()
+    except Exception:
+        polymarket = None
+
     alerts = _build_alerts(active_trades, next_events)
     if ks_status.get("active"):
         alerts.insert(0, {
@@ -485,6 +494,7 @@ async def build_cockpit(user: str, user_id: int | None = None) -> dict:
         "cot_extremes": cot_extremes,
         "fear_greed": fear_greed,
         "geopolitical": geopolitical,
+        "polymarket": polymarket,
         "next_events": next_events[:5],
         "alerts": alerts,
     }
