@@ -36,7 +36,11 @@ function probColor(p: number): string {
 
 function MarketRow({ m }: { m: PolymarketReading }) {
   const pct = Math.round(m.yes_prob * 100);
-  const url = m.slug ? `https://polymarket.com/event/${m.slug}` : null;
+  // Polymarket /event/<slug> attend le slug de l'event parent (groupe les
+  // markets par maturité). Le slug du market seul renvoie 404. Fallback sur
+  // le market slug pour les anciens snapshots persistés sans event_slug.
+  const linkSlug = m.event_slug ?? m.slug;
+  const url = linkSlug ? `https://polymarket.com/event/${linkSlug}` : null;
   const inner = (
     <div className="py-2 border-b border-white/5 last:border-b-0 hover:bg-white/[0.02] transition px-1 -mx-1 rounded">
       <div className="flex items-baseline justify-between gap-2 mb-1.5">

@@ -407,6 +407,7 @@ export interface GeopoliticalSnapshot {
 export interface PolymarketReading {
   question: string;
   slug: string;
+  event_slug: string | null;
   yes_prob: number;
   no_prob: number;
   volume_24h: number;

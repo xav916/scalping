@@ -80,7 +80,8 @@ FETCH_LIMIT = 200
 @dataclass
 class MarketReading:
     question: str
-    slug: str
+    slug: str                # market slug — pour dedup interne
+    event_slug: Optional[str]  # slug de l'event parent — utilisé par le deep-link frontend
     yes_prob: float          # 0..1, prix du "Yes" (ou première outcome)
     no_prob: float           # 0..1, prix du "No" (1 - yes pour binaires)
     volume_24h: float        # USD
@@ -203,9 +204,20 @@ async def refresh_snapshot() -> Optional[PolymarketSnapshot]:
         if volume_24h < 1000:
             continue
 
+        # Le deep-link Polymarket /event/<slug> attend le slug de l'event
+        # parent, pas du market lui-même. Un market peut être attaché à
+        # plusieurs events ; on prend le premier (best-effort).
+        events_raw = m.get("events") or []
+        event_slug = None
+        if isinstance(events_raw, list) and events_raw:
+            first = events_raw[0]
+            if isinstance(first, dict):
+                event_slug = first.get("slug") or None
+
         reading = MarketReading(
             question=question[:140],
             slug=m.get("slug") or "",
+            event_slug=event_slug,
             yes_prob=round(yes_prob, 3),
             no_prob=round(no_prob, 3),
             volume_24h=round(volume_24h, 0),
