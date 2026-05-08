@@ -404,6 +404,15 @@ async def build_cockpit(user: str, user_id: int | None = None) -> dict:
     except Exception:
         fear_greed = None
 
+    # GDELT geopolitical news : tone moyen 24h sur 4 themes
+    # (monetary, geopolitical, energy, trade). Shadow only au demarrage,
+    # pas branche au scoring tant que la correlation n'est pas validee.
+    from backend.services import geopolitical_news_service as _geo
+    try:
+        geopolitical = _geo.get_current()
+    except Exception:
+        geopolitical = None
+
     alerts = _build_alerts(active_trades, next_events)
     if ks_status.get("active"):
         alerts.insert(0, {
@@ -432,6 +441,15 @@ async def build_cockpit(user: str, user_id: int | None = None) -> dict:
             "msg": (
                 f"Fear & Greed : {fear_greed['classification']} "
                 f"({fear_greed['value']}/100) — signal contrarien potentiel"
+            ),
+        })
+    if geopolitical and geopolitical.get("overall_stress") == "high":
+        alerts.append({
+            "level": "info",
+            "code": "geopolitical_high_stress",
+            "msg": (
+                f"GDELT stress eleve (tone={geopolitical['overall_tone']}) — "
+                f"news mondiales tres negatives sur 24h"
             ),
         })
 
@@ -466,6 +484,7 @@ async def build_cockpit(user: str, user_id: int | None = None) -> dict:
         "blackouts": blackouts,
         "cot_extremes": cot_extremes,
         "fear_greed": fear_greed,
+        "geopolitical": geopolitical,
         "next_events": next_events[:5],
         "alerts": alerts,
     }

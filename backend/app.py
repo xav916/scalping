@@ -1909,6 +1909,29 @@ async def fear_greed_refresh(_=Depends(verify_credentials)):
     return snap or {"available": False}
 
 
+@app.get("/api/geopolitical")
+async def geopolitical(_=Depends(verify_credentials)):
+    """Snapshot géopolitique GDELT : tone moyen + stress par thème
+    (monetary / geopolitical / energy / trade). Shadow only — pas
+    d'impact sur le scoring trade."""
+    from backend.services import geopolitical_news_service
+    snap = geopolitical_news_service.get_current()
+    return snap or {"available": False}
+
+
+@app.post("/api/geopolitical/refresh")
+async def geopolitical_refresh(_=Depends(verify_credentials)):
+    """Force un fetch GDELT. Normalement tourne en interval horaire si
+    GEOPOLITICAL_NEWS_ENABLED=true."""
+    from backend.services import geopolitical_news_service
+    from config.settings import GEOPOLITICAL_TIMESPAN
+    snap = await geopolitical_news_service.refresh_snapshot(timespan=GEOPOLITICAL_TIMESPAN)
+    if snap is None:
+        return {"available": False}
+    from dataclasses import asdict
+    return asdict(snap)
+
+
 @app.get("/api/kill-switch")
 async def kill_switch_status(_=Depends(verify_credentials)):
     """Etat du kill switch global. Voir backend/services/kill_switch.py."""

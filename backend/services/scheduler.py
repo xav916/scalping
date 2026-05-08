@@ -36,6 +36,9 @@ from backend.services.shadow_v2_core_long import SHADOW_PAIRS as _SHADOW_PAIRS
 from config.settings import (
     CANDLE_COUNT,
     CANDLE_INTERVAL,
+    GEOPOLITICAL_NEWS_ENABLED,
+    GEOPOLITICAL_REFRESH_INTERVAL_SEC,
+    GEOPOLITICAL_TIMESPAN,
     MACRO_REFRESH_INTERVAL_SEC,
     MACRO_SCORING_ENABLED,
     MATAF_POLL_INTERVAL,
@@ -666,6 +669,28 @@ def start_scheduler() -> AsyncIOScheduler:
         name="Sync CNN Fear & Greed Index (quotidien)",
         replace_existing=True,
     )
+
+    # GDELT geopolitical news : refresh horaire en shadow (no scoring impact).
+    # Gated par GEOPOLITICAL_NEWS_ENABLED. Fetch les 4 thèmes (monetary,
+    # geopolitical, energy, trade) en parallèle, persiste un snapshot.
+    if GEOPOLITICAL_NEWS_ENABLED:
+        from backend.services import geopolitical_news_service as _geo
+
+        async def _geo_refresh():
+            await _geo.refresh_snapshot(timespan=GEOPOLITICAL_TIMESPAN)
+
+        _scheduler.add_job(
+            _geo_refresh,
+            "interval",
+            seconds=GEOPOLITICAL_REFRESH_INTERVAL_SEC,
+            id="geopolitical_news_sync",
+            name="Sync GDELT geopolitical news (shadow)",
+            replace_existing=True,
+        )
+        logger.info(
+            f"geopolitical: refresh job scheduled every {GEOPOLITICAL_REFRESH_INTERVAL_SEC}s "
+            f"(timespan={GEOPOLITICAL_TIMESPAN})"
+        )
 
     # SaaS : rappels trial J-3 / J-1 envoyés chaque jour à 9h UTC. Best-effort :
     # si SMTP désactivé, la fn devient no-op. Idempotent via trial_reminders_sent.

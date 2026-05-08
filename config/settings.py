@@ -388,3 +388,12 @@ MACRO_VIX_HIGH = float(os.getenv("MACRO_VIX_HIGH", "30.0"))
 MACRO_VIX_ELEVATED = float(os.getenv("MACRO_VIX_ELEVATED", "20.0"))
 MACRO_VIX_LOW = float(os.getenv("MACRO_VIX_LOW", "15.0"))
 MACRO_DXY_VETO_SIGMA = float(os.getenv("MACRO_DXY_VETO_SIGMA", "2.0"))
+
+# ─── Geopolitical news scoring (GDELT — shadow only) ────────────
+# Branche le service `geopolitical_news_service` qui fetch GDELT toutes les
+# heures et stocke les snapshots. OFF par défaut : tant que le signal n'est
+# pas validé (4-6 semaines de données), pas d'impact sur le scoring trade.
+# Affichage seul (cockpit + /api/geopolitical).
+GEOPOLITICAL_NEWS_ENABLED = os.getenv("GEOPOLITICAL_NEWS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+GEOPOLITICAL_REFRESH_INTERVAL_SEC = int(os.getenv("GEOPOLITICAL_REFRESH_INTERVAL_SEC", "3600"))  # 1h
+GEOPOLITICAL_TIMESPAN = os.getenv("GEOPOLITICAL_TIMESPAN", "24h")  # fenêtre fetch GDELT
