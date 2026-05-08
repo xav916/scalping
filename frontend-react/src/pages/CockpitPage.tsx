@@ -33,6 +33,7 @@ import { AssetClassBreakdownCard } from '@/components/cockpit/AssetClassBreakdow
 import { FearGreedGauge } from '@/components/cockpit/FearGreedGauge';
 import { GeopoliticalCard } from '@/components/cockpit/GeopoliticalCard';
 import { PolymarketCard } from '@/components/cockpit/PolymarketCard';
+import { TrackAShadowCard } from '@/components/cockpit/TrackAShadowCard';
 import { ActiveTradesPanel } from '@/components/cockpit/ActiveTradesPanel';
 import { SystemHealthCard } from '@/components/cockpit/SystemHealthCard';
 import { CotExtremesCard } from '@/components/cockpit/CotExtremesCard';
@@ -61,7 +62,7 @@ const DEFAULT_RISK_IDS = [
   'active-trades',
 ] as const;
 const DEFAULT_PERF_IDS = ['period-metrics', 'pnl-calendar'] as const;
-const DEFAULT_ANALYSE_IDS = ['rejections', 'analyse-row', 'polymarket'] as const; // atomic : Equity + Drift, then prediction markets
+const DEFAULT_ANALYSE_IDS = ['rejections', 'analyse-row', 'polymarket', 'track-a-shadow'] as const; // atomic : Equity + Drift, prediction markets, Track A shadow log
 const DEFAULT_SYSTEM_IDS = ['system-row', 'cot-extremes'] as const; // atomic : SystemHealth + NextEvents
 
 /** Détecte si on est en viewport "desktop" (≥ md). Réactif au resize. */
@@ -396,6 +397,8 @@ function renderAnalyseCard(id: string, data: CockpitSnapshot): ReactNode {
       );
     case 'polymarket':
       return <PolymarketCard snapshot={data.polymarket} />;
+    case 'track-a-shadow':
+      return <TrackAShadowCard />;
     default:
       return null;
   }
