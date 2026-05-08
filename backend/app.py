@@ -2643,6 +2643,23 @@ async def api_admin_watchdog_unpause(
     }
 
 
+@app.get("/api/admin/geopolitical-veto-stats")
+async def api_admin_geopolitical_veto_stats(
+    days: int = 7,
+    _ctx: AuthContext = Depends(require_admin),
+):
+    """Stats des vetos géopolitiques sur les ``days`` derniers jours
+    (default 7, max 60).
+
+    Retourne ``{total, by_rule, by_pair, by_day, recent}`` agrégé depuis
+    ``signal_rejections`` filtre ``reason_code='geopolitical_veto'``.
+    Le tag ``[rule_id]`` au début de chaque blocker permet la ventilation
+    par règle (iran_hormuz / fed_dovish / recession / gdelt_stress).
+    """
+    from backend.services import geopolitical_veto
+    return geopolitical_veto.get_stats(days=days)
+
+
 @app.get("/api/admin/auto-exec/health")
 async def api_admin_auto_exec_health(
     _ctx: AuthContext = Depends(require_admin),

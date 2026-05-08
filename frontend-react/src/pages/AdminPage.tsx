@@ -8,6 +8,7 @@ import { GradientText } from '@/components/ui/GradientText';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { WatchdogCard } from '@/components/admin/WatchdogCard';
 import { AutoExecHealthCard } from '@/components/admin/AutoExecHealthCard';
+import { GeopoliticalVetoActivityCard } from '@/components/admin/GeopoliticalVetoActivityCard';
 import { Header } from '@/components/layout/Header';
 
 /**
@@ -89,6 +90,9 @@ export function AdminPage() {
 
         {/* Santé du pipeline auto-exec EA : heartbeat + orders 24h + zombies */}
         <AutoExecHealthCard />
+
+        {/* Vetos géopolitiques : count par règle / pair / jour sur 7j */}
+        <GeopoliticalVetoActivityCard />
 
         {isLoading && <Skeleton className="w-full h-48" />}
 

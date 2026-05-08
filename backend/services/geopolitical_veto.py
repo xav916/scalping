@@ -111,7 +111,7 @@ def _check_iran_hormuz(pair: str, direction: str, poly: dict | None) -> Optional
         return None
     prob, market, days = best
     return (
-        f"Iran peace deal prob {prob*100:.0f}% à {days}j "
+        f"[iran_hormuz] Iran peace deal prob {prob*100:.0f}% à {days}j "
         f"({market.get('question', '')[:60]}) → long {pair} risqué"
     )
 
@@ -143,7 +143,7 @@ def _check_fed_dovish(pair: str, direction: str, poly: dict | None) -> Optional[
         return None
     prob, market, days = best
     return (
-        f"Fed cut prob {prob*100:.0f}% à {days}j "
+        f"[fed_dovish] Fed cut prob {prob*100:.0f}% à {days}j "
         f"({market.get('question', '')[:60]}) → position USD-fort risquée"
     )
 
@@ -168,7 +168,7 @@ def _check_recession(pair: str, direction: str, poly: dict | None) -> Optional[s
         return None
     prob, market = best
     return (
-        f"Recession prob {prob*100:.0f}% "
+        f"[recession] Recession prob {prob*100:.0f}% "
         f"({market.get('question', '')[:60]}) → long {pair} risqué"
     )
 
@@ -187,7 +187,7 @@ def _check_gdelt_stress(pair: str, direction: str, gdelt: dict | None) -> Option
     if geo_theme.get("stress_level") != "high":
         return None
     tone = geo_theme.get("avg_tone")
-    return f"GDELT stress geopolitical=high (tone={tone}) → long {pair} EU risqué"
+    return f"[gdelt_stress] GDELT stress geopolitical=high (tone={tone}) → long {pair} EU risqué"
 
 
 # ─── Entry point ─────────────────────────────────────────────────────
@@ -257,3 +257,120 @@ def apply(pair: str, direction: str) -> tuple[bool, list[str], dict]:
     except Exception as e:
         logger.warning(f"geopolitical_veto: top-level error: {e}")
         return False, [], {}
+
+
+# ─── Observability — stats sur signal_rejections ─────────────────────
+import json as _json
+import re as _re
+import sqlite3 as _sqlite3
+from datetime import timedelta as _timedelta, timezone as _timezone
+
+_RULE_TAG_RE = _re.compile(r"\[(\w+)\]")
+KNOWN_RULES = ("iran_hormuz", "fed_dovish", "recession", "gdelt_stress")
+
+
+def get_stats(days: int = 7) -> dict:
+    """Stats des vetos géopolitiques sur les ``days`` derniers jours.
+
+    Lit la table ``signal_rejections`` filtre ``reason_code='geopolitical_veto'``,
+    parse le tag ``[rule_id]`` au début de chaque blocker pour ventiler par
+    règle. Best-effort : retourne dict vide si DB inaccessible.
+
+    Returns
+    -------
+    dict
+        {
+          "since": iso,
+          "until": iso,
+          "days": int,
+          "total": int,
+          "by_rule": {"iran_hormuz": N, ...},
+          "by_pair": [{"pair": "XAU/USD", "count": N}, ...],  # top 10
+          "by_day": [{"date": "2026-05-08", "count": N}, ...],
+          "recent": [{"created_at": ..., "pair": ..., "rule": ..., "reason": ...}, ...],  # 20 derniers
+        }
+    """
+    days = max(1, min(60, int(days)))
+    until = datetime.now(_timezone.utc)
+    since = until - _timedelta(days=days)
+    since_iso = since.isoformat()
+    until_iso = until.isoformat()
+
+    try:
+        from backend.services.trade_log_service import _DB_PATH
+        with _sqlite3.connect(str(_DB_PATH)) as c:
+            c.row_factory = _sqlite3.Row
+            rows = c.execute(
+                """
+                SELECT created_at, pair, direction, details
+                  FROM signal_rejections
+                 WHERE reason_code = 'geopolitical_veto'
+                   AND created_at >= ?
+                   AND created_at <= ?
+                 ORDER BY created_at DESC
+                """,
+                (since_iso, until_iso),
+            ).fetchall()
+    except Exception as e:
+        logger.warning(f"geopolitical_veto.get_stats: DB error: {e}")
+        return {
+            "since": since_iso, "until": until_iso, "days": days,
+            "total": 0, "by_rule": {}, "by_pair": [], "by_day": [], "recent": [],
+        }
+
+    by_rule: dict[str, int] = {r: 0 for r in KNOWN_RULES}
+    by_pair: dict[str, int] = {}
+    by_day: dict[str, int] = {}
+    recent: list[dict] = []
+
+    for row in rows:
+        try:
+            details = _json.loads(row["details"]) if row["details"] else {}
+        except (_json.JSONDecodeError, TypeError):
+            details = {}
+        blockers = details.get("blockers") or []
+
+        # Identifier la première règle taggée
+        rule_id = "unknown"
+        first_blocker = blockers[0] if blockers else ""
+        m = _RULE_TAG_RE.search(first_blocker)
+        if m and m.group(1) in KNOWN_RULES:
+            rule_id = m.group(1)
+        by_rule[rule_id] = by_rule.get(rule_id, 0) + 1
+
+        pair = row["pair"] or "UNKNOWN"
+        by_pair[pair] = by_pair.get(pair, 0) + 1
+
+        day = row["created_at"][:10] if row["created_at"] else ""
+        if day:
+            by_day[day] = by_day.get(day, 0) + 1
+
+        if len(recent) < 20:
+            recent.append({
+                "created_at": row["created_at"],
+                "pair": pair,
+                "direction": row["direction"],
+                "rule": rule_id,
+                "reason": first_blocker,
+            })
+
+    by_pair_sorted = sorted(
+        [{"pair": p, "count": c} for p, c in by_pair.items()],
+        key=lambda x: x["count"], reverse=True,
+    )[:10]
+
+    by_day_sorted = sorted(
+        [{"date": d, "count": c} for d, c in by_day.items()],
+        key=lambda x: x["date"],
+    )
+
+    return {
+        "since": since_iso,
+        "until": until_iso,
+        "days": days,
+        "total": len(rows),
+        "by_rule": by_rule,
+        "by_pair": by_pair_sorted,
+        "by_day": by_day_sorted,
+        "recent": recent,
+    }

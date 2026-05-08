@@ -184,7 +184,16 @@ def _check_rejection(setup, dest=None) -> str | None:
         logger.debug(f"mt5_bridge: event_blackout check failed: {e}")
     if getattr(setup, "is_simulated", False):
         return "simulated_data"
-    if getattr(setup, "verdict_blockers", None):
+    blockers = getattr(setup, "verdict_blockers", None)
+    if blockers:
+        # Distinction par type de veto pour observabilité dashboard.
+        # L'ordre des prefix est stable car les hooks scoring ajoutent
+        # toujours le même libellé : "Macro veto:" / "Geopolitical veto:".
+        first = blockers[0] if blockers else ""
+        if first.startswith("Geopolitical veto:"):
+            return "geopolitical_veto"
+        if first.startswith("Macro veto:"):
+            return "macro_veto"
         return "verdict_blocker"
     if not is_market_open_for(setup.pair):
         return "market_closed"
@@ -255,6 +264,12 @@ async def _push_to_destination(setup, dest) -> None:
             except Exception:
                 _pattern_str = None
             details = {"signal_pattern": _pattern_str}
+            # Persister les blockers en clair pour les dashboards
+            # (geopolitical_veto en particulier — sinon on perd la règle
+            # qui a déclenché et le détail prob/jours).
+            _blockers = getattr(setup, "verdict_blockers", None)
+            if _blockers:
+                details["blockers"] = list(_blockers)
             record_rejection(
                 pair=setup.pair,
                 direction=_direction_value(setup),

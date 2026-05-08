@@ -326,6 +326,24 @@ export const api = {
       };
     }>('/api/admin/auto-exec/health'),
 
+  adminGeopoliticalVetoStats: (days = 7) =>
+    request<{
+      since: string;
+      until: string;
+      days: number;
+      total: number;
+      by_rule: Record<string, number>;
+      by_pair: Array<{ pair: string; count: number }>;
+      by_day: Array<{ date: string; count: number }>;
+      recent: Array<{
+        created_at: string;
+        pair: string;
+        direction: string | null;
+        rule: string;
+        reason: string;
+      }>;
+    }>(`/api/admin/geopolitical-veto-stats?days=${days}`),
+
   macro: async () => {
     const raw = await request<{ status: string; snapshot: MacroSnapshot | null }>(
       '/api/macro'
