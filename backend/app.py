@@ -2122,6 +2122,76 @@ async def api_shadow_public_summary(token: str = ""):
     return summary()
 
 
+@app.get("/api/shadow/v2_core_long/counterfactual")
+async def api_shadow_counterfactual(token: str = "", days: int = 30):
+    """Rapport contrefactuel veto géopolitique × Track A (auth-by-token).
+
+    Lance la même logique que `scripts.research.track_a_veto_counterfactual`
+    sur la DB shadow live et retourne le rapport Markdown généré + un
+    payload JSON structuré (sample_size_verdict, direction_verdict, n).
+
+    Permet à l'agent remote (routine RemoteTrigger samedi) de fetcher le
+    rapport sans avoir SSH/DB access. La routine n'a qu'à `curl` cet
+    endpoint puis commit le Markdown reçu dans
+    ``docs/superpowers/journal/{date}-track-a-veto-counterfactual.md``.
+
+    Auth identique à public-summary (même token).
+    """
+    import hashlib
+    from datetime import datetime as _dt, timezone as _tz
+    from pathlib import Path
+    from fastapi import HTTPException
+
+    SHADOW_PUBLIC_TOKEN_HASH = "e980b1ed0b45ca6873caa3f2d6ddcf27f4d8a1d0aa87cf9072f6e3e0909b31ec"
+
+    if not token:
+        raise HTTPException(status_code=403, detail="token required")
+    provided_hash = hashlib.sha256(token.encode()).hexdigest()
+    import secrets as _s
+    if not _s.compare_digest(provided_hash, SHADOW_PUBLIC_TOKEN_HASH):
+        raise HTTPException(status_code=403, detail="invalid token")
+
+    from scripts.research.track_a_veto_counterfactual import (
+        load_reconciled_setups,
+        build_report,
+        compute_group_stats,
+        _sample_verdict,
+    )
+    from backend.services.trade_log_service import _DB_PATH
+
+    setups = load_reconciled_setups(Path(str(_DB_PATH)))
+    generated_at = _dt.now(_tz.utc)
+    markdown = build_report(setups, generated_at)
+
+    # Payload structuré pour la routine + l'UI éventuelle
+    n_total = len(setups)
+    vetoed = [s for s in setups if s["would_veto"]]
+    passed = [s for s in setups if not s["would_veto"]]
+    stats_v = compute_group_stats(vetoed)
+    stats_p = compute_group_stats(passed)
+
+    direction = "insufficient"
+    if n_total > 0 and stats_v["n"] > 0 and stats_p["n"] > 0:
+        delta = (stats_p.get("mean_pnl_pct") or 0) - (stats_v.get("mean_pnl_pct") or 0)
+        if abs(delta) < 0.05:
+            direction = "neutral"
+        elif delta > 0:
+            direction = "veto_would_help"
+        else:
+            direction = "veto_would_hurt"
+
+    return {
+        "generated_at": generated_at.isoformat(),
+        "days": days,
+        "n_total": n_total,
+        "n_vetoed": stats_v["n"],
+        "n_passed": stats_p["n"],
+        "sample_verdict": _sample_verdict(n_total),
+        "direction_verdict": direction,
+        "markdown": markdown,
+    }
+
+
 # ─── Endpoints publics shadow log (no auth) ─────────────────────────────────
 # Pour pages publiques /v2/live et /v2/track-record qui affichent le track
 # record en temps réel sans demander de login. Lecture seule, sanitisé
