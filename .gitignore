@@ -34,3 +34,9 @@ docs/strategy/
 
 # Artefacts diagnostiques éphémères (scripts one-shot d'analyse, DBs locales)
 _macro_veto_analysis/
+
+# Outputs des scripts research (re-générables : pre_screen_universe.py +
+# deep_dive_survivors.py). Pas versionnés pour éviter de polluer le repo
+# avec des résultats jetables qui changent à chaque scan.
+deep_dive_results.csv
+pre_screen_results.csv

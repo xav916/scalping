@@ -49,8 +49,13 @@ sudo docker build -t scalping-radar:latest .
 echo "=== prune dangling ==="
 # Supprime les images orphelines créées par ce build (anciennes layers
 # remplacées par les nouvelles). Sans ce prune, chaque deploy laisse
-# ~509MB d'image <none>:<none> → remplit les 8GB d'EBS en ~15 deploys.
-sudo docker image prune -f
+# ~509MB-879MB d'image <none>:<none> → remplit les 8GB d'EBS en ~10 deploys.
+# `-a` (était sans avant 2026-05-08) : purge AUSSI les images sans tag qui
+# ont des layers parentes — sinon `<none>:<none>` du deploy précédent reste
+# (vu en prod 2026-05-08 : 879MB orphelin malgré `prune -f`). Le container
+# `scalping-radar` running protège l'image utilisée scalping-radar:latest,
+# donc `-a -f` direct est safe.
+sudo docker image prune -a -f
 sudo docker builder prune -f --filter "until=24h"
 
 echo "=== sync assets archive (preserves old chunks for stale tabs) ==="

@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Scalping Radar — Schéma vulgarisé</title>
+<style>
+  :root {
+    --bg: #0b1020;
+    --bg-2: #111935;
+    --card: #161f3d;
+    --card-2: #1c2747;
+    --line: #2b3461;
+    --text: #e8edff;
+    --muted: #94a3c8;
+    --accent: #7ce6ff;
+    --green: #4ade80;
+    --orange: #fb923c;
+    --red: #f87171;
+    --purple: #c084fc;
+    --yellow: #fde047;
+    --blue: #60a5fa;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: linear-gradient(160deg, var(--bg) 0%, var(--bg-2) 100%);
+    color: var(--text);
+    padding: 32px 24px 60px;
+    min-height: 100vh;
+  }
+  h1 { font-size: 28px; margin: 0 0 4px; letter-spacing: -0.5px; }
+  h2 {
+    font-size: 19px;
+    margin: 36px 0 14px;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    font-weight: 600;
+  }
+  .subtitle { color: var(--muted); margin: 0 0 20px; font-size: 14px; }
+  .container { max-width: 1180px; margin: 0 auto; }
+
+  /* === Section 1 : Vue d'ensemble === */
+  .pipeline {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+    margin: 16px 0;
+  }
+  .stage {
+    background: var(--card);
+    border-radius: 14px;
+    padding: 18px 16px;
+    border: 1px solid var(--line);
+    position: relative;
+  }
+  .stage::after {
+    content: "→";
+    position: absolute;
+    right: -16px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 24px;
+    color: var(--accent);
+    z-index: 2;
+  }
+  .stage:last-child::after { display: none; }
+  .stage-title {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--accent);
+    margin-bottom: 10px;
+    font-weight: 700;
+  }
+  .stage-icon { font-size: 22px; margin-bottom: 6px; }
+  .stage-list { list-style: none; padding: 0; margin: 0; font-size: 13px; }
+  .stage-list li {
+    padding: 5px 0;
+    border-bottom: 1px dashed var(--line);
+    color: var(--text);
+  }
+  .stage-list li:last-child { border: 0; }
+  .stage-list small { color: var(--muted); display: block; font-size: 11px; }
+
+  /* === Section 2 : Workflow trade décision === */
+  .workflow { position: relative; padding-left: 0; margin-top: 20px; }
+  .step {
+    background: var(--card);
+    border-left: 4px solid var(--accent);
+    border-radius: 10px;
+    padding: 14px 18px;
+    margin-bottom: 10px;
+    display: grid;
+    grid-template-columns: 36px 1fr auto;
+    align-items: center;
+    gap: 16px;
+  }
+  .step-num {
+    width: 32px; height: 32px; border-radius: 50%;
+    background: var(--accent); color: var(--bg);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700;
+  }
+  .step-body strong { font-size: 15px; }
+  .step-body p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+  .step-body code { background: var(--bg); color: var(--accent); padding: 2px 6px; border-radius: 4px; font-size: 12px; }
+  .step-meta {
+    background: var(--bg);
+    border: 1px solid var(--line);
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 11px;
+    color: var(--muted);
+    text-align: right;
+    min-width: 130px;
+  }
+  .step-meta b { color: var(--text); display: block; font-size: 12px; }
+
+  /* Decision diamonds */
+  .decision {
+    background: linear-gradient(135deg, #2d1b50 0%, #4c1d95 100%);
+    border-left-color: var(--purple);
+  }
+  .decision .step-num { background: var(--purple); }
+
+  /* Verdict block */
+  .verdicts {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin: 16px 0 20px;
+  }
+  .verdict {
+    border-radius: 12px;
+    padding: 18px 16px;
+    border: 2px solid;
+  }
+  .v-take { background: rgba(74, 222, 128, 0.08); border-color: var(--green); }
+  .v-wait { background: rgba(251, 146, 60, 0.08); border-color: var(--orange); }
+  .v-skip { background: rgba(248, 113, 113, 0.08); border-color: var(--red); }
+  .verdict h3 { margin: 0 0 6px; font-size: 18px; }
+  .v-take h3 { color: var(--green); }
+  .v-wait h3 { color: var(--orange); }
+  .v-skip h3 { color: var(--red); }
+  .verdict p { margin: 0; font-size: 13px; color: var(--muted); }
+  .verdict .actions { margin-top: 10px; font-size: 12px; }
+  .verdict .actions span {
+    display: inline-block;
+    background: var(--card);
+    padding: 3px 8px;
+    border-radius: 12px;
+    margin: 3px 4px 0 0;
+  }
+
+  /* Scoring breakdown */
+  .scoring {
+    background: var(--card-2);
+    border-radius: 12px;
+    padding: 18px;
+    margin-top: 8px;
+  }
+  .factor {
+    display: grid;
+    grid-template-columns: 130px 1fr 60px;
+    align-items: center;
+    gap: 12px;
+    margin: 8px 0;
+  }
+  .factor-name { font-size: 13px; }
+  .factor-bar {
+    height: 18px;
+    background: var(--bg);
+    border-radius: 9px;
+    overflow: hidden;
+    position: relative;
+  }
+  .factor-fill {
+    height: 100%;
+    border-radius: 9px;
+    background: linear-gradient(90deg, var(--blue), var(--accent));
+  }
+  .factor-pts {
+    text-align: right;
+    font-weight: 700;
+    color: var(--accent);
+    font-size: 13px;
+  }
+  .factor.macro .factor-fill { background: linear-gradient(90deg, var(--purple), #ec4899); }
+  .factor.total {
+    border-top: 1px solid var(--line);
+    padding-top: 10px;
+    margin-top: 12px;
+    font-weight: 700;
+  }
+  .factor.total .factor-pts { color: var(--green); font-size: 16px; }
+
+  /* Threshold table */
+  .thresholds {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+    margin-top: 14px;
+  }
+  .thresh {
+    background: var(--card);
+    border-radius: 8px;
+    padding: 12px 14px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .thresh-val {
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--yellow);
+    min-width: 60px;
+  }
+  .thresh-name { font-size: 13px; color: var(--text); }
+  .thresh-name small { display: block; color: var(--muted); font-size: 11px; }
+
+  /* Footer note */
+  .note {
+    margin-top: 24px;
+    background: rgba(252, 211, 77, 0.08);
+    border-left: 3px solid var(--yellow);
+    padding: 12px 16px;
+    border-radius: 6px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .note b { color: var(--yellow); }
+
+  /* Architecture */
+  .arch {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 20px;
+    margin-top: 12px;
+    overflow-x: auto;
+  }
+  .arch-row {
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    gap: 16px;
+    align-items: center;
+    padding: 10px 0;
+    border-bottom: 1px dashed var(--line);
+  }
+  .arch-row:last-child { border: 0; }
+  .arch-label {
+    font-size: 12px;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    font-weight: 700;
+  }
+  .arch-boxes { display: flex; flex-wrap: wrap; gap: 8px; }
+  .arch-box {
+    background: var(--bg);
+    border: 1px solid var(--line);
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+  }
+  .arch-box.prod { border-color: var(--green); }
+  .arch-box.cloud { border-color: var(--blue); }
+  .arch-box.local { border-color: var(--orange); }
+  .arch-box.ext { border-color: var(--purple); }
+
+  /* Mobile */
+  @media (max-width: 900px) {
+    .pipeline { grid-template-columns: 1fr; }
+    .stage::after { content: "↓"; right: 50%; top: auto; bottom: -22px; transform: translateX(50%); }
+    .verdicts { grid-template-columns: 1fr; }
+    .thresholds { grid-template-columns: 1fr; }
+    .step { grid-template-columns: 32px 1fr; }
+    .step-meta { grid-column: 1 / -1; text-align: left; }
+    .arch-row { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <h1>Scalping Radar — Schéma vulgarisé</h1>
+  <p class="subtitle">Modules + workflow de décision d'un trade. État prod 2026-05.</p>
+
+  <!-- ====== Vue d'ensemble en 4 étages ====== -->
+  <h2>1. Vue d'ensemble — 4 étages</h2>
+  <div class="pipeline">
+
+    <div class="stage">
+      <div class="stage-icon">📡</div>
+      <div class="stage-title">Collecte</div>
+      <ul class="stage-list">
+        <li>Twelve Data <small>prix 5min + 1h, WS</small></li>
+        <li>ForexFactory <small>news éco</small></li>
+        <li>COT / F&amp;G <small>positionnement</small></li>
+        <li>Mataf <small>volatilité</small></li>
+        <li>DXY / SPX / VIX <small>contexte macro</small></li>
+      </ul>
+    </div>
+
+    <div class="stage">
+      <div class="stage-icon">🧠</div>
+      <div class="stage-title">Analyse</div>
+      <ul class="stage-list">
+        <li>Pattern detector <small>6 patterns 5min</small></li>
+        <li>Setup brut <small>entry / SL / TP / R:R</small></li>
+        <li>Scoring /100 <small>5 facteurs pondérés</small></li>
+        <li>Macro scoring <small>×0.75 à ×1.2 + veto</small></li>
+      </ul>
+    </div>
+
+    <div class="stage">
+      <div class="stage-icon">⚖️</div>
+      <div class="stage-title">Décision</div>
+      <ul class="stage-list">
+        <li>Filtre confidence <small>≥ 75 affichage UI</small></li>
+        <li>Coaching <small>TAKE / WAIT / SKIP</small></li>
+        <li>Filtre stars <small>XAU/XAG/WTI/ETH</small></li>
+        <li>Dedup + safety gates</li>
+      </ul>
+    </div>
+
+    <div class="stage">
+      <div class="stage-icon">📤</div>
+      <div class="stage-title">Distribution</div>
+      <ul class="stage-list">
+        <li>WebSocket <small>UI dashboard</small></li>
+        <li>Telegram <small>push mobile</small></li>
+        <li>MT5 EA <small>auto-exec broker</small></li>
+        <li>SQLite <small>log + analytics</small></li>
+      </ul>
+    </div>
+
+  </div>
+
+  <!-- ====== Workflow décision étape par étape ====== -->
+  <h2>2. Workflow d'un trade — étape par étape</h2>
+
+  <div class="workflow">
+
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <strong>Cycle d'analyse déclenché</strong>
+        <p>APScheduler tick toutes les <code>200s</code>, sur les 4 stars + paires shadow.</p>
+      </div>
+      <div class="step-meta"><b>200s</b>boucle infinie</div>
+    </div>
+
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <strong>Fetch des données marché</strong>
+        <p>~50 bougies 5min + ~50 bougies 1h, volatilité, événements éco, snapshot macro.</p>
+      </div>
+      <div class="step-meta"><b>+0.5s</b>Twelve Data</div>
+    </div>
+
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <strong>Détection pattern</strong>
+        <p>6 patterns testés : breakout up/down, momentum up/down, engulfing bullish, pin bar.</p>
+      </div>
+      <div class="step-meta"><b>+1s</b>pattern_detector.py</div>
+    </div>
+
+    <div class="step">
+      <div class="step-num">4</div>
+      <div class="step-body">
+        <strong>Construction du setup brut</strong>
+        <p><code>entry</code> = clôture, <code>SL</code> = ATR×1.5, <code>TP1</code>/<code>TP2</code> à R:R 1 et 2.</p>
+      </div>
+      <div class="step-meta"><b>+1.2s</b>calculate_trade_setup</div>
+    </div>
+
+    <div class="step">
+      <div class="step-num">5</div>
+      <div class="step-body">
+        <strong>Scoring sur 100</strong>
+        <p>5 facteurs pondérés produisent le score de confiance (voir ci-dessous).</p>
+      </div>
+      <div class="step-meta"><b>+1.3s</b>analysis_engine.py</div>
+    </div>
+
+    <div class="step">
+      <div class="step-num">6</div>
+      <div class="step-body">
+        <strong>Macro multiplicateur (Vague 1)</strong>
+        <p>DXY / SPX / VIX alignés ? Multiplie le score (×0.75 à ×1.2). Veto si VIX&gt;30 ou DXY 2σ contre.</p>
+      </div>
+      <div class="step-meta"><b>+1.5s</b>macro_scoring.py</div>
+    </div>
+
+    <div class="step decision">
+      <div class="step-num">7</div>
+      <div class="step-body">
+        <strong>Verdict du coach</strong>
+        <p>Synthèse score + trend MTF + warnings + veto → <code>TAKE</code> / <code>WAIT</code> / <code>SKIP</code>.</p>
+      </div>
+      <div class="step-meta"><b>+1.6s</b>coaching.py</div>
+    </div>
+
+    <div class="step">
+      <div class="step-num">8</div>
+      <div class="step-body">
+        <strong>Distribution conditionnelle</strong>
+        <p>UI WebSocket toujours. Telegram si <code>conf ≥ 50</code> ET (TAKE|WAIT). MT5 EA si <code>conf ≥ 60</code> ET TAKE ET paire ∈ stars.</p>
+      </div>
+      <div class="step-meta"><b>+1.7s</b>3 canaux</div>
+    </div>
+
+  </div>
+
+  <!-- ====== Détail scoring ====== -->
+  <h2>3. Détail du scoring — exemple breakout EUR/USD</h2>
+  <div class="scoring">
+
+    <div class="factor">
+      <span class="factor-name">Pattern</span>
+      <div class="factor-bar"><div class="factor-fill" style="width: 78%"></div></div>
+      <span class="factor-pts">23.4 / 30</span>
+    </div>
+
+    <div class="factor">
+      <span class="factor-name">Risk / Reward</span>
+      <div class="factor-bar"><div class="factor-fill" style="width: 100%"></div></div>
+      <span class="factor-pts">25 / 25</span>
+    </div>
+
+    <div class="factor">
+      <span class="factor-name">Volatilité</span>
+      <div class="factor-bar"><div class="factor-fill" style="width: 100%"></div></div>
+      <span class="factor-pts">20 / 20</span>
+    </div>
+
+    <div class="factor">
+      <span class="factor-name">Tendance MTF</span>
+      <div class="factor-bar"><div class="factor-fill" style="width: 100%"></div></div>
+      <span class="factor-pts">15 / 15</span>
+    </div>
+
+    <div class="factor">
+      <span class="factor-name">Contexte éco</span>
+      <div class="factor-bar"><div class="factor-fill" style="width: 100%"></div></div>
+      <span class="factor-pts">10 / 10</span>
+    </div>
+
+    <div class="factor macro">
+      <span class="factor-name">× Macro (DXY contre)</span>
+      <div class="factor-bar"><div class="factor-fill" style="width: 75%"></div></div>
+      <span class="factor-pts">× 0.75</span>
+    </div>
+
+    <div class="factor total">
+      <span class="factor-name">Score final</span>
+      <div class="factor-bar"><div class="factor-fill" style="width: 70%; background: linear-gradient(90deg, var(--green), var(--accent))"></div></div>
+      <span class="factor-pts">70 / 100</span>
+    </div>
+
+  </div>
+
+  <!-- ====== Verdicts ====== -->
+  <h2>4. Trois verdicts possibles</h2>
+  <div class="verdicts">
+    <div class="verdict v-take">
+      <h3>✓ TAKE</h3>
+      <p>Score haut, trend alignée, pas de blocker macro. Le radar recommande de prendre le trade.</p>
+      <div class="actions">
+        <span>Push UI</span>
+        <span>Push Telegram</span>
+        <span>Auto-exec MT5</span>
+      </div>
+    </div>
+    <div class="verdict v-wait">
+      <h3>⏳ WAIT</h3>
+      <p>Setup intéressant mais une condition manque (news proche, R:R faible, MTF incertaine).</p>
+      <div class="actions">
+        <span>Push UI</span>
+        <span>Push Telegram</span>
+      </div>
+    </div>
+    <div class="verdict v-skip">
+      <h3>✗ SKIP</h3>
+      <p>Score insuffisant ou veto macro déclenché. Setup loggé pour analyse mais ignoré.</p>
+      <div class="actions">
+        <span>Log SQLite seul</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ====== Seuils en prod ====== -->
+  <h2>5. Seuils actuels en prod</h2>
+  <div class="thresholds">
+    <div class="thresh">
+      <div class="thresh-val">75</div>
+      <div class="thresh-name">MIN_CONFIDENCE_SCORE<small>filtre affichage UI principal</small></div>
+    </div>
+    <div class="thresh">
+      <div class="thresh-val">50</div>
+      <div class="thresh-name">TELEGRAM_MIN_CONFIDENCE<small>seuil push mobile (phase observation)</small></div>
+    </div>
+    <div class="thresh">
+      <div class="thresh-val">60</div>
+      <div class="thresh-name">MT5_BRIDGE_MIN_CONFIDENCE<small>seuil auto-exec EA (à remonter à 90 avant live)</small></div>
+    </div>
+    <div class="thresh">
+      <div class="thresh-val">1%</div>
+      <div class="thresh-name">RISK_PER_TRADE_PCT<small>capital risqué par position</small></div>
+    </div>
+    <div class="thresh">
+      <div class="thresh-val">3%</div>
+      <div class="thresh-name">DAILY_LOSS_LIMIT_PCT<small>silent mode si perte journalière atteinte</small></div>
+    </div>
+    <div class="thresh">
+      <div class="thresh-val">200s</div>
+      <div class="thresh-name">CYCLE_INTERVAL<small>fréquence du cycle d'analyse</small></div>
+    </div>
+  </div>
+
+  <!-- ====== Architecture physique ====== -->
+  <h2>6. Architecture physique (où ça tourne)</h2>
+  <div class="arch">
+
+    <div class="arch-row">
+      <div class="arch-label">☁️ Cloud Backend</div>
+      <div class="arch-boxes">
+        <div class="arch-box cloud">EC2 t3.micro · Stockholm</div>
+        <div class="arch-box cloud">Docker · scalping-radar</div>
+        <div class="arch-box cloud">FastAPI + APScheduler</div>
+        <div class="arch-box cloud">SQLite trades.db</div>
+        <div class="arch-box cloud">Nginx + Let's Encrypt</div>
+      </div>
+    </div>
+
+    <div class="arch-row">
+      <div class="arch-label">🔗 Bridge MT5</div>
+      <div class="arch-boxes">
+        <div class="arch-box prod">EA MQL5 (en prod)</div>
+        <div class="arch-box prod">Polling /api/ea/pending 30s</div>
+        <div class="arch-box local">VPS Lightsail Windows</div>
+        <div class="arch-box local">MT5 Desktop · PepperstoneUK-Demo</div>
+      </div>
+    </div>
+
+    <div class="arch-row">
+      <div class="arch-label">📡 Sources externes</div>
+      <div class="arch-boxes">
+        <div class="arch-box ext">Twelve Data (plan Grow)</div>
+        <div class="arch-box ext">ForexFactory</div>
+        <div class="arch-box ext">CFTC COT</div>
+        <div class="arch-box ext">CNN Fear &amp; Greed</div>
+        <div class="arch-box ext">Telegram Bot API</div>
+      </div>
+    </div>
+
+    <div class="arch-row">
+      <div class="arch-label">🎨 Frontend SaaS</div>
+      <div class="arch-boxes">
+        <div class="arch-box prod">React V2 · /v2/cockpit</div>
+        <div class="arch-box prod">PWA installable</div>
+        <div class="arch-box prod">app.scalping-radar.online</div>
+        <div class="arch-box prod">Stripe + Resend</div>
+      </div>
+    </div>
+
+    <div class="arch-row">
+      <div class="arch-label">🔔 Observabilité</div>
+      <div class="arch-boxes">
+        <div class="arch-box cloud">bridge_monitor.py · 60s</div>
+        <div class="arch-box cloud">/v2/control-tower</div>
+        <div class="arch-box ext">@xav_scalping_infra_bot Telegram</div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="note">
+    <b>⚠️ Phase actuelle</b> — Stars-only depuis 2026-04-26 : seuls XAU/XAG/WTI/ETH passent en auto-exec et Telegram. Forex / SPX / NDX / BTC restent en shadow log uniquement (visibles dans <code>/v2/v1-legacy</code>). Verdict V1 : pas d'edge structurel sur 39 689 trades backtest, passage live bloqué jusqu'à validation V2 macro.
+  </div>
+
+</div>
+</body>
+</html>
