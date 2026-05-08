@@ -8,13 +8,23 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { LabelWithInfo } from '@/components/ui/Tooltip';
 import type { ShadowSetup, ShadowSystemSummary } from '@/types/domain';
 
+// Ordre d'affichage : baseline + jumeau _FILTERED groupés par pair, pour
+// comparaison directe à l'œil. Le suffix [F] indique le système jumeau qui
+// ne logge un setup que si le veto contrefactuel laisse passer (le baseline
+// est toujours loggé). Permet l'A/B test live "sans veto" vs "avec veto".
 const SYSTEM_LABELS: Record<string, string> = {
   V2_CORE_LONG_XAUUSD_4H: 'XAU H4',
+  V2_CORE_LONG_XAUUSD_4H_FILTERED: 'XAU H4 [F]',
   V2_CORE_LONG_XAGUSD_4H: 'XAG H4',
+  V2_CORE_LONG_XAGUSD_4H_FILTERED: 'XAG H4 [F]',
   V2_WTI_OPTIMAL_WTIUSD_4H: 'WTI H4',
+  V2_WTI_OPTIMAL_WTIUSD_4H_FILTERED: 'WTI H4 [F]',
   V2_CORE_LONG_ETHUSD_1D: 'ETH 1D',
+  V2_CORE_LONG_ETHUSD_1D_FILTERED: 'ETH 1D [F]',
   V2_TIGHT_LONG_XLI_1D: 'XLI 1D',
+  V2_TIGHT_LONG_XLI_1D_FILTERED: 'XLI 1D [F]',
   V2_WTI_OPTIMAL_XLK_1D: 'XLK 1D',
+  V2_WTI_OPTIMAL_XLK_1D_FILTERED: 'XLK 1D [F]',
 };
 
 function formatPnl(eur: number): string {

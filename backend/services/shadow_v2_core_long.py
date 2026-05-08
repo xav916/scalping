@@ -344,10 +344,17 @@ def _persist_setup(
     cycle_at: datetime,
     macro_features: dict | None = None,
     geopolitical_features: dict | None = None,
+    system_id_override: str | None = None,
 ) -> bool:
-    """Insert idempotent (UNIQUE system_id, bar_timestamp). Retourne True si nouveau."""
+    """Insert idempotent (UNIQUE system_id, bar_timestamp). Retourne True si nouveau.
+
+    ``system_id_override`` permet de logger un système jumeau (ex: ``_FILTERED``
+    pour le shadow filtered twin de Track A) sans collision avec le baseline.
+    Si fourni, utilise cette valeur ; sinon dérivée de ``SHADOW_CONFIG``.
+    """
     cfg = SHADOW_CONFIG.get(pair, {})
-    system_id = cfg.get("system_id", f"V2_CORE_LONG_{pair.replace('/', '')}_4H")
+    base_system_id = cfg.get("system_id", f"V2_CORE_LONG_{pair.replace('/', '')}_4H")
+    system_id = system_id_override or base_system_id
     risk_pct_for_pair = cfg.get("risk_pct", DEFAULT_RISK_PCT)
     timeframe = cfg.get("tf", "4h")
 
@@ -493,6 +500,36 @@ async def run_shadow_log(
                     f"pattern={pattern_name} entry={setup.entry_price:.4f} "
                     f"SL={setup.stop_loss:.4f} TP1={setup.take_profit_1:.4f}"
                 )
+
+            # Twin filtered : si le veto contrefactuel laisse passer le setup,
+            # logger AUSSI une entry jumelle avec system_id suffixé `_FILTERED`.
+            # Si le veto aurait skip (would_veto=True), ne PAS logger le twin
+            # → le système filtered "rejette" ce setup. Comparaison directe
+            # baseline (toujours loggé) vs filtered (loggé seulement si pass)
+            # au gate S6.
+            try:
+                from config.settings import SHADOW_FILTERED_TWIN_ENABLED
+            except Exception:
+                SHADOW_FILTERED_TWIN_ENABLED = False
+            if SHADOW_FILTERED_TWIN_ENABLED and geopolitical_features:
+                veto_eval = geopolitical_features.get("veto_evaluated") or {}
+                would_veto = veto_eval.get("would_veto", False)
+                if not would_veto:
+                    twin_system_id = f"{cfg['system_id']}_FILTERED"
+                    if _persist_setup(
+                        setup, pair, pattern_name, last_bar_ts, cycle_at,
+                        macro_features=macro_features,
+                        geopolitical_features=geopolitical_features,
+                        system_id_override=twin_system_id,
+                    ):
+                        logger.info(
+                            f"shadow: twin filtered {twin_system_id} {pair} (veto pass)"
+                        )
+                else:
+                    logger.info(
+                        f"shadow: twin filtered SKIP {cfg['system_id']}_FILTERED {pair} "
+                        f"(veto matched: {veto_eval.get('rules_matched')})"
+                    )
 
         counts[pair] = n_new
 

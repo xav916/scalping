@@ -431,3 +431,11 @@ GEOPOLITICAL_VETO_RECESSION_PROB = float(os.getenv("GEOPOLITICAL_VETO_RECESSION_
 
 # Règle 4 : GDELT stress geopolitical=high → veto longs indices européens.
 GEOPOLITICAL_VETO_GDELT_STRESS_ENABLED = os.getenv("GEOPOLITICAL_VETO_GDELT_STRESS_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+
+# Track A shadow filtered twin : pour chaque setup Track A baseline, si
+# le veto contrefactuel laisse passer (would_veto=False), logger AUSSI un
+# 2e setup avec system_id suffixé `_FILTERED`. Permet la comparaison live
+# directe "sans veto" vs "avec veto" sur Track A, sans dépendre du seul
+# script counterfactual posthoc. Le baseline reste loggé toujours (lecture
+# seule pure). Le twin n'apparaît que si le veto laisse passer.
+SHADOW_FILTERED_TWIN_ENABLED = os.getenv("SHADOW_FILTERED_TWIN_ENABLED", "true").lower() in ("1", "true", "yes", "on")

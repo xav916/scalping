@@ -131,8 +131,15 @@ def test_run_shadow_log_too_few_candles(temp_db):
     assert result["XAG/USD"] == 0
 
 
-def test_run_shadow_log_unique_constraint(temp_db):
-    """Appels successifs sur les mêmes candles → 1 setup max par bar (idempotent)."""
+def test_run_shadow_log_unique_constraint(temp_db, monkeypatch):
+    """Appels successifs sur les mêmes candles → 1 setup max par bar (idempotent).
+
+    Twin filtered désactivé pour ce test (sinon les setups baseline +
+    twins doublent le compte ; testé séparément).
+    """
+    import config.settings as _settings
+    monkeypatch.setattr(_settings, "SHADOW_FILTERED_TWIN_ENABLED", False)
+
     start = datetime(2026, 4, 1, 0, 0, tzinfo=timezone.utc)
     h1 = _make_h1_sequence(start, 200)  # 200 H1 = 50 H4 buckets
     h1_dict = {"XAU/USD": h1, "XAG/USD": h1}
@@ -361,3 +368,77 @@ def test_ensure_schema_idempotent_with_geopol_column(temp_db):
     with sqlite3.connect(temp_db) as c:
         cols = [r[1] for r in c.execute("PRAGMA table_info(shadow_setups)").fetchall()]
     assert "geopolitical_features_json" in cols
+
+
+# ─── Filtered twin systems (V2_CORE_LONG_*_FILTERED) ────────────────────────
+
+
+def test_persist_setup_with_system_id_override(temp_db):
+    """system_id_override permet de logger un twin filtered sans collision."""
+    from backend.models.schemas import TradeDirection
+    from datetime import datetime, timezone
+    shadow.ensure_schema()
+
+    bar_ts = datetime(2026, 5, 8, 16, 0, tzinfo=timezone.utc)
+    cycle_ts = datetime(2026, 5, 8, 16, 5, tzinfo=timezone.utc)
+
+    class _S:
+        pair = "XAU/USD"
+        direction = TradeDirection.BUY
+        entry_price = 2400.0
+        stop_loss = 2390.0
+        take_profit_1 = 2418.0
+        take_profit_2 = 2425.0
+
+    # Baseline insert
+    inserted_base = shadow._persist_setup(
+        _S(), "XAU/USD", "momentum_up", bar_ts, cycle_ts,
+    )
+    assert inserted_base is True
+
+    # Twin avec override : même bar_ts MAIS system_id différent → pas de collision
+    inserted_twin = shadow._persist_setup(
+        _S(), "XAU/USD", "momentum_up", bar_ts, cycle_ts,
+        system_id_override="V2_CORE_LONG_XAUUSD_4H_FILTERED",
+    )
+    assert inserted_twin is True
+
+    # Vérifier qu'on a bien 2 rows distincts
+    with sqlite3.connect(temp_db) as c:
+        rows = c.execute(
+            "SELECT system_id FROM shadow_setups WHERE bar_timestamp = ?",
+            (bar_ts.isoformat(),),
+        ).fetchall()
+    system_ids = sorted(r[0] for r in rows)
+    assert system_ids == [
+        "V2_CORE_LONG_XAUUSD_4H",
+        "V2_CORE_LONG_XAUUSD_4H_FILTERED",
+    ]
+
+
+def test_persist_setup_unique_constraint_per_system_id(temp_db):
+    """L'UNIQUE constraint est sur (system_id, bar_timestamp) — un même
+    system_id avec le même bar_ts est skip silencieusement (idempotent)."""
+    from backend.models.schemas import TradeDirection
+    from datetime import datetime, timezone
+    shadow.ensure_schema()
+
+    bar_ts = datetime(2026, 5, 8, 16, 0, tzinfo=timezone.utc)
+    cycle_ts = datetime(2026, 5, 8, 16, 5, tzinfo=timezone.utc)
+
+    class _S:
+        pair = "XAU/USD"
+        direction = TradeDirection.BUY
+        entry_price = 2400.0
+        stop_loss = 2390.0
+        take_profit_1 = 2418.0
+        take_profit_2 = 2425.0
+
+    # 1er insert
+    assert shadow._persist_setup(_S(), "XAU/USD", "momentum_up", bar_ts, cycle_ts) is True
+    # 2nd insert même (system_id, bar_ts) → skip silencieux
+    assert shadow._persist_setup(_S(), "XAU/USD", "momentum_up", bar_ts, cycle_ts) is False
+
+    with sqlite3.connect(temp_db) as c:
+        n = c.execute("SELECT COUNT(*) FROM shadow_setups").fetchone()[0]
+    assert n == 1
