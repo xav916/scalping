@@ -18,6 +18,13 @@
 Settings → Auto-exec MT5 → **"Télécharger ScalpingRadarEA.mq5"** (~50 Ko de
 source MQL5 — tu vas le compiler à l'étape 3).
 
+> **💡 Si tu re-télécharges après une mise à jour** : vérifie la date du
+> fichier dans ton dossier Downloads. Edge / Chrome cachent agressivement le
+> .mq5 — si tu vois l'ancienne date, force le refresh avec `Ctrl + Shift + R`
+> (ou ouvre la page Settings dans une fenêtre privée). Le serveur envoie
+> maintenant un header `Cache-Control: no-store` mais les onglets ouverts
+> avant le 2026-05-09 peuvent encore avoir l'ancienne version en cache.
+
 ## Étape 2 — Drop dans MT5
 
 1. Dans MT5, menu File → **Open Data Folder**
@@ -108,6 +115,32 @@ ScalpingRadarEA order_id=42 EXECUTED ticket=123456789 EURUSD buy
 - **Définitivement** : clic droit sur l'EA dans le chart → **Remove**
 - **Côté SaaS** : Settings → Auto-exec MT5 → "Désactiver" (le SaaS arrête
   d'enqueuer les ordres ; même si l'EA tourne il ne reçoit plus rien)
+
+## Mettre à jour l'EA (nouvelle version publiée)
+
+Quand on pousse une nouvelle version du `.mq5` (fix bug, nouvelle feature,
+nouveau symbol map), il faut **re-compiler manuellement** côté MT5 — MT5 ne
+reconnaît pas automatiquement qu'un nouveau `.mq5` est dispo.
+
+1. Settings → Auto-exec MT5 → re-télécharge `ScalpingRadarEA.mq5` (vérifie
+   la date du fichier dans Downloads, force `Ctrl + Shift + R` si vieille).
+2. Replace le fichier dans `<MT5 Data Folder>/MQL5/Experts/` (l'ancien sera
+   écrasé).
+3. MetaEditor → ouvre le `.mq5` → **Compile (F7)** → vérifie `0 errors`.
+4. Retour à MT5 → clic droit sur le chart où tourne l'EA → **Remove**.
+5. Drag l'EA depuis Navigator → **Expert Advisors → ScalpingRadarEA** vers
+   le même chart.
+6. Re-saisis tes inputs (`InpApiKey`, `InpSymbolMap`, etc.) — ils ne sont
+   pas conservés entre attach/detach.
+
+> **Pourquoi pas auto ?** MT5 ne reload pas un EA en cours d'exécution
+> quand le `.mq5` change sur disque. Il faut détach + re-attach. C'est une
+> limite de MetaTrader, pas un bug de notre côté.
+
+> **Comment savoir si une nouvelle version est dispo ?** Watch
+> https://github.com/xav916/scalping/commits/main/mt5-bridge/ScalpingRadarEA.mq5
+> ou le bot infra Telegram (@xav_scalping_infra_bot) annonce les nouvelles
+> versions.
 
 ## Troubleshooting
 

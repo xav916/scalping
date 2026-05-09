@@ -1,4 +1,23 @@
-# Onboarding Cédric — bridge MT5 auto-exec Premium
+# ⚠️ OBSOLÈTE — Onboarding Cédric — bridge MT5 (architecture legacy)
+
+> **🚫 Ce document est obsolète depuis le 2026-05-05.** Cédric a été migré
+> sur l'architecture **EA MQL5** (pas de bridge.py Python à installer côté
+> user). Pour onboarder un nouvel user Premium, voir :
+>
+> - `mt5-bridge/MT5_EA_INSTALL.md` — install EA dans MT5 Desktop (~5 min)
+> - Web : https://app.scalping-radar.online/docs/ea-setup.html
+>
+> Le bridge.py Python (décrit ci-dessous) ne tourne plus que pour l'admin
+> sur le VPS scalping-bridge-vps (Xavier). Tous les nouveaux users sont
+> routés via la queue `mt5_pending_orders` et l'EA polls cette queue.
+>
+> **Conservé pour archive** : si jamais on doit ré-onboarder un user en
+> mode bridge.py legacy (fallback EA introuvable, broker sans support
+> WebRequest, etc.), la procédure ci-dessous reste valide.
+
+---
+
+# Onboarding Cédric — bridge MT5 auto-exec Premium (LEGACY)
 
 > **Driver** : premier user Premium SaaS (c.chaussis@icloud.com, id=17, Mac
 > niveau 0 tech). Multi-tenant bridge routing déjà déployé en prod (Phases A-D).

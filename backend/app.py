@@ -638,10 +638,13 @@ async def api_ea_download(_ctx: AuthContext = Depends(require_min_tier("premium"
             status_code=500,
             detail=f"EA source introuvable côté serveur ({_EA_SOURCE_PATH.name})",
         )
+    # no-store : Edge / Chrome cachent le .mq5 sinon, et un user qui re-télécharge
+    # après une mise à jour récupère l'ancien fichier (vu chez Cédric le 2026-05-08).
     return FileResponse(
         path=_EA_SOURCE_PATH,
         filename="ScalpingRadarEA.mq5",
         media_type="text/plain",
+        headers={"Cache-Control": "no-store, must-revalidate"},
     )
 
 

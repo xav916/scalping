@@ -351,6 +351,9 @@
       <li>Une fenêtre s'ouvre — navigue dans <code>MQL5/Experts/</code></li>
       <li>Glisse <code>ScalpingRadarEA.mq5</code> dans ce dossier</li>
     </ul>
+    <p style="background: rgba(245, 158, 11, 0.1); border-left: 3px solid #f59e0b; padding: 12px 16px; border-radius: 6px; margin-top: 16px;">
+      💡 <strong>Si tu re-télécharges après une mise à jour</strong> : vérifie la date du fichier dans Downloads. Edge / Chrome cachent agressivement le <code>.mq5</code>. Si tu vois l'ancienne date, force le refresh avec <code>Ctrl + Shift + R</code> (ou ouvre la page Settings dans une fenêtre privée).
+    </p>
 
     <h2 id="step-compile"><span class="num">03</span>Compiler dans MetaEditor</h2>
     <p>
@@ -438,7 +441,23 @@
       là, les setups éligibles passent automatiquement sur ton compte démo.
     </div>
 
-    <h2 id="troubleshoot"><span class="num">07</span>Dépannage</h2>
+    <h2 id="step-update"><span class="num">07</span>Mettre à jour l'EA</h2>
+    <p>
+      Quand une nouvelle version du <code>.mq5</code> est publiée (fix, nouveau symbol map, nouvelle feature), MT5 ne reload pas l'EA automatiquement — il faut le faire à la main :
+    </p>
+    <ol>
+      <li><a href="/v2/settings">Settings</a> → re-télécharge <code>ScalpingRadarEA.mq5</code> (force <code>Ctrl + Shift + R</code> si Edge cache l'ancien)</li>
+      <li>Replace le fichier dans <code>MQL5/Experts/</code> (l'ancien sera écrasé)</li>
+      <li>MetaEditor → ouvre le <code>.mq5</code> → <strong>Compile (F7)</strong></li>
+      <li>Retour à MT5 → clic droit sur le chart où tourne l'EA → <strong>Remove</strong></li>
+      <li>Drag l'EA depuis Navigator → ScalpingRadarEA vers le même chart</li>
+      <li>Re-saisis tes inputs (<code>InpApiKey</code>, <code>InpSymbolMap</code>, etc.) — pas conservés entre attach/detach</li>
+    </ol>
+    <p style="background: rgba(244, 114, 182, 0.08); border-left: 3px solid #f472b6; padding: 12px 16px; border-radius: 6px;">
+      <strong>Pourquoi pas auto ?</strong> MT5 ne reload pas un EA en cours d'exécution quand le <code>.mq5</code> change sur disque. Détach + re-attach est la procédure officielle MetaTrader.
+    </p>
+
+    <h2 id="troubleshoot"><span class="num">08</span>Dépannage</h2>
 
     <h3>"WebRequest 4060" / "URL non whitelistée"</h3>
     <ul>
