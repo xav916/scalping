@@ -97,7 +97,11 @@ async def run_analysis_cycle() -> None:
     global _latest_overview, _latest_candles_by_pair, _latest_h1_candles_by_pair, _last_cycle_at
 
     logger.info("Démarrage du cycle d'analyse...")
-    _last_cycle_at = datetime.now(timezone.utc)
+    cycle_started_at = datetime.now(timezone.utc)
+    _last_cycle_at = cycle_started_at
+    cycle_signals_count = 0
+    cycle_setups_count = 0
+    cycle_error: str | None = None
 
     try:
         # Récupérer toutes les données en parallèle
@@ -281,6 +285,9 @@ async def run_analysis_cycle() -> None:
             "last_update": now.isoformat(),
         })
 
+        cycle_signals_count = len(signals)
+        cycle_setups_count = len(all_trade_setups)
+
         logger.info(
             f"Cycle terminé: {len(signals)} signal(s), "
             f"{len(all_patterns)} pattern(s), "
@@ -310,6 +317,21 @@ async def run_analysis_cycle() -> None:
 
     except Exception as e:
         logger.error(f"Erreur cycle d'analyse: {e}", exc_info=True)
+        cycle_error = str(e)[:500]
+    finally:
+        # Heartbeat dédié — table radar_cycle_heartbeat. Le bridge_monitor
+        # se base dessus depuis 2026-05-09 pour ne plus déclencher de faux
+        # positifs sur des sessions calmes (cf. radar_heartbeat_service.py).
+        try:
+            from backend.services.radar_heartbeat_service import record_cycle
+            record_cycle(
+                started_at=cycle_started_at,
+                signals_count=cycle_signals_count,
+                setups_count=cycle_setups_count,
+                error_message=cycle_error,
+            )
+        except Exception as e:
+            logger.warning(f"radar_heartbeat record failed (non-bloquant): {e}")
 
 
 _shadow_reconcile_counter = 0  # toutes les N appels de cockpit, on tente reconcile
