@@ -136,7 +136,7 @@ def _format_global_message(sl_trades: list[dict[str, Any]]) -> str:
 
     lines = [
         "🚨 *RAFALE GLOBALE — incident systémique*",
-        f"**{count}** SL auto-exec dans la dernière heure (PnL = {total_pnl:.2f}€).",
+        f"*{count}* SL auto-exec dans la dernière heure (PnL = {total_pnl:.2f}€).",
     ]
     if top_patterns:
         lines.append("Top patterns : " + " · ".join(f"{p}: {c}" for p, c in top_patterns))
@@ -163,7 +163,7 @@ def _format_pair_message(pair: str, sl_trades: list[dict[str, Any]]) -> str:
 
     lines = [
         f"⚠️ *Rafale stops loss — {pair}*",
-        f"**{count}** SL sur {pair} dans la dernière heure (PnL = {total_pnl:.2f}€).",
+        f"*{count}* SL sur {pair} dans la dernière heure (PnL = {total_pnl:.2f}€).",
         f"Direction : {directions}",
     ]
     if top_patterns:
@@ -183,7 +183,7 @@ def _format_pattern_message(pattern: str, sl_trades: list[dict[str, Any]]) -> st
 
     lines = [
         f"📢 *Pattern défaillant* `{pattern}`",
-        f"**{count}** SL sur ce pattern dans la dernière heure (PnL = {total_pnl:.2f}€).",
+        f"*{count}* SL sur ce pattern dans la dernière heure (PnL = {total_pnl:.2f}€).",
     ]
     if top_pairs:
         lines.append("Top pairs : " + " · ".join(f"{p}: {c}" for p, c in top_pairs))
@@ -405,7 +405,7 @@ async def _send_pair_resume_notification(
             f"La pair {pair} était paused depuis {ctx.get('max_pause_hours', '?')}h "
             "(plafond max). Force resume engagé.\n"
             f"Pattern défaillant : `{pattern}`.\n"
-            "**Action humaine recommandée** : analyser pourquoi V1 essayait encore."
+            "*Action humaine recommandée* : analyser pourquoi V1 essayait encore."
         )
     else:
         # Fallback générique (pause legacy sans contexte smart)

@@ -53,7 +53,7 @@ def _format_message(reason_code: str, count: int, top_pairs: list[tuple[str, int
     label = REASON_LABELS_FR.get(reason_code, reason_code)
     lines = [
         f"⚠️ *Rafale rejections* · `{reason_code}`",
-        f"**{count}** ordres bloqués dans la dernière heure ({label}).",
+        f"*{count}* ordres bloqués dans la dernière heure ({label}).",
     ]
     if top_pairs:
         pairs_str = " · ".join(f"{p}: {c}" for p, c in top_pairs[:5])
