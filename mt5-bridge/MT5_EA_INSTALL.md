@@ -71,7 +71,11 @@ MT5 bloque les requêtes externes par défaut. Pour autoriser :
      passer d'ordres réels)
    - **InpSymbolMap** : mapping pair SaaS → symbole broker, séparé par
      virgules. À renseigner si ton broker nomme certains CFD différemment
-     du SaaS. Recommandé pour Pepperstone et la plupart des retail brokers :
+     du SaaS.
+     **💡 Settings → Auto-exec MT5 → étape 2 affiche un dropdown broker** —
+     tu choisis ton broker (Pepperstone, générique, custom) et tu obtiens
+     la valeur exacte à coller dans `InpSymbolMap`, avec un bouton Copier.
+     Pour Pepperstone (UK / EU / Demo) :
      ```
      WTI/USD=USOIL,SPX=SPX500,NDX=NAS100
      ```

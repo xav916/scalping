@@ -26,6 +26,30 @@ const ALL_PAIRS = [
   'SPX', 'NDX', 'WTI/USD',
 ];
 
+// Pré-remplit l'input InpSymbolMap de l'EA selon le broker. Évite à chaque
+// nouvel user Premium de passer 1h à découvrir que Pepperstone utilise
+// USOIL au lieu de WTIUSD (cf. feedback_ea_symbol_map_pepperstone.md).
+// Seules les pairs où le broker diverge du strip-slash par défaut sont mappées
+// — pas besoin de mapper EURUSD, BTCUSD, XAUUSD si le broker les nomme déjà
+// comme ça en strip-slash.
+const BROKER_PRESETS: Record<string, { label: string; symbolMap: string; note: string }> = {
+  pepperstone: {
+    label: 'Pepperstone (UK / EU / Demo)',
+    symbolMap: 'WTI/USD=USOIL,SPX=SPX500,NDX=NAS100',
+    note: 'Validé en prod (admin Xavier compte 62119130 + Cédric compte 62120807, PepperstoneUK-Demo).',
+  },
+  generic: {
+    label: 'Broker générique (strip-slash)',
+    symbolMap: '',
+    note: 'Pour les brokers qui utilisent les noms canoniques sans slash (EURUSD, BTCUSD, XAUUSD, WTIUSD, US500, US100). Vide = strip-slash par défaut dans l\'EA.',
+  },
+  custom: {
+    label: 'Autre / mapping custom',
+    symbolMap: '',
+    note: 'Tape ton mapping manuellement dans InpSymbolMap. Format: PAIR=BROKER_SYMBOL séparés par des virgules. Ne mappe que les pairs où ton broker diverge du strip-slash par défaut.',
+  },
+};
+
 export function SettingsPage() {
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -109,6 +133,11 @@ export function SettingsPage() {
   const [revealedApiKey, setRevealedApiKey] = useState<string | null>(null);
   const [showRegenWarning, setShowRegenWarning] = useState(false);
   const [copiedKey, setCopiedKey] = useState(false);
+  const [broker, setBroker] = useState<string>(() => {
+    if (typeof window === 'undefined') return 'pepperstone';
+    return localStorage.getItem('ea-broker-preset') || 'pepperstone';
+  });
+  const [copiedSymbolMap, setCopiedSymbolMap] = useState(false);
 
   const generateApiKeyMut = useMutation({
     mutationFn: () => api.userBrokerGenerateApiKey(),
@@ -510,6 +539,58 @@ export function SettingsPage() {
                   N'oublie pas d'ajouter <code className="text-white/70">https://app.scalping-radar.online</code> dans
                   Tools → Options → Expert Advisors → Allow WebRequest.
                 </p>
+
+                {/* Broker preset picker — pré-remplit InpSymbolMap selon le broker */}
+                <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3 space-y-2">
+                  <label className="block text-xs text-white/70">
+                    Quel broker utilises-tu ?
+                  </label>
+                  <select
+                    value={broker}
+                    onChange={(e) => {
+                      setBroker(e.target.value);
+                      localStorage.setItem('ea-broker-preset', e.target.value);
+                      setCopiedSymbolMap(false);
+                    }}
+                    className="w-full px-3 py-2 rounded-lg bg-slate-900/60 border border-white/15 text-sm text-white"
+                  >
+                    {Object.entries(BROKER_PRESETS).map(([key, preset]) => (
+                      <option key={key} value={key} className="bg-slate-900">
+                        {preset.label}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-white/50 leading-relaxed">
+                    {BROKER_PRESETS[broker].note}
+                  </p>
+                  {BROKER_PRESETS[broker].symbolMap ? (
+                    <div className="space-y-1.5">
+                      <p className="text-[11px] text-white/60">
+                        Colle cette valeur dans l'input <code className="text-white/80">InpSymbolMap</code> de l'EA :
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <code className="flex-1 px-3 py-2 rounded-lg bg-slate-900/60 font-mono text-xs text-cyan-200 break-all">
+                          {BROKER_PRESETS[broker].symbolMap}
+                        </code>
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(BROKER_PRESETS[broker].symbolMap);
+                            setCopiedSymbolMap(true);
+                            setTimeout(() => setCopiedSymbolMap(false), 2000);
+                          }}
+                          className="px-3 py-2 rounded-lg bg-cyan-400/20 border border-cyan-400/40 text-cyan-200 text-xs font-medium shrink-0"
+                        >
+                          {copiedSymbolMap ? 'Copié ✓' : 'Copier'}
+                        </button>
+                      </div>
+                    </div>
+                  ) : broker === 'generic' ? (
+                    <p className="text-[11px] text-emerald-300">
+                      ✓ Aucun mapping nécessaire — laisse <code>InpSymbolMap</code> vide dans les inputs de l'EA.
+                    </p>
+                  ) : null}
+                </div>
+
                 <a
                   href="/docs/ea-setup.html"
                   target="_blank"
