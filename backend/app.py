@@ -3142,6 +3142,178 @@ async def api_admin_pair_pnl_regulator(
     }
 
 
+@app.get("/api/admin/pair-admission/weekly-report")
+async def api_admin_pair_admission_weekly_report(token: str = ""):
+    """Markdown weekly report du Pair Admission Controller (auth-by-token).
+
+    Pour la routine RemoteTrigger qui pousse dans docs/superpowers/journal/
+    chaque vendredi 17h UTC. Pas de cookie session — token shared avec
+    public-summary / counterfactual / health-token.
+
+    Contenu :
+    - Snapshot matrice (pair × direction) à l'instant T
+    - Transitions de la semaine (hors backfill)
+    - Candidats promotion manuelle (TELEGRAM avec score franchissant
+      seuils AUTO_EXEC — humain doit valider)
+    - Candidats pause (AUTO_EXEC en zone warning -1% à -3%)
+    """
+    import hashlib
+    import sqlite3 as _sql
+    from datetime import datetime, timedelta, timezone
+    import secrets as _s
+    from fastapi.responses import PlainTextResponse
+
+    SHADOW_PUBLIC_TOKEN_HASH = "e980b1ed0b45ca6873caa3f2d6ddcf27f4d8a1d0aa87cf9072f6e3e0909b31ec"
+    if not token:
+        raise HTTPException(status_code=403, detail="token required")
+    if not _s.compare_digest(hashlib.sha256(token.encode()).hexdigest(), SHADOW_PUBLIC_TOKEN_HASH):
+        raise HTTPException(status_code=403, detail="invalid token")
+
+    from backend.services import pair_admission_controller as pac
+    from backend.services.trade_log_service import _DB_PATH
+    from config.settings import WATCHED_PAIRS
+
+    all_states = pac.list_all_states()
+    by_pair_dir: dict[tuple, dict] = {(s["pair"], s.get("direction")): s for s in all_states}
+    universe_pairs = sorted(set(WATCHED_PAIRS) | {p for p, _ in by_pair_dir.keys()})
+
+    counts: dict[str, int] = {}
+    matrix_rows = []
+    candidates_promote: list[dict] = []
+    candidates_pause: list[dict] = []
+
+    for pair in universe_pairs:
+        row_buy = {"direction": "buy"}
+        row_sell = {"direction": "sell"}
+        for direction in ("buy", "sell"):
+            full = by_pair_dir.get((pair, direction)) or by_pair_dir.get((pair, None)) or {}
+            state = full.get("state", pac.DEFAULT_STATE)
+            counts[state] = counts.get(state, 0) + 1
+            score = pac.compute_promotion_score(pair, direction=direction)
+            entry = {
+                "pair": pair, "direction": direction, "state": state,
+                "score": score,
+            }
+            if direction == "buy":
+                row_buy = entry
+            else:
+                row_sell = entry
+
+            # Detection candidates
+            if state == "TELEGRAM" and score["eligible_for"] == "TELEGRAM" and score["sample"] >= pac.PROMOTE_MIN_SAMPLE:
+                # TELEGRAM mature → admin peut promote vers AUTO_EXEC
+                candidates_promote.append(entry)
+            if state == "AUTO_EXEC" and score["sample"] >= pac.PROMOTE_MIN_SAMPLE and -3.0 < score["pnl_pct"] < -1.0:
+                # Zone warning juste au-dessus du seuil pause auto
+                candidates_pause.append(entry)
+        matrix_rows.append({"pair": pair, "buy": row_buy, "sell": row_sell})
+
+    one_week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    with _sql.connect(str(_DB_PATH)) as c:
+        c.row_factory = _sql.Row
+        recent_transitions = c.execute(
+            """
+            SELECT pair, direction, state, state_since, reason, transitioned_by
+              FROM pair_admission_state
+             WHERE state_since >= ?
+               AND transitioned_by NOT LIKE 'auto:backfill%'
+             ORDER BY state_since DESC LIMIT 100
+            """,
+            (one_week_ago,),
+        ).fetchall()
+
+    now_paris = (datetime.now(timezone.utc) + timedelta(hours=2)).strftime("%Y-%m-%d %H:%M")
+    md_lines = [
+        f"# Pair Admission — Weekly Report",
+        f"",
+        f"Généré : {now_paris} Paris · auto-routine hebdo",
+        f"",
+        f"## Snapshot états (totals)",
+        f"",
+    ]
+    for state in ("AUTO_EXEC", "TELEGRAM", "PAUSED", "OBSERVED", "DEMOTED"):
+        md_lines.append(f"- **{state}** : {counts.get(state, 0)}")
+    md_lines.append("")
+
+    # Section transitions
+    md_lines.append("## Transitions des 7 derniers jours")
+    md_lines.append("")
+    if recent_transitions:
+        md_lines.append("| When (UTC) | Pair | Dir | State | By | Reason |")
+        md_lines.append("|---|---|---|---|---|---|")
+        for r in recent_transitions[:50]:
+            when = (r["state_since"] or "")[:19].replace("T", " ")
+            md_lines.append(
+                f"| {when} | `{r['pair']}` | {r['direction'] or '—'} | **{r['state']}** | "
+                f"{r['transitioned_by'] or 'auto'} | {(r['reason'] or '')[:120]} |"
+            )
+    else:
+        md_lines.append("_Aucune transition cette semaine (hors backfill)._")
+    md_lines.append("")
+
+    # Section candidates promotion manuelle
+    md_lines.append("## 🎯 Candidats promotion manuelle (TELEGRAM → AUTO_EXEC)")
+    md_lines.append("")
+    md_lines.append(
+        "_TELEGRAM avec score sain : critères AUTO_EXEC franchis sur fenêtre 30 trades._"
+    )
+    md_lines.append("")
+    if candidates_promote:
+        md_lines.append("| Pair | Dir | n | PnL% | WR% | PF | maxDD% |")
+        md_lines.append("|---|---|---|---|---|---|---|")
+        for c in candidates_promote:
+            s = c["score"]
+            md_lines.append(
+                f"| `{c['pair']}` | {c['direction']} | {s['sample']} | "
+                f"{s['pnl_pct']:+.2f}% | {s['wr']:.1f}% | {s['pf']:.2f} | {s['max_dd_pct']:.2f}% |"
+            )
+    else:
+        md_lines.append("_Aucun candidat cette semaine._")
+    md_lines.append("")
+
+    # Section candidates pause
+    md_lines.append("## ⚠️ Candidats pause (AUTO_EXEC en zone warning -3% < PnL% < -1%)")
+    md_lines.append("")
+    if candidates_pause:
+        md_lines.append("| Pair | Dir | n | PnL% | WR% | PF | maxDD% |")
+        md_lines.append("|---|---|---|---|---|---|---|")
+        for c in candidates_pause:
+            s = c["score"]
+            md_lines.append(
+                f"| `{c['pair']}` | {c['direction']} | {s['sample']} | "
+                f"{s['pnl_pct']:+.2f}% | {s['wr']:.1f}% | {s['pf']:.2f} | {s['max_dd_pct']:.2f}% |"
+            )
+    else:
+        md_lines.append("_Aucun candidat cette semaine._")
+    md_lines.append("")
+
+    # Section matrice complète
+    md_lines.append("## Matrice complète (pair × direction)")
+    md_lines.append("")
+    md_lines.append("| Pair | BUY state | BUY n / PnL% | SELL state | SELL n / PnL% |")
+    md_lines.append("|---|---|---|---|---|")
+    for r in matrix_rows:
+        buy_score = r["buy"].get("score") or {}
+        sell_score = r["sell"].get("score") or {}
+        buy_metrics = f"{buy_score.get('sample', 0)} / {buy_score.get('pnl_pct', 0):+.2f}%" if buy_score.get("sample") else "—"
+        sell_metrics = f"{sell_score.get('sample', 0)} / {sell_score.get('pnl_pct', 0):+.2f}%" if sell_score.get("sample") else "—"
+        md_lines.append(
+            f"| `{r['pair']}` | **{r['buy'].get('state', 'OBSERVED')}** | {buy_metrics} | "
+            f"**{r['sell'].get('state', 'OBSERVED')}** | {sell_metrics} |"
+        )
+    md_lines.append("")
+    md_lines.append("---")
+    md_lines.append("")
+    md_lines.append(
+        f"_Seuils promo auto OBSERVED→TELEGRAM : sample ≥ {pac.PROMOTE_MIN_SAMPLE}, "
+        f"PnL ≥ {pac.PROMOTE_MIN_PNL_PCT}%, WR ≥ {pac.PROMOTE_MIN_WR_PCT}%, "
+        f"PF ≥ {pac.PROMOTE_MIN_PF}, maxDD > -{pac.PROMOTE_MAX_DD_PCT}%. "
+        f"Promotion AUTO_EXEC reste manuelle (humain dans la boucle)._"
+    )
+
+    return PlainTextResponse("\n".join(md_lines), media_type="text/markdown; charset=utf-8")
+
+
 @app.get("/api/admin/auto-exec/health")
 async def api_admin_auto_exec_health(
     _ctx: AuthContext = Depends(require_admin),
