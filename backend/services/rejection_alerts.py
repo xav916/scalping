@@ -50,15 +50,20 @@ def _count_by_reason(since_iso: str, until_iso: str) -> dict[str, int]:
 
 
 def _format_message(reason_code: str, count: int, top_pairs: list[tuple[str, int]]) -> str:
-    label = REASON_LABELS_FR.get(reason_code, reason_code)
+    # HTML (Telegram parse_mode=HTML) depuis 2026-05-13 : les reason_code
+    # contiennent souvent des "_" (ex: MIN_RR_BELOW_THRESHOLD) qui cassaient
+    # Markdown legacy. HTML est tolérant aux _ et * littéraux.
+    import html
+    label = html.escape(REASON_LABELS_FR.get(reason_code, reason_code))
+    safe_code = html.escape(reason_code)
     lines = [
-        f"⚠️ *Rafale rejections* · `{reason_code}`",
-        f"*{count}* ordres bloqués dans la dernière heure ({label}).",
+        f"⚠️ <b>Rafale rejections</b> · <code>{safe_code}</code>",
+        f"<b>{count}</b> ordres bloqués dans la dernière heure ({label}).",
     ]
     if top_pairs:
-        pairs_str = " · ".join(f"{p}: {c}" for p, c in top_pairs[:5])
+        pairs_str = " · ".join(f"{html.escape(p)}: {c}" for p, c in top_pairs[:5])
         lines.append(f"Top pairs : {pairs_str}")
-    lines.append(f"\n→ Vérifier `/v2/cockpit` section RejectionsCard.")
+    lines.append("\n→ Vérifier <code>/v2/cockpit</code> section RejectionsCard.")
     return "\n".join(lines)
 
 
@@ -116,7 +121,7 @@ async def check_and_alert() -> dict[str, Any]:
                 # cohérent avec project_telegram_bot_infra.md. Le canal
                 # user-facing reste dédié aux signaux de trading.
                 from backend.services.telegram_service import send_infra_text
-                sent = await send_infra_text(msg, parse_mode="Markdown")
+                sent = await send_infra_text(msg, parse_mode="HTML")
                 if sent:
                     _last_alert_at[reason] = now
                     alerts_sent.append(reason)

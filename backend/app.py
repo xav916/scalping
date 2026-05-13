@@ -2396,7 +2396,14 @@ async def api_admin_notify_infra_telegram(
     if not title and not body:
         raise HTTPException(status_code=400, detail="title or body required")
 
-    text = f"*{title}*\n\n{body}" if title else body
+    # HTML depuis 2026-05-13 : Markdown legacy cassait dès qu'un body
+    # contenait un underscore (88 HTTP 400 / 96h observés). html.escape
+    # neutralise les <>& du contenu fourni par le caller, et HTML ignore
+    # les _ * ` littéraux qui sont parse-significants en Markdown.
+    import html as _html
+    safe_title = _html.escape(title)
+    safe_body = _html.escape(body)
+    text = f"<b>{safe_title}</b>\n\n{safe_body}" if title else safe_body
     text = text[:4000]
 
     url = f"https://api.telegram.org/bot{INFRA_TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -2405,7 +2412,7 @@ async def api_admin_notify_infra_telegram(
             response = await client.post(url, json={
                 "chat_id": INFRA_TELEGRAM_CHAT_ID,
                 "text": text,
-                "parse_mode": "Markdown",
+                "parse_mode": "HTML",
                 "disable_web_page_preview": True,
             })
         if response.status_code != 200:

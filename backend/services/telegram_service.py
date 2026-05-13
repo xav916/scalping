@@ -145,13 +145,21 @@ async def send_text(text: str, parse_mode: str = "Markdown") -> None:
             logger.warning(f"Erreur Telegram text {user}: {e}")
 
 
-async def send_infra_text(text: str, parse_mode: str = "Markdown") -> bool:
+async def send_infra_text(text: str, parse_mode: str = "HTML") -> bool:
     """Envoie un texte vers le canal infra dédié (@xav_scalping_infra_bot).
 
     Sépare les alertes système (rafales rejections, monitoring infra,
     routine alerts) du canal user-facing qui est réservé aux signaux de
     trading. Lit INFRA_TELEGRAM_BOT_TOKEN + INFRA_TELEGRAM_CHAT_ID depuis
     config.settings — si non configuré, no-op silencieux + log.
+
+    parse_mode HTML par défaut depuis 2026-05-13 : Markdown legacy Telegram
+    cassait dès qu'un message contenait un underscore non échappé (ex:
+    reason_code "MIN_RR_BELOW_THRESHOLD" → 88 HTTP 400 sur 96h observés).
+    HTML est plus strict côté tags mais ignore complètement les caractères
+    _ * ` [ qui sont littéraux. Tout caller passant parse_mode="Markdown"
+    bascule silencieusement en plain (pas de parse_mode) pour éviter la
+    régression — il faut passer explicitement "HTML" pour formater.
 
     Retourne True si envoyé, False sinon.
     """
@@ -160,14 +168,24 @@ async def send_infra_text(text: str, parse_mode: str = "Markdown") -> bool:
         logger.info("send_infra_text: INFRA_TELEGRAM_* non configure, skip")
         return False
     url = TELEGRAM_API.format(token=INFRA_TELEGRAM_BOT_TOKEN)
+    payload: dict = {
+        "chat_id": INFRA_TELEGRAM_CHAT_ID,
+        "text": text[:4000],
+        "disable_web_page_preview": True,
+    }
+    if parse_mode == "HTML":
+        payload["parse_mode"] = "HTML"
+    elif parse_mode == "Markdown" or parse_mode == "MarkdownV2":
+        # Legacy callers — on les laisse passer mais sans parse_mode pour
+        # éviter de re-déclencher le bug d'underscore. Le contenu sera
+        # affiché en clair (les * et _ resteront visibles).
+        logger.info(
+            "send_infra_text: parse_mode=%s deprecated, envoi en plain text",
+            parse_mode,
+        )
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            r = await client.post(url, json={
-                "chat_id": INFRA_TELEGRAM_CHAT_ID,
-                "text": text[:4000],
-                "parse_mode": parse_mode,
-                "disable_web_page_preview": True,
-            })
+            r = await client.post(url, json=payload)
         if r.status_code != 200:
             logger.warning(f"send_infra_text: HTTP {r.status_code} {r.text[:200]}")
             return False
