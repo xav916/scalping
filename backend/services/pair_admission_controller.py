@@ -349,7 +349,78 @@ def set_state(
     logger.warning(
         f"pair_admission: {pair}{dir_label} {current} → {new_state} by={transitioned_by} reason={reason}"
     )
+
+    # Notification Telegram infra des transitions, sauf le backfill initial
+    # (= silencieux pour ne pas spammer ~30 messages au déploiement). Best-effort :
+    # toute erreur Telegram est swallowée pour ne jamais bloquer l'écriture DB.
+    if not transitioned_by.startswith("auto:backfill"):
+        try:
+            _notify_transition(pair, direction, current, new_state, reason, score_snapshot, transitioned_by)
+        except Exception as e:
+            logger.debug(f"pair_admission: telegram notify failed: {e}")
+
     return new_id
+
+
+def _notify_transition(
+    pair: str,
+    direction: Optional[str],
+    from_state: str,
+    to_state: str,
+    reason: str,
+    score: Optional[dict],
+    transitioned_by: str,
+) -> None:
+    """Pousse une alerte HTML sur le canal Telegram infra @xav_scalping_infra_bot.
+
+    Format compact : pair/direction, transition, raison + métriques score si dispo.
+    Best-effort fire-and-forget. Si l'event loop n'a pas de session async dispo,
+    on lance la coroutine dans un thread isolé pour ne pas bloquer le caller.
+    """
+    import asyncio
+    import html
+    from backend.services.telegram_service import send_infra_text
+
+    dir_label = direction.upper() if direction else "pair-level"
+    safe_reason = html.escape((reason or "").strip())[:200]
+
+    # Emoji selon transition pour scanability
+    arrow = {
+        ("OBSERVED", "TELEGRAM"): "📈",
+        ("TELEGRAM", "OBSERVED"): "📉",
+        ("AUTO_EXEC", "PAUSED"): "⏸",
+        ("PAUSED", "AUTO_EXEC"): "▶️",
+        ("PAUSED", "DEMOTED"): "❌",
+        ("OBSERVED", "AUTO_EXEC"): "📈",
+    }.get((from_state, to_state), "🔄")
+
+    lines = [
+        f"{arrow} <b>Pair admission</b> · <code>{html.escape(pair)}</code> · {dir_label}",
+        f"<b>{from_state}</b> → <b>{to_state}</b>",
+        f"Raison : {safe_reason}",
+    ]
+    if score and isinstance(score, dict) and score.get("sample"):
+        lines.append(
+            f"Score : n={score.get('sample')} pnl%={score.get('pnl_pct')} "
+            f"WR%={score.get('wr')} PF={score.get('pf')} maxDD%={score.get('max_dd_pct')}"
+        )
+    if transitioned_by and transitioned_by != "auto":
+        lines.append(f"By : {html.escape(transitioned_by)}")
+    text = "\n".join(lines)
+
+    # Run la coroutine send_infra_text dans le contexte approprié
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    coro = send_infra_text(text, parse_mode="HTML")
+    if loop and loop.is_running():
+        # Schedule sans bloquer (fire-and-forget)
+        asyncio.ensure_future(coro)
+    else:
+        # Pas de loop actif (test ou contexte sync) → run sync
+        asyncio.run(coro)
 
 
 # ─── Score composite + transitions auto ─────────────────────────────────
