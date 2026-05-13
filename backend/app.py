@@ -3011,6 +3011,90 @@ async def api_admin_geopolitical_veto_stats(
     return geopolitical_veto.get_stats(days=days)
 
 
+@app.get("/api/admin/pair-admission")
+async def api_admin_pair_admission(
+    _ctx: AuthContext = Depends(require_admin),
+):
+    """État de l'univers Pair Admission Controller.
+
+    Retourne pour chaque pair de WATCHED_PAIRS (= univers V1) son état
+    courant + score de promotion + history des transitions récentes.
+
+    États : OBSERVED, TELEGRAM, AUTO_EXEC, PAUSED, DEMOTED.
+    """
+    from backend.services import pair_admission_controller
+    from config.settings import WATCHED_PAIRS
+
+    all_states = pair_admission_controller.list_all_states()
+    by_pair = {s["pair"]: s for s in all_states}
+
+    universe = sorted(set(WATCHED_PAIRS) | set(by_pair.keys()))
+    result = []
+    for pair in universe:
+        full = by_pair.get(pair) or {
+            "pair": pair,
+            "state": pair_admission_controller.DEFAULT_STATE,
+            "state_since": None, "reason": None,
+            "score_snapshot": None, "transitioned_by": None,
+        }
+        score = pair_admission_controller.compute_promotion_score(pair)
+        full["current_score"] = score
+        result.append(full)
+
+    counts: dict[str, int] = {}
+    for r in result:
+        counts[r["state"]] = counts.get(r["state"], 0) + 1
+
+    return {
+        "universe_size": len(result),
+        "counts_by_state": counts,
+        "thresholds": {
+            "promote_min_sample": pair_admission_controller.PROMOTE_MIN_SAMPLE,
+            "promote_min_pnl_pct": pair_admission_controller.PROMOTE_MIN_PNL_PCT,
+            "promote_min_wr_pct": pair_admission_controller.PROMOTE_MIN_WR_PCT,
+            "promote_min_pf": pair_admission_controller.PROMOTE_MIN_PF,
+            "promote_max_dd_pct": pair_admission_controller.PROMOTE_MAX_DD_PCT,
+            "demote_max_re_pauses_60d": pair_admission_controller.DEMOTE_MAX_RE_PAUSES_60D,
+        },
+        "pairs": result,
+    }
+
+
+@app.post("/api/admin/pair-admission/{pair}/transition")
+async def api_admin_pair_admission_transition(
+    pair: str,
+    payload: dict,
+    ctx: AuthContext = Depends(require_admin),
+):
+    """Transition manuelle d'un pair vers un nouvel état.
+
+    Body : ``{to_state: 'AUTO_EXEC'|'TELEGRAM'|'OBSERVED'|'PAUSED'|'DEMOTED',
+    reason: str}``.
+
+    Permet à l'admin de promote TELEGRAM → AUTO_EXEC (humain dans la boucle
+    pour l'entrée d'argent réel) ou réhabiliter une pair DEMOTED.
+    """
+    from backend.services import pair_admission_controller
+
+    to_state = (payload or {}).get("to_state", "").strip().upper()
+    reason = (payload or {}).get("reason", "").strip()
+    if not to_state or to_state not in pair_admission_controller.VALID_STATES:
+        raise HTTPException(status_code=400, detail=f"to_state invalide. Doit être dans {list(pair_admission_controller.VALID_STATES)}")
+    if not reason:
+        raise HTTPException(status_code=400, detail="reason requis pour audit")
+
+    admin_id = f"admin:{ctx.username}" if hasattr(ctx, "username") else "admin"
+    inserted_id = pair_admission_controller.set_state(
+        pair, to_state, reason, transitioned_by=admin_id
+    )
+    return {
+        "pair": pair,
+        "to_state": to_state,
+        "transition_id": inserted_id,
+        "current_state": pair_admission_controller.get_current_state(pair),
+    }
+
+
 @app.get("/api/admin/pair-pnl-regulator")
 async def api_admin_pair_pnl_regulator(
     _ctx: AuthContext = Depends(require_admin),

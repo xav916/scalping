@@ -160,8 +160,24 @@ def _check_rejection(setup, dest=None) -> str | None:
     """
     if dest is None and not is_configured():
         return "_not_configured"  # privé, non enregistré
-    if setup.pair not in _STAR_PAIRS_SET:
-        return "_not_a_star"  # privé : filtre auto-exec stars-only, attendu pour 12 paires sur 16
+    # Source de vérité pour l'éligibilité auto-exec : pair_admission_controller
+    # (= state machine par pair). Migration douce : si la pair n'a JAMAIS été
+    # enregistrée dans le controller (= row absente, ex: pré-backfill ou en
+    # test patch), fallback sur la liste hardcodée _STAR_PAIRS_SET legacy.
+    try:
+        from backend.services import pair_admission_controller
+        if pair_admission_controller.has_explicit_state(setup.pair):
+            # Le controller a un état explicite pour cette pair → respecte-le
+            if not pair_admission_controller.is_auto_exec_eligible(setup.pair):
+                return "_not_admitted"  # pair pas en state AUTO_EXEC
+        else:
+            # Pas de row → fallback legacy _STAR_PAIRS_SET
+            if setup.pair not in _STAR_PAIRS_SET:
+                return "_not_a_star"
+    except Exception as e:
+        logger.debug(f"mt5_bridge: pair_admission_controller fallback: {e}")
+        if setup.pair not in _STAR_PAIRS_SET:
+            return "_not_a_star"  # privé : filtre auto-exec stars-only legacy
     # Blocklist surgical : retire un pair sans toucher au scoring/Telegram.
     # Cf. MT5_BRIDGE_BLOCKED_PAIRS dans config/settings.py.
     if setup.pair.upper() in MT5_BRIDGE_BLOCKED_PAIRS:

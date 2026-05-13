@@ -678,6 +678,33 @@ def start_scheduler() -> AsyncIOScheduler:
         replace_existing=True,
     )
 
+    # Pair Admission Controller — state machine généralisée par pair
+    # (OBSERVED, TELEGRAM, AUTO_EXEC, PAUSED, DEMOTED). Backfill au startup
+    # pour migrer en douceur de _STAR_PAIRS_SET hardcodé vers le contrôleur
+    # dynamique. Re-check toutes les 60 min comme le pair_pnl_regulator.
+    from backend.services import pair_admission_controller as _pac
+    try:
+        backfill = _pac.backfill_initial_states()
+        logger.info(
+            f"pair_admission_controller startup backfill: {backfill.get('applied', 0)} transitions"
+        )
+        # Premier check après backfill pour appliquer transitions sur les rows existantes
+        first_check = _pac.check_and_regulate()
+        logger.info(
+            f"pair_admission_controller startup check: n_pairs={first_check.get('n_pairs', 0)} "
+            f"transitions={first_check.get('n_transitions', 0)}"
+        )
+    except Exception:
+        logger.exception("pair_admission_controller: startup hook failed (non-fatal)")
+    _scheduler.add_job(
+        _pac.check_and_regulate,
+        "interval",
+        minutes=60,
+        id="pair_admission_controller_check",
+        name="Pair Admission Controller — state machine (60 min)",
+        replace_existing=True,
+    )
+
     # Alertes rafales de stops loss : toutes les 5 min, surveille les
     # SL auto-exec de la derniere heure. Envoie Telegram si >= 5 SL global
     # (cooldown 30 min) ou >= 3 SL meme pattern (cooldown 30 min par pattern).
