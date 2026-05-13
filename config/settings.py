@@ -145,6 +145,15 @@ MT5_BRIDGE_ALLOWED_ASSET_CLASSES = [
     for c in os.getenv("MT5_BRIDGE_ALLOWED_ASSET_CLASSES", "forex,metal").split(",")
     if c.strip()
 ]
+# Pairs explicitement bloquées de l'auto-exec bridge même si elles sont dans
+# _STAR_PAIRS_SET. Permet de retirer un instrument sans rebuild ni redéploiement.
+# Cas d'usage 2026-05-13 : XAG/USD accumule 80% des pertes du portefeuille
+# (-783€ sur 76 trades, WR 30%) car V1 ne génère que des setups SHORT sur un
+# actif en uptrend. Garde le scoring/Telegram actifs mais bloque l'exec en
+# attendant V2 long-only au gate S6 (2026-06-06).
+MT5_BRIDGE_BLOCKED_PAIRS = frozenset(
+    p.strip().upper() for p in os.getenv("MT5_BRIDGE_BLOCKED_PAIRS", "").split(",") if p.strip()
+)
 # Cap par pair : N positions max SIMULTANÉMENT sur la même paire. Forcé
 # de diversifier, évite la concentration aveugle (ex: 4 XAU/USD ouverts
 # qui tombent ensemble sur un mouvement défavorable).

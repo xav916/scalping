@@ -36,6 +36,7 @@ from config.settings import (
     MT5_BRIDGE_MIN_SL_DISTANCE_PCT_PER_CLASS,
     MT5_BRIDGE_MAX_POSITIONS_PER_PAIR,
     MT5_BRIDGE_BLOCKED_DIRECTIONS,
+    MT5_BRIDGE_BLOCKED_PAIRS,
     MT5_BRIDGE_AVOID_HOURS_UTC,
     TRADING_CAPITAL,
     RISK_PER_TRADE_PCT,
@@ -161,6 +162,10 @@ def _check_rejection(setup, dest=None) -> str | None:
         return "_not_configured"  # privé, non enregistré
     if setup.pair not in _STAR_PAIRS_SET:
         return "_not_a_star"  # privé : filtre auto-exec stars-only, attendu pour 12 paires sur 16
+    # Blocklist surgical : retire un pair sans toucher au scoring/Telegram.
+    # Cf. MT5_BRIDGE_BLOCKED_PAIRS dans config/settings.py.
+    if setup.pair.upper() in MT5_BRIDGE_BLOCKED_PAIRS:
+        return "pair_blocked"
     try:
         from backend.services import kill_switch
         # Passe le pair pour que les pauses per-pair (rafale chirurgicale)
