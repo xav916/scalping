@@ -550,12 +550,12 @@ async def api_user_broker_put(
 
 
 @app.get("/api/ea/pending")
-async def api_ea_pending(api_key: str = ""):
+async def api_ea_pending(api_key: str = "", ea_version: str = ""):
     """Retourne les ordres PENDING pour cet api_key, marqués SENT atomiquement.
 
     L'EA poll cet endpoint toutes les ~30s. Retourne max 5 ordres pour
     limiter le payload. Heartbeat implicite : chaque poll met à jour
-    ``last_ea_heartbeat``.
+    ``last_ea_heartbeat`` (et ``ea_version`` si propagé par l'EA ≥ v1.03).
     """
     user = users_service.find_user_by_bridge_api_key(api_key)
     if not user:
@@ -564,7 +564,7 @@ async def api_ea_pending(api_key: str = ""):
         raise HTTPException(
             status_code=403, detail="Premium tier requis pour l'auto-exec"
         )
-    users_service.update_ea_heartbeat(user["id"])
+    users_service.update_ea_heartbeat(user["id"], ea_version=ea_version or None)
 
     from backend.services import mt5_pending_orders_service
 
@@ -601,7 +601,7 @@ async def api_ea_result(payload: dict):
 
 
 @app.post("/api/ea/heartbeat")
-async def api_ea_heartbeat(api_key: str = ""):
+async def api_ea_heartbeat(api_key: str = "", ea_version: str = ""):
     """L'EA signale qu'il est vivant. Optionnel — le pull /pending fait
     déjà heartbeat implicite.
 
@@ -611,7 +611,7 @@ async def api_ea_heartbeat(api_key: str = ""):
     user = users_service.find_user_by_bridge_api_key(api_key)
     if not user:
         raise HTTPException(status_code=401, detail="api_key invalide")
-    users_service.update_ea_heartbeat(user["id"])
+    users_service.update_ea_heartbeat(user["id"], ea_version=ea_version or None)
     return {"ok": True}
 
 
@@ -3150,6 +3150,8 @@ async def api_admin_auto_exec_health(
                 "last": last_hb,
                 "age_seconds": hb_age,
                 "status": hb_status,
+                "ea_version": cfg.get("ea_version"),
+                "ea_version_seen_at": cfg.get("ea_version_seen_at"),
             },
             "orders_24h": {
                 "total": len(orders),

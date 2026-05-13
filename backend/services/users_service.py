@@ -609,14 +609,23 @@ def find_user_by_bridge_api_key(api_key: str) -> Optional[dict]:
     return None
 
 
-def update_ea_heartbeat(user_id: int) -> None:
+def update_ea_heartbeat(user_id: int, ea_version: Optional[str] = None) -> None:
     """Met à jour ``broker_config.last_ea_heartbeat`` au timestamp now.
 
-    Permet à l'admin de voir quels users ont leur EA actif (dernier poll).
-    Si pas de heartbeat depuis > 1h, considérer l'EA offline.
+    Si ``ea_version`` est fourni (envoyé par l'EA ≥ v1.03 dans le query
+    string du poll), on persiste aussi ``ea_version`` + ``ea_version_seen_at``
+    pour distinguer les users sur ancienne EA (qui ne propage pas la version)
+    de ceux sur la dernière. Utile pour diagnostiquer les régressions
+    (ex: Cédric resté sur v1.00 sans symbol map).
     """
     cfg = get_broker_config(user_id)
-    cfg["last_ea_heartbeat"] = datetime.now(timezone.utc).isoformat()
+    now_iso = datetime.now(timezone.utc).isoformat()
+    cfg["last_ea_heartbeat"] = now_iso
+    if ea_version:
+        # Sanitize : on borne à 16 chars pour éviter qu'un user malveillant
+        # puisse stuffer broker_config avec un long string.
+        cfg["ea_version"] = str(ea_version)[:16]
+        cfg["ea_version_seen_at"] = now_iso
     with _conn() as c:
         c.execute(
             "UPDATE users SET broker_config = ? WHERE id = ?",

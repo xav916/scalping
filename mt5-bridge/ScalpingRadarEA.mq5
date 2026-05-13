@@ -24,8 +24,11 @@
 //+------------------------------------------------------------------+
 #property copyright   "Scalping Radar"
 #property link        "https://app.scalping-radar.online"
-#property version     "1.02"
+#property version     "1.03"
 #property strict
+
+// Version envoyée au backend dans le query string du poll (telemetry).
+#define EA_VERSION_STRING "1.03"
 
 //─── Inputs (modifiables par l'user au drag sur chart) ──────────────
 input string   InpApiKey              = "";                                    // API key (depuis Settings → Auto-exec MT5)
@@ -35,7 +38,8 @@ input double   InpDefaultLot          = 0.01;                                  /
 input int      InpMagicNumber         = 20260429;                              // Magic number pour identifier les trades EA
 input int      InpDeviationPoints     = 20;                                    // Slippage max accepté (points)
 input bool     InpDryRun              = false;                                 // Si true, log les ordres sans OrderSend (test)
-input string   InpSymbolMap           = "";                                    // Mapping pair→broker_symbol (csv: "WTI/USD=USOIL,SPX=SPX500"). Vide = strip / par défaut
+input string   InpSymbolMap           = "";                                    // Mapping pair→broker_symbol (csv: "WTI/USD=USOIL,SPX=SPX500"). Vide = auto-detect
+input bool     InpSymbolAutoMap       = true;                                  // Si true, essaie une liste d'alias par défaut quand pair pas dans InpSymbolMap
 
 //─── État interne ──────────────────────────────────────────────────
 int g_poll_count = 0;
@@ -96,7 +100,7 @@ void OnDeinit(const int reason)
 void OnTimer()
 {
     g_poll_count++;
-    string response = HttpGet("/api/ea/pending?api_key=" + InpApiKey);
+    string response = HttpGet("/api/ea/pending?api_key=" + InpApiKey + "&ea_version=" + EA_VERSION_STRING);
     if(response == "")
     {
         // Erreur réseau ou auth — déjà logguée par HttpGet
@@ -317,22 +321,52 @@ void ProcessSingleOrder(const string order_json)
 }
 
 //+------------------------------------------------------------------+
+//| GetSymbolAliasesCsv — alias broker connus par pair (v1.03)       |
+//|                                                                  |
+//| Chaque CFD non-forex est nommé différemment selon le broker      |
+//| (Pepperstone: USOIL / IC Markets: WTI / OANDA: WTICOUSD...).     |
+//| On liste les alias connus ; MapSymbol tente chacun via           |
+//| SymbolSelect, le premier qui existe gagne.                       |
+//|                                                                  |
+//| Pour forex/métaux simples, on garde le strip-slash               |
+//| (EUR/USD → EURUSD) qui marche chez 95% des brokers.              |
+//+------------------------------------------------------------------+
+string GetSymbolAliasesCsv(const string pair)
+{
+    if(pair == "WTI/USD") return "USOIL,WTI,XTIUSD,WTI.cash,WTIUSD";
+    if(pair == "SPX")     return "US500,SPX500,SP500,SPX.cash,SPXm,SPX";
+    if(pair == "NDX")     return "NAS100,US100,USTECH100,NDX100,NAS.cash,NDXm";
+    if(pair == "XAU/USD") return "XAUUSD,GOLD,XAU.cash,XAUUSDm";
+    if(pair == "XAG/USD") return "XAGUSD,SILVER,XAG.cash,XAGUSDm";
+    if(pair == "BTC/USD") return "BTCUSD,BTCUSDm,BTC.cash";
+    if(pair == "ETH/USD") return "ETHUSD,ETHUSDm,ETH.cash";
+    // Forex default — strip slash
+    string fallback = pair;
+    StringReplace(fallback, "/", "");
+    return fallback;
+}
+
+//+------------------------------------------------------------------+
 //| MapSymbol — traduit le pair SaaS vers le symbole broker          |
 //|                                                                  |
-//| 1. Si InpSymbolMap contient une entrée "<pair>=<broker_symbol>", |
-//|    on retourne le broker_symbol (ex: "WTI/USD=USOIL").           |
-//| 2. Sinon fallback : strip "/" du pair (EUR/USD → EURUSD).        |
+//| Ordre de résolution :                                            |
+//| 1. InpSymbolMap user override (priorité absolue) si non vide.    |
+//| 2. Si InpSymbolAutoMap : itère la liste d'alias connus du pair,  |
+//|    garde le premier qui passe SymbolSelect (= existe chez le     |
+//|    broker). Ajoute aussi au Market Watch comme effet de bord.    |
+//| 3. Fallback strip-slash (EUR/USD → EURUSD).                      |
 //|                                                                  |
 //| Format InpSymbolMap : "PAIR1=BROKER1,PAIR2=BROKER2,..." (csv).   |
-//| Le parsing est simple — pas de quoting, pas d'espaces tolérés    |
-//| dans les valeurs.                                                |
+//| Pas de quoting, pas d'espaces tolérés dans les valeurs.          |
 //|                                                                  |
 //| Driver : Cédric (Pepperstone) avait 100% FAILED sur WTI/USD car  |
-//| Pepperstone connaît USOIL pas WTIUSD. Avant ce fix l'EA          |
-//| convertissait WTI/USD → WTIUSD aveuglément.                      |
+//| Pepperstone connaît USOIL pas WTIUSD. v1.02 ajoutait InpSymbolMap|
+//| manuel mais l'user devait le saisir au drag de l'EA, oubli       |
+//| fréquent. v1.03 essaie automatiquement les alias connus.         |
 //+------------------------------------------------------------------+
 string MapSymbol(const string pair)
 {
+    // 1. InpSymbolMap user override
     if(InpSymbolMap != "")
     {
         string entries[];
@@ -346,6 +380,27 @@ string MapSymbol(const string pair)
             if(key == pair) return val;
         }
     }
+
+    // 2. Auto-detect via alias list
+    if(InpSymbolAutoMap)
+    {
+        string aliases_csv = GetSymbolAliasesCsv(pair);
+        // Si pas d'alias spécifique (fallback strip-slash a été retourné en
+        // un seul item), on essaie quand même via SymbolSelect — ça normalise
+        // les forex avec suffixe broker (EURUSDm chez IC Markets par exemple).
+        string aliases[];
+        int n = StringSplit(aliases_csv, ',', aliases);
+        for(int i = 0; i < n; i++)
+        {
+            if(SymbolSelect(aliases[i], true)) return aliases[i];
+        }
+        // Aucun alias dispo — on continue vers le fallback brut pour
+        // qu'au moins le log d'erreur mentionne le pair tel quel.
+        Print("[ScalpingRadarEA] aucun alias dispo pour ", pair,
+              " — testés: ", aliases_csv);
+    }
+
+    // 3. Fallback brut
     string fallback = pair;
     StringReplace(fallback, "/", "");
     return fallback;
