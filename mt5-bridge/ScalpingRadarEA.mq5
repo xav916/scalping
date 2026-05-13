@@ -24,11 +24,11 @@
 //+------------------------------------------------------------------+
 #property copyright   "Scalping Radar"
 #property link        "https://app.scalping-radar.online"
-#property version     "1.03"
+#property version     "1.04"
 #property strict
 
 // Version envoyée au backend dans le query string du poll (telemetry).
-#define EA_VERSION_STRING "1.03"
+#define EA_VERSION_STRING "1.04"
 
 //─── Inputs (modifiables par l'user au drag sur chart) ──────────────
 input string   InpApiKey              = "";                                    // API key (depuis Settings → Auto-exec MT5)
@@ -564,5 +564,102 @@ void OnTick()
 {
     // No-op. Le polling se fait dans OnTimer pour ne pas dépendre de
     // l'activité du marché (un EA en weekend doit aussi pouvoir poll).
+}
+
+//+------------------------------------------------------------------+
+//| OnTradeTransaction — report des trades fermés vers le backend    |
+//|                                                                  |
+//| Détecte les fermetures de position (DEAL_ADD avec DEAL_ENTRY_OUT)|
+//| posées par cet EA (magic = InpMagicNumber), récupère le PnL réel |
+//| broker et POST /api/ea/closed-trade. Permet à pair_pnl_regulator |
+//| côté backend d'évaluer la santé d'un pair multi-tenant — pas     |
+//| seulement Xavier admin via personal_trades legacy.               |
+//|                                                                  |
+//| Ajouté en v1.04 le 2026-05-13.                                   |
+//+------------------------------------------------------------------+
+void OnTradeTransaction(const MqlTradeTransaction& trans,
+                        const MqlTradeRequest& request,
+                        const MqlTradeResult& result)
+{
+    if(trans.type != TRADE_TRANSACTION_DEAL_ADD) return;
+    ulong deal_id = trans.deal;
+    if(deal_id == 0) return;
+
+    // Charger l'history pour récupérer le deal
+    if(!HistorySelectByPosition(trans.position))
+    {
+        if(!HistoryDealSelect(deal_id)) return;
+    }
+
+    // Filtre magic (= trades posés par cet EA, pas les manuels)
+    long magic = HistoryDealGetInteger(deal_id, DEAL_MAGIC);
+    if(magic != InpMagicNumber) return;
+
+    // Filtre type d'entrée : OUT (= fermeture) ou INOUT (= reverse close+open)
+    long entry = HistoryDealGetInteger(deal_id, DEAL_ENTRY);
+    if(entry != DEAL_ENTRY_OUT && entry != DEAL_ENTRY_INOUT) return;
+
+    // Collecte des champs du deal de fermeture
+    string symbol = HistoryDealGetString(deal_id, DEAL_SYMBOL);
+    double profit = HistoryDealGetDouble(deal_id, DEAL_PROFIT);
+    double volume = HistoryDealGetDouble(deal_id, DEAL_VOLUME);
+    double exit_price = HistoryDealGetDouble(deal_id, DEAL_PRICE);
+    long close_time = HistoryDealGetInteger(deal_id, DEAL_TIME);
+    long position_id = HistoryDealGetInteger(deal_id, DEAL_POSITION_ID);
+    long deal_type = HistoryDealGetInteger(deal_id, DEAL_TYPE);
+    // Direction de la position originale : un DEAL_TYPE_BUY de sortie ferme une vente,
+    // un DEAL_TYPE_SELL de sortie ferme un achat.
+    string direction = (deal_type == DEAL_TYPE_BUY) ? "sell" : "buy";
+
+    // Récupère l'entry_price en cherchant le deal IN sur la même position
+    double entry_price = 0.0;
+    if(HistorySelectByPosition(position_id))
+    {
+        int total = HistoryDealsTotal();
+        for(int i = 0; i < total; i++)
+        {
+            ulong d = HistoryDealGetTicket(i);
+            if(d == 0) continue;
+            long e = HistoryDealGetInteger(d, DEAL_ENTRY);
+            if(e == DEAL_ENTRY_IN)
+            {
+                entry_price = HistoryDealGetDouble(d, DEAL_PRICE);
+                break;
+            }
+        }
+    }
+
+    // Format closed_at ISO 8601 UTC (MT5 stocke les datetime en GMT)
+    MqlDateTime dt;
+    TimeToStruct((datetime)close_time, dt);
+    string closed_at = StringFormat("%04d-%02d-%02dT%02d:%02d:%02d+00:00",
+                                    dt.year, dt.mon, dt.day, dt.hour, dt.min, dt.sec);
+
+    // Construit le JSON et POST
+    string body = "{";
+    body += "\"api_key\":\"" + InpApiKey + "\",";
+    body += "\"pair\":\"" + symbol + "\",";  // broker symbol, backend normalise
+    body += "\"direction\":\"" + direction + "\",";
+    body += "\"entry_price\":" + DoubleToString(entry_price, 5) + ",";
+    body += "\"exit_price\":" + DoubleToString(exit_price, 5) + ",";
+    body += "\"pnl\":" + DoubleToString(profit, 2) + ",";
+    body += "\"volume\":" + DoubleToString(volume, 2) + ",";
+    body += "\"mt5_ticket\":" + IntegerToString(position_id) + ",";
+    body += "\"mt5_deal_id\":" + IntegerToString((long)deal_id) + ",";
+    body += "\"magic\":" + IntegerToString((long)magic) + ",";
+    body += "\"closed_at\":\"" + closed_at + "\",";
+    body += "\"ea_version\":\"" + EA_VERSION_STRING + "\"";
+    body += "}";
+
+    if(HttpPostJson("/api/ea/closed-trade", body))
+    {
+        Print("[ScalpingRadarEA] closed-trade reported deal=", deal_id,
+              " symbol=", symbol, " pnl=", DoubleToString(profit, 2));
+    }
+    else
+    {
+        Print("[ScalpingRadarEA] closed-trade report FAILED deal=", deal_id,
+              " symbol=", symbol);
+    }
 }
 //+------------------------------------------------------------------+

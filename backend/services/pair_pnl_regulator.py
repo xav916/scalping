@@ -115,28 +115,56 @@ def _config() -> dict[str, Any]:
 
 
 def compute_window_metrics(pair: str, window_trades: int) -> dict[str, Any]:
-    """Retourne PnL agrégé sur les N derniers trades auto-exec fermés du pair.
+    """Retourne PnL agrégé multi-tenant sur les N derniers trades fermés.
 
-    Si moins de N trades existent, retourne ce qu'il y a (sample peut être < N).
+    Union de deux sources :
+    - ``personal_trades`` : trades historiques admin Xavier (is_auto=1)
+    - ``ea_closed_trades`` : trades reportés par l'EA des users Premium
+      (Cédric + futurs, EA ≥ v1.04)
+
+    Le SQL UNION ALL puis ORDER BY closed_at DESC LIMIT N garantit qu'on
+    prend les N plus récents toutes sources confondues, multi-user.
     """
     _ensure_schema()
+    # ea_closed_trades schema ensure aussi (idempotent)
+    from backend.services import ea_closed_trades_service as _eact
+    _eact._ensure_schema()
+
     with sqlite3.connect(_db_path()) as c:
         c.row_factory = sqlite3.Row
         rows = c.execute(
             """
-            SELECT pnl, closed_at
-              FROM personal_trades
+            SELECT pnl, closed_at, 'admin' AS source FROM personal_trades
              WHERE pair = ? AND status = 'CLOSED'
                AND is_auto = 1 AND pnl IS NOT NULL
-             ORDER BY closed_at DESC LIMIT ?
+            UNION ALL
+            SELECT pnl, closed_at, 'ea_' || user_id AS source FROM ea_closed_trades
+             WHERE pair = ?
+            ORDER BY closed_at DESC LIMIT ?
             """,
-            (pair, window_trades),
+            (pair, pair, window_trades),
         ).fetchall()
     n = len(rows)
     if n == 0:
-        return {"n": 0, "sum_pnl": 0.0, "wins": 0, "wr": 0.0, "oldest_at": None, "newest_at": None}
+        return {
+            "n": 0, "sum_pnl": 0.0, "wins": 0, "wr": 0.0,
+            "oldest_at": None, "newest_at": None,
+            "by_source": {},
+        }
     sum_pnl = sum(r["pnl"] for r in rows)
     wins = sum(1 for r in rows if r["pnl"] > 0)
+    # Breakdown par source (pour debug/dashboard : qui contribue combien)
+    by_source: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        src = r["source"]
+        if src not in by_source:
+            by_source[src] = {"n": 0, "sum_pnl": 0.0, "wins": 0}
+        by_source[src]["n"] += 1
+        by_source[src]["sum_pnl"] += r["pnl"]
+        if r["pnl"] > 0:
+            by_source[src]["wins"] += 1
+    for src in by_source:
+        by_source[src]["sum_pnl"] = round(by_source[src]["sum_pnl"], 2)
     return {
         "n": n,
         "sum_pnl": round(sum_pnl, 2),
@@ -144,6 +172,7 @@ def compute_window_metrics(pair: str, window_trades: int) -> dict[str, Any]:
         "wr": round(100.0 * wins / n, 1),
         "oldest_at": rows[-1]["closed_at"],
         "newest_at": rows[0]["closed_at"],
+        "by_source": by_source,
     }
 
 

@@ -600,6 +600,53 @@ async def api_ea_result(payload: dict):
     return {"acked": success}
 
 
+@app.post("/api/ea/closed-trade")
+async def api_ea_closed_trade(payload: dict):
+    """L'EA reporte un trade fermé (multi-tenant, EA ≥ v1.04).
+
+    Body : ``{api_key, pair, direction, entry_price, exit_price, pnl,
+    volume?, mt5_ticket?, mt5_deal_id?, magic?, opened_at?, closed_at?,
+    close_reason?}``
+
+    Permet à pair_pnl_regulator d'évaluer la santé d'un pair par user
+    (Cédric + futurs Premium) — pas seulement Xavier admin via la table
+    legacy personal_trades.
+
+    Dédup automatique sur (user_id, mt5_deal_id) — l'EA peut re-poster
+    suite à un retry réseau, on ignore silencieusement le doublon.
+    """
+    api_key = (payload or {}).get("api_key", "")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="api_key requis")
+    user = users_service.find_user_by_bridge_api_key(api_key)
+    if not user:
+        raise HTTPException(status_code=401, detail="api_key invalide")
+
+    required = ("pair", "direction", "entry_price", "exit_price", "pnl")
+    missing = [k for k in required if payload.get(k) is None]
+    if missing:
+        raise HTTPException(status_code=400, detail=f"champs manquants : {missing}")
+
+    from backend.services import ea_closed_trades_service
+
+    inserted_id = ea_closed_trades_service.record(
+        user_id=int(user["id"]),
+        pair=str(payload["pair"]),
+        direction=str(payload["direction"]),
+        entry_price=float(payload["entry_price"]),
+        exit_price=float(payload["exit_price"]),
+        pnl=float(payload["pnl"]),
+        volume=payload.get("volume"),
+        mt5_ticket=payload.get("mt5_ticket"),
+        mt5_deal_id=payload.get("mt5_deal_id"),
+        magic=payload.get("magic"),
+        opened_at=payload.get("opened_at"),
+        closed_at=payload.get("closed_at"),
+        close_reason=payload.get("close_reason"),
+    )
+    return {"recorded": inserted_id is not None, "id": inserted_id}
+
+
 @app.post("/api/ea/heartbeat")
 async def api_ea_heartbeat(api_key: str = "", ea_version: str = ""):
     """L'EA signale qu'il est vivant. Optionnel — le pull /pending fait

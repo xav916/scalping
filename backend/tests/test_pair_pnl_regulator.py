@@ -18,10 +18,11 @@ def _isolated_db(tmp_path, monkeypatch):
 
     monkeypatch.setattr(trade_log_service, "_DB_PATH", db_path)
 
-    # Reset le cache schema-ensured pour que le module recrée la table dans tmp
-    from backend.services import pair_pnl_regulator
+    # Reset le cache schema-ensured pour que les modules recréent les tables dans tmp
+    from backend.services import pair_pnl_regulator, ea_closed_trades_service
 
     monkeypatch.setattr(pair_pnl_regulator, "_SCHEMA_ENSURED", False)
+    monkeypatch.setattr(ea_closed_trades_service, "_SCHEMA_ENSURED", False)
 
     # Crée la table personal_trades minimale
     with sqlite3.connect(db_path) as c:
