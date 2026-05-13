@@ -655,6 +655,29 @@ def start_scheduler() -> AsyncIOScheduler:
         replace_existing=True,
     )
 
+    # Auto-régulateur PnL par pair : pause auto quand sum_pnl < seuil sur
+    # fenêtre glissante (default 30 trades, -3% capital). Complète le
+    # watchdog rafale en capturant le saignement chronique diffus
+    # (cf XAG/USD audit 2026-05-13). Backfill au démarrage + check 60 min.
+    from backend.services import pair_pnl_regulator as _ppnl_reg
+    try:
+        startup_result = _ppnl_reg.check_and_regulate()
+        logger.info(
+            f"pair_pnl_regulator startup backfill: paused={startup_result.get('n_paused', 0)} "
+            f"resumed={startup_result.get('n_resumed', 0)} "
+            f"keep_paused={startup_result.get('n_keep_paused', 0)}"
+        )
+    except Exception:
+        logger.exception("pair_pnl_regulator: startup backfill failed (non-fatal)")
+    _scheduler.add_job(
+        _ppnl_reg.check_and_regulate,
+        "interval",
+        minutes=60,
+        id="pair_pnl_regulator_check",
+        name="Auto-régulateur PnL par pair (60 min)",
+        replace_existing=True,
+    )
+
     # Alertes rafales de stops loss : toutes les 5 min, surveille les
     # SL auto-exec de la derniere heure. Envoie Telegram si >= 5 SL global
     # (cooldown 30 min) ou >= 3 SL meme pattern (cooldown 30 min par pattern).

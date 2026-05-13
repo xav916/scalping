@@ -154,6 +154,15 @@ MT5_BRIDGE_ALLOWED_ASSET_CLASSES = [
 MT5_BRIDGE_BLOCKED_PAIRS = frozenset(
     p.strip().upper() for p in os.getenv("MT5_BRIDGE_BLOCKED_PAIRS", "").split(",") if p.strip()
 )
+# Pair PnL Regulator : auto-pause par pair quand sum_pnl < seuil sur fenêtre
+# glissante. Capture le saignement chronique (cas XAG/USD diffus) invisible
+# au watchdog rafale stop_loss_alerts.
+# Cf. backend/services/pair_pnl_regulator.py
+PAIR_PNL_REGULATOR_ENABLED = os.getenv("PAIR_PNL_REGULATOR_ENABLED", "true").lower() in ("true", "1", "yes")
+PAIR_PNL_REGULATOR_WINDOW_TRADES = int(os.getenv("PAIR_PNL_REGULATOR_WINDOW_TRADES", "30"))
+PAIR_PNL_REGULATOR_MIN_SAMPLE = int(os.getenv("PAIR_PNL_REGULATOR_MIN_SAMPLE", "10"))
+PAIR_PNL_REGULATOR_PAUSE_THRESHOLD_PCT = float(os.getenv("PAIR_PNL_REGULATOR_PAUSE_THRESHOLD_PCT", "-3.0"))
+PAIR_PNL_REGULATOR_PAUSE_DURATION_DAYS = int(os.getenv("PAIR_PNL_REGULATOR_PAUSE_DURATION_DAYS", "14"))
 # Cap par pair : N positions max SIMULTANÉMENT sur la même paire. Forcé
 # de diversifier, évite la concentration aveugle (ex: 4 XAU/USD ouverts
 # qui tombent ensemble sur un mouvement défavorable).

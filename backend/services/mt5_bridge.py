@@ -166,6 +166,14 @@ def _check_rejection(setup, dest=None) -> str | None:
     # Cf. MT5_BRIDGE_BLOCKED_PAIRS dans config/settings.py.
     if setup.pair.upper() in MT5_BRIDGE_BLOCKED_PAIRS:
         return "pair_blocked"
+    # Auto-régulateur PnL : pause auto par pair quand sum_pnl < seuil sur
+    # fenêtre glissante. Couvre le saignement chronique (cas XAG diffus).
+    try:
+        from backend.services import pair_pnl_regulator
+        if pair_pnl_regulator.is_paused(setup.pair):
+            return "pair_auto_paused"
+    except Exception as e:
+        logger.debug(f"mt5_bridge: pair_pnl_regulator check failed: {e}")
     try:
         from backend.services import kill_switch
         # Passe le pair pour que les pauses per-pair (rafale chirurgicale)

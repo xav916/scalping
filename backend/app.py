@@ -2964,6 +2964,41 @@ async def api_admin_geopolitical_veto_stats(
     return geopolitical_veto.get_stats(days=days)
 
 
+@app.get("/api/admin/pair-pnl-regulator")
+async def api_admin_pair_pnl_regulator(
+    _ctx: AuthContext = Depends(require_admin),
+):
+    """État du régulateur PnL par pair.
+
+    Retourne :
+    - ``config`` : params actifs (window_trades, threshold_pct, ...)
+    - ``active_pauses`` : pairs actuellement pausées (avec PnL au moment du déclenchement)
+    - ``current_metrics`` : pour chaque pair stars + chaque pair pausée, le
+      PnL sur la fenêtre glissante actuelle (utile pour anticiper la
+      prochaine décision)
+    """
+    from backend.services import pair_pnl_regulator
+    from backend.services.shadow_v2_core_long import SHADOW_PAIRS as _STAR_PAIRS
+
+    cfg = pair_pnl_regulator._config()
+    active_pauses = pair_pnl_regulator.list_active_pauses()
+    paused_pairs = {p["pair"] for p in active_pauses}
+
+    pairs_to_show = sorted(set(_STAR_PAIRS) | paused_pairs)
+    current_metrics = []
+    for pair in pairs_to_show:
+        m = pair_pnl_regulator.compute_window_metrics(pair, cfg["window_trades"])
+        if m["n"] > 0:
+            m["pnl_pct"] = round(100.0 * m["sum_pnl"] / cfg["capital"], 2)
+        current_metrics.append({"pair": pair, **m, "is_paused": pair in paused_pairs})
+
+    return {
+        "config": cfg,
+        "active_pauses": active_pauses,
+        "current_metrics": current_metrics,
+    }
+
+
 @app.get("/api/admin/auto-exec/health")
 async def api_admin_auto_exec_health(
     _ctx: AuthContext = Depends(require_admin),
