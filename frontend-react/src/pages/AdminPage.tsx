@@ -9,6 +9,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { WatchdogCard } from '@/components/admin/WatchdogCard';
 import { AutoExecHealthCard } from '@/components/admin/AutoExecHealthCard';
 import { GeopoliticalVetoActivityCard } from '@/components/admin/GeopoliticalVetoActivityCard';
+import { PairAdmissionCard } from '@/components/admin/PairAdmissionCard';
 import { Header } from '@/components/layout/Header';
 
 /**
@@ -90,6 +91,9 @@ export function AdminPage() {
 
         {/* Santé du pipeline auto-exec EA : heartbeat + orders 24h + zombies */}
         <AutoExecHealthCard />
+
+        {/* Pair Admission Controller : matrice (pair × direction) + transitions manuelles */}
+        <PairAdmissionCard />
 
         {/* Vetos géopolitiques : count par règle / pair / jour sur 7j */}
         <GeopoliticalVetoActivityCard />

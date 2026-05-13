@@ -344,6 +344,54 @@ export const api = {
       }>;
     }>(`/api/admin/geopolitical-veto-stats?days=${days}`),
 
+  adminPairAdmission: () =>
+    request<{
+      universe_size: number;
+      n_pairs: number;
+      counts_by_state: Record<string, number>;
+      thresholds: {
+        promote_min_sample: number;
+        promote_min_pnl_pct: number;
+        promote_min_wr_pct: number;
+        promote_min_pf: number;
+        promote_max_dd_pct: number;
+        demote_max_re_pauses_60d: number;
+      };
+      buckets: Array<{
+        pair: string;
+        direction: 'buy' | 'sell' | null;
+        state: 'OBSERVED' | 'TELEGRAM' | 'AUTO_EXEC' | 'PAUSED' | 'DEMOTED';
+        state_since: string | null;
+        reason: string | null;
+        transitioned_by: string | null;
+        current_score: {
+          sample: number;
+          sum_pnl: number;
+          pnl_pct: number;
+          wr: number;
+          pf: number;
+          max_dd_pct: number;
+          eligible_for: string;
+          reason: string;
+        };
+      }>;
+    }>('/api/admin/pair-admission'),
+
+  adminPairAdmissionTransition: (
+    pair: string,
+    body: { to_state: string; reason: string; direction?: 'buy' | 'sell' | null }
+  ) =>
+    request<{
+      pair: string;
+      direction: string | null;
+      to_state: string;
+      transition_id: number;
+      current_state: string;
+    }>(`/api/admin/pair-admission/${encodeURIComponent(pair)}/transition`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
   macro: async () => {
     const raw = await request<{ status: string; snapshot: MacroSnapshot | null }>(
       '/api/macro'
