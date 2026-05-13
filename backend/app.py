@@ -3015,10 +3015,11 @@ async def api_admin_geopolitical_veto_stats(
 async def api_admin_pair_admission(
     _ctx: AuthContext = Depends(require_admin),
 ):
-    """État de l'univers Pair Admission Controller.
+    """État de l'univers Pair Admission Controller (matrice pair × direction).
 
-    Retourne pour chaque pair de WATCHED_PAIRS (= univers V1) son état
-    courant + score de promotion + history des transitions récentes.
+    Retourne pour chaque (pair × direction) de WATCHED_PAIRS son état
+    courant + score de promotion. La granularité direction-specific
+    remplace le filtre statique MT5_BRIDGE_BLOCKED_DIRECTIONS=*:buy.
 
     États : OBSERVED, TELEGRAM, AUTO_EXEC, PAUSED, DEMOTED.
     """
@@ -3026,20 +3027,25 @@ async def api_admin_pair_admission(
     from config.settings import WATCHED_PAIRS
 
     all_states = pair_admission_controller.list_all_states()
-    by_pair = {s["pair"]: s for s in all_states}
+    by_pair_dir: dict[tuple, dict] = {(s["pair"], s.get("direction")): s for s in all_states}
 
-    universe = sorted(set(WATCHED_PAIRS) | set(by_pair.keys()))
+    universe_pairs = sorted(set(WATCHED_PAIRS) | {p for p, _ in by_pair_dir.keys()})
     result = []
-    for pair in universe:
-        full = by_pair.get(pair) or {
-            "pair": pair,
-            "state": pair_admission_controller.DEFAULT_STATE,
-            "state_since": None, "reason": None,
-            "score_snapshot": None, "transitioned_by": None,
-        }
-        score = pair_admission_controller.compute_promotion_score(pair)
-        full["current_score"] = score
-        result.append(full)
+    for pair in universe_pairs:
+        for direction in ("buy", "sell"):
+            # Cherche row direction-specific, sinon row pair-level (NULL)
+            full = by_pair_dir.get((pair, direction)) or by_pair_dir.get((pair, None)) or {
+                "pair": pair,
+                "direction": direction,
+                "state": pair_admission_controller.DEFAULT_STATE,
+                "state_since": None, "reason": None,
+                "score_snapshot": None, "transitioned_by": None,
+            }
+            # Cohérence : force la direction visible dans la row même si fallback pair-level
+            full = {**full, "direction": direction}
+            score = pair_admission_controller.compute_promotion_score(pair, direction=direction)
+            full["current_score"] = score
+            result.append(full)
 
     counts: dict[str, int] = {}
     for r in result:
@@ -3047,6 +3053,7 @@ async def api_admin_pair_admission(
 
     return {
         "universe_size": len(result),
+        "n_pairs": len(universe_pairs),
         "counts_by_state": counts,
         "thresholds": {
             "promote_min_sample": pair_admission_controller.PROMOTE_MIN_SAMPLE,
@@ -3056,7 +3063,7 @@ async def api_admin_pair_admission(
             "promote_max_dd_pct": pair_admission_controller.PROMOTE_MAX_DD_PCT,
             "demote_max_re_pauses_60d": pair_admission_controller.DEMOTE_MAX_RE_PAUSES_60D,
         },
-        "pairs": result,
+        "buckets": result,
     }
 
 
@@ -3066,18 +3073,22 @@ async def api_admin_pair_admission_transition(
     payload: dict,
     ctx: AuthContext = Depends(require_admin),
 ):
-    """Transition manuelle d'un pair vers un nouvel état.
+    """Transition manuelle d'un (pair × direction) vers un nouvel état.
 
-    Body : ``{to_state: 'AUTO_EXEC'|'TELEGRAM'|'OBSERVED'|'PAUSED'|'DEMOTED',
-    reason: str}``.
+    Body : ``{to_state, reason, direction?}``
+    - ``to_state`` : 'AUTO_EXEC' | 'TELEGRAM' | 'OBSERVED' | 'PAUSED' | 'DEMOTED'
+    - ``reason`` : audit log, obligatoire
+    - ``direction`` : 'buy' | 'sell' | null (pair-level)
 
-    Permet à l'admin de promote TELEGRAM → AUTO_EXEC (humain dans la boucle
-    pour l'entrée d'argent réel) ou réhabiliter une pair DEMOTED.
+    Permet à l'admin de promote (pair, buy) ou (pair, sell) indépendamment
+    (ex: activer V2 long-only XAU au gate S6 = transition (XAU, buy) → AUTO_EXEC
+    sans toucher (XAU, sell)).
     """
     from backend.services import pair_admission_controller
 
     to_state = (payload or {}).get("to_state", "").strip().upper()
     reason = (payload or {}).get("reason", "").strip()
+    direction = (payload or {}).get("direction")
     if not to_state or to_state not in pair_admission_controller.VALID_STATES:
         raise HTTPException(status_code=400, detail=f"to_state invalide. Doit être dans {list(pair_admission_controller.VALID_STATES)}")
     if not reason:
@@ -3085,13 +3096,14 @@ async def api_admin_pair_admission_transition(
 
     admin_id = f"admin:{ctx.username}" if hasattr(ctx, "username") else "admin"
     inserted_id = pair_admission_controller.set_state(
-        pair, to_state, reason, transitioned_by=admin_id
+        pair, to_state, reason, direction=direction, transitioned_by=admin_id
     )
     return {
         "pair": pair,
+        "direction": direction,
         "to_state": to_state,
         "transition_id": inserted_id,
-        "current_state": pair_admission_controller.get_current_state(pair),
+        "current_state": pair_admission_controller.get_current_state(pair, direction),
     }
 
 

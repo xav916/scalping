@@ -161,17 +161,18 @@ def _check_rejection(setup, dest=None) -> str | None:
     if dest is None and not is_configured():
         return "_not_configured"  # privé, non enregistré
     # Source de vérité pour l'éligibilité auto-exec : pair_admission_controller
-    # (= state machine par pair). Migration douce : si la pair n'a JAMAIS été
-    # enregistrée dans le controller (= row absente, ex: pré-backfill ou en
-    # test patch), fallback sur la liste hardcodée _STAR_PAIRS_SET legacy.
+    # (= state machine pair × direction). Migration douce : si (pair, direction)
+    # n'a JAMAIS été enregistrée dans le controller (= row absente, pré-backfill
+    # ou test patch), fallback sur la liste hardcodée _STAR_PAIRS_SET legacy.
+    setup_direction = getattr(setup, "direction", None)
+    if hasattr(setup_direction, "value"):
+        setup_direction = setup_direction.value
     try:
         from backend.services import pair_admission_controller
-        if pair_admission_controller.has_explicit_state(setup.pair):
-            # Le controller a un état explicite pour cette pair → respecte-le
-            if not pair_admission_controller.is_auto_exec_eligible(setup.pair):
-                return "_not_admitted"  # pair pas en state AUTO_EXEC
+        if pair_admission_controller.has_explicit_state(setup.pair, setup_direction):
+            if not pair_admission_controller.is_auto_exec_eligible(setup.pair, setup_direction):
+                return "_not_admitted"
         else:
-            # Pas de row → fallback legacy _STAR_PAIRS_SET
             if setup.pair not in _STAR_PAIRS_SET:
                 return "_not_a_star"
     except Exception as e:

@@ -76,7 +76,14 @@ def _db_path() -> str:
 
 
 def _ensure_schema() -> None:
-    """Crée pair_admission_state si pas déjà là. Idempotent."""
+    """Crée pair_admission_state si pas déjà là. Idempotent.
+
+    Évolution 2026-05-13 : ajout colonne ``direction`` (NULL pour les rows
+    pair-level legacy, 'buy' ou 'sell' pour les rows direction-specific).
+    Migration douce : les rows existantes restent direction IS NULL et
+    s'appliquent à toutes les directions. Les nouvelles rows
+    (pair × direction) overrident les rows pair-level pour le sens donné.
+    """
     global _SCHEMA_ENSURED
     if _SCHEMA_ENSURED:
         return
@@ -95,8 +102,16 @@ def _ensure_schema() -> None:
             )
             """
         )
+        # Migration : ajoute la colonne direction si absente (idempotent via try)
+        try:
+            c.execute("ALTER TABLE pair_admission_state ADD COLUMN direction TEXT")
+        except sqlite3.OperationalError:
+            pass  # colonne déjà présente
         c.execute(
             "CREATE INDEX IF NOT EXISTS idx_pas_pair_since ON pair_admission_state(pair, state_since DESC)"
+        )
+        c.execute(
+            "CREATE INDEX IF NOT EXISTS idx_pas_pair_dir_since ON pair_admission_state(pair, direction, state_since DESC)"
         )
     _SCHEMA_ENSURED = True
 
@@ -104,34 +119,92 @@ def _ensure_schema() -> None:
 # ─── Read API ───────────────────────────────────────────────────────────
 
 
-def get_current_state(pair: str) -> str:
-    """Retourne l'état courant d'un pair (= dernière row, sinon DEFAULT_STATE)."""
+def _normalize_direction(direction: Optional[str]) -> Optional[str]:
+    """Normalise direction en 'buy'/'sell' ou None. Valide les entrées."""
+    if direction is None:
+        return None
+    d = str(direction).strip().lower()
+    if d in ("buy", "long", "b"):
+        return "buy"
+    if d in ("sell", "short", "s"):
+        return "sell"
+    return None  # entrée invalide → fallback pair-level
+
+
+def get_current_state(pair: str, direction: Optional[str] = None) -> str:
+    """Retourne l'état courant pour (pair, direction).
+
+    Résolution :
+    1. Si direction fournie : cherche row direction-specific (= row où la
+       colonne direction = direction) la plus récente.
+    2. Sinon ou si pas de row spécifique : cherche row pair-level (= row
+       où direction IS NULL) la plus récente.
+    3. Sinon : retourne DEFAULT_STATE.
+
+    Cette résolution permet la migration douce : les rows existantes
+    (direction IS NULL = pair-level legacy) restent honorées tant qu'on
+    n'a pas posé de row direction-specific qui override.
+    """
     _ensure_schema()
+    direction = _normalize_direction(direction)
     with sqlite3.connect(_db_path()) as c:
+        if direction is not None:
+            # 1. Row direction-specific
+            row = c.execute(
+                """
+                SELECT state FROM pair_admission_state
+                 WHERE pair = ? AND direction = ?
+                 ORDER BY state_since DESC LIMIT 1
+                """,
+                (pair, direction),
+            ).fetchone()
+            if row:
+                return row[0]
+        # 2. Row pair-level legacy (direction IS NULL)
         row = c.execute(
             """
             SELECT state FROM pair_admission_state
-             WHERE pair = ? ORDER BY state_since DESC LIMIT 1
+             WHERE pair = ? AND direction IS NULL
+             ORDER BY state_since DESC LIMIT 1
             """,
             (pair,),
         ).fetchone()
     return row[0] if row else DEFAULT_STATE
 
 
-def get_full_state(pair: str) -> dict[str, Any]:
-    """Retourne l'état + métadonnées (state_since, reason, score)."""
+def get_full_state(pair: str, direction: Optional[str] = None) -> dict[str, Any]:
+    """Retourne l'état + métadonnées (state_since, reason, score).
+
+    Même résolution que get_current_state : direction-specific d'abord,
+    fallback pair-level.
+    """
     _ensure_schema()
+    direction = _normalize_direction(direction)
     with sqlite3.connect(_db_path()) as c:
         c.row_factory = sqlite3.Row
-        row = c.execute(
-            """
-            SELECT * FROM pair_admission_state
-             WHERE pair = ? ORDER BY state_since DESC LIMIT 1
-            """,
-            (pair,),
-        ).fetchone()
+        row = None
+        if direction is not None:
+            row = c.execute(
+                """
+                SELECT * FROM pair_admission_state
+                 WHERE pair = ? AND direction = ?
+                 ORDER BY state_since DESC LIMIT 1
+                """,
+                (pair, direction),
+            ).fetchone()
+        if not row:
+            row = c.execute(
+                """
+                SELECT * FROM pair_admission_state
+                 WHERE pair = ? AND direction IS NULL
+                 ORDER BY state_since DESC LIMIT 1
+                """,
+                (pair,),
+            ).fetchone()
     if not row:
-        return {"pair": pair, "state": DEFAULT_STATE, "state_since": None, "reason": None, "score_snapshot": None, "transitioned_by": None}
+        return {"pair": pair, "direction": direction, "state": DEFAULT_STATE,
+                "state_since": None, "reason": None, "score_snapshot": None,
+                "transitioned_by": None}
     d = dict(row)
     if d.get("score_snapshot"):
         try:
@@ -142,22 +215,29 @@ def get_full_state(pair: str) -> dict[str, Any]:
 
 
 def list_all_states() -> list[dict[str, Any]]:
-    """Retourne l'état courant de tous les pairs qui ont une row.
+    """Retourne l'état courant de tous les (pair × direction) qui ont une row.
 
-    Pour avoir l'univers complet, le caller doit aussi inclure les pairs de
-    WATCHED_PAIRS (default state = OBSERVED si pas de row).
+    Une row par bucket (pair, direction) — ex: 3 rows possibles par pair
+    (pair-level NULL + buy + sell). Le caller peut filtrer/grouper selon ses
+    besoins. Pour l'univers complet, inclure WATCHED_PAIRS (default OBSERVED).
     """
     _ensure_schema()
     with sqlite3.connect(_db_path()) as c:
         c.row_factory = sqlite3.Row
+        # On groupe par (pair, direction) avec IS NULL bien traité via COALESCE
         rows = c.execute(
             """
             SELECT pas.* FROM pair_admission_state pas
              INNER JOIN (
-                SELECT pair, MAX(state_since) AS max_since
-                  FROM pair_admission_state GROUP BY pair
-             ) latest ON pas.pair = latest.pair AND pas.state_since = latest.max_since
-             ORDER BY pas.pair
+                SELECT pair, COALESCE(direction, '__null__') AS dir_key,
+                       MAX(state_since) AS max_since
+                  FROM pair_admission_state
+                 GROUP BY pair, dir_key
+             ) latest
+               ON pas.pair = latest.pair
+              AND COALESCE(pas.direction, '__null__') = latest.dir_key
+              AND pas.state_since = latest.max_since
+             ORDER BY pas.pair, pas.direction
             """
         ).fetchall()
     result = []
@@ -175,52 +255,54 @@ def list_all_states() -> list[dict[str, Any]]:
 # ─── Eligibility helpers (utilisés par mt5_bridge + telegram_service) ───
 
 
-def _has_explicit_state(pair: str) -> bool:
-    """True si pair a au moins une row dans pair_admission_state.
+def _has_explicit_state(pair: str, direction: Optional[str] = None) -> bool:
+    """True si (pair, direction) a au moins une row dans pair_admission_state.
 
-    Permet aux helpers de distinguer "pair vraiment OBSERVED par décision"
-    vs "pair jamais vue par le controller" (= migration douce, fallback
-    sur legacy _STAR_PAIRS_SET tant que backfill n'a pas tourné).
+    Si direction fournie : True si row direction-specific OU row pair-level.
+    Si direction None : True si au moins une row existe pour pair.
     """
     _ensure_schema()
+    direction = _normalize_direction(direction)
     with sqlite3.connect(_db_path()) as c:
-        row = c.execute(
-            "SELECT 1 FROM pair_admission_state WHERE pair = ? LIMIT 1", (pair,)
-        ).fetchone()
+        if direction is not None:
+            row = c.execute(
+                "SELECT 1 FROM pair_admission_state WHERE pair = ? AND (direction = ? OR direction IS NULL) LIMIT 1",
+                (pair, direction),
+            ).fetchone()
+        else:
+            row = c.execute(
+                "SELECT 1 FROM pair_admission_state WHERE pair = ? LIMIT 1",
+                (pair,),
+            ).fetchone()
     return bool(row)
 
 
-def is_auto_exec_eligible(pair: str) -> bool:
-    """True si la pair peut être pushée vers le bridge MT5 (auto-exec).
+def is_auto_exec_eligible(pair: str, direction: Optional[str] = None) -> bool:
+    """True si (pair, direction) peut être pushée vers le bridge MT5.
 
-    Migration douce : si la pair n'a JAMAIS été enregistrée dans le
-    controller (= row absente), on délègue au callsite (qui peut faire
-    un fallback _STAR_PAIRS_SET legacy). Cela évite de casser les
-    déploiements pré-backfill.
+    Migration douce : si pas de row pour (pair, direction) ni pair-level,
+    retourne False et le callsite fait son fallback _STAR_PAIRS_SET legacy.
     """
-    if not _has_explicit_state(pair):
+    if not _has_explicit_state(pair, direction):
         return False  # callsite doit faire son fallback
-    return get_current_state(pair) == STATE_AUTO_EXEC
+    return get_current_state(pair, direction) == STATE_AUTO_EXEC
 
 
-def is_telegram_eligible(pair: str) -> bool:
-    """True si la pair peut générer un push Telegram user-facing.
+def is_telegram_eligible(pair: str, direction: Optional[str] = None) -> bool:
+    """True si (pair, direction) peut générer un push Telegram user-facing.
 
     PAUSED inclus : on continue à informer le user mais avec verdict SKIP
     forcé côté setup (= signal info, pas trade reco).
-
-    Migration douce : si la pair n'a pas de row, retourne False et le
-    callsite fait son fallback _STAR_PAIRS_SET legacy.
     """
-    if not _has_explicit_state(pair):
+    if not _has_explicit_state(pair, direction):
         return False  # callsite doit faire son fallback
-    return get_current_state(pair) in (STATE_TELEGRAM, STATE_AUTO_EXEC, STATE_PAUSED)
+    return get_current_state(pair, direction) in (STATE_TELEGRAM, STATE_AUTO_EXEC, STATE_PAUSED)
 
 
-def has_explicit_state(pair: str) -> bool:
+def has_explicit_state(pair: str, direction: Optional[str] = None) -> bool:
     """API publique de _has_explicit_state pour les callers qui veulent
     décider eux-mêmes du fallback legacy."""
-    return _has_explicit_state(pair)
+    return _has_explicit_state(pair, direction)
 
 
 # ─── Write API ──────────────────────────────────────────────────────────
@@ -230,17 +312,25 @@ def set_state(
     pair: str,
     new_state: str,
     reason: str,
+    direction: Optional[str] = None,
     score_snapshot: Optional[dict] = None,
     transitioned_by: str = "auto",
 ) -> int:
-    """Transitionne un pair vers un nouvel état. Idempotent si déjà dans l'état."""
+    """Transitionne (pair, direction) vers un nouvel état. Idempotent.
+
+    Si direction=None : insère une row pair-level (= s'applique à tous
+    les sens en l'absence de row direction-specific).
+    Si direction='buy'/'sell' : insère une row direction-specific qui
+    override le pair-level pour ce sens.
+    """
     if new_state not in VALID_STATES:
         raise ValueError(f"État invalide : {new_state}. Doit être dans {VALID_STATES}")
     _ensure_schema()
+    direction = _normalize_direction(direction)
 
-    current = get_current_state(pair)
+    current = get_current_state(pair, direction)
     if current == new_state:
-        logger.debug(f"pair_admission: {pair} déjà {new_state}, no-op")
+        logger.debug(f"pair_admission: {pair}/{direction} déjà {new_state}, no-op")
         return -1
 
     now = datetime.now(timezone.utc).isoformat()
@@ -249,14 +339,15 @@ def set_state(
         cur = c.execute(
             """
             INSERT INTO pair_admission_state
-                (pair, state, state_since, reason, score_snapshot, transitioned_by)
-            VALUES (?, ?, ?, ?, ?, ?)
+                (pair, direction, state, state_since, reason, score_snapshot, transitioned_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (pair, new_state, now, reason, score_json, transitioned_by),
+            (pair, direction, new_state, now, reason, score_json, transitioned_by),
         )
         new_id = cur.lastrowid
+    dir_label = f"/{direction}" if direction else ""
     logger.warning(
-        f"pair_admission: {pair} {current} → {new_state} by={transitioned_by} reason={reason}"
+        f"pair_admission: {pair}{dir_label} {current} → {new_state} by={transitioned_by} reason={reason}"
     )
     return new_id
 
@@ -305,53 +396,85 @@ def _compute_max_dd(trades_pnl: list[float], capital: float) -> float:
     return round(100.0 * max_dd_eur / capital, 2)
 
 
-def _fetch_trades_for_pair(pair: str, window: int) -> list[float]:
+def _fetch_trades_for_pair(pair: str, window: int, direction: Optional[str] = None) -> list[float]:
     """Union admin (personal_trades) + Premium (ea_closed_trades) + shadow.
 
-    Pour scoring promotion d'une pair OBSERVED qui n'a pas de live trades :
-    on tombera sur shadow_setups (Track A V2 backtest live, table
-    `shadow_setups`) comme source secondaire.
+    Filtre optionnel par direction ('buy' ou 'sell'). Si direction None,
+    agrège toutes directions confondues (= comportement pair-level).
+    Pour scoring d'une pair OBSERVED sans live trades, fallback sur
+    shadow_setups (Track A V2 backtest live).
     """
     _ensure_schema()
-    # ea_closed_trades schema doit aussi être garanti (UNION le requiert)
     from backend.services import ea_closed_trades_service as _eact
     _eact._ensure_schema()
+    direction = _normalize_direction(direction)
     pnls: list[float] = []
+
     with sqlite3.connect(_db_path()) as c:
-        # 1. Live trades (admin + Premium)
-        rows = c.execute(
-            """
-            SELECT pnl, closed_at FROM personal_trades
-             WHERE pair = ? AND status = 'CLOSED'
-               AND is_auto = 1 AND pnl IS NOT NULL
-            UNION ALL
-            SELECT pnl, closed_at FROM ea_closed_trades WHERE pair = ?
-            ORDER BY closed_at DESC LIMIT ?
-            """,
-            (pair, pair, window),
-        ).fetchall()
+        if direction is not None:
+            # Filtre par direction sur toutes les sources
+            rows = c.execute(
+                """
+                SELECT pnl, closed_at FROM personal_trades
+                 WHERE pair = ? AND status = 'CLOSED'
+                   AND is_auto = 1 AND pnl IS NOT NULL
+                   AND LOWER(direction) = ?
+                UNION ALL
+                SELECT pnl, closed_at FROM ea_closed_trades
+                 WHERE pair = ? AND LOWER(direction) = ?
+                ORDER BY closed_at DESC LIMIT ?
+                """,
+                (pair, direction, pair, direction, window),
+            ).fetchall()
+        else:
+            rows = c.execute(
+                """
+                SELECT pnl, closed_at FROM personal_trades
+                 WHERE pair = ? AND status = 'CLOSED'
+                   AND is_auto = 1 AND pnl IS NOT NULL
+                UNION ALL
+                SELECT pnl, closed_at FROM ea_closed_trades WHERE pair = ?
+                ORDER BY closed_at DESC LIMIT ?
+                """,
+                (pair, pair, window),
+            ).fetchall()
         for r in rows:
             pnls.append(float(r[0]))
 
-        # 2. Si pas assez de live, compléter avec shadow_setups (backtest live)
+        # Fallback shadow_setups si pas assez de live
         if len(pnls) < window:
             need = window - len(pnls)
-            shadow_rows = c.execute(
-                """
-                SELECT pnl_eur FROM shadow_setups
-                 WHERE pair = ? AND outcome IS NOT NULL
-                   AND outcome != 'OPEN' AND pnl_eur IS NOT NULL
-                 ORDER BY exit_at DESC LIMIT ?
-                """,
-                (pair, need),
-            ).fetchall()
+            if direction is not None:
+                shadow_rows = c.execute(
+                    """
+                    SELECT pnl_eur FROM shadow_setups
+                     WHERE pair = ? AND outcome IS NOT NULL
+                       AND outcome != 'OPEN' AND pnl_eur IS NOT NULL
+                       AND LOWER(direction) = ?
+                     ORDER BY exit_at DESC LIMIT ?
+                    """,
+                    (pair, direction, need),
+                ).fetchall()
+            else:
+                shadow_rows = c.execute(
+                    """
+                    SELECT pnl_eur FROM shadow_setups
+                     WHERE pair = ? AND outcome IS NOT NULL
+                       AND outcome != 'OPEN' AND pnl_eur IS NOT NULL
+                     ORDER BY exit_at DESC LIMIT ?
+                    """,
+                    (pair, need),
+                ).fetchall()
             for r in shadow_rows:
                 pnls.append(float(r[0]))
     return pnls
 
 
-def compute_promotion_score(pair: str, window: int = 30) -> dict[str, Any]:
-    """Calcule le score composite pour décider si un pair peut transiter.
+def compute_promotion_score(pair: str, window: int = 30, direction: Optional[str] = None) -> dict[str, Any]:
+    """Calcule le score composite pour décider si (pair, direction) peut transiter.
+
+    Si direction None : agrège toutes directions (= scoring pair-level legacy).
+    Si direction 'buy'/'sell' : scoring restreint à ce sens.
 
     Retourne :
     - sample : nb total de trades évalués
@@ -363,7 +486,7 @@ def compute_promotion_score(pair: str, window: int = 30) -> dict[str, Any]:
     - eligible_for : 'AUTO_EXEC' | 'TELEGRAM' | 'OBSERVED' (la cible naturelle)
     """
     from config.settings import TRADING_CAPITAL
-    pnls = _fetch_trades_for_pair(pair, window)
+    pnls = _fetch_trades_for_pair(pair, window, direction=direction)
     sample = len(pnls)
     if sample == 0:
         return {
@@ -429,87 +552,83 @@ def _count_recent_pauses(pair: str, days: int = 60) -> int:
     return int(row[0]) if row else 0
 
 
-def evaluate_pair(pair: str) -> dict[str, Any]:
-    """Décide la transition d'un pair selon son état actuel + score.
+def evaluate_pair(pair: str, direction: Optional[str] = None) -> dict[str, Any]:
+    """Décide la transition d'un (pair, direction) selon son état + score.
 
-    Retourne {action: 'transition'|'keep', from_state, to_state?, score, reason}.
-    Si action='transition', set_state est appelé automatiquement.
+    Si direction None : scoring + transition agrégés (= pair-level legacy).
+    Si direction 'buy'/'sell' : scoring + transition restreint à ce sens.
+
+    Retourne {action, from_state, to_state?, score, reason}.
     """
-    current = get_current_state(pair)
-    score = compute_promotion_score(pair)
+    direction = _normalize_direction(direction)
+    current = get_current_state(pair, direction)
+    score = compute_promotion_score(pair, direction=direction)
 
-    # Transitions selon l'état actuel
     if current == STATE_OBSERVED:
-        # Peut auto-promote vers TELEGRAM si tous critères OK
         if score["eligible_for"] == STATE_TELEGRAM:
-            set_state(pair, STATE_TELEGRAM, f"auto-promote: {score['reason']}", score)
+            set_state(pair, STATE_TELEGRAM, f"auto-promote: {score['reason']}", direction=direction, score_snapshot=score)
             return {"action": "transition", "from_state": current, "to_state": STATE_TELEGRAM, "score": score, "reason": score["reason"]}
         return {"action": "keep", "from_state": current, "score": score, "reason": score["reason"]}
 
     elif current == STATE_TELEGRAM:
-        # Auto-demote si critères ne sont plus tenus (ex: PnL retombe sous seuil)
         if score["eligible_for"] == STATE_OBSERVED and score["sample"] >= PROMOTE_MIN_SAMPLE:
-            # Demotion seulement si suffisamment de sample pour conclure
-            set_state(pair, STATE_OBSERVED, f"auto-demote: {score['reason']}", score)
+            set_state(pair, STATE_OBSERVED, f"auto-demote: {score['reason']}", direction=direction, score_snapshot=score)
             return {"action": "transition", "from_state": current, "to_state": STATE_OBSERVED, "score": score, "reason": score["reason"]}
         return {"action": "keep", "from_state": current, "score": score, "reason": "telegram healthy or sample insufficient"}
 
     elif current == STATE_AUTO_EXEC:
-        # Demotion vers PAUSED si saignement (= pair_pnl_regulator logique)
         if score["sample"] >= PROMOTE_MIN_SAMPLE and score["pnl_pct"] < -3.0:
-            set_state(pair, STATE_PAUSED, f"auto-pause: pnl_pct {score['pnl_pct']}% < -3%", score)
+            set_state(pair, STATE_PAUSED, f"auto-pause: pnl_pct {score['pnl_pct']}% < -3%", direction=direction, score_snapshot=score)
             return {"action": "transition", "from_state": current, "to_state": STATE_PAUSED, "score": score, "reason": "saignement détecté"}
         return {"action": "keep", "from_state": current, "score": score, "reason": "auto_exec healthy"}
 
     elif current == STATE_PAUSED:
-        # Auto-resume après cool-off 14j IF PnL re-évalué et OK
         from datetime import timedelta
-        full = get_full_state(pair)
+        full = get_full_state(pair, direction)
         try:
             since = datetime.fromisoformat(full["state_since"].replace("Z", "+00:00"))
             elapsed = datetime.now(timezone.utc) - since
         except (ValueError, AttributeError, TypeError):
             elapsed = timedelta(days=0)
         if elapsed >= timedelta(days=14):
-            # Check demotion DEMOTED : 2× pauses récentes = trop instable
             recent_pauses = _count_recent_pauses(pair, days=60)
             if recent_pauses >= DEMOTE_MAX_RE_PAUSES_60D:
-                set_state(pair, STATE_DEMOTED, f"auto-demote: {recent_pauses} pauses on 60d (max {DEMOTE_MAX_RE_PAUSES_60D})", score)
+                set_state(pair, STATE_DEMOTED, f"auto-demote: {recent_pauses} pauses on 60d (max {DEMOTE_MAX_RE_PAUSES_60D})", direction=direction, score_snapshot=score)
                 return {"action": "transition", "from_state": current, "to_state": STATE_DEMOTED, "score": score, "reason": "trop instable"}
-            # Sinon resume vers AUTO_EXEC (ré-évaluation au prochain cycle)
-            set_state(pair, STATE_AUTO_EXEC, "cool-off 14j expired, re-evaluating live", score)
+            set_state(pair, STATE_AUTO_EXEC, "cool-off 14j expired, re-evaluating live", direction=direction, score_snapshot=score)
             return {"action": "transition", "from_state": current, "to_state": STATE_AUTO_EXEC, "score": score, "reason": "cool-off expired"}
         return {"action": "keep", "from_state": current, "score": score, "reason": f"cool-off encore {(timedelta(days=14) - elapsed).days}j"}
 
     elif current == STATE_DEMOTED:
-        # Pas de transition auto depuis DEMOTED — admin manuel uniquement
         return {"action": "keep", "from_state": current, "score": score, "reason": "DEMOTED requires manual admin transition"}
 
     return {"action": "keep", "from_state": current, "score": score, "reason": "unknown state"}
 
 
 def check_and_regulate() -> dict[str, Any]:
-    """Job scheduler : évalue tous les pairs de l'univers, applique transitions."""
+    """Job scheduler : évalue tous les (pair × direction) de l'univers."""
     from config.settings import WATCHED_PAIRS
-    # Univers = WATCHED_PAIRS + tout pair qui a déjà une row (PAUSED/DEMOTED histo)
     universe = set(WATCHED_PAIRS)
     for s in list_all_states():
         universe.add(s["pair"])
 
     decisions = []
     for pair in sorted(universe):
-        try:
-            d = evaluate_pair(pair)
-            d["pair"] = pair
-            decisions.append(d)
-        except Exception:
-            logger.exception(f"pair_admission: evaluate {pair} failed")
+        for direction in ("buy", "sell"):
+            try:
+                d = evaluate_pair(pair, direction=direction)
+                d["pair"] = pair
+                d["direction"] = direction
+                decisions.append(d)
+            except Exception:
+                logger.exception(f"pair_admission: evaluate {pair}/{direction} failed")
 
     transitions = sum(1 for d in decisions if d["action"] == "transition")
-    logger.info(f"pair_admission: check n_pairs={len(decisions)} transitions={transitions}")
+    logger.info(f"pair_admission: check n_buckets={len(decisions)} transitions={transitions}")
     return {
         "checked_at": datetime.now(timezone.utc).isoformat(),
-        "n_pairs": len(decisions),
+        "n_buckets": len(decisions),
+        "n_pairs": len({d["pair"] for d in decisions}),
         "n_transitions": transitions,
         "decisions": decisions,
     }
@@ -518,17 +637,20 @@ def check_and_regulate() -> dict[str, Any]:
 def backfill_initial_states() -> dict[str, Any]:
     """Au premier deploy, donne un état initial à chaque pair de WATCHED_PAIRS.
 
-    Pour chaque pair de WATCHED_PAIRS qui n'a aucune row dans
-    pair_admission_state :
-    - Si pair dans _STAR_PAIRS (set legacy hardcodé Phase 4) :
-        - Si pair_pnl_regulator.is_paused(pair) → PAUSED
-        - Sinon → AUTO_EXEC
-    - Sinon → OBSERVED
+    Évolution 2026-05-13 : backfill (pair × direction) au lieu de pair-level
+    seul. Matérialise explicitement le filtre `*:buy` historique en posant
+    (pair, 'buy') = OBSERVED pour toutes les pairs, et (pair, 'sell') hérite
+    du comportement legacy pair-level (AUTO_EXEC pour les stars sauf XAG
+    SELL paused, OBSERVED pour les autres).
 
-    Idempotent : si la pair a déjà une row, on ne touche pas.
+    Stratégie :
+    - Phase 1 (rétrocompat) : si pair n'a AUCUNE row, applique la logique
+      pair-level legacy (= comportement v1 contrôleur).
+    - Phase 2 (direction granularité) : pour chaque (pair, direction) qui
+      n'a pas de row direction-specific, déclare l'état initial selon les
+      règles ci-dessus.
 
-    À appeler une fois au startup pour migrer en douceur de la liste
-    hardcodée vers le contrôleur dynamique.
+    Idempotent : ré-appel = 0 changement si état déjà posé.
     """
     from config.settings import WATCHED_PAIRS
     from backend.services.shadow_v2_core_long import SHADOW_PAIRS as _STAR_PAIRS
@@ -538,37 +660,65 @@ def backfill_initial_states() -> dict[str, Any]:
 
     star_set = frozenset(_STAR_PAIRS)
     transitions: list[dict[str, Any]] = []
-    universe = set(WATCHED_PAIRS) | star_set  # garantir que XLI/XLK soient inclus
+    universe = set(WATCHED_PAIRS) | star_set
 
     for pair in sorted(universe):
-        existing = get_current_state(pair)
-        # get_current_state retourne DEFAULT_STATE (OBSERVED) si pas de row.
-        # On doit distinguer "pas de row" vs "row = OBSERVED explicite" :
+        # Phase 1 : Backfill pair-level legacy si jamais aucune row
         with sqlite3.connect(_db_path()) as c:
-            row = c.execute(
+            has_any = c.execute(
                 "SELECT 1 FROM pair_admission_state WHERE pair = ? LIMIT 1", (pair,)
             ).fetchone()
-        if row:
-            continue  # déjà une row, ne touche pas
+            has_pair_level = c.execute(
+                "SELECT 1 FROM pair_admission_state WHERE pair = ? AND direction IS NULL LIMIT 1", (pair,)
+            ).fetchone()
 
-        # Détermine l'état initial
-        if pair in star_set:
-            if pair_pnl_regulator.is_paused(pair):
-                target = STATE_PAUSED
-                reason = "backfill: pair was in _STAR_PAIRS_SET and paused by pair_pnl_regulator"
+        if not has_any:
+            if pair in star_set:
+                if pair_pnl_regulator.is_paused(pair):
+                    pair_level_target = STATE_PAUSED
+                    pair_level_reason = "backfill: pair was in _STAR_PAIRS_SET and paused by pair_pnl_regulator"
+                else:
+                    pair_level_target = STATE_AUTO_EXEC
+                    pair_level_reason = "backfill: pair was in _STAR_PAIRS_SET (legacy star) and active"
             else:
-                target = STATE_AUTO_EXEC
-                reason = "backfill: pair was in _STAR_PAIRS_SET (legacy star) and active"
-        else:
-            target = STATE_OBSERVED
-            reason = "backfill: pair not in legacy _STAR_PAIRS, default OBSERVED"
+                pair_level_target = STATE_OBSERVED
+                pair_level_reason = "backfill: pair not in legacy _STAR_PAIRS, default OBSERVED"
 
-        inserted = set_state(pair, target, reason, transitioned_by="auto:backfill")
-        # set_state retourne -1 si idempotent (target = current = OBSERVED par
-        # défaut). On ne compte une "vraie" transition que si l'insert a eu
-        # lieu — sinon idempotence second-run garantie.
-        if inserted and inserted > 0:
-            transitions.append({"pair": pair, "to_state": target, "reason": reason})
+            inserted = set_state(pair, pair_level_target, pair_level_reason, transitioned_by="auto:backfill")
+            if inserted and inserted > 0:
+                transitions.append({"pair": pair, "direction": None, "to_state": pair_level_target, "reason": pair_level_reason})
+
+        # Phase 2 : Backfill direction-specific (buy / sell)
+        # Récupère le state pair-level effectif (post phase 1)
+        pair_level_state = get_current_state(pair)  # direction=None → pair-level lookup
+
+        for direction in ("buy", "sell"):
+            # Skip si déjà une row direction-specific pour ce sens
+            with sqlite3.connect(_db_path()) as c:
+                has_dir = c.execute(
+                    "SELECT 1 FROM pair_admission_state WHERE pair = ? AND direction = ? LIMIT 1",
+                    (pair, direction),
+                ).fetchone()
+            if has_dir:
+                continue
+
+            if direction == "buy":
+                # Reproduit le filtre *:buy historique : tout buy = OBSERVED
+                # (= pas d'auto-exec). Sera promu manuellement ou par
+                # check_and_regulate quand un edge buy émerge (V2 long).
+                dir_target = STATE_OBSERVED
+                dir_reason = "backfill: direction=buy default OBSERVED (= remplace filtre statique *:buy)"
+            else:  # sell
+                # Hérite du comportement pair-level : si pair était AUTO_EXEC,
+                # le SELL hérite (= seul sens autorisé sous *:buy historique).
+                # Si pair était PAUSED, on propage à SELL (= la direction qui
+                # saignait, cas XAG).
+                dir_target = pair_level_state
+                dir_reason = f"backfill: direction=sell inherits pair-level state ({pair_level_state})"
+
+            inserted = set_state(pair, dir_target, dir_reason, direction=direction, transitioned_by="auto:backfill")
+            if inserted and inserted > 0:
+                transitions.append({"pair": pair, "direction": direction, "to_state": dir_target, "reason": dir_reason})
 
     logger.info(
         f"pair_admission: backfill_initial_states applied {len(transitions)} transitions"

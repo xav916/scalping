@@ -249,16 +249,24 @@ def _cleanup_old_dedup_keys() -> None:
 
 
 def _should_push_setup(setup) -> bool:
-    """Filtre : pair éligible Telegram + verdict dans la liste autorisée + score au-dessus du seuil.
+    """Filtre : (pair, direction) éligible Telegram + verdict dans la liste
+    autorisée + score au-dessus du seuil.
 
     Éligibilité Telegram = state in (TELEGRAM, AUTO_EXEC, PAUSED) via
     pair_admission_controller. Fallback sur _STAR_PAIRS_SET hardcodé si
-    controller indisponible.
+    controller indisponible ou si (pair, direction) jamais vue.
     """
+    setup_direction = getattr(setup, "direction", None)
+    if hasattr(setup_direction, "value"):
+        setup_direction = setup_direction.value
     try:
         from backend.services import pair_admission_controller
-        if not pair_admission_controller.is_telegram_eligible(setup.pair):
-            return False
+        if pair_admission_controller.has_explicit_state(setup.pair, setup_direction):
+            if not pair_admission_controller.is_telegram_eligible(setup.pair, setup_direction):
+                return False
+        else:
+            if setup.pair not in _STAR_PAIRS_SET:
+                return False
     except Exception:
         if setup.pair not in _STAR_PAIRS_SET:
             return False
