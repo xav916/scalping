@@ -130,6 +130,15 @@ export function SettingsPage() {
     staleTime: 60_000,
   });
   const [eaOpen, setEaOpen] = useState(false);
+  // Auto-ouvre la section Auto-exec MT5 si l'user a déjà une api_key configurée
+  // (= EA installé ou en cours d'install). Évite à Xavier/Cédric/futurs Premium
+  // de devoir cliquer pour retrouver le bouton de download EA à chaque visite.
+  useEffect(() => {
+    if (brokerQ.data?.api_key_set && !eaOpen) {
+      setEaOpen(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [brokerQ.data?.api_key_set]);
   const [revealedApiKey, setRevealedApiKey] = useState<string | null>(null);
   const [showRegenWarning, setShowRegenWarning] = useState(false);
   const [copiedKey, setCopiedKey] = useState(false);
