@@ -307,6 +307,20 @@ async def run_analysis_cycle() -> None:
         except Exception as e:
             logger.warning(f"shadow log V2_CORE_LONG failed (non-bloquant): {e}")
 
+        # Option C — shadow log V1 pour pairs OBSERVED.
+        # Persiste les TradeSetups V1 high-confidence dans shadow_setups
+        # pour les pairs en état OBSERVED, permettant à compute_promotion_score
+        # d'évaluer la fiabilité d'une pair sans engager d'argent (résout le
+        # chicken-and-egg de la promotion auto OBSERVED → AUTO_EXEC).
+        # La reconciliation existante (shadow_reconciliation.py) résout ces
+        # shadows comme les V2 — pas de logique dédiée.
+        try:
+            from backend.services.shadow_v1 import log_v1_shadows_for_observed_pairs
+            v1_counts = log_v1_shadows_for_observed_pairs(all_trade_setups, cycle_at=now)
+            logger.info(f"shadow log V1: {v1_counts}")
+        except Exception as e:
+            logger.warning(f"shadow log V1 failed (non-bloquant): {e}")
+
         # Pousse un snapshot cockpit immediat des qu'un cycle se termine :
         # les clients connectes voient les nouveaux setups sans attendre le
         # prochain tick du job periodique (jusqu'a 5s de latence evitee).

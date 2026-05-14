@@ -569,12 +569,30 @@ def compute_promotion_score(pair: str, window: int = 30, direction: Optional[str
     from config.settings import TRADING_CAPITAL
     pnls = _fetch_trades_for_pair(pair, window, direction=direction)
     sample = len(pnls)
+    pnl_source = "personal_trades"
+    # Fallback OBSERVED : si aucun trade réel sur cette pair, on score sur les
+    # shadow_setups V1_SHADOW (cf shadow_v1.py). Permet la promotion auto
+    # from scratch des pairs en observation (résout le chicken-and-egg).
+    if sample == 0:
+        try:
+            current_state = get_current_state(pair, direction)
+        except Exception:
+            current_state = DEFAULT_STATE
+        if current_state == STATE_OBSERVED:
+            try:
+                from backend.services.shadow_v1 import fetch_v1_shadow_pnls
+                pnls = fetch_v1_shadow_pnls(pair, direction, window)
+                sample = len(pnls)
+                pnl_source = "shadow_v1"
+            except Exception:
+                pass  # shadow_v1 indispo (tests isolés p.ex.) : reste à 0
     if sample == 0:
         return {
             "sample": 0, "sum_pnl": 0.0, "pnl_pct": 0.0,
             "wr": 0.0, "pf": 0.0, "max_dd_pct": 0.0,
             "eligible_for": STATE_OBSERVED,
             "reason": "no data",
+            "pnl_source": pnl_source,
         }
     sum_pnl = round(sum(pnls), 2)
     wins = sum(1 for p in pnls if p > 0)
@@ -614,6 +632,7 @@ def compute_promotion_score(pair: str, window: int = 30, direction: Optional[str
         "max_dd_pct": max_dd_pct,
         "eligible_for": eligible,
         "reason": reason,
+        "pnl_source": pnl_source,
     }
 
 

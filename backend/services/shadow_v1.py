@@ -1,0 +1,182 @@
+"""Shadow log V1 — persiste les signaux V1 pour les pairs OBSERVED.
+
+Permet à `compute_promotion_score` (pair_admission_controller) d'évaluer
+empiriquement les pairs en mode observation sans engager d'argent réel,
+résolvant le chicken-and-egg de la promotion auto OBSERVED → AUTO_EXEC.
+
+Architecture :
+- À chaque cycle radar, pour chaque TradeSetup généré (passant
+  filter_high_confidence_setups), on check si la (pair, direction) est
+  en état OBSERVED via pair_admission_controller.
+- Si oui, on INSERT une row dans `shadow_setups` avec
+  `system_id='V1_SHADOW_<PAIR>_<DIR>'` (unique par pair-direction pour
+  respecter la contrainte UNIQUE (system_id, bar_timestamp)).
+- La reconciliation existante (`shadow_reconciliation.py`) résout ces
+  shadows automatiquement — pas de filtre par system_id, donc V1 et V2
+  sont traités uniformément.
+
+Note : le système est en lecture seule côté V1 prod. Il ne déclenche
+ni Telegram ni auto-exec. Sa seule sortie est d'alimenter le calcul
+de `compute_promotion_score` pour les pairs OBSERVED.
+"""
+from __future__ import annotations
+
+import logging
+import sqlite3
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+# Même fichier que shadow_v2_core_long
+DB_PATH = Path("/app/data/trades.db") if Path("/app").exists() else Path("trades.db")
+
+V1_SYSTEM_PREFIX = "V1_SHADOW"
+V1_TIMEFRAME = "1h"  # le radar V1 analyse des bougies 1h (CANDLE_INTERVAL effectif)
+DEFAULT_CAPITAL_EUR = 10000.0  # capital fictif pour sizing shadow
+DEFAULT_RISK_PCT = 0.01        # 1% risque par trade, équivalent à V2
+
+
+def system_id_for(pair: str, direction: str) -> str:
+    """V1_SHADOW_<PAIR>_<DIR> — unique par pair+direction pour respecter
+    UNIQUE (system_id, bar_timestamp) lors d'inserts multi-pairs au même cycle.
+
+    Ex: 'V1_SHADOW_XAUUSD_buy', 'V1_SHADOW_EURUSD_sell'.
+    """
+    pair_clean = pair.replace("/", "")
+    return f"{V1_SYSTEM_PREFIX}_{pair_clean}_{direction}"
+
+
+def _persist_v1_shadow(
+    setup: Any,
+    pair: str,
+    direction: str,
+    cycle_at: datetime,
+) -> bool:
+    """INSERT shadow_setups V1_SHADOW. Idempotent via UNIQUE.
+
+    Retourne True si une nouvelle row a été créée, False sinon (collision
+    UNIQUE = même bar logué au cycle précédent, normal pendant warmup).
+    """
+    entry = float(setup.entry_price)
+    sl = float(setup.stop_loss)
+    tp1 = float(setup.take_profit_1)
+    tp2 = getattr(setup, "take_profit_2", None)
+
+    risk = abs(entry - sl)
+    if entry <= 0 or risk <= 0:
+        logger.debug(f"shadow_v1: skip {pair} {direction} — entry/risk invalide ({entry}/{risk})")
+        return False
+    risk_pct = risk / entry
+    reward = abs(tp1 - entry)
+    rr = reward / risk if risk > 0 else 0.0
+
+    sizing_max_loss_eur = DEFAULT_CAPITAL_EUR * DEFAULT_RISK_PCT
+    sizing_position_eur = sizing_max_loss_eur / risk_pct
+
+    # Pattern name : compatibilité avec V2 schema
+    pattern_name = "v1_signal"
+    try:
+        if hasattr(setup, "pattern") and hasattr(setup.pattern, "pattern"):
+            pattern_name = setup.pattern.pattern.value
+        elif hasattr(setup, "pattern"):
+            pattern_name = str(setup.pattern)
+    except Exception:
+        pass
+
+    system_id = system_id_for(pair, direction)
+    cycle_iso = cycle_at.isoformat()
+
+    with sqlite3.connect(DB_PATH) as c:
+        try:
+            c.execute(
+                """
+                INSERT INTO shadow_setups (
+                    cycle_at, bar_timestamp, system_id, pair, timeframe,
+                    direction, pattern, entry_price, stop_loss,
+                    take_profit_1, take_profit_2, risk_pct, rr,
+                    sizing_capital_eur, sizing_risk_pct,
+                    sizing_position_eur, sizing_max_loss_eur
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    cycle_iso, cycle_iso, system_id, pair, V1_TIMEFRAME,
+                    direction, pattern_name,
+                    entry, sl, tp1, tp2, risk_pct, rr,
+                    DEFAULT_CAPITAL_EUR, DEFAULT_RISK_PCT,
+                    sizing_position_eur, sizing_max_loss_eur,
+                ),
+            )
+            return True
+        except sqlite3.IntegrityError:
+            # Collision UNIQUE — déjà logué pour ce cycle/pair/direction
+            return False
+
+
+def log_v1_shadows_for_observed_pairs(setups: list, cycle_at: datetime) -> dict[str, int]:
+    """Pour chaque TradeSetup, log un V1_SHADOW si (pair, direction) en OBSERVED.
+
+    Appelé depuis scheduler.run_analysis_cycle après filter_high_confidence_setups.
+    Idempotent et non-bloquant : log + counts d'erreurs sans propager d'exception.
+
+    Returns:
+        {"logged": int, "skipped_not_observed": int, "errors": int}
+    """
+    from backend.services import pair_admission_controller as pac
+
+    counts = {"logged": 0, "skipped_not_observed": 0, "errors": 0}
+    for setup in setups:
+        try:
+            pair = setup.pair
+            direction = setup.direction.value if hasattr(setup.direction, "value") else str(setup.direction)
+
+            current = pac.get_current_state(pair, direction)
+            if current != pac.STATE_OBSERVED:
+                counts["skipped_not_observed"] += 1
+                continue
+
+            if _persist_v1_shadow(setup, pair, direction, cycle_at):
+                counts["logged"] += 1
+        except Exception as e:
+            logger.warning(f"shadow_v1 log failed for {getattr(setup, 'pair', '?')}: {e}")
+            counts["errors"] += 1
+    return counts
+
+
+def fetch_v1_shadow_pnls(pair: str, direction: str | None, window: int = 30) -> list[float]:
+    """Récupère les pnl_eur des N derniers shadow_setups V1_SHADOW résolus.
+
+    Utilisé par compute_promotion_score (pair_admission_controller) comme
+    fallback quand une pair est en OBSERVED et a 0 trades réels.
+
+    Si direction est None : agrège buy + sell (= scoring pair-level legacy).
+    Sinon : restreint à ce sens.
+
+    Returns:
+        Liste de pnl_eur (float), exit-time desc, limité à `window`.
+    """
+    if direction:
+        system_ids = [system_id_for(pair, direction)]
+    else:
+        system_ids = [system_id_for(pair, "buy"), system_id_for(pair, "sell")]
+
+    placeholders = ",".join("?" * len(system_ids))
+    sql = f"""
+        SELECT pnl_eur FROM shadow_setups
+         WHERE system_id IN ({placeholders})
+           AND pair = ?
+           AND outcome IS NOT NULL
+           AND pnl_eur IS NOT NULL
+         ORDER BY exit_at DESC
+         LIMIT ?
+    """
+    pnls: list[float] = []
+    with sqlite3.connect(DB_PATH) as c:
+        rows = c.execute(sql, (*system_ids, pair, window)).fetchall()
+    for r in rows:
+        try:
+            pnls.append(float(r[0]))
+        except (TypeError, ValueError):
+            continue
+    return pnls
