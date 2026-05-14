@@ -67,6 +67,16 @@ VALID_STATES = frozenset([
 # (= ne pas envoyer Telegram ni auto-exec sans décision explicite)
 DEFAULT_STATE = STATE_OBSERVED
 
+# Cible de la promotion automatique quand tous les critères statistiques sont validés.
+# Défaut TELEGRAM = conservateur (admin valide ensuite AUTO_EXEC manuellement).
+# Surcharge env AUTO_PROMOTE_TARGET=AUTO_EXEC pour activer le full-auto (saut TELEGRAM).
+# ⚠️ AUTO_EXEC engage de l'argent réel sans validation humaine — accepter le risque
+# d'oscillation OBSERVED→AUTO_EXEC→PAUSED (cap downside ≈ -3% capital par pair via
+# pair_pnl_regulator).
+import os as _os
+_raw_target = _os.getenv("AUTO_PROMOTE_TARGET", STATE_TELEGRAM).upper()
+AUTO_PROMOTE_TARGET = _raw_target if _raw_target in (STATE_TELEGRAM, STATE_AUTO_EXEC) else STATE_TELEGRAM
+
 _SCHEMA_ENSURED = False
 
 
@@ -588,10 +598,10 @@ def compute_promotion_score(pair: str, window: int = 30, direction: Optional[str
         reason_parts.append(f"max_dd {max_dd_pct} < -{PROMOTE_MAX_DD_PCT}")
 
     if not reason_parts:
-        # Tous critères OK : éligible AUTO_EXEC. Mais transition auto = TELEGRAM seul,
-        # AUTO_EXEC reste manuel par défaut (admin valide l'entrée d'argent).
-        eligible = STATE_TELEGRAM
-        reason = "all promote criteria met → eligible for TELEGRAM (admin must validate AUTO_EXEC)"
+        # Tous critères OK : cible déterminée par env AUTO_PROMOTE_TARGET.
+        # Défaut TELEGRAM (admin valide AUTO_EXEC ensuite) ; AUTO_EXEC = full-auto.
+        eligible = AUTO_PROMOTE_TARGET
+        reason = f"all promote criteria met → eligible for {AUTO_PROMOTE_TARGET}"
     else:
         reason = "; ".join(reason_parts)
 
@@ -636,9 +646,11 @@ def evaluate_pair(pair: str, direction: Optional[str] = None) -> dict[str, Any]:
     score = compute_promotion_score(pair, direction=direction)
 
     if current == STATE_OBSERVED:
-        if score["eligible_for"] == STATE_TELEGRAM:
-            set_state(pair, STATE_TELEGRAM, f"auto-promote: {score['reason']}", direction=direction, score_snapshot=score)
-            return {"action": "transition", "from_state": current, "to_state": STATE_TELEGRAM, "score": score, "reason": score["reason"]}
+        # Accepte TELEGRAM ou AUTO_EXEC comme cible selon AUTO_PROMOTE_TARGET env.
+        target = score["eligible_for"]
+        if target in (STATE_TELEGRAM, STATE_AUTO_EXEC):
+            set_state(pair, target, f"auto-promote: {score['reason']}", direction=direction, score_snapshot=score)
+            return {"action": "transition", "from_state": current, "to_state": target, "score": score, "reason": score["reason"]}
         return {"action": "keep", "from_state": current, "score": score, "reason": score["reason"]}
 
     elif current == STATE_TELEGRAM:

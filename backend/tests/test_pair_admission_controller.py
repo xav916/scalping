@@ -152,13 +152,13 @@ def test_compute_promotion_score_meets_threshold(_isolated_db, monkeypatch):
     assert score["wr"] >= 45.0
     assert score["pnl_pct"] >= 2.0
     assert score["pf"] >= 1.3
-    assert score["eligible_for"] == pac.STATE_TELEGRAM
+    assert score["eligible_for"] == pac.AUTO_PROMOTE_TARGET
 
 
 # ─── Auto transitions ──────────────────────────────────────────────────
 
 
-def test_evaluate_observed_promotes_to_telegram_if_criteria_met(_isolated_db):
+def test_evaluate_observed_promotes_to_target_if_criteria_met(_isolated_db):
     from backend.services import pair_admission_controller as pac
 
     # 30 winning trades clean
@@ -169,8 +169,9 @@ def test_evaluate_observed_promotes_to_telegram_if_criteria_met(_isolated_db):
         )
     d = pac.evaluate_pair("XAU/USD")
     assert d["action"] == "transition"
-    assert d["to_state"] == pac.STATE_TELEGRAM
-    assert pac.get_current_state("XAU/USD") == pac.STATE_TELEGRAM
+    # Target dépend de AUTO_PROMOTE_TARGET env (default TELEGRAM ; AUTO_EXEC si full-auto).
+    assert d["to_state"] == pac.AUTO_PROMOTE_TARGET
+    assert pac.get_current_state("XAU/USD") == pac.AUTO_PROMOTE_TARGET
 
 
 def test_evaluate_auto_exec_demotes_to_paused_on_drawdown(_isolated_db):

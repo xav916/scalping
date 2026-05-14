@@ -3107,6 +3107,84 @@ async def api_admin_pair_admission_transition(
     }
 
 
+@app.post("/api/admin/pair-admission/auto-apply")
+async def api_admin_pair_admission_auto_apply(
+    payload: dict = None,
+    token: str = "",
+):
+    """Applique automatiquement les promotions éligibles (auth-by-token).
+
+    Pour chaque (pair × direction) du WATCHED_PAIRS :
+    - Si state actuel = OBSERVED ET compute_promotion_score().eligible_for in
+      {TELEGRAM, AUTO_EXEC} (selon AUTO_PROMOTE_TARGET env) → set_state.
+
+    Body : ``{dry_run: bool}`` — si true, calcule sans appliquer (debug).
+    Token : même que health-token / notify-infra-telegram (SHADOW_PUBLIC_TOKEN_HASH).
+
+    Réservé aux routines RemoteTrigger. Le caller voit les actions planifiées /
+    effectuées ; aucune transition automatique de demote (PAUSED reste géré par
+    pair_pnl_regulator côté radar cycle).
+    """
+    import hashlib
+    from fastapi import HTTPException
+    from backend.services import pair_admission_controller as pac
+    from config.settings import WATCHED_PAIRS
+
+    SHADOW_PUBLIC_TOKEN_HASH = "e980b1ed0b45ca6873caa3f2d6ddcf27f4d8a1d0aa87cf9072f6e3e0909b31ec"
+
+    if not token:
+        raise HTTPException(status_code=403, detail="token required")
+    provided_hash = hashlib.sha256(token.encode()).hexdigest()
+    import secrets as _s
+    if not _s.compare_digest(provided_hash, SHADOW_PUBLIC_TOKEN_HASH):
+        raise HTTPException(status_code=403, detail="invalid token")
+
+    dry_run = bool((payload or {}).get("dry_run", False))
+    actions = []
+    promotable_states = {pac.STATE_TELEGRAM, pac.STATE_AUTO_EXEC}
+
+    for pair in WATCHED_PAIRS:
+        for direction in ("buy", "sell"):
+            current = pac.get_current_state(pair, direction)
+            if current != pac.STATE_OBSERVED:
+                continue
+            score = pac.compute_promotion_score(pair, direction=direction)
+            eligible = score.get("eligible_for")
+            if eligible not in promotable_states:
+                continue
+
+            reason = (
+                f"auto-apply: criteria met "
+                f"(sample={score['sample']}, pnl_pct={score['pnl_pct']}%, "
+                f"wr={score['wr']}%, pf={score['pf']}, dd={score['max_dd_pct']}%)"
+            )
+            entry = {
+                "pair": pair,
+                "direction": direction,
+                "from_state": current,
+                "to_state": eligible,
+                "score": score,
+                "reason": reason,
+                "applied": False,
+            }
+            if not dry_run:
+                pac.set_state(
+                    pair, eligible, reason,
+                    direction=direction, transitioned_by="auto-apply",
+                )
+                entry["applied"] = True
+            actions.append(entry)
+
+    return {
+        "dry_run": dry_run,
+        "auto_promote_target_env": pac.AUTO_PROMOTE_TARGET,
+        "watched_pairs_count": len(WATCHED_PAIRS),
+        "actions_count": len(actions),
+        "applied_count": sum(1 for a in actions if a["applied"]),
+        "actions": actions,
+    }
+
+
 @app.get("/api/admin/pair-pnl-regulator")
 async def api_admin_pair_pnl_regulator(
     _ctx: AuthContext = Depends(require_admin),
