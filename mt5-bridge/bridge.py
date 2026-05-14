@@ -63,6 +63,26 @@ TRADING_HOURS_UTC = os.getenv("TRADING_HOURS_UTC", "").strip()
 PARTIAL_CLOSE_PCT = float(os.getenv("PARTIAL_CLOSE_PCT", "50"))
 TRAIL_DISTANCE_POINTS = int(os.getenv("TRAIL_DISTANCE_POINTS", "150"))
 
+# Broker-specific symbol mapping. Surcharge la résolution par défaut quand
+# le broker utilise un alias non-trivial (ex. Pepperstone : WTI/USD → USOIL).
+# Format env : MT5_SYMBOL_MAP="WTI/USD:USOIL,XYZ:ABC". Le mapping s'applique
+# AVANT les fallbacks classiques (suffixes .c/.m/.pro/.raw) — donc même si on
+# mappe vers USOIL, on tente USOIL, USOIL.c, USOIL.m, etc. au cas où le
+# broker re-suffixe.
+def _parse_symbol_map(raw: str) -> dict[str, str]:
+    m: dict[str, str] = {}
+    for entry in (raw or "").split(","):
+        entry = entry.strip()
+        if ":" not in entry:
+            continue
+        k, v = entry.split(":", 1)
+        k, v = k.strip(), v.strip()
+        if k and v:
+            m[k] = v
+    return m
+
+MT5_SYMBOL_MAP = _parse_symbol_map(os.getenv("MT5_SYMBOL_MAP", ""))
+
 # Génère une clé si absente (affichée au démarrage pour copie dans le client)
 if not BRIDGE_API_KEY:
     BRIDGE_API_KEY = secrets.token_urlsafe(24)
@@ -127,9 +147,27 @@ def resolve_symbol(pair_str: str):
     MetaQuotes-Demo utilise typiquement 'EURUSD', mais les brokers peuvent
     suffixer (.c, .m, .pro, etc.). On tente plusieurs variantes et on
     retourne la première qui existe et est sélectionnable.
+
+    Si la pair est dans MT5_SYMBOL_MAP (env var), le mapping broker-specific
+    est testé en priorité (ex. Pepperstone WTI/USD → USOIL).
     """
     base = pair_str.replace("/", "")
-    candidates = [
+    candidates: list[str] = []
+    # 1) Override broker-specific (priorité haute)
+    mapped = MT5_SYMBOL_MAP.get(pair_str)
+    if mapped:
+        mapped_base = mapped.replace("/", "")
+        candidates.extend([
+            mapped,
+            mapped_base,
+            mapped_base + ".c",
+            mapped_base + ".m",
+            mapped_base + "m",
+            mapped_base + ".pro",
+            mapped_base + ".raw",
+        ])
+    # 2) Variantes par défaut
+    candidates.extend([
         pair_str,        # EUR/USD littéral
         base,            # EURUSD
         base + ".c",
@@ -137,7 +175,7 @@ def resolve_symbol(pair_str: str):
         base + "m",
         base + ".pro",
         base + ".raw",
-    ]
+    ])
     for c in candidates:
         info = mt5.symbol_info(c)
         if info is None:
