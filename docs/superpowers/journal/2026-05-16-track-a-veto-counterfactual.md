@@ -1,13 +1,8 @@
-# 2026-05-16 — Track A × veto contrefactuel (auto)
-
-**Sample :** 8 réconciliés (DÉRISOIRE — pas d'analyse statistiquement valide possible)
-**Verdict :** veto_would_hurt
-
----
+> 🚨 **ALERT VERDICT CHANGED** — direction_verdict = `veto_would_hurt`, n_total = `8`. Le veto a quitté le statut 'insufficient'.
 
 # Track A × Veto géopolitique — analyse contrefactuelle
 
-**Généré :** 2026-05-16T06:00:31+00:00
+**Généré :** 2026-05-16T07:05:44+00:00
 **Source :** `shadow_setups` filtre `outcome IS NOT NULL AND geopolitical_features_json IS NOT NULL`
 **Échantillon :** 8 setups réconciliés
 **Confiance échantillon :** DÉRISOIRE — pas d'analyse statistiquement valide possible
