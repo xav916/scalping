@@ -2402,6 +2402,14 @@ async def api_admin_test_telegram_close_pedagogic(
     }
 
 
+# État cooldown in-memory pour /api/admin/notify-infra-telegram. Clé =
+# dedup_key fourni par le caller (ex: "ea_health_executed_rate_low"),
+# valeur = datetime UTC du dernier envoi. Reset au reboot — acceptable :
+# au pire on renvoie une alerte de plus juste après un restart. Même
+# pattern que `_last_alert_at` dans rejection_alerts.py.
+_INFRA_ALERT_LAST_SENT: dict[str, datetime] = {}
+
+
 @app.post("/api/admin/notify-infra-telegram")
 async def api_admin_notify_infra_telegram(
     payload: dict,
@@ -2414,9 +2422,15 @@ async def api_admin_notify_infra_telegram(
     dans leur prompt. Le token de cet endpoint est partagé avec
     `public-summary` et `counterfactual` (même hash SHA256).
 
-    Body : `{"title": str, "body": str}` — title est mis en gras Markdown,
-    body suit en clair. La concat finale est tronquée à 4000 chars
-    (limite Telegram = 4096).
+    Body : `{"title": str, "body": str, "dedup_key"?: str,
+    "cooldown_seconds"?: int}`. title est mis en gras HTML, body suit en
+    clair, concat tronquée à 4000 chars (limite Telegram = 4096).
+
+    Cooldown optionnel (2026-05-16) : si `dedup_key` ET `cooldown_seconds`
+    > 0 fournis, suppress l'alerte si même dedup_key envoyée il y a moins
+    de cooldown_seconds. Évite que les routines récurrentes (EA health
+    monitoring 4×/jour) spamment sur anomalies persistantes. État
+    in-memory côté process (reset au restart container).
 
     Côté env (EC2) : INFRA_TELEGRAM_BOT_TOKEN + INFRA_TELEGRAM_CHAT_ID.
     Si non configuré, retourne 503 (pas de fail silencieux).
@@ -2442,6 +2456,28 @@ async def api_admin_notify_infra_telegram(
     body = (payload.get("body") or "").strip()
     if not title and not body:
         raise HTTPException(status_code=400, detail="title or body required")
+
+    # Cooldown : skip si dedup_key déjà envoyé récemment.
+    dedup_key = (payload.get("dedup_key") or "").strip()
+    try:
+        cooldown_seconds = int(payload.get("cooldown_seconds") or 0)
+    except (TypeError, ValueError):
+        cooldown_seconds = 0
+    if dedup_key and cooldown_seconds > 0:
+        now = datetime.now(timezone.utc)
+        last = _INFRA_ALERT_LAST_SENT.get(dedup_key)
+        if last is not None:
+            elapsed = (now - last).total_seconds()
+            if elapsed < cooldown_seconds:
+                return {
+                    "sent": False,
+                    "skipped": "cooldown",
+                    "dedup_key": dedup_key,
+                    "elapsed_seconds": int(elapsed),
+                    "cooldown_seconds": cooldown_seconds,
+                    "remaining_seconds": int(cooldown_seconds - elapsed),
+                }
+        _INFRA_ALERT_LAST_SENT[dedup_key] = now
 
     # HTML depuis 2026-05-13 : Markdown legacy cassait dès qu'un body
     # contenait un underscore (88 HTTP 400 / 96h observés). html.escape
