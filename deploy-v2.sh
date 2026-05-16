@@ -5,7 +5,10 @@
 set -euo pipefail
 
 KEY="C:/Users/xav91/Scalping/scalping/scalping-key.pem"
-HOST="ec2-user@100.103.107.75"
+# Default Tailscale IP. Si bloqué (IP home change, peer offline, etc.),
+# fallback public AWS : `SCALPING_HOST=ec2-user@51.21.132.216 bash deploy-v2.sh`.
+# Voir mémoire `feedback_ssh_tailscale_blocked_fallback.md`.
+HOST="${SCALPING_HOST:-ec2-user@100.103.107.75}"
 
 # Push les commits locaux AVANT le pull distant — sinon l'EC2 ne récupère rien
 # et le docker build réutilise le cache de l'ancien react-builder (bundle JS
