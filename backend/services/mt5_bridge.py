@@ -264,6 +264,40 @@ def _check_rejection(setup, dest=None) -> str | None:
     return None
 
 
+def _build_order_payload(setup, sz: dict) -> dict:
+    """Construit le dict envoyé à l'EA MQL5 / bridge.py.
+
+    Contient à la fois les **prix absolus** (sl/tp) pour compat ascendante
+    avec EA v≤1.04 et les **distances relatives** (sl_dist/tp_dist/tp2_dist)
+    pour permettre à l'EA v1.05+ de recalculer SL/TP à partir du fill price
+    effectif. Sans ça, le slippage entre signal et exécution dégrade le R:R
+    réel (mesuré 0.7-1.3 au lieu de 1.8 sur ETH/USD le 2026-05-18).
+    """
+    entry = setup.entry_price
+    sl = setup.stop_loss
+    tp1 = setup.take_profit_1
+    tp2 = getattr(setup, "take_profit_2", None)
+    return {
+        "pair": setup.pair,
+        "direction": _direction_value(setup),
+        "entry": entry,
+        # Prix absolus (legacy EA v≤1.04, bridge.py admin).
+        "sl": sl,
+        "tp": tp1,
+        "tp2": tp2,
+        # Distances relatives (EA v1.05+). Positives en unités de prix.
+        # L'EA calculera : SL = fill_price ± sl_dist, TP = fill_price ± tp_dist.
+        "sl_dist": abs(entry - sl),
+        "tp_dist": abs(entry - tp1),
+        "tp2_dist": abs(entry - tp2) if tp2 is not None else None,
+        "risk_money": sz["risk_money"],
+        "comment": f"scalping-radar-{date.today().isoformat()}",
+        "risk_pct": RISK_PER_TRADE_PCT,
+        "confidence": getattr(setup, "confidence_score", None),
+        "sizing_detail": sz,
+    }
+
+
 def _should_push(setup) -> bool:
     """Backward-compat : True si OK, False si rejeté."""
     return _check_rejection(setup) is None
@@ -351,24 +385,7 @@ async def _push_to_destination(setup, dest) -> None:
     from backend.services import sizing
     sz = sizing.compute_risk_money(setup)
     risk_money = sz["risk_money"]
-    payload = {
-        "pair": setup.pair,
-        "direction": direction,
-        "entry": setup.entry_price,
-        "sl": setup.stop_loss,
-        "tp": setup.take_profit_1,
-        # risk_money : le bridge calcule les lots en utilisant les specs
-        # RÉELLES du symbole chez le broker (trade_tick_value, volume_step,
-        # etc.). Évite les formules forex appliquées aux métaux qui
-        # sous-sizent sur XAU/XAG.
-        "risk_money": risk_money,
-        "comment": f"scalping-radar-{date.today().isoformat()}",
-        # Infos complémentaires pour les logs du bridge
-        "tp2": getattr(setup, "take_profit_2", None),
-        "risk_pct": RISK_PER_TRADE_PCT,
-        "confidence": getattr(setup, "confidence_score", None),
-        "sizing_detail": sz,
-    }
+    payload = _build_order_payload(setup, sz)
 
     # ─── Routing dispatch (Phase MQL.C) ──────────────────────────────
     # admin_legacy (user_id=None) : push HTTP synchrone vers le bridge admin.

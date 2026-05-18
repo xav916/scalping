@@ -24,11 +24,11 @@
 //+------------------------------------------------------------------+
 #property copyright   "Scalping Radar"
 #property link        "https://app.scalping-radar.online"
-#property version     "1.04"
+#property version     "1.05"
 #property strict
 
 // Version envoyée au backend dans le query string du poll (telemetry).
-#define EA_VERSION_STRING "1.04"
+#define EA_VERSION_STRING "1.05"
 
 //─── Inputs (modifiables par l'user au drag sur chart) ──────────────
 input string   InpApiKey              = "";                                    // API key (depuis Settings → Auto-exec MT5)
@@ -281,6 +281,14 @@ void ProcessSingleOrder(const string order_json)
     double entry = ExtractDoubleField(payload_json, "entry");
     double sl = ExtractDoubleField(payload_json, "sl");
     double tp = ExtractDoubleField(payload_json, "tp");
+    // v1.05 : distances relatives — si présentes et > 0, on les utilise pour
+    // recalculer SL/TP à partir du fill price effectif après market order.
+    // Élimine le biais slippage qui rognait le R:R réel (0.7-1.3 au lieu de
+    // 1.8 sur ETH/USD le 2026-05-18). Backward compat : si le backend
+    // n'envoie pas sl_dist/tp_dist (legacy v≤1.04), on garde la logique
+    // historique SL/TP absolus.
+    double sl_dist = ExtractDoubleField(payload_json, "sl_dist");
+    double tp_dist = ExtractDoubleField(payload_json, "tp_dist");
     string comment = ExtractStringField(payload_json, "comment");
 
     if(pair == "" || direction == "" || sl == 0.0 || tp == 0.0)
@@ -295,7 +303,7 @@ void ProcessSingleOrder(const string order_json)
     if(InpDryRun)
     {
         Print("[ScalpingRadarEA] DRY_RUN order_id=", order_id, " ", symbol, " ", direction,
-              " sl=", sl, " tp=", tp);
+              " sl=", sl, " tp=", tp, " sl_dist=", sl_dist, " tp_dist=", tp_dist);
         AckResult(order_id, true, 999000 + order_id, "DRY_RUN");
         return;
     }
@@ -304,7 +312,7 @@ void ProcessSingleOrder(const string order_json)
     // dans tous les cas (succès comme échec) pour qu'on l'envoie dans
     // l'ack — utile pour le debug à distance via mt5_pending_orders.mt5_error.
     uint out_retcode = 0;
-    int ticket = ExecuteOrderSend(symbol, direction, sl, tp, comment, order_id, out_retcode);
+    int ticket = ExecuteOrderSend(symbol, direction, sl, tp, sl_dist, tp_dist, comment, order_id, out_retcode);
     if(ticket > 0)
     {
         g_orders_executed++;
@@ -427,13 +435,70 @@ ENUM_ORDER_TYPE_FILLING DetermineFilling(const string symbol)
 }
 
 //+------------------------------------------------------------------+
+//| ApplySlTpFromFill — TRADE_ACTION_SLTP après market order         |
+//|                                                                  |
+//| v1.05 : pose SL/TP en relatif au fill price plutôt qu'en absolu  |
+//| pour neutraliser le slippage entry signal vs entry réel.         |
+//| Backend envoie sl_dist/tp_dist (distances positives en unités    |
+//| de prix), on calcule sl = fill ± sl_dist et tp = fill ± tp_dist. |
+//+------------------------------------------------------------------+
+void ApplySlTpFromFill(
+    const string symbol,
+    const ulong position_ticket,
+    const bool is_buy,
+    const double fill,
+    const double sl_dist,
+    const double tp_dist
+)
+{
+    if(fill <= 0.0 || sl_dist <= 0.0 || tp_dist <= 0.0) return;
+
+    int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
+    double new_sl = is_buy ? (fill - sl_dist) : (fill + sl_dist);
+    double new_tp = is_buy ? (fill + tp_dist) : (fill - tp_dist);
+    new_sl = NormalizeDouble(new_sl, digits);
+    new_tp = NormalizeDouble(new_tp, digits);
+
+    MqlTradeRequest mod_req = {};
+    MqlTradeResult mod_result = {};
+    mod_req.action = TRADE_ACTION_SLTP;
+    mod_req.position = position_ticket;
+    mod_req.symbol = symbol;
+    mod_req.sl = new_sl;
+    mod_req.tp = new_tp;
+
+    if(!OrderSend(mod_req, mod_result))
+    {
+        Print("[ScalpingRadarEA] ApplySlTpFromFill OrderSend FAILED ticket=",
+              position_ticket, " err=", GetLastError(),
+              " retcode=", mod_result.retcode);
+        return;
+    }
+    if(mod_result.retcode != TRADE_RETCODE_DONE)
+    {
+        Print("[ScalpingRadarEA] ApplySlTpFromFill retcode=", mod_result.retcode,
+              " ticket=", position_ticket, " sl=", new_sl, " tp=", new_tp);
+        return;
+    }
+    Print("[ScalpingRadarEA] SL/TP set from fill=", fill,
+          " sl=", new_sl, " tp=", new_tp, " ticket=", position_ticket);
+}
+
+
+//+------------------------------------------------------------------+
 //| ExecuteOrderSend — wrap MqlTradeRequest                          |
+//|                                                                  |
+//| sl_dist / tp_dist (v1.05) : si > 0, place le market order SANS   |
+//| SL/TP puis pose SL/TP relatifs au fill price via TRADE_ACTION_SLTP.|
+//| Si == 0, fallback legacy : SL/TP absolus from payload (v≤1.04). |
 //+------------------------------------------------------------------+
 int ExecuteOrderSend(
     const string symbol,
     const string direction,
     const double sl,
     const double tp,
+    const double sl_dist,
+    const double tp_dist,
     const string comment,
     const int order_id,
     uint &out_retcode
@@ -446,19 +511,30 @@ int ExecuteOrderSend(
         return 0;
     }
 
+    bool use_dist = (sl_dist > 0.0 && tp_dist > 0.0);
+    bool is_buy = (direction == "buy" || direction == "BUY");
+
     MqlTradeRequest request = {};
     MqlTradeResult result = {};
     request.action = TRADE_ACTION_DEAL;
     request.symbol = symbol;
     request.volume = InpDefaultLot;
-
-    bool is_buy = (direction == "buy" || direction == "BUY");
     request.type = is_buy ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
     request.price = is_buy
         ? SymbolInfoDouble(symbol, SYMBOL_ASK)
         : SymbolInfoDouble(symbol, SYMBOL_BID);
-    request.sl = sl;
-    request.tp = tp;
+    // Si on a les distances : market order sans SL/TP, on les pose ensuite
+    // depuis le fill price effectif. Sinon legacy.
+    if(use_dist)
+    {
+        request.sl = 0;
+        request.tp = 0;
+    }
+    else
+    {
+        request.sl = sl;
+        request.tp = tp;
+    }
     request.deviation = InpDeviationPoints;
     request.magic = InpMagicNumber;
     string short_comment = "scalping-radar-" + IntegerToString(order_id);
@@ -480,6 +556,14 @@ int ExecuteOrderSend(
         return 0;
     }
     out_retcode = result.retcode;
+
+    if(use_dist)
+    {
+        // result.order = ticket de l'ordre qui a ouvert la position.
+        // En MT5, pour un market order rempli, position_ticket = order_ticket.
+        ApplySlTpFromFill(symbol, result.order, is_buy, result.price, sl_dist, tp_dist);
+    }
+
     return (int)result.order;
 }
 

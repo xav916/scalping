@@ -370,14 +370,25 @@ def _pick_filling_mode(symbol: str) -> int:
         return mt5.ORDER_FILLING_IOC
 
 
-def _send_market_order(symbol: str, direction: str, lots: float, sl: float, tp: float, comment: str) -> dict:
-    """Envoie un ordre MARKET à MT5. Retourne un dict {ok, ticket, retcode, message}."""
+def _send_market_order(
+    symbol: str, direction: str, lots: float, sl: float, tp: float, comment: str,
+    sl_dist: float = 0.0, tp_dist: float = 0.0,
+) -> dict:
+    """Envoie un ordre MARKET à MT5. Retourne un dict {ok, ticket, retcode, message}.
+
+    Si ``sl_dist`` et ``tp_dist`` sont > 0 (envoyés par le backend depuis
+    2026-05-18) : market order **sans** SL/TP puis modification de la
+    position avec SL/TP recalculés depuis le fill price effectif. Élimine
+    le biais slippage qui dégradait le R:R réel (mesuré 0.7-1.3 au lieu de
+    1.8 sur ETH/USD le 2026-05-18). Sinon : legacy avec SL/TP absolus.
+    """
     tick = mt5.symbol_info_tick(symbol)
     if tick is None:
         return {"ok": False, "message": f"No tick data for {symbol}"}
 
     price = tick.ask if direction == "buy" else tick.bid
     order_type = mt5.ORDER_TYPE_BUY if direction == "buy" else mt5.ORDER_TYPE_SELL
+    use_dist = (sl_dist > 0.0 and tp_dist > 0.0)
 
     req = {
         "action": mt5.TRADE_ACTION_DEAL,
@@ -385,8 +396,9 @@ def _send_market_order(symbol: str, direction: str, lots: float, sl: float, tp: 
         "volume": lots,
         "type": order_type,
         "price": price,
-        "sl": sl,
-        "tp": tp,
+        # Si use_dist : SL/TP posés après fill via TRADE_ACTION_SLTP.
+        "sl": 0.0 if use_dist else sl,
+        "tp": 0.0 if use_dist else tp,
         "deviation": DEVIATION_POINTS,
         "magic": MAGIC_NUMBER,
         "comment": comment[:30],  # MT5 limite le comment
@@ -396,14 +408,67 @@ def _send_market_order(symbol: str, direction: str, lots: float, sl: float, tp: 
     result = mt5.order_send(req)
     if result is None:
         return {"ok": False, "message": f"order_send returned None: {mt5.last_error()}"}
+    ok = result.retcode == mt5.TRADE_RETCODE_DONE
+
+    if ok and use_dist and result.price > 0:
+        # Pose SL/TP relatifs au fill price. Si la modify échoue, on log
+        # mais on retourne quand même ok=True : l'ordre est rempli, l'absence
+        # de SL/TP est récupérable manuellement.
+        _apply_sltp_from_fill(
+            symbol=symbol,
+            ticket=result.order,
+            is_buy=(direction == "buy"),
+            fill=result.price,
+            sl_dist=sl_dist,
+            tp_dist=tp_dist,
+        )
+
     return {
-        "ok": result.retcode == mt5.TRADE_RETCODE_DONE,
+        "ok": ok,
         "ticket": result.order,
         "retcode": result.retcode,
         "message": result.comment,
         "price": result.price,
         "volume": result.volume,
     }
+
+
+def _apply_sltp_from_fill(*, symbol: str, ticket: int, is_buy: bool, fill: float,
+                          sl_dist: float, tp_dist: float) -> None:
+    """Pose SL/TP relatifs au fill price via TRADE_ACTION_SLTP.
+
+    No-op si dist invalides. Best-effort : log warning si échec mais ne
+    raise pas — l'ordre principal est déjà rempli.
+    """
+    if fill <= 0 or sl_dist <= 0 or tp_dist <= 0:
+        return
+    info = mt5.symbol_info(symbol)
+    digits = info.digits if info else 5
+    new_sl = round(fill - sl_dist, digits) if is_buy else round(fill + sl_dist, digits)
+    new_tp = round(fill + tp_dist, digits) if is_buy else round(fill - tp_dist, digits)
+    req = {
+        "action": mt5.TRADE_ACTION_SLTP,
+        "position": ticket,
+        "symbol": symbol,
+        "sl": new_sl,
+        "tp": new_tp,
+    }
+    r = mt5.order_send(req)
+    if r is None:
+        logger.warning(
+            f"[SLTP] modify returned None ticket={ticket} err={mt5.last_error()}"
+        )
+        return
+    if r.retcode != mt5.TRADE_RETCODE_DONE:
+        logger.warning(
+            f"[SLTP] modify retcode={r.retcode} ticket={ticket} "
+            f"sl={new_sl} tp={new_tp} msg={r.comment}"
+        )
+        return
+    logger.info(
+        f"[SLTP] ticket={ticket} SL/TP recalculé depuis fill={fill} "
+        f"sl={new_sl} tp={new_tp}"
+    )
 
 
 def _close_position(p) -> dict:
@@ -1158,7 +1223,19 @@ def _handle_live_order(*, data, pair, mt5_symbol, direction, lots, entry, sl, tp
         )
         return jsonify({"ok": False, "blocked": True, "reason": reason}), 429
 
-    result = _send_market_order(mt5_symbol, direction, lots, sl, tp, comment=client_comment or "scalping-radar")
+    # Distances relatives optionnelles (backend 2026-05-18+) pour neutraliser
+    # le biais slippage. Si absentes ou nulles, fallback legacy absolu.
+    try:
+        sl_dist = float(data.get("sl_dist") or 0.0)
+        tp_dist = float(data.get("tp_dist") or 0.0)
+    except (ValueError, TypeError):
+        sl_dist = 0.0
+        tp_dist = 0.0
+    result = _send_market_order(
+        mt5_symbol, direction, lots, sl, tp,
+        comment=client_comment or "scalping-radar",
+        sl_dist=sl_dist, tp_dist=tp_dist,
+    )
 
     if result["ok"]:
         logger.info(
