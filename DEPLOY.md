@@ -82,13 +82,15 @@ HTTP redirige automatiquement vers HTTPS.
 
 ## Mise a jour apres un nouveau commit
 
+**Workflow standard depuis le PC local** :
+
 ```bash
-cd ~/scalping
-git pull
-sudo bash deploy/setup-ec2.sh
+bash deploy-v2.sh
 ```
 
-Le domaine et le token sont lus depuis `.env`, pas besoin de les re-specifier.
+Ce script (à la racine du repo) fait : `git push origin main` + ssh EC2 + `git pull` + `docker build` + `systemctl restart`. Il **ne touche jamais** à `/opt/scalping/data/` ni à `/opt/scalping/.env`. Il intègre depuis 2026-05-19 un pre-flight check qui refuse le deploy si `trades.db < 100KB` ou `.env < 500B` (signature d'un wipe). Override avec `ALLOW_WIPED_DEPLOY=1 bash deploy-v2.sh`.
+
+**À NE PAS utiliser pour des mises à jour incrémentales** : `sudo bash deploy/setup-ec2.sh` — c'est un script de **setup initial** d'EC2 vierge (installer packages, DuckDNS, Certbot, nginx, systemd). Il fait un `rsync --delete` qui ne devrait toucher que le code, mais a déjà wipé `/opt/scalping/data/trades.db` lors d'un incident le 2026-05-18 (corrigé depuis avec `--exclude 'data' --exclude '.env'`).
 
 ## Comment ca marche
 

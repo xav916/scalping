@@ -1,4 +1,17 @@
 #!/usr/bin/env bash
+# ╔══════════════════════════════════════════════════════════════════════╗
+# ║  SETUP-EC2.SH — INITIAL EC2 PROVISIONING ONLY                       ║
+# ║                                                                      ║
+# ║  Ce script est conçu pour le PREMIER déploiement d'une EC2 vierge :  ║
+# ║  install packages, DuckDNS, Certbot, nginx config, systemd service.  ║
+# ║                                                                      ║
+# ║  POUR LES MISES À JOUR INCRÉMENTALES (nouveau commit), UTILISER :    ║
+# ║      bash deploy-v2.sh                                               ║
+# ║                                                                      ║
+# ║  setup-ec2.sh est idempotent sur l'infra mais le rsync --delete      ║
+# ║  exclut désormais data/ et .env (corrigé 2026-05-19 après incident   ║
+# ║  rsync --delete qui avait wipé trades.db + secrets).                 ║
+# ╚══════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 
 APP_DIR="/opt/scalping"
@@ -85,6 +98,12 @@ DUCKDNS_CRON="*/5 * * * * curl -s 'https://www.duckdns.org/update?domains=${DUCK
 echo "Cron DuckDNS installe (mise a jour IP toutes les 5 min)."
 
 # ─── Copie du projet ────────────────────────────────────────────────
+# IMPORTANT : --exclude 'data' et 'data/' protègent la DB SQLite live
+# (montée en bind dans le container). Sans ces excludes, le --delete efface
+# /opt/scalping/data/trades.db à chaque run du script. Incident vécu 2026-05-18 :
+# un agent a relancé setup-ec2.sh comme deploy incrémental → wipe complet.
+# --exclude '.env' protège les secrets prod (le script recrée .env depuis
+# .env.example plus bas SEULEMENT si absent).
 mkdir -p "${APP_DIR}"
 rsync -a --delete \
   --exclude '.git' \
@@ -93,6 +112,9 @@ rsync -a --delete \
   --exclude '.pytest_cache' \
   --exclude 'scalping-key.pem' \
   --exclude '.claude' \
+  --exclude 'data' \
+  --exclude 'data/' \
+  --exclude '.env' \
   "${REPO_DIR}/" "${APP_DIR}/"
 
 cd "${APP_DIR}"

@@ -10,6 +10,38 @@ KEY="C:/Users/xav91/Scalping/scalping/scalping-key.pem"
 # Voir mémoire `feedback_ssh_tailscale_blocked_fallback.md`.
 HOST="${SCALPING_HOST:-ec2-user@100.103.107.75}"
 
+# === PRE-FLIGHT: guard against deploying onto a wiped EC2 ===
+# Added 2026-05-19 after rsync --delete incident wiped /opt/scalping/data + .env.
+# Refuse to deploy if data dir or .env look truncated, to give a chance to investigate.
+# Override with: ALLOW_WIPED_DEPLOY=1 bash deploy-v2.sh
+echo "=== pre-flight check (data + env sanity) ==="
+ssh -i "$KEY" -o StrictHostKeyChecking=no "$HOST" bash <<'PREFLIGHT'
+set -e
+if [ ! -d /opt/scalping/data ]; then
+    echo "ABORT: /opt/scalping/data missing on EC2" >&2
+    exit 1
+fi
+# Threshold = 100KB:
+# - Wipe state right after service start = 94KB (blocked)
+# - Post-recovery state with some inserts = 221KB+ (allowed)
+# - Bump to 1MB once DB is back to nominal size (1-2 weeks after recovery).
+trades_size=$(stat -c %s /opt/scalping/data/trades.db 2>/dev/null || echo 0)
+if [ "$trades_size" -lt 100000 ] && [ -z "${ALLOW_WIPED_DEPLOY:-}" ]; then
+    echo "ABORT: /opt/scalping/data/trades.db is only ${trades_size} bytes (< 100KB)" >&2
+    echo "       This is the wiped-state signature. Investigate before deploying." >&2
+    echo "       Override: ALLOW_WIPED_DEPLOY=1 bash deploy-v2.sh" >&2
+    exit 1
+fi
+env_size=$(stat -c %s /opt/scalping/.env 2>/dev/null || echo 0)
+if [ "$env_size" -lt 500 ] && [ -z "${ALLOW_WIPED_DEPLOY:-}" ]; then
+    echo "ABORT: /opt/scalping/.env is only ${env_size} bytes (< 500)" >&2
+    echo "       This is the wiped-state signature. Investigate before deploying." >&2
+    echo "       Override: ALLOW_WIPED_DEPLOY=1 bash deploy-v2.sh" >&2
+    exit 1
+fi
+echo "  -> sane (trades.db ${trades_size} bytes, .env ${env_size} bytes)"
+PREFLIGHT
+
 # Push les commits locaux AVANT le pull distant — sinon l'EC2 ne récupère rien
 # et le docker build réutilise le cache de l'ancien react-builder (bundle JS
 # identique → toutes les nouvelles features absentes en prod).
