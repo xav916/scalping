@@ -48,7 +48,8 @@ def _isolated_db(tmp_path, monkeypatch):
             """
             CREATE TABLE shadow_setups (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                pair TEXT, outcome TEXT, exit_at TEXT, pnl_eur REAL
+                system_id TEXT, pair TEXT, direction TEXT,
+                outcome TEXT, exit_at TEXT, pnl_eur REAL
             )
             """
         )
@@ -153,6 +154,50 @@ def test_compute_promotion_score_meets_threshold(_isolated_db, monkeypatch):
     assert score["pnl_pct"] >= 2.0
     assert score["pf"] >= 1.3
     assert score["eligible_for"] == pac.AUTO_PROMOTE_TARGET
+
+
+# ─── Shadow fallback filtre system_id (fix 2026-05-18) ─────────────────
+
+
+def _insert_shadow(db_path, pair: str, direction: str, pnl: float, system_id: str, idx: int = 0):
+    exit_at = (datetime.now(timezone.utc) + timedelta(minutes=idx)).isoformat()
+    with sqlite3.connect(db_path) as c:
+        c.execute(
+            "INSERT INTO shadow_setups (system_id, pair, direction, exit_at, outcome, pnl_eur) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (system_id, pair, direction, exit_at, "TP1" if pnl > 0 else "SL", pnl),
+        )
+
+
+def test_shadow_fallback_filters_to_v1_only(_isolated_db):
+    """V2_CORE_LONG shadows ne doivent PAS contaminer le score d'admission V1."""
+    from backend.services import pair_admission_controller as pac
+
+    # 0 live + 20 V1_SHADOW gagnants + 20 V2_CORE_LONG perdants
+    for i in range(20):
+        _insert_shadow(_isolated_db, "XAU/USD", "buy", 50.0, "V1_SHADOW_XAUUSD_buy", idx=i)
+    for i in range(20):
+        _insert_shadow(_isolated_db, "XAU/USD", "buy", -50.0, "V2_CORE_LONG_XAUUSD_4H", idx=100 + i)
+
+    pnls = pac._fetch_trades_for_pair("XAU/USD", window=30, direction="buy")
+    # Sans le filtre, on prendrait les 30 plus récents (= les 20 V2 + 10 V1) =
+    # mix perdants/gagnants. Avec le filtre, on ne prend que les 20 V1 gagnants.
+    assert len(pnls) == 20, f"attendu 20 V1_SHADOW seulement, reçu {len(pnls)}"
+    assert all(p > 0 for p in pnls), "tous les pnl doivent être les V1 gagnants"
+
+
+def test_shadow_fallback_pair_level_also_filtered(_isolated_db):
+    """Filtre V1_SHADOW% s'applique aussi en mode pair-level (direction=None)."""
+    from backend.services import pair_admission_controller as pac
+
+    for i in range(10):
+        _insert_shadow(_isolated_db, "EUR/JPY", "buy", 30.0, "V1_SHADOW_EURJPY_buy", idx=i)
+    for i in range(20):
+        _insert_shadow(_isolated_db, "EUR/JPY", "buy", -20.0, "V2_CORE_LONG_EURJPY_4H", idx=100 + i)
+
+    pnls = pac._fetch_trades_for_pair("EUR/JPY", window=30, direction=None)
+    assert len(pnls) == 10
+    assert all(p > 0 for p in pnls)
 
 
 # ─── Auto transitions ──────────────────────────────────────────────────

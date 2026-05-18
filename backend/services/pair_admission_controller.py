@@ -522,7 +522,12 @@ def _fetch_trades_for_pair(pair: str, window: int, direction: Optional[str] = No
         for r in rows:
             pnls.append(float(r[0]))
 
-        # Fallback shadow_setups si pas assez de live
+        # Fallback shadow_setups si pas assez de live.
+        # Filtre system_id LIKE 'V1_SHADOW_%' : la décision d'admission
+        # pilote l'auto-exec V1 sur le bridge, donc on score sur les signaux
+        # V1 uniquement. Sans ce filtre on mélangeait V2_CORE_LONG (TF H4,
+        # SL/TP différents) et V1_SHADOW (TF 1h) — biais quand V2 a une
+        # série de pertes/gains atypiques sur la même pair.
         if len(pnls) < window:
             need = window - len(pnls)
             if direction is not None:
@@ -532,6 +537,7 @@ def _fetch_trades_for_pair(pair: str, window: int, direction: Optional[str] = No
                      WHERE pair = ? AND outcome IS NOT NULL
                        AND outcome != 'OPEN' AND pnl_eur IS NOT NULL
                        AND LOWER(direction) = ?
+                       AND system_id LIKE 'V1_SHADOW_%'
                      ORDER BY exit_at DESC LIMIT ?
                     """,
                     (pair, direction, need),
@@ -542,6 +548,7 @@ def _fetch_trades_for_pair(pair: str, window: int, direction: Optional[str] = No
                     SELECT pnl_eur FROM shadow_setups
                      WHERE pair = ? AND outcome IS NOT NULL
                        AND outcome != 'OPEN' AND pnl_eur IS NOT NULL
+                       AND system_id LIKE 'V1_SHADOW_%'
                      ORDER BY exit_at DESC LIMIT ?
                     """,
                     (pair, need),
