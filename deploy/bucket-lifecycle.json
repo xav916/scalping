@@ -7,6 +7,9 @@
       "Expiration": {
         "Days": 30
       },
+      "NoncurrentVersionExpiration": {
+        "NoncurrentDays": 30
+      },
       "AbortIncompleteMultipartUpload": {
         "DaysAfterInitiation": 7
       }
