@@ -20,7 +20,7 @@ if [ ! -d "$DATA_DIR" ]; then
     exit 1
 fi
 
-for db in trades.db backtest.db; do
+for db in trades.db backtest.db macro.db; do
     if [ -f "$DATA_DIR/$db" ]; then
         echo "[$(date)] Upload $db -> s3://$S3_BUCKET/$TIMESTAMP/$db"
         aws s3 cp "$DATA_DIR/$db" "s3://$S3_BUCKET/$TIMESTAMP/$db" --no-progress

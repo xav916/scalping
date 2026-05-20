@@ -1,0 +1,15 @@
+{
+  "Rules": [
+    {
+      "ID": "expire-backups-after-30-days",
+      "Status": "Enabled",
+      "Filter": {},
+      "Expiration": {
+        "Days": 30
+      },
+      "AbortIncompleteMultipartUpload": {
+        "DaysAfterInitiation": 7
+      }
+    }
+  ]
+}

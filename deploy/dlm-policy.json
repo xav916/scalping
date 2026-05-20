@@ -1,0 +1,17 @@
+{
+  "ResourceTypes": ["VOLUME"],
+  "TargetTags": [{"Key": "Backup", "Value": "true"}],
+  "Schedules": [
+    {
+      "Name": "daily-snapshot-7d-retention",
+      "CopyTags": true,
+      "TagsToAdd": [{"Key": "Source", "Value": "dlm-daily"}],
+      "CreateRule": {
+        "Interval": 24,
+        "IntervalUnit": "HOURS",
+        "Times": ["02:00"]
+      },
+      "RetainRule": {"Count": 7}
+    }
+  ]
+}
