@@ -1,11 +1,11 @@
 # Day Trading Radar V0 — spec architecture
 
-**Date :** 2026-05-09
-**Statut :** spec **draft, gated** par la validation Scalping V2 au gate S6 (2026-06-06)
+**Date :** 2026-05-09 (gate décalé le 2026-05-22)
+**Statut :** spec **draft, gated** par la validation Scalping V2 au gate **S8 (2026-07-04)** — décalé de S6 (2026-06-06) suite à l'incident rsync --delete du 2026-05-18 qui a wipé la table `shadow_setups` et fait perdre 3 semaines de données V2
 **Auteur :** session collaborative humain + assistant (Opus 4.7 1M)
-**Horizon de mise en chantier :** ~2026-06-06 (au plus tôt) si Track A V2_CORE_LONG XAU H4 valide gate S6 (cf. `project_research_j1_findings.md`)
+**Horizon de mise en chantier :** ~2026-07-04 (au plus tôt) si Track A V2_CORE_LONG XAU H4 valide gate S8 (cf. `project_research_j1_findings.md`)
 **Effort estimé :** ~15-20 h pour V0 shadow log, +30-40 h pour passage live démo
-**Précondition :** Scalping V2 confirmé profitable en shadow live (gate S6) OU pivot SaaS observatoire-only acté
+**Précondition :** Scalping V2 confirmé profitable en shadow live (gate S8) OU pivot SaaS observatoire-only acté
 
 ---
 
