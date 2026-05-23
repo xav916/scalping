@@ -1,13 +1,6 @@
-# 2026-05-23 — Track A × veto contrefactuel (auto)
-
-**Sample :** 2 réconciliés (DÉRISOIRE — pas d'analyse statistiquement valide possible)
-**Verdict :** insufficient
-
----
-
 # Track A × Veto géopolitique — analyse contrefactuelle
 
-**Généré :** 2026-05-23T06:10:26+00:00
+**Généré :** 2026-05-23T07:03:45+00:00
 **Source :** `shadow_setups` filtre `outcome IS NOT NULL AND geopolitical_features_json IS NOT NULL`
 **Échantillon :** 2 setups réconciliés
 **Confiance échantillon :** DÉRISOIRE — pas d'analyse statistiquement valide possible
