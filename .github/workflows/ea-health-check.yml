@@ -1,0 +1,24 @@
+name: EA Health Check (4×/day)
+
+on:
+  schedule:
+    # Run at 00:23, 06:23, 12:23, 18:23 UTC
+    - cron: '23 0,6,12,18 * * *'
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  health-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run EA health check
+        run: bash monitoring/ea-health-check.sh
+
+      - name: Archive health logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: health-check-logs
+          path: monitoring/health-checks.log
+          retention-days: 30
