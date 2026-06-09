@@ -456,6 +456,11 @@ GEOPOLITICAL_VETO_RECESSION_PROB = float(os.getenv("GEOPOLITICAL_VETO_RECESSION_
 # Règle 4 : GDELT stress geopolitical=high → veto longs indices européens.
 GEOPOLITICAL_VETO_GDELT_STRESS_ENABLED = os.getenv("GEOPOLITICAL_VETO_GDELT_STRESS_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 
+# Règle 5 : Tariff / trade war prob ≥ X% à <Y jours → veto longs risk-on (indices US, crypto).
+GEOPOLITICAL_VETO_TARIFF_ENABLED = os.getenv("GEOPOLITICAL_VETO_TARIFF_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+GEOPOLITICAL_VETO_TARIFF_PROB = float(os.getenv("GEOPOLITICAL_VETO_TARIFF_PROB", "0.40"))
+GEOPOLITICAL_VETO_TARIFF_DAYS = int(os.getenv("GEOPOLITICAL_VETO_TARIFF_DAYS", "30"))
+
 # Track A shadow filtered twin : pour chaque setup Track A baseline, si
 # le veto contrefactuel laisse passer (would_veto=False), logger AUSSI un
 # 2e setup avec system_id suffixé `_FILTERED`. Permet la comparaison live

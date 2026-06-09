@@ -27,6 +27,10 @@ Règles V1 (toggleables individuellement via env vars) :
    → veto LONGS sur indices européens (DAX/CAC40/FTSE). Logique :
    tension globale + Europe particulièrement exposée = aversion risque.
 
+5. **TARIFF** — Polymarket "tariff" ou "trade war" prob ≥ seuil à <X jours
+   → veto LONGS sur risk-on (indices US, crypto). Logique : une annonce
+   tariff imminente = repricing risk-off (indices baissent, crypto sell-off).
+
 Toutes les règles ont des seuils env-tunables (cf. ``config.settings``).
 """
 from __future__ import annotations
@@ -46,6 +50,9 @@ from config.settings import (
     GEOPOLITICAL_VETO_RECESSION_ENABLED,
     GEOPOLITICAL_VETO_RECESSION_PROB,
     GEOPOLITICAL_VETO_GDELT_STRESS_ENABLED,
+    GEOPOLITICAL_VETO_TARIFF_ENABLED,
+    GEOPOLITICAL_VETO_TARIFF_PROB,
+    GEOPOLITICAL_VETO_TARIFF_DAYS,
 )
 
 logger = logging.getLogger(__name__)
@@ -55,6 +62,7 @@ logger = logging.getLogger(__name__)
 _SAFE_HAVEN_AND_OIL = {"XAU/USD", "XAG/USD", "WTI/USD"}
 _US_INDICES = {"SPX", "NDX", "US30"}
 _EU_INDICES = {"DAX", "CAC40", "FTSE", "EUR/JPY", "EUR/GBP"}
+_RISK_ON_AND_CRYPTO = {"SPX", "NDX", "US30", "BTC/USD", "ETH/USD"}
 
 
 # ─── Polymarket question matchers ────────────────────────────────────
@@ -131,7 +139,15 @@ def _check_fed_dovish(pair: str, direction: str, poly: dict | None) -> Optional[
     monetary_markets = (poly.get("themes") or {}).get("monetary") or []
     best = None
     for m in monetary_markets:
-        if _q_matches(m.get("question", ""), ["rate cut"]) or _q_matches(m.get("question", ""), ["fed", "cut"]):
+        q = m.get("question", "")
+        # Polymarket emploie indifféremment "rate cut", "fed cut", ou "decrease interest rates" :
+        # on accepte les 4 patterns sinon la règle reste inerte sur la wording actuelle.
+        if (
+            _q_matches(q, ["rate cut"])
+            or _q_matches(q, ["fed", "cut"])
+            or _q_matches(q, ["fed", "decrease"])
+            or _q_matches(q, ["decrease", "interest", "rates"])
+        ):
             days = _days_to(m.get("end_date"))
             if days is None or days < 0 or days > GEOPOLITICAL_VETO_FED_DOVISH_DAYS:
                 continue
@@ -170,6 +186,42 @@ def _check_recession(pair: str, direction: str, poly: dict | None) -> Optional[s
     return (
         f"[recession] Recession prob {prob*100:.0f}% "
         f"({market.get('question', '')[:60]}) → long {pair} risqué"
+    )
+
+
+def _check_tariff(pair: str, direction: str, poly: dict | None) -> Optional[str]:
+    """Tariff / trade war prob élevée à horizon court + long risk-on (indices US, crypto).
+
+    Logique : une annonce tariff imminente déclenche un repricing risk-off
+    (indices baissent, crypto sell-off). On veto les longs risk-on.
+    Sources : marchés Polymarket sous les thèmes politics/economy/geopolitical
+    mentionnant "tariff" ou "trade war".
+    """
+    if not GEOPOLITICAL_VETO_TARIFF_ENABLED:
+        return None
+    if direction != "buy" or pair not in _RISK_ON_AND_CRYPTO:
+        return None
+    if not poly:
+        return None
+    themes = poly.get("themes") or {}
+    best = None
+    for theme_name in ("politics", "economy", "geopolitical"):
+        for m in themes.get(theme_name) or []:
+            q = m.get("question", "")
+            if _q_matches(q, ["tariff"]) or _q_matches(q, ["trade", "war"]):
+                days = _days_to(m.get("end_date"))
+                if days is None or days < 0 or days > GEOPOLITICAL_VETO_TARIFF_DAYS:
+                    continue
+                prob = m.get("yes_prob") or 0
+                if prob >= GEOPOLITICAL_VETO_TARIFF_PROB:
+                    if best is None or prob > best[0]:
+                        best = (prob, m, days)
+    if best is None:
+        return None
+    prob, market, days = best
+    return (
+        f"[tariff] Tariff/trade war prob {prob*100:.0f}% à {days}j "
+        f"({market.get('question', '')[:60]}) → long {pair} risk-on risqué"
     )
 
 
@@ -238,6 +290,7 @@ def apply(pair: str, direction: str) -> tuple[bool, list[str], dict]:
             ("fed_dovish", _check_fed_dovish, (pair, direction, poly)),
             ("recession", _check_recession, (pair, direction, poly)),
             ("gdelt_stress", _check_gdelt_stress, (pair, direction, gdelt)),
+            ("tariff", _check_tariff, (pair, direction, poly)),
         ):
             try:
                 rules_evaluated.append(rule_id)
@@ -266,7 +319,7 @@ import sqlite3 as _sqlite3
 from datetime import timedelta as _timedelta, timezone as _timezone
 
 _RULE_TAG_RE = _re.compile(r"\[(\w+)\]")
-KNOWN_RULES = ("iran_hormuz", "fed_dovish", "recession", "gdelt_stress")
+KNOWN_RULES = ("iran_hormuz", "fed_dovish", "recession", "gdelt_stress", "tariff")
 
 
 def get_stats(days: int = 7) -> dict:
