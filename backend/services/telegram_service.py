@@ -813,11 +813,23 @@ async def send_daily_recap() -> None:
             (today_paris,),
         ).fetchone()
 
-        # Scope auto-exec
+        # Scope auto-exec : la table pair_admission_state est append-only
+        # (insert à chaque transition), donc filtrer state='AUTO_EXEC' direct
+        # remonte aussi les paires qui ONT ÉTÉ AUTO_EXEC un jour. Il faut
+        # joindre sur MAX(id) par (pair, direction) pour avoir l'état courant.
         scope_rows = cur.execute(
-            """SELECT pair, direction FROM pair_admission_state
-               WHERE state='AUTO_EXEC' AND direction IS NOT NULL
-               ORDER BY pair, direction"""
+            """SELECT pas.pair, pas.direction
+               FROM pair_admission_state pas
+               JOIN (
+                   SELECT pair, direction, MAX(id) AS max_id
+                   FROM pair_admission_state
+                   GROUP BY pair, direction
+               ) t
+                 ON pas.pair = t.pair
+                AND IFNULL(pas.direction,'') = IFNULL(t.direction,'')
+                AND pas.id = t.max_id
+               WHERE pas.state = 'AUTO_EXEC' AND pas.direction IS NOT NULL
+               ORDER BY pas.pair, pas.direction"""
         ).fetchall()
 
         # Transitions du jour
