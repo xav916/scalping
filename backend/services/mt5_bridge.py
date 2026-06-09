@@ -461,6 +461,20 @@ async def _push_to_destination(setup, dest) -> None:
                     + ") "
                     f"mode={data.get('mode', '?')}"
                 )
+                # Notif user "Trade OUVERT" si le bridge a vraiment fillé
+                # (ticket présent, mode='live'). Best-effort, non bloquant.
+                if data.get("ok") and data.get("ticket"):
+                    try:
+                        from backend.services import telegram_service as _tg
+                        await _tg.send_trade_opened(
+                            setup,
+                            ticket=int(data.get("ticket")),
+                            fill_price=float(data.get("price") or setup.entry_price),
+                            volume=float(data.get("volume") or 0),
+                            mode=str(data.get("mode") or "?"),
+                        )
+                    except Exception as _e:
+                        logger.warning(f"send_trade_opened hook error: {_e}")
             else:
                 logger.warning(
                     f"MT5 bridge[{dest.destination_id}] a répondu {r.status_code} "

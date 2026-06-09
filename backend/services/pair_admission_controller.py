@@ -432,6 +432,19 @@ def _notify_transition(
         # Pas de loop actif (test ou contexte sync) → run sync
         asyncio.run(coro)
 
+    # Notif user-facing en plus de l'infra (refonte 2026-06-10).
+    # Best-effort, fire-and-forget. Évite spam : déjà filtré côté caller
+    # par `transitioned_by != "auto:backfill"`.
+    try:
+        from backend.services.telegram_service import send_pac_transition_user
+        coro_user = send_pac_transition_user(pair, direction, from_state, to_state, reason or "")
+        if loop and loop.is_running():
+            asyncio.ensure_future(coro_user)
+        else:
+            asyncio.run(coro_user)
+    except Exception as e:
+        logger.debug(f"pair_admission: telegram user notify failed: {e}")
+
 
 # ─── Score composite + transitions auto ─────────────────────────────────
 

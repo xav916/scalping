@@ -637,3 +637,250 @@ async def send_close(trade: dict) -> None:
                     logger.info(f"Close Telegram envoye a {user} pour {pair} ticket={ticket}")
         except Exception as e:
             logger.warning(f"Erreur envoi close Telegram {user}: {e}")
+
+
+# ─── Refonte notifs user (2026-06-10) ────────────────────────────────
+# Suite à la demande user du 2026-06-10 minuit : virer les push setup
+# verbeux (TELEGRAM_SETUP_VERDICTS="" en .env coupe send_setup) et envoyer
+# uniquement des notifs actionnables :
+#   - send_trade_opened : confirme un fill broker réussi
+#   - send_close       : (déjà existant) confirme une clôture
+#   - send_veto_alert  : 1er match d'une règle veto dans la journée
+#   - send_pac_transition_user : changement d'état AUTO_EXEC/PAUSED/etc.
+#   - send_daily_recap : récap 23h59 Paris (PnL + scope + transitions + vetos)
+
+# Dedup en mémoire pour la notif veto : 1 push max par (date, rule_id, pair)
+_veto_notified_today: set[tuple[str, str, str]] = set()
+
+
+def _format_trade_opened(setup, ticket: int, fill_price: float, volume: float, mode: str) -> str:
+    from datetime import datetime, timezone, timedelta
+    dir_value = setup.direction.value if hasattr(setup.direction, "value") else str(setup.direction)
+    dir_label = "ACHAT 🟢" if dir_value == "buy" else "VENTE 🔴"
+    pair_label = _PAIR_FR_LABEL.get(setup.pair, setup.pair)
+    paris_now = datetime.now(timezone.utc) + timedelta(hours=2)
+    time_str = paris_now.strftime("%H:%M")
+    sl = float(getattr(setup, "stop_loss", 0) or 0)
+    tp1 = float(getattr(setup, "take_profit_1", 0) or 0)
+    tp2 = float(getattr(setup, "take_profit_2", 0) or 0)
+    rr1 = float(getattr(setup, "risk_reward_1", 0) or 0)
+    lines = [
+        f"🟢 *Trade OUVERT* · {pair_label} ({setup.pair}) · {dir_label}",
+        f"Fill `{fill_price:.5f}` · volume `{volume}` · ticket `{ticket}` · {time_str} Paris",
+        f"SL `{sl:.5f}` · TP1 `{tp1:.5f}` (R:R {rr1:.1f}) · TP2 `{tp2:.5f}`",
+        f"Mode broker : *{mode}*",
+    ]
+    return "\n".join(lines)
+
+
+async def send_trade_opened(setup, ticket: int, fill_price: float, volume: float, mode: str) -> None:
+    """Push une notif user-facing à la confirmation d'un fill broker.
+
+    Appelée depuis ``mt5_bridge._push_to_destination`` après status 200
+    sur le path admin_legacy. Le ticket vient de la réponse bridge.
+    Best-effort : toute exception silencieuse, ne casse jamais le flow trade.
+    """
+    if not is_configured():
+        return
+    try:
+        text = _format_trade_opened(setup, ticket, fill_price, volume, mode)
+        destinataires = _destinataires()
+        url = TELEGRAM_API.format(token=TELEGRAM_BOT_TOKEN)
+        for user, chat_id in destinataires:
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    r = await client.post(url, json={
+                        "chat_id": chat_id, "text": text,
+                        "parse_mode": "Markdown", "disable_web_page_preview": True,
+                    })
+                    if r.status_code != 200:
+                        logger.warning(f"Telegram trade_opened {r.status_code}: {r.text[:200]}")
+            except Exception as e:
+                logger.warning(f"Erreur envoi trade_opened {user}: {e}")
+    except Exception as e:
+        logger.warning(f"send_trade_opened error: {e}")
+
+
+async def send_veto_alert(pair: str, direction: str, rules_matched: list[str], reasons: list[str]) -> None:
+    """Push une alerte user au 1er match veto géopolitique du jour pour
+    (pair, rule). Dedup en mémoire par (date_iso, rule_id, pair) — évite le
+    spam si la même règle déclenche plusieurs cycles.
+    """
+    if not is_configured() or not rules_matched:
+        return
+    from datetime import date
+    today_iso = date.today().isoformat()
+    new_rules = []
+    for rule_id in rules_matched:
+        key = (today_iso, rule_id, pair)
+        if key in _veto_notified_today:
+            continue
+        _veto_notified_today.add(key)
+        new_rules.append(rule_id)
+    if not new_rules:
+        return
+    try:
+        rules_str = ", ".join(new_rules)
+        reasons_str = "\n".join(f"• {r}" for r in (reasons or [])[:3])
+        text = (
+            f"🌍 *Veto géopolitique activé* · {pair} {direction}\n"
+            f"Règle(s) déclenchée(s) : *{rules_str}*\n"
+            f"{reasons_str}\n"
+            f"_Les setups concernés ne seront pas auto-exécutés tant que la condition macro tient._"
+        )
+        destinataires = _destinataires()
+        url = TELEGRAM_API.format(token=TELEGRAM_BOT_TOKEN)
+        for user, chat_id in destinataires:
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    r = await client.post(url, json={
+                        "chat_id": chat_id, "text": text,
+                        "parse_mode": "Markdown", "disable_web_page_preview": True,
+                    })
+                    if r.status_code != 200:
+                        logger.warning(f"Telegram veto_alert {r.status_code}: {r.text[:200]}")
+            except Exception as e:
+                logger.warning(f"Erreur envoi veto_alert {user}: {e}")
+    except Exception as e:
+        logger.warning(f"send_veto_alert error: {e}")
+
+
+async def send_pac_transition_user(pair: str, direction: str | None, from_state: str | None, to_state: str, reason: str) -> None:
+    """Push une notif user d'une transition PAC (en plus de la notif infra existante).
+
+    Filtré : on n'envoie PAS les backfills (transitioned_by='auto:backfill').
+    Les states PAUSED/AUTO_EXEC/DEMOTED/OBSERVED/TELEGRAM intéressent le user
+    pour comprendre quelles paires deviennent éligibles ou pas.
+    """
+    if not is_configured():
+        return
+    try:
+        arrow = "📈" if to_state in ("TELEGRAM", "AUTO_EXEC") else "📉" if to_state == "DEMOTED" else "⏸" if to_state == "PAUSED" else "🔄"
+        dir_str = direction or "*"
+        reason_short = (reason or "")[:120]
+        text = (
+            f"{arrow} *Transition paire* · {pair} {dir_str}\n"
+            f"*{from_state or 'NEW'}* → *{to_state}*\n"
+            f"_{reason_short}_"
+        )
+        destinataires = _destinataires()
+        url = TELEGRAM_API.format(token=TELEGRAM_BOT_TOKEN)
+        for user, chat_id in destinataires:
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    r = await client.post(url, json={
+                        "chat_id": chat_id, "text": text,
+                        "parse_mode": "Markdown", "disable_web_page_preview": True,
+                    })
+                    if r.status_code != 200:
+                        logger.warning(f"Telegram pac_transition_user {r.status_code}: {r.text[:200]}")
+            except Exception as e:
+                logger.warning(f"Erreur envoi pac_transition_user {user}: {e}")
+    except Exception as e:
+        logger.warning(f"send_pac_transition_user error: {e}")
+
+
+async def send_daily_recap() -> None:
+    """Récap 23h59 Paris : PnL du jour + scope auto-exec + transitions du jour + vetos.
+
+    Cron job appelé depuis scheduler.py via CronTrigger(timezone="Europe/Paris",
+    hour=23, minute=59). Le récap couvre la fenêtre Paris [00:00 → 23:59] du jour.
+    Best-effort : toute erreur SQL → message minimal sans crash.
+    """
+    if not is_configured():
+        return
+    try:
+        from datetime import datetime, timezone, timedelta
+        import sqlite3
+        from backend.services.trade_log_service import _DB_PATH
+
+        paris_now = datetime.now(timezone.utc) + timedelta(hours=2)
+        today_paris = paris_now.date().isoformat()
+        today_label = paris_now.strftime("%d/%m/%Y")
+
+        con = sqlite3.connect(str(_DB_PATH))
+        con.row_factory = sqlite3.Row
+        cur = con.cursor()
+
+        # PnL du jour (Xavier auto)
+        pnl_row = cur.execute(
+            """SELECT COUNT(*) n, COALESCE(SUM(pnl),0) pnl,
+                      SUM(CASE WHEN pnl>0 THEN 1 ELSE 0 END) wins,
+                      SUM(CASE WHEN pnl<0 THEN 1 ELSE 0 END) losses
+               FROM personal_trades
+               WHERE is_auto=1 AND status='CLOSED'
+                 AND DATE(closed_at)=DATE(?)""",
+            (today_paris,),
+        ).fetchone()
+
+        # Scope auto-exec
+        scope_rows = cur.execute(
+            """SELECT pair, direction FROM pair_admission_state
+               WHERE state='AUTO_EXEC' AND direction IS NOT NULL
+               ORDER BY pair, direction"""
+        ).fetchall()
+
+        # Transitions du jour
+        trans_rows = cur.execute(
+            """SELECT pair, direction, state, reason
+               FROM pair_admission_state
+               WHERE DATE(state_since)=DATE(?)
+                 AND transitioned_by != 'auto:backfill'
+               ORDER BY state_since DESC LIMIT 15""",
+            (today_paris,),
+        ).fetchall()
+
+        # Vetos du jour
+        veto_row = cur.execute(
+            """SELECT COUNT(*) n FROM signal_rejections
+               WHERE reason_code='geopolitical_veto'
+                 AND DATE(created_at)=DATE(?)""",
+            (today_paris,),
+        ).fetchone()
+
+        con.close()
+
+        # Format
+        lines = [f"📊 *Récap du {today_label}*", ""]
+        n = pnl_row["n"] or 0
+        if n > 0:
+            pnl = pnl_row["pnl"] or 0
+            wins = pnl_row["wins"] or 0
+            losses = pnl_row["losses"] or 0
+            emoji = "🟢" if pnl > 0 else ("🔴" if pnl < 0 else "⚪")
+            lines.append(f"{emoji} *PnL du jour : {pnl:+.2f} $*")
+            wr = (100.0 * wins / n) if n > 0 else 0
+            lines.append(f"   {n} trades clôturés · {wins} gagnants / {losses} perdants · WR {wr:.0f}%")
+        else:
+            lines.append("💤 Aucun trade clôturé aujourd'hui.")
+
+        lines.append("")
+        lines.append(f"📋 *Scope auto-exec* ({len(scope_rows)} paires actives) :")
+        if scope_rows:
+            for r in scope_rows[:20]:
+                lines.append(f"   • {r['pair']} {r['direction']}")
+        else:
+            lines.append("   _(aucune paire AUTO_EXEC)_")
+
+        if trans_rows:
+            lines.append("")
+            lines.append(f"🔄 *Transitions du jour* ({len(trans_rows)})")
+            for r in trans_rows[:8]:
+                reason_short = (r["reason"] or "")[:60]
+                dir_str = r["direction"] or "*"
+                lines.append(f"   • {r['pair']} {dir_str} → *{r['state']}* — {reason_short}")
+        else:
+            lines.append("")
+            lines.append("🔄 Pas de transition PAC aujourd'hui.")
+
+        n_veto = veto_row["n"] or 0
+        lines.append("")
+        if n_veto > 0:
+            lines.append(f"🌍 *{n_veto} setup(s) bloqué(s) par veto géopolitique aujourd'hui.*")
+        else:
+            lines.append("🌍 Aucun veto géopolitique aujourd'hui.")
+
+        await send_text("\n".join(lines))
+
+    except Exception as e:
+        logger.warning(f"send_daily_recap error: {e}")

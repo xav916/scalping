@@ -623,6 +623,18 @@ def start_scheduler() -> AsyncIOScheduler:
         name="Email summary quotidien",
         replace_existing=True,
     )
+    # Récap quotidien Telegram à 23h59 Paris (timezone-aware, gère CET/CEST)
+    # Refonte 2026-06-10 : PnL du jour + scope auto-exec + transitions + vetos.
+    from backend.services.telegram_service import send_daily_recap
+    async def _telegram_daily_recap_cycle():
+        await send_daily_recap()
+    _scheduler.add_job(
+        _telegram_daily_recap_cycle,
+        CronTrigger(hour=23, minute=59, timezone="Europe/Paris"),
+        id="telegram_daily_recap",
+        name="Récap Telegram 23h59 Paris",
+        replace_existing=True,
+    )
     # Sync bridge MT5 → personal_trades : pull incrémental depuis /audit
     # pour que les ordres auto apparaissent dans le dashboard.
     from backend.services.mt5_sync import sync_from_bridge

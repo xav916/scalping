@@ -618,6 +618,17 @@ def enrich_trade_setup(
                     f"geopolitical_veto pair={setup.pair} dir={setup.direction.value} "
                     f"matched={meta.get('rules_matched')} reasons={reasons}"
                 )
+                # Notif user 1× par (jour, rule, pair) — dedup côté telegram_service.
+                # Fire-and-forget pour ne jamais bloquer le pipeline scoring.
+                try:
+                    import asyncio as _asyncio
+                    from backend.services import telegram_service as _tg
+                    _asyncio.create_task(_tg.send_veto_alert(
+                        setup.pair, setup.direction.value,
+                        meta.get("rules_matched") or [], reasons,
+                    ))
+                except Exception as _e:
+                    logger.warning(f"send_veto_alert hook error: {_e}")
         except Exception as e:
             logger.warning(f"geopolitical_veto error: {e}")
 
