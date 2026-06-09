@@ -347,13 +347,46 @@ def _format_setup(setup) -> str:
     rr1 = float(getattr(setup, "risk_reward_1", 0) or 0)
     rr2 = float(getattr(setup, "risk_reward_2", 0) or 0)
 
+    # Statut d'exécution PAC : distingue clairement "trade auto-exécuté chez
+    # ton broker" vs "signal info uniquement (paire en surveillance/PAUSED)".
+    # Évite la confusion vécue le 2026-06-09 où un signal GBP/USD buy avec
+    # verdict TAKE et summary "passez l'ordre" arrivait alors que la paire
+    # était PAUSED depuis 6 jours et que le bridge n'exécutait rien.
+    pac_auto = None
+    pac_state = None
+    try:
+        from backend.services import pair_admission_controller as _pac
+        if _pac.has_explicit_state(setup.pair, dir_value):
+            pac_state = _pac.get_current_state(setup.pair, dir_value)
+            pac_auto = (pac_state == "AUTO_EXEC")
+        else:
+            # Fallback legacy stars : si pair dans _STAR_PAIRS_SET, considère auto
+            pac_auto = setup.pair in _STAR_PAIRS_SET
+            pac_state = "AUTO_EXEC (legacy)" if pac_auto else "non-éligible"
+    except Exception:
+        pac_auto = None  # PAC indisponible → on n'affiche pas de badge
+
+    if pac_auto is True:
+        exec_badge = "🤖 *Auto-exécuté* — ordre envoyé chez ton broker."
+    elif pac_auto is False:
+        exec_badge = (
+            f"👁 *Signal info uniquement* — paire en `{pac_state}`, "
+            f"**pas d'auto-exécution**. À placer manuellement si tu veux."
+        )
+    else:
+        exec_badge = None
+
     lines = [
         f"{verdict_icon} *{pair_label}* ({setup.pair}) — {dir_label}",
         f"Score *{score:.0f}/100* · {time_str} Paris",
+    ]
+    if exec_badge:
+        lines.append(exec_badge)
+    lines.extend([
         "",
         "🧭 *Lecture du radar*",
         f"Pattern détecté : *{pattern_explain}*.",
-    ]
+    ])
 
     verdict_summary = getattr(setup, "verdict_summary", None)
     if verdict_summary:
