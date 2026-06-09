@@ -163,6 +163,22 @@ PAIR_PNL_REGULATOR_WINDOW_TRADES = int(os.getenv("PAIR_PNL_REGULATOR_WINDOW_TRAD
 PAIR_PNL_REGULATOR_MIN_SAMPLE = int(os.getenv("PAIR_PNL_REGULATOR_MIN_SAMPLE", "10"))
 PAIR_PNL_REGULATOR_PAUSE_THRESHOLD_PCT = float(os.getenv("PAIR_PNL_REGULATOR_PAUSE_THRESHOLD_PCT", "-3.0"))
 PAIR_PNL_REGULATOR_PAUSE_DURATION_DAYS = int(os.getenv("PAIR_PNL_REGULATOR_PAUSE_DURATION_DAYS", "14"))
+
+# Circuit breaker démotions PAC : bloque les auto-demotes si trop de demotions
+# dans une fenêtre glissante. Anti-cascade conçu suite à l'observation du
+# 2026-06-07/08 (17 demotions auto en 48h). Quand le seuil est atteint, les
+# auto-demotes sont gelées jusqu'à ce que le compteur retombe sous le seuil.
+# Une notification Telegram user+infra est envoyée à chaque blocage.
+PAC_CIRCUIT_BREAKER_ENABLED = os.getenv("PAC_CIRCUIT_BREAKER_ENABLED", "true").lower() in ("true", "1", "yes")
+PAC_CIRCUIT_BREAKER_THRESHOLD = int(os.getenv("PAC_CIRCUIT_BREAKER_THRESHOLD", "5"))
+PAC_CIRCUIT_BREAKER_WINDOW_DAYS = int(os.getenv("PAC_CIRCUIT_BREAKER_WINDOW_DAYS", "7"))
+
+# Délai minimum (jours) en état TELEGRAM avant promotion auto vers AUTO_EXEC.
+# Restaure le palier loss-averse asymétrique du design d'origine : la première
+# promotion automatique (OBSERVED → TELEGRAM) capture les signaux user-facing,
+# puis seule la stabilité prolongée déclenche le passage AUTO_EXEC sans humain.
+# Default 7j ≈ 1 cycle hebdo macro complet.
+PAC_TELEGRAM_TO_AUTOEXEC_DAYS = int(os.getenv("PAC_TELEGRAM_TO_AUTOEXEC_DAYS", "7"))
 # Cap par pair : N positions max SIMULTANÉMENT sur la même paire. Forcé
 # de diversifier, évite la concentration aveugle (ex: 4 XAU/USD ouverts
 # qui tombent ensemble sur un mouvement défavorable).

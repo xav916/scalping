@@ -85,6 +85,92 @@ def _db_path() -> str:
     return str(_DB_PATH)
 
 
+# ─── Circuit breaker auto-demotes ─────────────────────────────────────
+# Anti-cascade : si > THRESHOLD demotions auto sur fenêtre glissante,
+# bloque les nouvelles demotions auto. Le PAUSED reste, l'humain peut
+# intervenir. Cf. 2026-06-07/08 : 17 demotions en 48h.
+
+
+def _breaker_window() -> int:
+    try:
+        from config.settings import PAC_CIRCUIT_BREAKER_WINDOW_DAYS
+        return int(PAC_CIRCUIT_BREAKER_WINDOW_DAYS)
+    except Exception:
+        return 7
+
+
+def _breaker_threshold() -> int:
+    try:
+        from config.settings import PAC_CIRCUIT_BREAKER_THRESHOLD
+        return int(PAC_CIRCUIT_BREAKER_THRESHOLD)
+    except Exception:
+        return 5
+
+
+def _count_recent_auto_demotions(window_days: int = 7) -> int:
+    """Compte les DEMOTED auto sur fenêtre glissante."""
+    from datetime import timedelta
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=window_days)).isoformat()
+    try:
+        with sqlite3.connect(_db_path()) as c:
+            row = c.execute(
+                """SELECT COUNT(*) FROM pair_admission_state
+                   WHERE state = ? AND state_since >= ?
+                     AND transitioned_by LIKE 'auto%'""",
+                ("DEMOTED", cutoff),
+            ).fetchone()
+        return int(row[0]) if row else 0
+    except Exception:
+        return 0
+
+
+def is_demotion_blocked() -> bool:
+    """True si le circuit breaker bloque les auto-demotes (anti-cascade)."""
+    try:
+        from config.settings import PAC_CIRCUIT_BREAKER_ENABLED
+    except ImportError:
+        return False
+    if not PAC_CIRCUIT_BREAKER_ENABLED:
+        return False
+    return _count_recent_auto_demotions(_breaker_window()) >= _breaker_threshold()
+
+
+_breaker_notified_window: set[str] = set()  # dedup notif par jour
+
+
+def _notify_circuit_breaker_block(pair: str, direction: str | None, n_recent: int) -> None:
+    """Push Telegram (user+infra) à chaque blocage. Dedup 1× par (date, pair, direction)
+    pour éviter le spam si le breaker déclenche sur plusieurs paires en cascade.
+    """
+    try:
+        today = datetime.now(timezone.utc).date().isoformat()
+        key = f"{today}|{pair}|{direction or ''}"
+        if key in _breaker_notified_window:
+            return
+        _breaker_notified_window.add(key)
+        # Reset si jour change
+        if len(_breaker_notified_window) > 50:
+            _breaker_notified_window.clear()
+            _breaker_notified_window.add(key)
+
+        import asyncio
+        from backend.services.telegram_service import send_text
+        msg = (
+            f"🚨 *Circuit breaker PAC*\n"
+            f"DEMOTE bloquée pour `{pair}` `{direction or '*'}` "
+            f"({n_recent} demotes auto / {_breaker_window()}j ≥ {_breaker_threshold()}).\n"
+            f"_Action humaine requise pour éjecter manuellement si vraiment nécessaire._"
+        )
+        coro = send_text(msg)
+        try:
+            loop = asyncio.get_running_loop()
+            asyncio.ensure_future(coro)
+        except RuntimeError:
+            asyncio.run(coro)
+    except Exception as e:
+        logger.debug(f"_notify_circuit_breaker_block error: {e}")
+
+
 def _ensure_schema() -> None:
     """Crée pair_admission_state si pas déjà là. Idempotent.
 
@@ -696,7 +782,34 @@ def evaluate_pair(pair: str, direction: Optional[str] = None) -> dict[str, Any]:
         if score["eligible_for"] == STATE_OBSERVED and score["sample"] >= PROMOTE_MIN_SAMPLE:
             set_state(pair, STATE_OBSERVED, f"auto-demote: {score['reason']}", direction=direction, score_snapshot=score)
             return {"action": "transition", "from_state": current, "to_state": STATE_OBSERVED, "score": score, "reason": score["reason"]}
-        return {"action": "keep", "from_state": current, "score": score, "reason": "telegram healthy or sample insufficient"}
+        # Palier loss-averse asymétrique : promote TELEGRAM → AUTO_EXEC après
+        # PAC_TELEGRAM_TO_AUTOEXEC_DAYS stables (default 7j) sans demote.
+        # Évite les promotes auto trop rapides vers l'argent réel (cas XAU buy
+        # 2026-06-08 cool-off → AUTO_EXEC → -125% PnL en 24h).
+        from datetime import timedelta
+        try:
+            from config.settings import PAC_TELEGRAM_TO_AUTOEXEC_DAYS as _tg_days
+        except ImportError:
+            _tg_days = 7
+        full = get_full_state(pair, direction)
+        try:
+            since = datetime.fromisoformat(full["state_since"].replace("Z", "+00:00"))
+            elapsed = datetime.now(timezone.utc) - since
+        except (ValueError, AttributeError, TypeError):
+            elapsed = timedelta(days=0)
+        if (
+            elapsed >= timedelta(days=_tg_days)
+            and score["sample"] >= PROMOTE_MIN_SAMPLE
+            and score["eligible_for"] in (STATE_TELEGRAM, STATE_AUTO_EXEC)
+        ):
+            set_state(
+                pair, STATE_AUTO_EXEC,
+                f"auto-promote TELEGRAM stable {elapsed.days}j ≥ {_tg_days}j",
+                direction=direction, score_snapshot=score,
+            )
+            return {"action": "transition", "from_state": current, "to_state": STATE_AUTO_EXEC, "score": score, "reason": "stable in TELEGRAM"}
+        days_left = max(0, _tg_days - elapsed.days)
+        return {"action": "keep", "from_state": current, "score": score, "reason": f"telegram stable {elapsed.days}j (encore {days_left}j avant AUTO_EXEC)"}
 
     elif current == STATE_AUTO_EXEC:
         if score["sample"] >= PROMOTE_MIN_SAMPLE and score["pnl_pct"] < -3.0:
@@ -715,6 +828,22 @@ def evaluate_pair(pair: str, direction: Optional[str] = None) -> dict[str, Any]:
         if elapsed >= timedelta(days=14):
             recent_pauses = _count_recent_pauses(pair, days=60)
             if recent_pauses >= DEMOTE_MAX_RE_PAUSES_60D:
+                # Circuit breaker : si trop de demotions auto récentes, on bloque
+                # l'éjection définitive (anti-cascade cf. 2026-06-07/08 — 17
+                # demotions en 48h). Le PAUSED reste, l'humain peut intervenir.
+                if is_demotion_blocked():
+                    n_recent = _count_recent_auto_demotions(_breaker_window())
+                    logger.warning(
+                        f"pac_circuit_breaker: blocking DEMOTED for {pair}/{direction} "
+                        f"({n_recent} auto-demotes / {_breaker_window()}d)"
+                    )
+                    _notify_circuit_breaker_block(pair, direction, n_recent)
+                    return {
+                        "action": "keep",
+                        "from_state": current,
+                        "score": score,
+                        "reason": f"DEMOTE bloquée par circuit breaker ({n_recent} demotes/{_breaker_window()}d)",
+                    }
                 set_state(pair, STATE_DEMOTED, f"auto-demote: {recent_pauses} pauses on 60d (max {DEMOTE_MAX_RE_PAUSES_60D})", direction=direction, score_snapshot=score)
                 return {"action": "transition", "from_state": current, "to_state": STATE_DEMOTED, "score": score, "reason": "trop instable"}
             set_state(pair, STATE_AUTO_EXEC, "cool-off 14j expired, re-evaluating live", direction=direction, score_snapshot=score)
