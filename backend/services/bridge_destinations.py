@@ -48,6 +48,12 @@ class BridgeConfig:
     auto_exec_enabled : bool
         Master switch pour cette destination. ``False`` = court-circuite tous
         les pushes vers ce bridge sans toucher au reste du pipeline.
+    symbol_map : dict[str, str] | None
+        Mapping ``pair → broker_symbol`` propre au broker de cette destination.
+        Permet d'injecter ``broker_symbol`` dans le payload pour que l'EA
+        utilise le bon nom de symbole (ex: ``XAU/USD → GOLD`` pour Pepperstone
+        UK). ``None`` = pas de mapping server-side, l'EA gère via son
+        ``InpSymbolMap`` local. Cf. ``feedback_ea_symbol_map_pepperstone.md``.
     """
 
     destination_id: str
@@ -57,6 +63,7 @@ class BridgeConfig:
     min_confidence: float
     allowed_asset_classes: frozenset[str]
     auto_exec_enabled: bool
+    symbol_map: dict[str, str] | None = None
 
 
 def _admin_legacy_destination() -> BridgeConfig | None:
@@ -113,6 +120,8 @@ def _user_destinations(setup: Any) -> list[BridgeConfig]:
         if pair not in user["watched_pairs"]:
             continue
         cfg = user["broker_config"]
+        raw_map = cfg.get("symbol_map")
+        symbol_map = raw_map if isinstance(raw_map, dict) and raw_map else None
         try:
             destinations.append(
                 BridgeConfig(
@@ -128,6 +137,7 @@ def _user_destinations(setup: Any) -> list[BridgeConfig]:
                         mb.MT5_BRIDGE_ALLOWED_ASSET_CLASSES
                     ),
                     auto_exec_enabled=True,
+                    symbol_map=symbol_map,
                 )
             )
         except (KeyError, TypeError, ValueError):

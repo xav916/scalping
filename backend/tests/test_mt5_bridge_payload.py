@@ -64,3 +64,48 @@ def test_payload_tp2_dist_none_when_no_tp2():
     p = mt5_bridge._build_order_payload(s, sz)
     assert p["tp2"] is None
     assert p["tp2_dist"] is None
+
+
+def test_payload_no_broker_symbol_without_dest():
+    """Backward compat : sans dest, pas de champ ``broker_symbol`` ajouté."""
+    sz = {"risk_money": 10.0, "lots": 0.01}
+    p = mt5_bridge._build_order_payload(_setup(), sz)
+    assert "broker_symbol" not in p
+
+
+def test_payload_no_broker_symbol_without_map():
+    """``dest`` fourni mais ``symbol_map=None`` : pas de ``broker_symbol``."""
+    sz = {"risk_money": 10.0, "lots": 0.01}
+    dest = SimpleNamespace(symbol_map=None)
+    p = mt5_bridge._build_order_payload(_setup(), sz, dest=dest)
+    assert "broker_symbol" not in p
+
+
+def test_payload_no_broker_symbol_when_pair_absent_from_map():
+    """``dest.symbol_map`` ne contient pas la pair : pas de ``broker_symbol``."""
+    sz = {"risk_money": 10.0, "lots": 0.01}
+    dest = SimpleNamespace(symbol_map={"XAU/USD": "GOLD"})
+    # _setup() utilise ETH/USD
+    p = mt5_bridge._build_order_payload(_setup(), sz, dest=dest)
+    assert "broker_symbol" not in p
+
+
+def test_payload_includes_broker_symbol_when_mapped():
+    """``dest.symbol_map[pair]`` présent : ``broker_symbol`` injecté.
+
+    Cas Cédric Pepperstone UK Demo : ETH/USD doit être mappé pour OrderSend.
+    Sans ce mapping, OrderSend retourne retcode=10031 ou 0 selon le symbole
+    qui n'existe pas chez le broker (cf. project_cedric_zero_exec_diagnostic).
+    """
+    sz = {"risk_money": 10.0, "lots": 0.01}
+    dest = SimpleNamespace(symbol_map={"ETH/USD": "ETHUSD", "WTI/USD": "USOIL"})
+    p = mt5_bridge._build_order_payload(_setup(), sz, dest=dest)
+    assert p["broker_symbol"] == "ETHUSD"
+
+
+def test_payload_no_broker_symbol_with_empty_map():
+    """``dest.symbol_map={}`` (dict vide) : traité comme None, pas d'injection."""
+    sz = {"risk_money": 10.0, "lots": 0.01}
+    dest = SimpleNamespace(symbol_map={})
+    p = mt5_bridge._build_order_payload(_setup(), sz, dest=dest)
+    assert "broker_symbol" not in p

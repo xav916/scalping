@@ -28,7 +28,13 @@
 #property strict
 
 // Version envoyée au backend dans le query string du poll (telemetry).
-#define EA_VERSION_STRING "1.05"
+// v1.06 (2026-06-11) : support du champ ``broker_symbol`` dans le payload.
+//   Si présent et non vide, override le résultat de MapSymbol(pair). Permet
+//   au backend de gérer le mapping multi-tenant côté serveur (per-user via
+//   ``broker_config.symbol_map``) sans que l'user ait à saisir InpSymbolMap
+//   au drag de l'EA. Driver = Cédric Pepperstone UK Demo, 0 exec sur 152
+//   dispatches faute de mapping symbole (cf. project_cedric_zero_exec_*).
+#define EA_VERSION_STRING "1.06"
 
 //─── Inputs (modifiables par l'user au drag sur chart) ──────────────
 input string   InpApiKey              = "";                                    // API key (depuis Settings → Auto-exec MT5)
@@ -297,8 +303,13 @@ void ProcessSingleOrder(const string order_json)
         return;
     }
 
-    // Mapping symbole : d'abord InpSymbolMap user-config (broker-spécifique), sinon strip-slash par défaut.
-    string symbol = MapSymbol(pair);
+    // Mapping symbole v1.06 : priorité absolue à ``broker_symbol`` du payload
+    // (envoyé par le backend si ``broker_config.symbol_map`` est configuré pour
+    // ce user). Sinon fallback sur InpSymbolMap user-config local, puis
+    // alias auto, puis strip-slash. Le server-side mapping élimine le besoin
+    // de saisir InpSymbolMap au drag pour les Premium multi-tenant.
+    string broker_symbol = ExtractStringField(payload_json, "broker_symbol");
+    string symbol = (broker_symbol != "") ? broker_symbol : MapSymbol(pair);
 
     if(InpDryRun)
     {

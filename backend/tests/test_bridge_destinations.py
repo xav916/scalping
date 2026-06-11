@@ -261,3 +261,79 @@ def test_premium_user_ea_only_without_bridge_url(monkeypatch):
     assert len(dests) == 1
     assert dests[0].destination_id == "user:17"
     assert dests[0].bridge_url == ""
+
+
+# ─── symbol_map flow (multi-tenant broker mapping) ────────────────────
+
+
+def test_user_destination_no_symbol_map_by_default(monkeypatch):
+    """broker_config sans ``symbol_map`` → ``BridgeConfig.symbol_map`` est None."""
+    _set_admin_env(monkeypatch, MT5_BRIDGE_ENABLED=False)
+    monkeypatch.setattr(
+        "backend.services.users_service.list_premium_auto_exec_users",
+        lambda: [_stub_premium_user(user_id=42)],
+    )
+
+    dests = bridge_destinations.resolve_destinations(_mk_setup("EUR/USD"))
+
+    assert len(dests) == 1
+    assert dests[0].symbol_map is None
+
+
+def test_user_destination_picks_up_symbol_map_from_broker_config(monkeypatch):
+    """broker_config.symbol_map → BridgeConfig.symbol_map dict.
+
+    Permet le mapping multi-tenant : un user Pepperstone UK mappe
+    XAU/USD → GOLD, alors qu'un autre sur Razor garde le strip-slash par
+    défaut côté EA. Driver = bug Cédric 2026-06-11 (152 dispatch/0 exec).
+    """
+    _set_admin_env(monkeypatch, MT5_BRIDGE_ENABLED=False)
+    user = _stub_premium_user(user_id=2)
+    user["broker_config"]["symbol_map"] = {
+        "XAU/USD": "GOLD",
+        "ETH/USD": "ETHUSD",
+        "WTI/USD": "USOIL",
+    }
+    monkeypatch.setattr(
+        "backend.services.users_service.list_premium_auto_exec_users",
+        lambda: [user],
+    )
+
+    dests = bridge_destinations.resolve_destinations(_mk_setup("EUR/USD"))
+
+    assert len(dests) == 1
+    assert dests[0].symbol_map == {
+        "XAU/USD": "GOLD",
+        "ETH/USD": "ETHUSD",
+        "WTI/USD": "USOIL",
+    }
+
+
+def test_user_destination_empty_symbol_map_normalized_to_none(monkeypatch):
+    """broker_config.symbol_map={} → traité comme None (pas d'injection inutile)."""
+    _set_admin_env(monkeypatch, MT5_BRIDGE_ENABLED=False)
+    user = _stub_premium_user(user_id=42)
+    user["broker_config"]["symbol_map"] = {}
+    monkeypatch.setattr(
+        "backend.services.users_service.list_premium_auto_exec_users",
+        lambda: [user],
+    )
+
+    dests = bridge_destinations.resolve_destinations(_mk_setup("EUR/USD"))
+
+    assert dests[0].symbol_map is None
+
+
+def test_user_destination_invalid_symbol_map_type_ignored(monkeypatch):
+    """broker_config.symbol_map non-dict (str, list, etc.) → None safe fallback."""
+    _set_admin_env(monkeypatch, MT5_BRIDGE_ENABLED=False)
+    user = _stub_premium_user(user_id=42)
+    user["broker_config"]["symbol_map"] = "XAU/USD=GOLD"  # malformé
+    monkeypatch.setattr(
+        "backend.services.users_service.list_premium_auto_exec_users",
+        lambda: [user],
+    )
+
+    dests = bridge_destinations.resolve_destinations(_mk_setup("EUR/USD"))
+
+    assert dests[0].symbol_map is None

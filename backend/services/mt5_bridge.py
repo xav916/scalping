@@ -264,7 +264,7 @@ def _check_rejection(setup, dest=None) -> str | None:
     return None
 
 
-def _build_order_payload(setup, sz: dict) -> dict:
+def _build_order_payload(setup, sz: dict, dest=None) -> dict:
     """Construit le dict envoyé à l'EA MQL5 / bridge.py.
 
     Contient à la fois les **prix absolus** (sl/tp) pour compat ascendante
@@ -272,12 +272,18 @@ def _build_order_payload(setup, sz: dict) -> dict:
     pour permettre à l'EA v1.05+ de recalculer SL/TP à partir du fill price
     effectif. Sans ça, le slippage entre signal et exécution dégrade le R:R
     réel (mesuré 0.7-1.3 au lieu de 1.8 sur ETH/USD le 2026-05-18).
+
+    Si ``dest`` est fourni et que sa ``symbol_map`` contient la pair du setup,
+    injecte ``broker_symbol`` dans le payload. L'EA v1.06+ utilisera cette
+    valeur prioritairement sur son ``InpSymbolMap`` local. Permet le mapping
+    multi-tenant server-side (un Premium peut être sur Pepperstone UK avec
+    XAU/USD=GOLD, un autre sur Razor avec XAU/USD=XAUUSD).
     """
     entry = setup.entry_price
     sl = setup.stop_loss
     tp1 = setup.take_profit_1
     tp2 = getattr(setup, "take_profit_2", None)
-    return {
+    payload = {
         "pair": setup.pair,
         "direction": _direction_value(setup),
         "entry": entry,
@@ -296,6 +302,11 @@ def _build_order_payload(setup, sz: dict) -> dict:
         "confidence": getattr(setup, "confidence_score", None),
         "sizing_detail": sz,
     }
+    if dest is not None and getattr(dest, "symbol_map", None):
+        broker_sym = dest.symbol_map.get(setup.pair)
+        if broker_sym:
+            payload["broker_symbol"] = broker_sym
+    return payload
 
 
 def _should_push(setup) -> bool:
@@ -385,7 +396,7 @@ async def _push_to_destination(setup, dest) -> None:
     from backend.services import sizing
     sz = sizing.compute_risk_money(setup)
     risk_money = sz["risk_money"]
-    payload = _build_order_payload(setup, sz)
+    payload = _build_order_payload(setup, sz, dest=dest)
 
     # ─── Routing dispatch (Phase MQL.C) ──────────────────────────────
     # admin_legacy (user_id=None) : push HTTP synchrone vers le bridge admin.
