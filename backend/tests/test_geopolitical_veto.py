@@ -311,14 +311,27 @@ def test_gdelt_normal_theme_no_veto(monkeypatch):
     assert vetoed is False
 
 
-def test_gdelt_no_veto_on_us_indices(monkeypatch):
-    """US indices ne sont pas couverts par la règle GDELT (réservée EU)."""
+def test_gdelt_vetoes_us_indices_too(monkeypatch):
+    """v2026-06-11 : scope étendu à _INDICES_FOR_GDELT_STRESS = EU + US.
+    Avant cette date la règle était EU-only, mais WATCHED_PAIRS ne contenait
+    aucun EU index → règle inerte. Couvre désormais SPX/NDX/US30 aussi.
+    """
     _enable_all_rules(monkeypatch)
     gdelt = _gdelt_snapshot(overall_stress="high", geo_stress="high")
     _patch_snapshots(monkeypatch, None, gdelt)
 
-    vetoed, _, _ = geopolitical_veto.apply("SPX", "buy")
-    # Pas de match sur règle GDELT (US), pas de Polymarket → pas de veto
+    vetoed, reasons, _ = geopolitical_veto.apply("SPX", "buy")
+    assert vetoed is True
+    assert "SPX" in reasons[0]
+
+
+def test_gdelt_no_veto_on_non_index(monkeypatch):
+    """Crypto et forex hors EU/USD-cross ne sont pas couverts par GDELT_STRESS."""
+    _enable_all_rules(monkeypatch)
+    gdelt = _gdelt_snapshot(overall_stress="high", geo_stress="high")
+    _patch_snapshots(monkeypatch, None, gdelt)
+
+    vetoed, _, _ = geopolitical_veto.apply("BTC/USD", "buy")
     assert vetoed is False
 
 

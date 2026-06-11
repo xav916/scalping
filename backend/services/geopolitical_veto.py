@@ -63,6 +63,11 @@ _SAFE_HAVEN_AND_OIL = {"XAU/USD", "XAG/USD", "WTI/USD"}
 _US_INDICES = {"SPX", "NDX", "US30"}
 _EU_INDICES = {"DAX", "CAC40", "FTSE", "EUR/JPY", "EUR/GBP"}
 _RISK_ON_AND_CRYPTO = {"SPX", "NDX", "US30", "BTC/USD", "ETH/USD"}
+# Scope étendu pour GDELT_STRESS : couvre indices globaux (EU + US) pour que
+# la règle ait une cible réelle dans WATCHED_PAIRS actuel (qui ne contient pas
+# encore d'EU indices). Justification : stress géopolitique GLOBAL impacte
+# l'appétit risque sur tous les indices risk-on, pas seulement EU.
+_INDICES_FOR_GDELT_STRESS = _EU_INDICES | _US_INDICES
 
 
 # ─── Polymarket question matchers ────────────────────────────────────
@@ -237,7 +242,7 @@ def _check_gdelt_stress(pair: str, direction: str, gdelt: dict | None) -> Option
     """
     if not GEOPOLITICAL_VETO_GDELT_STRESS_ENABLED:
         return None
-    if direction != "buy" or pair not in _EU_INDICES:
+    if direction != "buy" or pair not in _INDICES_FOR_GDELT_STRESS:
         return None
     if not gdelt:
         return None
@@ -248,7 +253,7 @@ def _check_gdelt_stress(pair: str, direction: str, gdelt: dict | None) -> Option
     if stress_level not in _GDELT_STRESS_TRIGGER_LEVELS:
         return None
     tone = geo_theme.get("avg_tone")
-    return f"[gdelt_stress] GDELT stress geopolitical={stress_level} (tone={tone}) → long {pair} EU risqué"
+    return f"[gdelt_stress] GDELT stress geopolitical={stress_level} (tone={tone}) → long {pair} indice risk-on risqué"
 
 
 # ─── Entry point ─────────────────────────────────────────────────────
