@@ -63,11 +63,19 @@ _SAFE_HAVEN_AND_OIL = {"XAU/USD", "XAG/USD", "WTI/USD"}
 _US_INDICES = {"SPX", "NDX", "US30"}
 _EU_INDICES = {"DAX", "CAC40", "FTSE", "EUR/JPY", "EUR/GBP"}
 _RISK_ON_AND_CRYPTO = {"SPX", "NDX", "US30", "BTC/USD", "ETH/USD"}
-# Scope étendu pour GDELT_STRESS : couvre indices globaux (EU + US) pour que
-# la règle ait une cible réelle dans WATCHED_PAIRS actuel (qui ne contient pas
-# encore d'EU indices). Justification : stress géopolitique GLOBAL impacte
-# l'appétit risque sur tous les indices risk-on, pas seulement EU.
-_INDICES_FOR_GDELT_STRESS = _EU_INDICES | _US_INDICES
+# Scope étendu pour GDELT_STRESS : couvre indices globaux (EU + US) + crypto.
+# Pourquoi étendre à crypto : V1 ne génère quasi jamais de setups longs SPX/NDX
+# (constat live 2026-06-11 : 0 setup SPX/NDX en 30j d'historique), donc la règle
+# resterait latente sur indices seuls. ETH/BTC ont eux des centaines de signaux
+# par jour → le veto produira un contrefactuel mesurable avant le gate S8.
+# Sémantique : "stress géopolitique global" affecte tout asset risk-on, incluant
+# crypto (corrélation BTC ↔ équités US confirmée en régime de stress).
+# Doublon partiel avec TARIFF qui couvre aussi BTC/ETH : intentionnel — les deux
+# signaux mesurent des dimensions différentes (Polymarket prob spécifique tariff
+# vs GDELT tone global), on peut tomber sur l'un sans l'autre.
+_RISK_ON_FOR_GDELT_STRESS = _EU_INDICES | _US_INDICES | {"BTC/USD", "ETH/USD"}
+# Alias rétro-compat — l'ancien nom était utilisé en interne uniquement.
+_INDICES_FOR_GDELT_STRESS = _RISK_ON_FOR_GDELT_STRESS
 
 
 # ─── Polymarket question matchers ────────────────────────────────────
@@ -253,7 +261,7 @@ def _check_gdelt_stress(pair: str, direction: str, gdelt: dict | None) -> Option
     if stress_level not in _GDELT_STRESS_TRIGGER_LEVELS:
         return None
     tone = geo_theme.get("avg_tone")
-    return f"[gdelt_stress] GDELT stress geopolitical={stress_level} (tone={tone}) → long {pair} indice risk-on risqué"
+    return f"[gdelt_stress] GDELT stress geopolitical={stress_level} (tone={tone}) → long {pair} risk-on risqué"
 
 
 # ─── Entry point ─────────────────────────────────────────────────────

@@ -325,14 +325,35 @@ def test_gdelt_vetoes_us_indices_too(monkeypatch):
     assert "SPX" in reasons[0]
 
 
-def test_gdelt_no_veto_on_non_index(monkeypatch):
-    """Crypto et forex hors EU/USD-cross ne sont pas couverts par GDELT_STRESS."""
+def test_gdelt_vetoes_crypto_too(monkeypatch):
+    """v2026-06-11 scope crypto : BTC/USD et ETH/USD sont risk-on aussi.
+    Justification : V1 ne génère quasi jamais de setups SPX/NDX (0 en 30j),
+    donc le veto avait 0 cible. Crypto a des centaines de signaux/jour →
+    contrefactuel mesurable d'ici S8. Sémantique : stress géopolitique global
+    impacte tout asset risk-on incluant crypto (BTC ↔ équités US en stress).
+    """
     _enable_all_rules(monkeypatch)
     gdelt = _gdelt_snapshot(overall_stress="high", geo_stress="high")
     _patch_snapshots(monkeypatch, None, gdelt)
 
-    vetoed, _, _ = geopolitical_veto.apply("BTC/USD", "buy")
-    assert vetoed is False
+    for pair in ("BTC/USD", "ETH/USD"):
+        vetoed, reasons, _ = geopolitical_veto.apply(pair, "buy")
+        assert vetoed is True, f"{pair} should be vetoed by GDELT_STRESS"
+        assert pair in reasons[0]
+
+
+def test_gdelt_no_veto_on_safe_haven_or_forex(monkeypatch):
+    """Forex et safe-haven (XAU/XAG) ne sont pas couverts par GDELT_STRESS.
+    Safe-haven gardent leur logique IRAN_HORMUZ séparée.
+    """
+    _enable_all_rules(monkeypatch)
+    gdelt = _gdelt_snapshot(overall_stress="high", geo_stress="high")
+    _patch_snapshots(monkeypatch, None, gdelt)
+
+    for pair in ("EUR/USD", "USD/JPY"):
+        vetoed, _, meta = geopolitical_veto.apply(pair, "buy")
+        # GDELT ne match pas — autres règles peuvent matcher mais pas GDELT
+        assert "gdelt_stress" not in meta.get("rules_matched", [])
 
 
 # ─── Multi-rules + best-effort ───────────────────────────────────────
