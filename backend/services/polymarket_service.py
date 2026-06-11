@@ -59,6 +59,9 @@ THEMES: dict[str, list[str]] = {
     "economy": [
         "recession", " gdp ", "unemployment", "jobs report", "nfp",
         "non-farm", "labor market",
+        # v2026-06-11 : tariff/trade war = repricing macro direct.
+        # Le veto TARIFF du veto géopolitique scanne ce thème.
+        "tariff", "trade war", "trade deal",
     ],
     "crypto": [
         "bitcoin", "btc ", "$100k", "$150k", "$200k", "$1m",
@@ -67,6 +70,10 @@ THEMES: dict[str, list[str]] = {
     "politics": [
         "trump", "biden", "harris", "election ", "president",
         "impeach", "congress",
+        # v2026-06-11 : tariff = policy decision → politique. Coverage redondante
+        # avec economy mais permet aux marchés "Trump tariff X by Y" d'apparaître
+        # dans le top 5 politics même quand non détectés sous economy.
+        "tariff", "trade war",
     ],
 }
 
