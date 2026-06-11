@@ -267,10 +267,44 @@ def test_gdelt_high_stress_vetoes_long_eu_indices(monkeypatch):
     assert "GDELT stress" in reasons[0]
 
 
-def test_gdelt_high_stress_no_veto_when_only_overall_high(monkeypatch):
-    """Si overall=high mais theme géopolitical=elevated seulement → pas de veto."""
+def test_gdelt_elevated_stress_vetoes_long_eu_indices(monkeypatch):
+    """v2026-06-11 : 'elevated' désormais accepté comme 'high'. Avant cette
+    date la règle exigeait strict 'high' et ne matchait jamais en régime
+    macro normal — d'où désactivation par flag. Cf. project_geopolitical_veto_*.
+    """
+    _enable_all_rules(monkeypatch)
+    gdelt = _gdelt_snapshot(overall_stress="elevated", geo_stress="elevated")
+    _patch_snapshots(monkeypatch, None, gdelt)
+
+    vetoed, reasons, _ = geopolitical_veto.apply("DAX", "buy")
+    assert vetoed is True
+    assert "elevated" in reasons[0]
+
+
+def test_gdelt_mixed_high_elevated_vetoes_long_eu_indices(monkeypatch):
+    """overall=high + theme geo=elevated → veto (chaque niveau ∈ trigger set)."""
     _enable_all_rules(monkeypatch)
     gdelt = _gdelt_snapshot(overall_stress="high", geo_stress="elevated")
+    _patch_snapshots(monkeypatch, None, gdelt)
+
+    vetoed, _, _ = geopolitical_veto.apply("DAX", "buy")
+    assert vetoed is True
+
+
+def test_gdelt_normal_overall_no_veto(monkeypatch):
+    """overall_stress ∉ {high, elevated} → pas de veto même si theme=high."""
+    _enable_all_rules(monkeypatch)
+    gdelt = _gdelt_snapshot(overall_stress="normal", geo_stress="high")
+    _patch_snapshots(monkeypatch, None, gdelt)
+
+    vetoed, _, _ = geopolitical_veto.apply("DAX", "buy")
+    assert vetoed is False
+
+
+def test_gdelt_normal_theme_no_veto(monkeypatch):
+    """theme geopolitical stress_level ∉ {high, elevated} → pas de veto."""
+    _enable_all_rules(monkeypatch)
+    gdelt = _gdelt_snapshot(overall_stress="high", geo_stress="normal")
     _patch_snapshots(monkeypatch, None, gdelt)
 
     vetoed, _, _ = geopolitical_veto.apply("DAX", "buy")

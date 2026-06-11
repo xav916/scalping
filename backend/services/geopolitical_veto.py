@@ -225,21 +225,30 @@ def _check_tariff(pair: str, direction: str, poly: dict | None) -> Optional[str]
     )
 
 
+_GDELT_STRESS_TRIGGER_LEVELS = frozenset({"high", "elevated"})
+
+
 def _check_gdelt_stress(pair: str, direction: str, gdelt: dict | None) -> Optional[str]:
-    """Stress géopolitique GDELT élevé + long indice européen."""
+    """Stress géopolitique GDELT élevé + long indice européen.
+
+    Accepte ``overall_stress`` et ``stress_level`` ∈ {"high", "elevated"}.
+    Strict ``"high"`` était trop restrictif en régime macro normal — la règle
+    ne matchait jamais d'où la désactivation par flag depuis 2026-06-09.
+    """
     if not GEOPOLITICAL_VETO_GDELT_STRESS_ENABLED:
         return None
     if direction != "buy" or pair not in _EU_INDICES:
         return None
     if not gdelt:
         return None
-    if gdelt.get("overall_stress") != "high":
+    if gdelt.get("overall_stress") not in _GDELT_STRESS_TRIGGER_LEVELS:
         return None
     geo_theme = (gdelt.get("themes") or {}).get("geopolitical") or {}
-    if geo_theme.get("stress_level") != "high":
+    stress_level = geo_theme.get("stress_level")
+    if stress_level not in _GDELT_STRESS_TRIGGER_LEVELS:
         return None
     tone = geo_theme.get("avg_tone")
-    return f"[gdelt_stress] GDELT stress geopolitical=high (tone={tone}) → long {pair} EU risqué"
+    return f"[gdelt_stress] GDELT stress geopolitical={stress_level} (tone={tone}) → long {pair} EU risqué"
 
 
 # ─── Entry point ─────────────────────────────────────────────────────
