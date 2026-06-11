@@ -319,7 +319,7 @@ def test_best_effort_no_snapshots(monkeypatch):
     vetoed, reasons, meta = geopolitical_veto.apply("XAU/USD", "buy")
     assert vetoed is False
     assert reasons == []
-    assert meta["rules_evaluated"] == ["iran_hormuz", "fed_dovish", "recession", "gdelt_stress"]
+    assert meta["rules_evaluated"] == ["iran_hormuz", "fed_dovish", "recession", "gdelt_stress", "tariff"]
 
 
 def test_best_effort_polymarket_raises(monkeypatch):
@@ -344,6 +344,6 @@ def test_metadata_lists_all_evaluated_rules(monkeypatch):
 
     _, _, meta = geopolitical_veto.apply("EUR/USD", "buy")
     assert set(meta["rules_evaluated"]) == {
-        "iran_hormuz", "fed_dovish", "recession", "gdelt_stress",
+        "iran_hormuz", "fed_dovish", "recession", "gdelt_stress", "tariff",
     }
     assert meta["rules_matched"] == []
