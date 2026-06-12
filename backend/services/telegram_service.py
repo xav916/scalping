@@ -311,6 +311,50 @@ _ADMIN_DEST_LABELS = {
 }
 
 
+# Pip-value en EUR par 0.01 lot (= volume minimum). Approximations basées sur
+# specs broker standards 2026-06 + EUR/USD ~1.10. Utilisé pour estimer le
+# risque/gain en € user-facing dans les messages Telegram. Volatile.
+# Pour Demo (max_lot 0.10) : multiplier par 10.
+# Pour Live IC Markets (max_lot 0.02) : multiplier par 2.
+_PIP_VALUE_AT_001_LOT_EUR: dict[str, float] = {
+    # Forex majors quote USD : pip = 0.0001, 0.01 lot = 1000 base → $0.10/pip ≈ €0.09
+    "EUR/USD": 0.09,
+    "GBP/USD": 0.09,
+    "AUD/USD": 0.09,
+    "NZD/USD": 0.09,
+    # Forex JPY quote : pip = 0.01, 0.01 lot ≈ ¥10 → $0.07 ≈ €0.06
+    "USD/JPY": 0.06,
+    "EUR/JPY": 0.06,
+    "GBP/JPY": 0.06,
+    # Metals (oz)
+    "XAU/USD": 0.009,  # 0.01 lot = 1 oz, 1 pip = $0.01 ≈ €0.009
+    "XAG/USD": 0.045,  # 0.01 lot = 50 oz, 1 pip = $0.05 ≈ €0.045
+    # Energy (barrels)
+    "WTI/USD": 0.09,   # 0.01 lot = 10 barrels, 1 pip = $0.10 ≈ €0.09
+    # Crypto (rough)
+    "ETH/USD": 0.009,
+    "BTC/USD": 0.009,
+}
+
+
+def _estimate_eur_amounts(setup) -> dict | None:
+    """Retourne dict {risk, reward_1, reward_2} en EUR estimé pour 0.01 lot.
+    None si pair non mappée ou risk_pips manquant. Best-effort, approximation.
+    """
+    pair = getattr(setup, "pair", "")
+    risk_pips = float(getattr(setup, "risk_pips", 0) or 0)
+    reward_pips_1 = float(getattr(setup, "reward_pips_1", 0) or 0)
+    reward_pips_2 = float(getattr(setup, "reward_pips_2", 0) or 0)
+    pip_eur = _PIP_VALUE_AT_001_LOT_EUR.get(pair)
+    if not pip_eur or risk_pips <= 0:
+        return None
+    return {
+        "risk": pip_eur * risk_pips,
+        "reward_1": pip_eur * reward_pips_1,
+        "reward_2": pip_eur * reward_pips_2 if reward_pips_2 > 0 else None,
+    }
+
+
 def _describe_admin_destinations(setup) -> list[str]:
     """Liste les destinations admin qui exécuteront effectivement ce setup.
 
@@ -469,6 +513,21 @@ def _format_setup(setup) -> str:
             f"Tu risques *{risk:.1f} pts* pour viser *+{reward_1:.1f} pts* (R:R {rr1:.1f}). "
             f"Avec ce ratio, le trade devient gagnant si tu touches TP1 plus de "
             f"{int(round(100/(1+rr1)))}% du temps.",
+        ])
+
+    # Conversion EUR estimée (lot baseline 0.01 = volume minimum). Pour Demo
+    # (max_lot 0.10) multiplier mentalement par 10, pour Live IC Markets
+    # (max_lot 0.02) multiplier par 2. Approximation : EUR/USD ~1.10 + specs
+    # broker standards. Cf. _PIP_VALUE_AT_001_LOT_EUR.
+    eur = _estimate_eur_amounts(setup)
+    if eur is not None:
+        lines.extend([
+            "",
+            "💵 *En euros (estimation, lot 0.01)*",
+            f"Risque max : *−€{eur['risk']:.2f}* si SL touché",
+            f"Gain TP1   : *+€{eur['reward_1']:.2f}*"
+            + (f"  ·  TP2 : *+€{eur['reward_2']:.2f}*" if eur.get("reward_2") else ""),
+            "_Demo (×0.10 lot) ≈ ×10  ·  Live IC Markets (0.02 lot) ≈ ×2_",
         ])
 
     reasons = getattr(setup, "verdict_reasons", None) or []
