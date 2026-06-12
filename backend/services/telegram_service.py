@@ -302,6 +302,57 @@ _PATTERN_EXPLAIN_FR: dict[str, str] = {
 }
 
 
+# Labels lisibles pour chaque destination admin connue. Utilisé pour annoter
+# le badge "Auto-exécuté" du push Telegram avec les brokers réels touchés.
+# Cf. project_live_icmarkets_active_2026_06_12.
+_ADMIN_DEST_LABELS = {
+    "admin_legacy": "🧪 Demo Pepperstone",
+    "admin_live": "💰 Live IC Markets (€100)",
+}
+
+
+def _describe_admin_destinations(setup) -> list[str]:
+    """Liste les destinations admin qui exécuteront effectivement ce setup.
+
+    Filtre sur ``confidence_score`` et ``asset_class`` pour matcher ce que
+    ``mt5_bridge._check_rejection()`` accepterait par destination. Retourne
+    une liste de labels lisibles (ex. ["🧪 Demo Pepperstone", "💰 Live IC
+    Markets (€100)"]). Les user destinations (Premium EA queue) sont
+    exclues — elles ne concernent pas le push Telegram admin.
+
+    Best-effort : exceptions retournent [] pour ne jamais casser le format
+    du message Telegram principal.
+    """
+    try:
+        from backend.services import bridge_destinations
+        from config.settings import asset_class_for
+
+        score = float(getattr(setup, "confidence_score", 0) or 0)
+        pair = getattr(setup, "pair", None)
+        if not pair:
+            return []
+        try:
+            aclass = asset_class_for(pair)
+        except Exception:
+            aclass = None
+
+        labels = []
+        for dest in bridge_destinations.resolve_destinations(setup):
+            if dest.user_id is not None:
+                continue  # ignore user destinations (Premium EA queue)
+            if not dest.auto_exec_enabled:
+                continue
+            if score < dest.min_confidence:
+                continue
+            if aclass and aclass not in dest.allowed_asset_classes:
+                continue
+            label = _ADMIN_DEST_LABELS.get(dest.destination_id, dest.destination_id)
+            labels.append(label)
+        return labels
+    except Exception:
+        return []
+
+
 def _format_setup(setup) -> str:
     """Format Telegram pédagogique : vulgarise l'analyse pour le user-facing.
 
@@ -367,7 +418,17 @@ def _format_setup(setup) -> str:
         pac_auto = None  # PAC indisponible → on n'affiche pas de badge
 
     if pac_auto is True:
-        exec_badge = "🤖 *Auto-exécuté* — ordre envoyé chez ton broker."
+        # Liste les destinations admin qui recevront ce setup (Demo, Live, ...).
+        # Filtré sur confidence + asset class pour matcher ce que mt5_bridge
+        # routera effectivement. Cf. project_live_icmarkets_active_2026_06_12
+        # depuis 2026-06-12 : Demo Pepperstone + Live IC Markets en parallèle.
+        dest_labels = _describe_admin_destinations(setup)
+        if dest_labels:
+            exec_badge = f"🤖 *Auto-exécuté* → {' + '.join(dest_labels)}"
+        else:
+            # Fallback legacy si resolve_destinations n'a rien retourné
+            # (filtres en amont, edge case).
+            exec_badge = "🤖 *Auto-exécuté* — ordre envoyé chez ton broker."
     elif pac_auto is False:
         exec_badge = (
             f"👁 *Signal info uniquement* — paire en `{pac_state}`, "
