@@ -755,14 +755,23 @@ def _format_close(trade: dict) -> str:
 async def send_close(trade: dict) -> None:
     """Push une notification de fermeture sur le canal user-facing.
 
-    Filtre : pair stars-only, ticket non encore notifié, Telegram configuré.
+    Filtre : pair stars-only + LIVE_EXTRA_PAIRS (forex majors autorisés pour
+    le Live IC Markets depuis 2026-06-12). Avant cette date, forex EUR/USD,
+    GBP/USD, USD/JPY etaient skipped car non-stars → user ne voyait jamais
+    la cloture de ses trades Live forex.
+
     Dedup en mémoire par mt5_ticket — reset au reboot (peu grave, pire cas
     re-notif au redémarrage si un trade vient de fermer).
     """
     if not is_configured():
         return
     pair = trade.get("pair")
-    if pair not in _STAR_PAIRS_SET:
+    try:
+        from config.settings import MT5_BRIDGE_LIVE_EXTRA_PAIRS as _live_extras
+    except Exception:
+        _live_extras = frozenset()
+    allowed_pairs = _STAR_PAIRS_SET | _live_extras
+    if pair not in allowed_pairs:
         return
     ticket = trade.get("mt5_ticket")
     if ticket and int(ticket) in _notified_closes:
