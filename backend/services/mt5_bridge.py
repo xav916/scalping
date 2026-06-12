@@ -264,6 +264,59 @@ def _check_rejection(setup, dest=None) -> str | None:
     return None
 
 
+_FIRST_LIVE_PUSH_MARKER = "/app/data/.first_live_push_notified"
+
+
+def _notify_first_live_push(setup, bridge_response: dict) -> None:
+    """Alerte infra one-shot : 1er push Live réussi depuis activation IC Markets.
+
+    Marker fichier sur disque (`/app/data/.first_live_push_notified`) pour
+    idempotence à travers les restarts container. Idempotent : une fois le
+    marker créé, retourne immédiatement.
+
+    Pour reset l'alerte (re-déclencher au prochain push admin_live) :
+    ``rm /app/data/.first_live_push_notified`` côté container.
+
+    Best-effort : toute exception laisse le marker non créé (next push
+    re-tentera) et ne propage pas l'erreur au pipeline de push.
+    """
+    import os
+    if os.path.exists(_FIRST_LIVE_PUSH_MARKER):
+        return
+    try:
+        # Crée le marker AVANT l'envoi pour éviter race condition multi-thread.
+        with open(_FIRST_LIVE_PUSH_MARKER, "w") as f:
+            f.write(datetime.now(timezone.utc).isoformat())
+    except Exception as e:
+        logger.warning(f"first_live_push marker write failed: {e}")
+        return  # ne notifie pas si on ne peut pas marker (sinon spam au cycle suivant)
+
+    pair = getattr(setup, "pair", "?")
+    direction = _direction_value(setup)
+    ticket = bridge_response.get("ticket")
+    fill_price = bridge_response.get("price") or getattr(setup, "entry_price", 0)
+    volume = bridge_response.get("volume") or 0
+    confidence = getattr(setup, "confidence_score", None)
+
+    msg = (
+        "🚀 <b>Premier push LIVE détecté</b>\n"
+        f"Compte : <b>IC Markets €100</b> (admin_live)\n"
+        f"Pair : <code>{pair}</code> {direction.upper()}\n"
+        f"Ticket : <code>{ticket}</code>\n"
+        f"Fill : <code>{fill_price}</code> · Volume : <code>{volume}</code>\n"
+        f"Confidence : <code>{confidence}</code>\n"
+        f"\nL'auto-exec parallèle Demo+Live tourne. Surveiller :"
+        f"\n• <code>/v2/admin</code> pour positions Live"
+        f"\n• <code>SELECT * FROM mt5_pushes WHERE destination_id='admin_live'</code>"
+    )
+    try:
+        from backend.services import telegram_service as _tg
+        import asyncio as _asyncio
+        _asyncio.create_task(_tg.send_infra_text(msg, parse_mode="HTML"))
+    except Exception as e:
+        logger.warning(f"first_live_push send_infra_text failed: {e}")
+
+
 def _build_order_payload(setup, sz: dict, dest=None) -> dict:
     """Construit le dict envoyé à l'EA MQL5 / bridge.py.
 
@@ -486,6 +539,14 @@ async def _push_to_destination(setup, dest) -> None:
                         )
                     except Exception as _e:
                         logger.warning(f"send_trade_opened hook error: {_e}")
+                    # Alerte infra one-shot : premier push Live (admin_live)
+                    # réussi depuis l'activation 2026-06-12. Marker fichier sur
+                    # disque pour idempotence à travers les restarts container.
+                    if dest.destination_id == "admin_live":
+                        try:
+                            _notify_first_live_push(setup, data)
+                        except Exception as _e:
+                            logger.warning(f"first_live_push notif error: {_e}")
             else:
                 logger.warning(
                     f"MT5 bridge[{dest.destination_id}] a répondu {r.status_code} "
