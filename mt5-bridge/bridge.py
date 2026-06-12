@@ -34,6 +34,12 @@ load_dotenv()
 MT5_LOGIN = int(os.getenv("MT5_LOGIN", "0"))
 MT5_PASSWORD = os.getenv("MT5_PASSWORD", "")
 MT5_SERVER = os.getenv("MT5_SERVER", "MetaQuotes-Demo")
+# v2026-06-12 : path explicite vers terminal64.exe quand 2 MT5 tournent en
+# parallèle (Demo Pepperstone + Live IC Markets). Sans path, le Python lib
+# attache au 1er terminal trouvé via registry, ce qui crée un conflit. Avec
+# MT5_TERMINAL_PATH set, chaque bridge.py attache à son propre terminal.
+# Vide = comportement legacy (auto-discovery via registry).
+MT5_TERMINAL_PATH = os.getenv("MT5_TERMINAL_PATH", "")
 BRIDGE_API_KEY = os.getenv("BRIDGE_API_KEY", "")
 PAPER_MODE = os.getenv("PAPER_MODE", "true").lower() in ("1", "true", "yes", "on")
 MAX_LOT = float(os.getenv("MAX_LOT", "0.1"))
@@ -123,9 +129,11 @@ def ensure_mt5_connected() -> bool:
     # Si déjà initialisé et un compte est attaché, on ne reconnecte pas.
     if mt5.account_info() is not None:
         return True
-    if not mt5.initialize(
-        login=MT5_LOGIN, password=MT5_PASSWORD, server=MT5_SERVER
-    ):
+    # Avec path explicite (parallèle Demo+Live), on cible un terminal précis.
+    init_kwargs = {"login": MT5_LOGIN, "password": MT5_PASSWORD, "server": MT5_SERVER}
+    if MT5_TERMINAL_PATH:
+        init_kwargs["path"] = MT5_TERMINAL_PATH
+    if not mt5.initialize(**init_kwargs):
         err = mt5.last_error()
         logger.error(f"mt5.initialize() a échoué : {err}")
         return False
@@ -1384,6 +1392,7 @@ def main():
     logger.info(f"Bridge MT5 démarrage")
     logger.info(f"  MT5 Python package : {mt5.__version__}")
     logger.info(f"  Compte              : {MT5_LOGIN}@{MT5_SERVER}")
+    logger.info(f"  MT5_TERMINAL_PATH   : {MT5_TERMINAL_PATH or '(auto-discover via registry)'}")
     logger.info(f"  PAPER_MODE          : {PAPER_MODE}")
     logger.info(f"  MAX_LOT             : {MAX_LOT}")
     logger.info(f"  Listen              : http://{LISTEN_HOST}:{LISTEN_PORT}")
