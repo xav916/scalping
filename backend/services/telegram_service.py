@@ -339,9 +339,39 @@ _PIP_VALUE_AT_001_LOT_EUR: dict[str, float] = {
 }
 
 
+# Margin (= "argent engagé" pour ouvrir la position) estimée en EUR par 0.01 lot.
+# Approximations basées sur leverages ESMA retail UE (forex 1:30, métaux 1:20,
+# énergie 1:10, crypto 1:2) + prix typiques 2026-06 + USD→EUR ~0.90.
+# Pour Demo (max_lot 0.10) ≈ ×10. Pour Live (max_lot 0.02) ≈ ×2.
+_MARGIN_AT_001_LOT_EUR: dict[str, float] = {
+    # Forex majors (1:30 leverage) — 0.01 lot = 1000 base ÷ 30 ≈ €33
+    "EUR/USD": 33.0,
+    "GBP/USD": 39.0,
+    "AUD/USD": 22.0,
+    "NZD/USD": 20.0,
+    "USD/JPY": 33.0,
+    "EUR/JPY": 33.0,
+    "GBP/JPY": 38.0,
+    # Metals (1:20 leverage)
+    "XAU/USD": 190.0,  # 1 oz × $4200 ÷ 20 ≈ $210 ≈ €190
+    "XAG/USD": 113.0,  # 50 oz × $50 ÷ 20 ≈ $125 ≈ €113
+    # Energy (1:10 leverage)
+    "WTI/USD": 67.0,   # 10 barrels × $75 ÷ 10 ≈ $75 ≈ €67
+    # Crypto (1:2 leverage retail EU)
+    "ETH/USD": 8.0,    # 0.01 ETH × $1700 ÷ 2 ≈ $8.50 ≈ €7.65
+    "BTC/USD": 450.0,  # 0.01 BTC × $100000 ÷ 2 ≈ €450 (probable NO_MONEY sur €300 cap)
+}
+
+
 def _estimate_eur_amounts(setup) -> dict | None:
-    """Retourne dict {risk, reward_1, reward_2} en EUR estimé pour 0.01 lot.
-    None si pair non mappée ou risk_pips manquant. Best-effort, approximation.
+    """Retourne dict {margin, risk, reward_1, reward_2} en EUR estimé pour 0.01 lot.
+
+    - ``margin`` : "argent engagé" pour ouvrir la position (= notional ÷ leverage).
+      None si la pair n'a pas de mapping margin (le bloc est rendu sans cette ligne).
+    - ``risk`` / ``reward_*`` : pertes/gains potentiels si SL/TP touchés.
+
+    None retourné globalement si la pair n'a pas de mapping pip_value ou si
+    risk_pips manquant. Best-effort, approximation.
     """
     pair = getattr(setup, "pair", "")
     risk_pips = float(getattr(setup, "risk_pips", 0) or 0)
@@ -351,6 +381,7 @@ def _estimate_eur_amounts(setup) -> dict | None:
     if not pip_eur or risk_pips <= 0:
         return None
     return {
+        "margin": _MARGIN_AT_001_LOT_EUR.get(pair),  # None si non mappé
         "risk": pip_eur * risk_pips,
         "reward_1": pip_eur * reward_pips_1,
         "reward_2": pip_eur * reward_pips_2 if reward_pips_2 > 0 else None,
@@ -523,14 +554,16 @@ def _format_setup(setup) -> str:
     # broker standards. Cf. _PIP_VALUE_AT_001_LOT_EUR.
     eur = _estimate_eur_amounts(setup)
     if eur is not None:
-        lines.extend([
-            "",
-            "💵 *En euros (estimation, lot 0.01)*",
-            f"Risque max : *−€{eur['risk']:.2f}* si SL touché",
-            f"Gain TP1   : *+€{eur['reward_1']:.2f}*"
+        eur_lines = ["", "💵 *En euros (estimation, lot 0.01)*"]
+        if eur.get("margin") is not None:
+            eur_lines.append(f"Argent engagé : *~€{eur['margin']:.0f}* (margin requise)")
+        eur_lines.extend([
+            f"Risque max    : *−€{eur['risk']:.2f}* si SL touché",
+            f"Gain TP1      : *+€{eur['reward_1']:.2f}*"
             + (f"  ·  TP2 : *+€{eur['reward_2']:.2f}*" if eur.get("reward_2") else ""),
             "_Demo (×0.10 lot) ≈ ×10  ·  Live IC Markets (0.02 lot) ≈ ×2_",
         ])
+        lines.extend(eur_lines)
 
     reasons = getattr(setup, "verdict_reasons", None) or []
     warnings = getattr(setup, "verdict_warnings", None) or []
