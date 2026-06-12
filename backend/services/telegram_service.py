@@ -311,29 +311,31 @@ _ADMIN_DEST_LABELS = {
 }
 
 
-# Pip-value en EUR par 0.01 lot (= volume minimum). Approximations basées sur
-# specs broker standards 2026-06 + EUR/USD ~1.10. Utilisé pour estimer le
-# risque/gain en € user-facing dans les messages Telegram. Volatile.
-# Pour Demo (max_lot 0.10) : multiplier par 10.
+# Valeur en EUR par UNITÉ DE PRIX (= la valeur de `risk_pips` dans le système,
+# qui est en réalité la distance brute entry−stop, pas des pips au sens classique)
+# pour 0.01 lot (volume minimum). Approximations specs broker standards 2026-06
+# + EUR/USD ~1.10 + USD/JPY ~150. Utilisé pour estimer risque/gain € user-facing
+# dans les messages Telegram. Volatile, approximation.
+#
+# Pour Demo (max_lot 0.10) : multiplier mentalement par 10.
 # Pour Live IC Markets (max_lot 0.02) : multiplier par 2.
+#
+# Forex : le système stocke risk_pips = abs(entry-stop) arrondi à 2 décimales.
+# Pour les majors quote USD (pip = 0.0001), un SL typique de 10-30 pips = 0.001
+# à 0.003 → arrondi à 0.00, le champ est inexploitable. On skip forex pour ne
+# pas afficher €0.00 trompeur.
 _PIP_VALUE_AT_001_LOT_EUR: dict[str, float] = {
-    # Forex majors quote USD : pip = 0.0001, 0.01 lot = 1000 base → $0.10/pip ≈ €0.09
-    "EUR/USD": 0.09,
-    "GBP/USD": 0.09,
-    "AUD/USD": 0.09,
-    "NZD/USD": 0.09,
-    # Forex JPY quote : pip = 0.01, 0.01 lot ≈ ¥10 → $0.07 ≈ €0.06
-    "USD/JPY": 0.06,
-    "EUR/JPY": 0.06,
-    "GBP/JPY": 0.06,
-    # Metals (oz)
-    "XAU/USD": 0.009,  # 0.01 lot = 1 oz, 1 pip = $0.01 ≈ €0.009
-    "XAG/USD": 0.045,  # 0.01 lot = 50 oz, 1 pip = $0.05 ≈ €0.045
-    # Energy (barrels)
-    "WTI/USD": 0.09,   # 0.01 lot = 10 barrels, 1 pip = $0.10 ≈ €0.09
-    # Crypto (rough)
-    "ETH/USD": 0.009,
+    # Metals (1 lot = 100 oz pour XAU, 5000 oz pour XAG)
+    "XAU/USD": 0.90,   # 1 unité prix × 100 × 0.01 = $1 ≈ €0.90
+    "XAG/USD": 45.0,   # 1 unité prix × 5000 × 0.01 = $50 ≈ €45
+    # Energy (1 lot = 1000 barrels)
+    "WTI/USD": 9.0,    # 1 unité prix × 1000 × 0.01 = $10 ≈ €9
+    # Crypto (1 lot = 1 unité ; varie selon broker, approximation)
+    "ETH/USD": 0.009,  # 1 unité prix × 1 × 0.01 = $0.01 ≈ €0.009
     "BTC/USD": 0.009,
+    # Forex : NON mappé volontairement (risk_pips arrondi à 0.00 → affichage
+    # €0.00 trompeur). À reactiver quand on aura un pipeline qui conserve la
+    # précision (e.g. risk_money directement en EUR).
 }
 
 
