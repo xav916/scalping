@@ -418,15 +418,39 @@ def _send_market_order(
         return {"ok": False, "message": f"order_send returned None: {mt5.last_error()}"}
     ok = result.retcode == mt5.TRADE_RETCODE_DONE
 
-    if ok and use_dist and result.price > 0:
-        # Pose SL/TP relatifs au fill price. Si la modify échoue, on log
-        # mais on retourne quand même ok=True : l'ordre est rempli, l'absence
-        # de SL/TP est récupérable manuellement.
+    if ok and use_dist:
+        # Pose SL/TP relatifs au fill price.
+        #
+        # Bug fix 2026-06-12 : certains brokers (observé sur IC Markets EU
+        # avec ETH/USD) renvoient result.price=0.0 même quand l'ordre est
+        # rempli avec succès. Le check `result.price > 0` filtrait ces cas
+        # et laissait la position SANS SL/TP — risque non borné.
+        #
+        # Fix robuste : 3 sources de fill_price en fallback :
+        #   1. result.price (cas nominal MT5)
+        #   2. positions_get(ticket).price_open (vraie source de vérité)
+        #   3. price envoyé dans la request (tick.ask/bid au moment de l'envoi)
+        fill_price = result.price if result.price > 0 else 0.0
+        if fill_price <= 0:
+            try:
+                positions = mt5.positions_get(ticket=result.order)
+                if positions and len(positions) > 0:
+                    fill_price = positions[0].price_open
+                    logger.info(
+                        f"[LIVE] result.price=0, fallback positions_get → {fill_price}"
+                    )
+            except Exception as _e:
+                logger.warning(f"[LIVE] positions_get fallback failed: {_e}")
+        if fill_price <= 0:
+            fill_price = price  # dernier fallback : tick price au moment de l'envoi
+            logger.warning(
+                f"[LIVE] all fallbacks failed, using tick price {fill_price} for SL/TP"
+            )
         _apply_sltp_from_fill(
             symbol=symbol,
             ticket=result.order,
             is_buy=(direction == "buy"),
-            fill=result.price,
+            fill=fill_price,
             sl_dist=sl_dist,
             tp_dist=tp_dist,
         )
