@@ -132,6 +132,27 @@ MT5_BRIDGE_API_KEY = os.getenv("MT5_BRIDGE_API_KEY", "")
 # RIEN au bridge. true = push auto (bridge en paper par défaut → sans risque
 # financier tant que le bridge est en PAPER_MODE).
 MT5_BRIDGE_ENABLED = os.getenv("MT5_BRIDGE_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+# ─── Bridge MT5 LIVE (destination admin parallèle) ──────────────────
+# Permet de pousser les setups vers UN SECOND bridge en plus du Demo (admin_legacy).
+# Cas d'usage : Demo Pepperstone continue + Live IC Markets sur un nouveau MT5
+# terminal + bridge.py port 8788. Les deux destinations sont admin (user_id=None),
+# donc poussées en HTTP synchrone (pas via la queue EA des users Premium).
+# Driver 2026-06-12 : Pepperstone bloqué par AMF (MT5 inaccessible retail FR),
+# pivot IC Markets Cyprus en parallèle du Demo Pepperstone.
+MT5_BRIDGE_LIVE_ENABLED = os.getenv("MT5_BRIDGE_LIVE_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+MT5_BRIDGE_LIVE_URL = os.getenv("MT5_BRIDGE_LIVE_URL", "")
+MT5_BRIDGE_LIVE_API_KEY = os.getenv("MT5_BRIDGE_LIVE_API_KEY", "")
+# Le min_confidence Live peut être plus strict que Demo pour limiter le risque
+# capital réel (default = même valeur que Demo = MT5_BRIDGE_MIN_CONFIDENCE).
+MT5_BRIDGE_LIVE_MIN_CONFIDENCE = float(os.getenv("MT5_BRIDGE_LIVE_MIN_CONFIDENCE", os.getenv("MT5_BRIDGE_MIN_CONFIDENCE", "90")))
+# Asset classes acceptées pour le bridge Live (IC Markets Cyprus supporte tout
+# par défaut). Par défaut = même que Demo si non set.
+MT5_BRIDGE_LIVE_ALLOWED_ASSET_CLASSES = [
+    c.strip().lower()
+    for c in os.getenv("MT5_BRIDGE_LIVE_ALLOWED_ASSET_CLASSES",
+                       os.getenv("MT5_BRIDGE_ALLOWED_ASSET_CLASSES", "forex,metal")).split(",")
+    if c.strip()
+]
 # Seuil strict — 90 par défaut. Stricter que le push Telegram (80) : on
 # n'auto-trade qu'avec haute conviction.
 MT5_BRIDGE_MIN_CONFIDENCE = float(os.getenv("MT5_BRIDGE_MIN_CONFIDENCE", "90"))

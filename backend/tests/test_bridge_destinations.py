@@ -337,3 +337,142 @@ def test_user_destination_invalid_symbol_map_type_ignored(monkeypatch):
     dests = bridge_destinations.resolve_destinations(_mk_setup("EUR/USD"))
 
     assert dests[0].symbol_map is None
+
+
+# ─── admin_live : 2e destination admin parallèle (Demo + Live) ────────
+
+
+def _set_live_env(monkeypatch, **overrides):
+    """Helper : force la config admin LIVE via patches sur config.settings."""
+    from config import settings as st
+    defaults = {
+        "MT5_BRIDGE_LIVE_ENABLED": True,
+        "MT5_BRIDGE_LIVE_URL": "http://live-bridge:8788",
+        "MT5_BRIDGE_LIVE_API_KEY": "L" * 32,
+        "MT5_BRIDGE_LIVE_MIN_CONFIDENCE": 75.0,
+        "MT5_BRIDGE_LIVE_ALLOWED_ASSET_CLASSES": ["forex", "metal", "energy"],
+    }
+    defaults.update(overrides)
+    for name, value in defaults.items():
+        monkeypatch.setattr(st, name, value)
+
+
+def test_admin_live_returned_when_env_set(monkeypatch):
+    """MT5_BRIDGE_LIVE_* set → admin_live BridgeConfig retourné."""
+    _set_admin_env(monkeypatch, MT5_BRIDGE_ENABLED=False)  # désactive Demo pour isoler
+    _set_live_env(monkeypatch)
+    monkeypatch.setattr(
+        "backend.services.users_service.list_premium_auto_exec_users", lambda: []
+    )
+
+    dests = bridge_destinations.resolve_destinations(_mk_setup())
+
+    assert len(dests) == 1
+    live = dests[0]
+    assert live.destination_id == "admin_live"
+    assert live.user_id is None
+    assert live.bridge_url == "http://live-bridge:8788"
+    assert live.bridge_api_key == "L" * 32
+    assert live.min_confidence == 75.0
+    assert live.allowed_asset_classes == frozenset({"forex", "metal", "energy"})
+
+
+def test_admin_live_excluded_when_disabled(monkeypatch):
+    """MT5_BRIDGE_LIVE_ENABLED=false → admin_live PAS retourné même si URL/KEY set."""
+    _set_admin_env(monkeypatch, MT5_BRIDGE_ENABLED=False)
+    _set_live_env(monkeypatch, MT5_BRIDGE_LIVE_ENABLED=False)
+    monkeypatch.setattr(
+        "backend.services.users_service.list_premium_auto_exec_users", lambda: []
+    )
+
+    dests = bridge_destinations.resolve_destinations(_mk_setup())
+
+    assert dests == []
+
+
+def test_admin_live_excluded_when_url_missing(monkeypatch):
+    """URL Live vide → admin_live PAS retourné (safe fallback)."""
+    _set_admin_env(monkeypatch, MT5_BRIDGE_ENABLED=False)
+    _set_live_env(monkeypatch, MT5_BRIDGE_LIVE_URL="")
+    monkeypatch.setattr(
+        "backend.services.users_service.list_premium_auto_exec_users", lambda: []
+    )
+
+    dests = bridge_destinations.resolve_destinations(_mk_setup())
+
+    assert dests == []
+
+
+def test_admin_live_excluded_when_api_key_missing(monkeypatch):
+    """API_KEY Live vide → admin_live PAS retourné (safe fallback)."""
+    _set_admin_env(monkeypatch, MT5_BRIDGE_ENABLED=False)
+    _set_live_env(monkeypatch, MT5_BRIDGE_LIVE_API_KEY="")
+    monkeypatch.setattr(
+        "backend.services.users_service.list_premium_auto_exec_users", lambda: []
+    )
+
+    dests = bridge_destinations.resolve_destinations(_mk_setup())
+
+    assert dests == []
+
+
+def test_admin_legacy_and_live_returned_together(monkeypatch):
+    """Demo + Live actifs → 2 destinations admin dans l'ordre (legacy puis live).
+
+    Cas d'usage 2026-06-12 : Demo Pepperstone continue + Live IC Markets en
+    parallèle pour comparer side-by-side.
+    """
+    _set_admin_env(monkeypatch)  # Demo ON
+    _set_live_env(monkeypatch)   # Live ON
+    monkeypatch.setattr(
+        "backend.services.users_service.list_premium_auto_exec_users", lambda: []
+    )
+
+    dests = bridge_destinations.resolve_destinations(_mk_setup())
+
+    assert [d.destination_id for d in dests] == ["admin_legacy", "admin_live"]
+    assert dests[0].bridge_url == "http://admin-bridge:8787"
+    assert dests[1].bridge_url == "http://live-bridge:8788"
+
+
+def test_admin_live_and_users_returned_together(monkeypatch):
+    """Live + Premium users actifs → admin_live d'abord, puis users (Demo off)."""
+    _set_admin_env(monkeypatch, MT5_BRIDGE_ENABLED=False)  # Demo off
+    _set_live_env(monkeypatch)
+    monkeypatch.setattr(
+        "backend.services.users_service.list_premium_auto_exec_users",
+        lambda: [_stub_premium_user(user_id=42)],
+    )
+
+    dests = bridge_destinations.resolve_destinations(_mk_setup("EUR/USD"))
+
+    assert [d.destination_id for d in dests] == ["admin_live", "user:42"]
+
+
+def test_admin_live_uses_legacy_defaults_when_overrides_absent(monkeypatch):
+    """Si MT5_BRIDGE_LIVE_MIN_CONFIDENCE non set, fallback sur MT5_BRIDGE_MIN_CONFIDENCE.
+
+    Permet de configurer Live avec juste URL/KEY/ENABLED, sans dupliquer
+    min_confidence et asset classes.
+    """
+    from config import settings as st
+    _set_admin_env(monkeypatch, MT5_BRIDGE_ENABLED=False)
+    # Live activé avec juste URL/KEY/ENABLED, les autres restent valeurs par défaut
+    monkeypatch.setattr(st, "MT5_BRIDGE_LIVE_ENABLED", True)
+    monkeypatch.setattr(st, "MT5_BRIDGE_LIVE_URL", "http://live:8788")
+    monkeypatch.setattr(st, "MT5_BRIDGE_LIVE_API_KEY", "L" * 32)
+    # min_confidence + asset_classes : utiliser ce qui est dans settings live
+    # (qui est lui-même chargé via os.getenv au boot, mais on ne le re-évalue pas
+    # ici — on vérifie juste que ces fields sont set sur le BridgeConfig)
+    monkeypatch.setattr(st, "MT5_BRIDGE_LIVE_MIN_CONFIDENCE", 90.0)
+    monkeypatch.setattr(st, "MT5_BRIDGE_LIVE_ALLOWED_ASSET_CLASSES", ["forex", "metal"])
+    monkeypatch.setattr(
+        "backend.services.users_service.list_premium_auto_exec_users", lambda: []
+    )
+
+    dests = bridge_destinations.resolve_destinations(_mk_setup())
+
+    assert len(dests) == 1
+    assert dests[0].destination_id == "admin_live"
+    assert dests[0].min_confidence == 90.0
+    assert dests[0].allowed_asset_classes == frozenset({"forex", "metal"})

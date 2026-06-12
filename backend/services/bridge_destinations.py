@@ -87,6 +87,39 @@ def _admin_legacy_destination() -> BridgeConfig | None:
     )
 
 
+def _admin_live_destination() -> BridgeConfig | None:
+    """Retourne la config admin LIVE (2e destination admin parallèle), ou ``None``.
+
+    Permet de pousser les setups vers un second bridge admin en plus du Demo
+    (admin_legacy). Pattern : Demo Pepperstone continue + Live IC Markets sur
+    nouveau MT5 + bridge.py port 8788. Les deux destinations sont admin
+    (user_id=None) donc HTTP synchrone, pas via la queue EA des Premium users.
+
+    Driver 2026-06-12 : Pepperstone bloqué AMF (MT5 inaccessible retail FR),
+    pivot IC Markets Cyprus en parallèle du Demo Pepperstone.
+
+    Lit via ``config.settings`` directement (les env vars MT5_BRIDGE_LIVE_* sont
+    indépendantes des patches mt5_bridge des tests existants).
+    """
+    from config import settings as st
+
+    if not (
+        getattr(st, "MT5_BRIDGE_LIVE_ENABLED", False)
+        and getattr(st, "MT5_BRIDGE_LIVE_URL", "")
+        and getattr(st, "MT5_BRIDGE_LIVE_API_KEY", "")
+    ):
+        return None
+    return BridgeConfig(
+        destination_id="admin_live",
+        user_id=None,
+        bridge_url=st.MT5_BRIDGE_LIVE_URL.rstrip("/"),
+        bridge_api_key=st.MT5_BRIDGE_LIVE_API_KEY,
+        min_confidence=float(st.MT5_BRIDGE_LIVE_MIN_CONFIDENCE),
+        allowed_asset_classes=frozenset(st.MT5_BRIDGE_LIVE_ALLOWED_ASSET_CLASSES),
+        auto_exec_enabled=True,
+    )
+
+
 def _user_destinations(setup: Any) -> list[BridgeConfig]:
     """Retourne les destinations users (Premium tier) pour ce setup.
 
@@ -149,13 +182,16 @@ def _user_destinations(setup: Any) -> list[BridgeConfig]:
 def resolve_destinations(setup: Any) -> list[BridgeConfig]:
     """Liste toutes les destinations vers lesquelles ce setup doit être poussé.
 
-    Ordre : ``admin_legacy`` en premier (rétro-compat), puis users (Phase C).
-    Liste possiblement vide — équivalent à l'ancien
-    ``mt5_bridge.is_configured() == False``.
+    Ordre : ``admin_legacy`` en premier (rétro-compat), puis ``admin_live`` (si
+    configuré), puis users (Phase C). Liste possiblement vide — équivalent à
+    l'ancien ``mt5_bridge.is_configured() == False``.
     """
     destinations: list[BridgeConfig] = []
     admin = _admin_legacy_destination()
     if admin is not None:
         destinations.append(admin)
+    admin_live = _admin_live_destination()
+    if admin_live is not None:
+        destinations.append(admin_live)
     destinations.extend(_user_destinations(setup))
     return destinations
