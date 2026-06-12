@@ -153,6 +153,14 @@ MT5_BRIDGE_LIVE_ALLOWED_ASSET_CLASSES = [
                        os.getenv("MT5_BRIDGE_ALLOWED_ASSET_CLASSES", "forex,metal")).split(",")
     if c.strip()
 ]
+# Pairs SUPPLÉMENTAIRES autorisées sur admin_live en plus de _STAR_PAIRS_SET.
+# Cas d'usage 2026-06-12 : Live IC Markets €100 capital trop petit pour XAU
+# (margin €130) et ETH (margin €80+) à 0.01 lot. Élargir Live aux forex majors
+# où 0.01 lot ne consomme que €30 de margin. Demo Pepperstone garde stars-only.
+# Format CSV : "EUR/USD,GBP/USD,USD/JPY". Vide = pas d'extension (stars-only).
+MT5_BRIDGE_LIVE_EXTRA_PAIRS = frozenset(
+    p.strip().upper() for p in os.getenv("MT5_BRIDGE_LIVE_EXTRA_PAIRS", "").split(",") if p.strip()
+)
 # Seuil strict — 90 par défaut. Stricter que le push Telegram (80) : on
 # n'auto-trade qu'avec haute conviction.
 MT5_BRIDGE_MIN_CONFIDENCE = float(os.getenv("MT5_BRIDGE_MIN_CONFIDENCE", "90"))

@@ -167,17 +167,21 @@ def _check_rejection(setup, dest=None) -> str | None:
     setup_direction = getattr(setup, "direction", None)
     if hasattr(setup_direction, "value"):
         setup_direction = setup_direction.value
+    # Pour le filtre stars-only fallback, on inclut aussi les extras de cette
+    # destination (cas Live IC Markets €100 : EUR/USD permis en plus des stars).
+    extras = getattr(dest, "extra_pairs_allowed", None) or frozenset() if dest else frozenset()
+    allowed_pairs_for_dest = _STAR_PAIRS_SET | extras
     try:
         from backend.services import pair_admission_controller
         if pair_admission_controller.has_explicit_state(setup.pair, setup_direction):
             if not pair_admission_controller.is_auto_exec_eligible(setup.pair, setup_direction):
                 return "_not_admitted"
         else:
-            if setup.pair not in _STAR_PAIRS_SET:
+            if setup.pair not in allowed_pairs_for_dest:
                 return "_not_a_star"
     except Exception as e:
         logger.debug(f"mt5_bridge: pair_admission_controller fallback: {e}")
-        if setup.pair not in _STAR_PAIRS_SET:
+        if setup.pair not in allowed_pairs_for_dest:
             return "_not_a_star"  # privé : filtre auto-exec stars-only legacy
     # Blocklist surgical : retire un pair sans toucher au scoring/Telegram.
     # Cf. MT5_BRIDGE_BLOCKED_PAIRS dans config/settings.py.
@@ -629,8 +633,17 @@ async def send_setups(setups: list) -> None:
     """Push plusieurs setups en parallèle. No-op si bridge pas configuré."""
     if not is_configured() or not setups:
         return
-    # Pré-filtre 1 : stars du portefeuille Phase 4 uniquement.
-    setups = [s for s in setups if s.pair in _STAR_PAIRS_SET]
+    # Pré-filtre 1 : stars du portefeuille Phase 4 + extras autorisés sur
+    # admin_live (cas €100 cap insuffisant pour XAU/ETH → ouverture aux forex
+    # majors EUR/USD, GBP/USD, USD/JPY uniquement côté Live, cf. driver
+    # 2026-06-12 IC Markets). Demo continue de filtrer stars-only via le
+    # per-destination check dans _push_to_destination → _check_rejection.
+    try:
+        from config.settings import MT5_BRIDGE_LIVE_EXTRA_PAIRS as _live_extras
+    except Exception:
+        _live_extras = frozenset()
+    allowed_pairs = _STAR_PAIRS_SET | _live_extras
+    setups = [s for s in setups if s.pair in allowed_pairs]
     if not setups:
         return
     # Pré-filtre 2 : asset class supportée par le broker courant.

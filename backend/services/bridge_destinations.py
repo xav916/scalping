@@ -54,6 +54,11 @@ class BridgeConfig:
         utilise le bon nom de symbole (ex: ``XAU/USD → GOLD`` pour Pepperstone
         UK). ``None`` = pas de mapping server-side, l'EA gère via son
         ``InpSymbolMap`` local. Cf. ``feedback_ea_symbol_map_pepperstone.md``.
+    extra_pairs_allowed : frozenset[str]
+        Pairs SUPPLÉMENTAIRES autorisées en plus de ``_STAR_PAIRS_SET`` pour
+        cette destination. Permet d'élargir Live aux forex majors quand le
+        capital est trop petit pour les stars métaux. Empty = stars-only.
+        Cf. driver 2026-06-12 IC Markets €100.
     """
 
     destination_id: str
@@ -64,6 +69,7 @@ class BridgeConfig:
     allowed_asset_classes: frozenset[str]
     auto_exec_enabled: bool
     symbol_map: dict[str, str] | None = None
+    extra_pairs_allowed: frozenset[str] = frozenset()
 
 
 def _admin_legacy_destination() -> BridgeConfig | None:
@@ -117,6 +123,7 @@ def _admin_live_destination() -> BridgeConfig | None:
         min_confidence=float(st.MT5_BRIDGE_LIVE_MIN_CONFIDENCE),
         allowed_asset_classes=frozenset(st.MT5_BRIDGE_LIVE_ALLOWED_ASSET_CLASSES),
         auto_exec_enabled=True,
+        extra_pairs_allowed=getattr(st, "MT5_BRIDGE_LIVE_EXTRA_PAIRS", frozenset()),
     )
 
 
