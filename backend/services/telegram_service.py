@@ -307,7 +307,7 @@ _PATTERN_EXPLAIN_FR: dict[str, str] = {
 # Cf. project_live_icmarkets_active_2026_06_12.
 _ADMIN_DEST_LABELS = {
     "admin_legacy": "🧪 Demo Pepperstone",
-    "admin_live": "💰 Live IC Markets (€100)",
+    "admin_live": "💰 Live IC Markets (€300)",
 }
 
 
