@@ -49,21 +49,96 @@ def _count_by_reason(since_iso: str, until_iso: str) -> dict[str, int]:
     return {r[0]: r[1] for r in rows}
 
 
+# Mapping vulgarisé 2026-06-13 : explication "qu'est-ce qui se passe + pourquoi"
+# pour les reason_codes les plus fréquents. Affiché sur le bot infra.
+_REASON_EXPLAIN_FR = {
+    "verdict_blocker": (
+        "Signaux refusés par le filtre qualité du radar",
+        "Le radar a détecté des opportunités mais son analyse interne (contexte macro, "
+        "patterns, indicateurs) a jugé qu'elles n'étaient pas assez fiables pour être "
+        "exécutées. Cas typique : marché fermé, contexte tendu, ou pattern incomplet."
+    ),
+    "below_confidence": (
+        "Signaux jugés trop faibles",
+        "Le score de confiance des signaux est tombé sous le seuil configuré "
+        "(Demo 70, Live 50). Sans atteindre ce seuil, on préfère ne pas trader."
+    ),
+    "sl_too_close": (
+        "Stop loss trop proche du prix actuel",
+        "Le stop de sécurité serait collé au prix d'entrée — risque de se faire stopper "
+        "immédiatement sur le bruit du marché. Trade abandonné pour éviter une perte sèche."
+    ),
+    "bridge_error": (
+        "Erreur de communication avec le broker",
+        "Le tunnel entre le radar et MT5 a renvoyé une erreur (timeout, refus broker, "
+        "ou rejet d'ordre). Vérifier l'état des bridges si récurrent."
+    ),
+    "market_closed": (
+        "Marché fermé",
+        "Le marché concerné est fermé (weekend ou pause quotidienne). Comportement attendu."
+    ),
+    "rafale_pause": (
+        "Pair mise en pause après trop de pertes",
+        "Une paire a accumulé plusieurs stops perdants récents — le radar la met en pause "
+        "temporaire pour éviter de tomber dans une mauvaise série."
+    ),
+    "geopolitical_veto": (
+        "Trade bloqué par le contexte géopolitique",
+        "Une règle macro (Fed restrictive, climat tendu, tarifs douaniers, etc.) a bloqué "
+        "ce trade en sécurité. Reprise auto dès que la situation se calme."
+    ),
+}
+
+
 def _format_message(reason_code: str, count: int, top_pairs: list[tuple[str, int]]) -> str:
-    # HTML (Telegram parse_mode=HTML) depuis 2026-05-13 : les reason_code
-    # contiennent souvent des "_" (ex: MIN_RR_BELOW_THRESHOLD) qui cassaient
-    # Markdown legacy. HTML est tolérant aux _ et * littéraux.
+    """Format vulgarisé pour le bot infra (2026-06-13).
+    Tout le monde doit comprendre : qu'est-ce qui se passe, pourquoi, quel impact.
+    """
     import html
-    label = html.escape(REASON_LABELS_FR.get(reason_code, reason_code))
+    label = REASON_LABELS_FR.get(reason_code, reason_code)
+    explain = _REASON_EXPLAIN_FR.get(reason_code, (label, ""))
+    short_title, why = explain
     safe_code = html.escape(reason_code)
+
+    # Mapping FR des pairs pour vulgarisation
+    _PAIR_FR_LOCAL = {
+        "XAU/USD": "OR",
+        "XAG/USD": "Argent",
+        "WTI/USD": "Pétrole",
+        "BTC/USD": "Bitcoin",
+        "ETH/USD": "Ethereum",
+        "SPX": "S&P 500",
+        "NDX": "Nasdaq",
+    }
+    pairs_lines = []
+    for p, c in top_pairs[:5]:
+        p_fr = _PAIR_FR_LOCAL.get(p, p)
+        if p_fr != p:
+            pairs_lines.append(f"• {html.escape(p_fr)} ({html.escape(p)}) : {c}")
+        else:
+            pairs_lines.append(f"• {html.escape(p)} : {c}")
+
     lines = [
-        f"⚠️ <b>Rafale rejections</b> · <code>{safe_code}</code>",
-        f"<b>{count}</b> ordres bloqués dans la dernière heure ({label}).",
+        f"⚠️ <b>Beaucoup de signaux refusés</b> · <b>{count} en 1h</b>",
+        "",
+        f"<b>Type :</b> {html.escape(short_title)}",
+        f"<b>Code technique :</b> <code>{safe_code}</code>",
     ]
-    if top_pairs:
-        pairs_str = " · ".join(f"{html.escape(p)}: {c}" for p, c in top_pairs[:5])
-        lines.append(f"Top pairs : {pairs_str}")
-    lines.append("\n→ Vérifier <code>/v2/cockpit</code> section RejectionsCard.")
+    if pairs_lines:
+        lines.append("")
+        lines.append("📊 <b>Top paires concernées :</b>")
+        lines.extend(pairs_lines)
+    if why:
+        lines.append("")
+        lines.append(f"ℹ️ {html.escape(why)}")
+    lines.append("")
+    lines.append(
+        "🔁 Pourquoi ce message ? Plus de 10 signaux refusés en 1h pour la même raison = "
+        "soit un contexte de marché difficile (normal, ça passera), soit un vrai souci à "
+        "vérifier."
+    )
+    lines.append("")
+    lines.append("Vérification optionnelle : <code>/v2/cockpit</code> → RejectionsCard")
     return "\n".join(lines)
 
 
