@@ -1,13 +1,6 @@
-# 2026-06-13 — Track A × veto contrefactuel (auto)
-
-**Sample :** 76 réconciliés (EXPLOITABLE — signal directionnel possible, intervalles larges)
-**Verdict :** insufficient
-
----
-
 # Track A × Veto géopolitique — analyse contrefactuelle
 
-**Généré :** 2026-06-13T06:01:46+00:00
+**Généré :** 2026-06-13T07:03:47+00:00
 **Source :** `shadow_setups` filtre `outcome IS NOT NULL AND geopolitical_features_json IS NOT NULL`
 **Échantillon :** 76 setups réconciliés
 **Confiance échantillon :** EXPLOITABLE — signal directionnel possible, intervalles larges
