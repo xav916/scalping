@@ -105,25 +105,35 @@ def detect_anomalies(data):
 
 
 def notify_infra_telegram(issues, data):
-    """POST anomalies to infra telegram endpoint."""
+    """POST anomalies to infra telegram endpoint. Vulgarized 2026-06-13."""
     if not issues:
         return "OK", None
 
     T = data.get("totals", {})
-    body_lines = ["• " + i for i in issues]
+    body_lines = ["⚠️ *Anomalie(s) détectée(s) :*"]
+    body_lines.extend(["• " + i for i in issues])
     body_lines.append("")
+    body_lines.append("ℹ️ Pourquoi ce message ?")
     body_lines.append(
-        f"users={len(data.get('users', []))} live={T.get('users_live', 0)} "
-        f"offline={T.get('users_offline', 0)} stale={T.get('users_stale', 0)}"
+        "Le radar surveille en permanence les robots de trading des users Premium "
+        "(Cédric et autres). S'ils n'exécutent plus les ordres ou sont déconnectés, "
+        "ils ratent des trades — donc on alerte."
+    )
+    body_lines.append("")
+    body_lines.append("📊 *État global*")
+    body_lines.append(
+        f"Users configurés : {len(data.get('users', []))}  "
+        f"(en ligne : {T.get('users_live', 0)}, hors ligne : {T.get('users_offline', 0)}, "
+        f"silencieux : {T.get('users_stale', 0)})"
     )
     body_lines.append(
-        f"orders_24h={T.get('orders_24h', '?')} "
-        f"exec_rate_24h={T.get('executed_rate_24h', '?')} "
-        f"zombies={T.get('zombies_total', 0)}"
+        f"Ordres tentés 24h : {T.get('orders_24h', '?')}  "
+        f"(taux réussite : {T.get('executed_rate_24h', '?')}, "
+        f"en attente : {T.get('zombies_total', 0)})"
     )
     body = "\n".join(body_lines)
 
-    title = f"🚨 EA health — {len(issues)} anomalie(s)"
+    title = f"🚨 Robot Premium · {len(issues)} souci(s) détecté(s)"
     payload = json.dumps({"title": title, "body": body})
 
     try:
@@ -182,8 +192,16 @@ def run_health_check():
         # Critical alert: endpoint down
         print("\n[2] POSTing critical alert to Telegram...")
         payload = json.dumps({
-            "title": "🚨 EA monitoring — health endpoint DOWN",
-            "body": f"Status: {fetch_status}\nDetail: {fetch_detail or 'N/A'}"
+            "title": "🚨 Surveillance robots Premium HS",
+            "body": (
+                "⚠️ Le service qui vérifie l'état des robots des users Premium "
+                "(Cédric et autres) ne répond plus.\n\n"
+                f"Code retour : {fetch_status}\n"
+                f"Détail : {fetch_detail or 'aucun'}\n\n"
+                "ℹ️ Pourquoi ce message ?\n"
+                "Sans ce service, on ne sait plus si les robots Premium "
+                "exécutent les trades. À vérifier rapidement côté backend."
+            )
         })
 
         try:
