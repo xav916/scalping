@@ -644,49 +644,51 @@ _notified_closes: set[int] = set()
 
 
 def _format_close(trade: dict) -> str:
-    """Format pédagogique pour la fermeture d'un trade auto-exec.
+    """Format vulgarisé fermeture : 'résultat + impact sur ton solde'.
 
-    Champs attendus dans `trade` (depuis personal_trades) :
-    - pair, direction, entry_price, exit_price, pnl, close_reason
-    - signal_confidence, mt5_ticket, created_at, closed_at, size_lot
-
-    Sections : Header (outcome + pnl) / Détails / Lecture du résultat.
+    Réécrit 2026-06-13 pour parler au lambda.
     """
     from datetime import datetime, timezone, timedelta
 
     pair = trade.get("pair") or "?"
     pair_label = _PAIR_FR_LABEL.get(pair, pair)
     direction = (trade.get("direction") or "").lower()
-    dir_label = "ACHAT 🟢" if direction == "buy" else "VENTE 🔴"
+    verb_open = "Acheté" if direction == "buy" else "Vendu"
+    verb_close = "revendu" if direction == "buy" else "racheté"
     entry = float(trade.get("entry_price") or 0)
     exit_price = float(trade.get("exit_price") or 0)
     pnl = float(trade.get("pnl") or 0)
     close_reason = (trade.get("close_reason") or "UNKNOWN").upper()
-    score = float(trade.get("signal_confidence") or 0)
     ticket = trade.get("mt5_ticket") or "—"
-    size_lot = trade.get("size_lot")
 
-    # Outcome icon + verdict text
+    # Header + impact compte
     if close_reason in ("TP1", "TP2"):
         outcome_icon = "✅"
-        outcome_word = f"GAIN ({close_reason} touché)"
+        outcome_word = "Trade GAGNÉ"
+        impact = "ton solde a augmenté"
+        explain = "Objectif de gain atteint comme prévu."
     elif close_reason == "SL":
         outcome_icon = "❌"
-        outcome_word = "PERTE (Stop Loss touché)"
+        outcome_word = "Trade PERDU"
+        impact = "ton solde a baissé"
+        explain = "Le marché s'est retourné, le stop de sécurité a coupé la perte."
     elif close_reason == "TIMEOUT":
         outcome_icon = "⏱"
-        outcome_word = "FERMÉ AU TEMPS (Timeout — ni TP ni SL touché)"
+        outcome_word = "Trade clos au temps"
+        impact = "ni gain ni perte significatifs"
+        explain = "Le marché n'a pas bougé assez. Position libérée pour faire place à d'autres signaux."
     elif close_reason == "MANUAL":
         outcome_icon = "👋"
-        outcome_word = "FERMÉ MANUELLEMENT"
+        outcome_word = "Trade fermé à la main"
+        impact = "fermé manuellement"
+        explain = "Tu as clôturé la position toi-même depuis MT5 — le radar n'a pas pris la décision."
     else:
         outcome_icon = "🔚"
-        outcome_word = f"FERMÉ ({close_reason})"
+        outcome_word = "Trade fermé"
+        impact = ""
+        explain = "Sortie de cause inconnue — vérifier l'historique MT5."
 
-    # Pts mouvement
-    pts_moved = exit_price - entry if direction == "buy" else entry - exit_price
-
-    # Durée du trade
+    # Durée
     duration_str = "—"
     try:
         ca = trade.get("created_at")
@@ -705,50 +707,23 @@ def _format_close(trade: dict) -> str:
     except Exception:
         pass
 
-    paris_now = datetime.now(timezone.utc) + timedelta(hours=2)
-    time_str = paris_now.strftime("%H:%M")
-
     pnl_sign = "+" if pnl >= 0 else ""
-    pts_sign = "+" if pts_moved >= 0 else ""
+    # Prix au format FR
+    decimals = 2 if any(k in pair for k in ("XAU", "XAG", "BTC", "ETH", "SOL", "LTC", "BCH", "DOT", "ADA", "XRP", "WTI")) else 5
+    entry_str = f"{entry:.{decimals}f}".replace(".", ",")
+    exit_str = f"{exit_price:.{decimals}f}".replace(".", ",")
 
+    header_impact = f" · {impact}" if impact else ""
     lines = [
-        f"{outcome_icon} *{pair_label}* ({pair}) — {dir_label}",
-        f"*{outcome_word}*",
-        f"PnL : *{pnl_sign}{pnl:.2f} €* · Mouvement : {pts_sign}{pts_moved:.2f} pts · {time_str} Paris",
+        f"{outcome_icon} *{outcome_word}* · {pair_label} ({pair})",
+        f"*{pnl_sign}€{pnl:.2f}* en {duration_str}{header_impact}",
         "",
-        "📋 *Détails du trade*",
-        f"Entrée  `{entry:.5f}`",
-        f"Sortie  `{exit_price:.5f}`",
-        f"Durée   {duration_str}",
+        "📋 *Détail*",
+        f"{verb_open} à {entry_str} → {verb_close} à {exit_str}",
+        explain,
+        "",
+        f"`#{ticket}`",
     ]
-    if size_lot:
-        lines.append(f"Volume  {size_lot} lot")
-    if score:
-        lines.append(f"Score initial  {score:.0f}/100")
-    lines.append(f"Ticket MT5  `{ticket}`")
-
-    # Lecture pédagogique du résultat
-    lines.extend(["", "📊 *Lecture du résultat*"])
-    if close_reason in ("TP1", "TP2"):
-        lines.append(
-            f"Le marché est allé dans la direction prévue jusqu'à toucher le {close_reason}. "
-            f"Setup gagnant : la thèse du radar (pattern + tendance) s'est confirmée."
-        )
-    elif close_reason == "SL":
-        lines.append(
-            "Le marché s'est inversé contre la position et a touché le Stop Loss. "
-            "Perte limitée comme prévu — le SL a fait son job de protection."
-        )
-    elif close_reason == "TIMEOUT":
-        lines.append(
-            "Ni TP ni SL touchés dans la fenêtre. Le marché a stagné ou bougé "
-            "trop lentement. Sortie au temps écoulé pour libérer le capital."
-        )
-    elif close_reason == "MANUAL":
-        lines.append("Tu as fermé la position manuellement — le radar n'a pas conduit la sortie.")
-    else:
-        lines.append("Sortie de cause inconnue — voir le journal MT5 pour le détail.")
-
     return "\n".join(lines)
 
 
@@ -818,22 +793,41 @@ _veto_notified_today: set[tuple[str, str, str]] = set()
 
 
 def _format_trade_opened(setup, ticket: int, fill_price: float, volume: float, mode: str) -> str:
+    """Format vulgarisé : 'qu'est-ce qui se passe, combien je gagne/perds, pourquoi'.
+
+    Réécrit 2026-06-13 pour parler au lambda (cf. memo
+    feedback_telegram_messages_vulgarized_2026_06_13).
+    """
     from datetime import datetime, timezone, timedelta
     dir_value = setup.direction.value if hasattr(setup.direction, "value") else str(setup.direction)
-    dir_label = "ACHAT 🟢" if dir_value == "buy" else "VENTE 🔴"
+    dir_word = "ACHAT" if dir_value == "buy" else "VENTE"
     pair_label = _PAIR_FR_LABEL.get(setup.pair, setup.pair)
     paris_now = datetime.now(timezone.utc) + timedelta(hours=2)
     time_str = paris_now.strftime("%H:%M")
-    sl = float(getattr(setup, "stop_loss", 0) or 0)
-    tp1 = float(getattr(setup, "take_profit_1", 0) or 0)
-    tp2 = float(getattr(setup, "take_profit_2", 0) or 0)
-    rr1 = float(getattr(setup, "risk_reward_1", 0) or 0)
+    mode_label = "LIVE (argent réel)" if mode == "live" else "Démo"
+
+    # Prix au format FR (virgule, 2 décimales pour métaux/crypto, 5 pour forex)
+    decimals = 2 if any(k in setup.pair for k in ("XAU", "XAG", "BTC", "ETH", "SOL", "LTC", "BCH", "DOT", "ADA", "XRP", "WTI")) else 5
+    fill_str = f"{fill_price:.{decimals}f}".replace(".", ",")
+
     lines = [
-        f"🟢 *Trade OUVERT* · {pair_label} ({setup.pair}) · {dir_label}",
-        f"Fill `{fill_price:.5f}` · volume `{volume}` · ticket `{ticket}` · {time_str} Paris",
-        f"SL `{sl:.5f}` · TP1 `{tp1:.5f}` (R:R {rr1:.1f}) · TP2 `{tp2:.5f}`",
-        f"Mode broker : *{mode}*",
+        f"🟢 *Nouveau trade* · {pair_label} ({setup.pair})",
+        f"Position *{dir_word}* à {fill_str} · {time_str}",
+        "",
     ]
+
+    eur = _estimate_eur_amounts(setup)
+    if eur is not None:
+        gain_visee = eur.get("reward_1") or 0
+        perte_max = eur.get("risk") or 0
+        lines.append(f"💰 Gain visé : *+€{gain_visee:.2f}*")
+        lines.append(f"🛑 Perte max : *−€{perte_max:.2f}*")
+        lines.append(f"⏱ Durée moyenne : 1 à 4h")
+        lines.append("")
+
+    lines.append("ℹ️ Le radar a lancé un ordre auto chez ton broker. Le trade tourne seul jusqu'à toucher son objectif ou son stop.")
+    lines.append("")
+    lines.append(f"`#{ticket}` · compte {mode_label}")
     return "\n".join(lines)
 
 
@@ -884,13 +878,27 @@ async def send_veto_alert(pair: str, direction: str, rules_matched: list[str], r
     if not new_rules:
         return
     try:
-        rules_str = ", ".join(new_rules)
-        reasons_str = "\n".join(f"• {r}" for r in (reasons or [])[:3])
+        # Vulgarisation des noms de règles techniques (2026-06-13)
+        _RULE_FR = {
+            "FED_HAWKISH": "Fed (banque centrale US) en mode restrictif",
+            "GDELT_STRESS": "Climat géopolitique stressé (actualité internationale)",
+            "POLYMARKET_RISK": "Marché prédictif signale un risque imminent",
+            "TARIFF": "Annonce de hausse de tarifs douaniers",
+            "ECB_HAWKISH": "BCE (banque centrale Europe) en mode restrictif",
+        }
+        pair_label = _PAIR_FR_LABEL.get(pair, pair)
+        rules_friendly = [_RULE_FR.get(r, r) for r in new_rules]
+        causes_str = "\n".join(f"• {r}" for r in rules_friendly[:3])
         text = (
-            f"🌍 *Veto géopolitique activé* · {pair} {direction}\n"
-            f"Règle(s) déclenchée(s) : *{rules_str}*\n"
-            f"{reasons_str}\n"
-            f"_Les setups concernés ne seront pas auto-exécutés tant que la condition macro tient._"
+            f"🌍 *Trades suspendus* · {pair_label} ({pair})\n"
+            f"\n"
+            f"⚠️ Le contexte macro est trop tendu pour trader sereinement.\n"
+            f"Cause(s) :\n{causes_str}\n"
+            f"\n"
+            f"ℹ️ Le radar surveille l'actualité économique et géopolitique en continu. "
+            f"Si ça devient risqué, il bloque les trades pour te protéger.\n"
+            f"\n"
+            f"🔁 Reprise auto dès que la situation se calme — rien à faire de ton côté."
         )
         destinataires = _destinataires()
         url = TELEGRAM_API.format(token=TELEGRAM_BOT_TOKEN)
@@ -919,13 +927,50 @@ async def send_pac_transition_user(pair: str, direction: str | None, from_state:
     if not is_configured():
         return
     try:
+        # Vulgarisation 2026-06-13 : explication impact + glossaire états en bas
+        _STATE_FR = {
+            "OBSERVED": "👁 simplement surveillée (pas d'ordres)",
+            "TELEGRAM": "📱 signal envoyé en notif (à toi de jouer)",
+            "AUTO_EXEC": "🤖 trades automatiques (le radar exécute seul)",
+            "PAUSED": "⏸ en pause (résultats récents insuffisants)",
+            "DEMOTED": "📉 rétrogradée (performance dégradée)",
+        }
         arrow = "📈" if to_state in ("TELEGRAM", "AUTO_EXEC") else "📉" if to_state == "DEMOTED" else "⏸" if to_state == "PAUSED" else "🔄"
-        dir_str = direction or "*"
-        reason_short = (reason or "")[:120]
+        action_word = {
+            "AUTO_EXEC": "activée en mode auto",
+            "TELEGRAM": "activée en mode notif",
+            "PAUSED": "mise en pause",
+            "DEMOTED": "rétrogradée",
+            "OBSERVED": "remise en simple surveillance",
+        }.get(to_state, "modifiée")
+        pair_label = _PAIR_FR_LABEL.get(pair, pair)
+        dir_str = ""
+        if direction == "buy":
+            dir_str = " (sens achat)"
+        elif direction == "sell":
+            dir_str = " (sens vente)"
+        new_state_fr = _STATE_FR.get(to_state, to_state)
+        reason_short = (reason or "")[:140]
+
+        if to_state == "AUTO_EXEC":
+            effect_line = "Effet : le radar prendra les ordres seul sur cette paire quand un signal apparaît."
+        elif to_state == "TELEGRAM":
+            effect_line = "Effet : tu vas recevoir les signaux par notif, à toi de placer l'ordre manuellement si tu veux."
+        elif to_state in ("PAUSED", "DEMOTED"):
+            effect_line = "Effet : plus de trades auto sur cette paire jusqu'à amélioration des résultats."
+        else:
+            effect_line = "Effet : la paire est juste observée pour le moment."
+
         text = (
-            f"{arrow} *Transition paire* · {pair} {dir_str}\n"
-            f"*{from_state or 'NEW'}* → *{to_state}*\n"
-            f"_{reason_short}_"
+            f"{arrow} *{pair_label}* {action_word} · {pair}{dir_str}\n"
+            f"\n"
+            f"Nouveau mode : *{new_state_fr}*\n"
+            f"{effect_line}\n"
+            f"\n"
+            f"ℹ️ Une paire peut basculer entre 4 modes selon ses performances. "
+            f"Tu reçois ce message à chaque changement.\n"
+            f"\n"
+            f"_Raison : {reason_short}_"
         )
         destinataires = _destinataires()
         url = TELEGRAM_API.format(token=TELEGRAM_BOT_TOKEN)
