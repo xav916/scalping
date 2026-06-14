@@ -240,9 +240,20 @@ def compute_verdict(
         warnings.append(f"Conflit MTF : tendance 1h = {h1_trend}")
 
     # Decision finale
+    # Seuil SKIP plus permissif pour crypto weekend (2026-06-14) : observé
+    # plafond score=69 cap sur ETH/BTC/BCH weekend → 100% SKIP avec seuil 75.
+    # Crypto = 24/7 mais volatilité plus basse weekend → patterns moins forts.
+    # On accepte score 65+ uniquement pour la combinaison crypto + weekend.
+    from config.settings import asset_class_for as _ac
+    from backend.services import session_service as _ss
+
+    skip_threshold = 75
+    if _ac(setup.pair) == "crypto" and _ss.is_weekend():
+        skip_threshold = 65
+
     if blockers:
         action = "SKIP"
-    elif score < 75 or len(warnings) >= 3:
+    elif score < skip_threshold or len(warnings) >= 3:
         action = "SKIP"
     elif len(warnings) >= 1 and score < 85:
         action = "WAIT"
