@@ -469,15 +469,59 @@ def _apply_sltp_from_fill(*, symbol: str, ticket: int, is_buy: bool, fill: float
                           sl_dist: float, tp_dist: float) -> None:
     """Pose SL/TP relatifs au fill price via TRADE_ACTION_SLTP.
 
+    Préserve le R:R du backend (sl_dist / tp_dist appliqués depuis fill)
+    quand c'est possible. Si l'un tombe dans la "forbidden zone" du broker
+    (`trade_stops_level` points autour du prix courant), on clamp pour
+    sortir de la zone interdite plutôt que de skipper.
+
+    Fix 2026-06-14 incident : retcode 10016 "Invalid stops" observé sur
+    IC Markets EU ETH/USD weekend. Avant ce fix, le SL/TP n'était jamais
+    posé en cas de stops_level élevé, laissant la position non protégée.
+
     No-op si dist invalides. Best-effort : log warning si échec mais ne
     raise pas — l'ordre principal est déjà rempli.
     """
     if fill <= 0 or sl_dist <= 0 or tp_dist <= 0:
         return
     info = mt5.symbol_info(symbol)
-    digits = info.digits if info else 5
-    new_sl = round(fill - sl_dist, digits) if is_buy else round(fill + sl_dist, digits)
-    new_tp = round(fill + tp_dist, digits) if is_buy else round(fill - tp_dist, digits)
+    if not info:
+        logger.warning(f"[SLTP] symbol_info None pour {symbol}, abort")
+        return
+    digits = info.digits
+    point = info.point
+    # Base : SL/TP relatifs au fill (préserve le R:R souhaité par le backend)
+    new_sl = fill + sl_dist if not is_buy else fill - sl_dist
+    new_tp = fill - tp_dist if not is_buy else fill + tp_dist
+    # Clamp anti-Invalid-stops : si l'un tombe dans la forbidden zone du
+    # broker (stops_level points autour du prix courant), on le pousse à la
+    # limite avec un buffer 20% pour absorber le slippage marché entre
+    # calcul et send (~1-2 ticks).
+    stops_lvl = getattr(info, "trade_stops_level", 0) or 0
+    tick = mt5.symbol_info_tick(symbol)
+    if tick and stops_lvl > 0 and tick.bid > 0 and tick.ask > 0:
+        min_dist = stops_lvl * point * 1.2
+        if is_buy:
+            # BUY position : SL closes via SELL (price=bid). Doit être
+            # bid - min_dist au plus haut (sinon "trop près").
+            max_sl = tick.bid - min_dist
+            if new_sl > max_sl:
+                new_sl = max_sl
+            # TP closes via SELL : doit être bid + min_dist au plus bas.
+            min_tp = tick.bid + min_dist
+            if new_tp < min_tp:
+                new_tp = min_tp
+        else:
+            # SELL position : SL closes via BUY (price=ask). Doit être
+            # ask + min_dist au plus bas.
+            min_sl = tick.ask + min_dist
+            if new_sl < min_sl:
+                new_sl = min_sl
+            # TP closes via BUY : doit être ask - min_dist au plus haut.
+            max_tp = tick.ask - min_dist
+            if new_tp > max_tp:
+                new_tp = max_tp
+    new_sl = round(new_sl, digits)
+    new_tp = round(new_tp, digits)
     req = {
         "action": mt5.TRADE_ACTION_SLTP,
         "position": ticket,
@@ -494,12 +538,14 @@ def _apply_sltp_from_fill(*, symbol: str, ticket: int, is_buy: bool, fill: float
     if r.retcode != mt5.TRADE_RETCODE_DONE:
         logger.warning(
             f"[SLTP] modify retcode={r.retcode} ticket={ticket} "
-            f"sl={new_sl} tp={new_tp} msg={r.comment}"
+            f"sl={new_sl} tp={new_tp} msg={r.comment} "
+            f"stops_lvl={stops_lvl} bid={getattr(tick, 'bid', '?')} "
+            f"ask={getattr(tick, 'ask', '?')}"
         )
         return
     logger.info(
-        f"[SLTP] ticket={ticket} SL/TP recalculé depuis fill={fill} "
-        f"sl={new_sl} tp={new_tp}"
+        f"[SLTP] ticket={ticket} SL/TP posé fill={fill} sl={new_sl} tp={new_tp} "
+        f"(stops_lvl={stops_lvl} bid={getattr(tick, 'bid', '?')} ask={getattr(tick, 'ask', '?')})"
     )
 
 
