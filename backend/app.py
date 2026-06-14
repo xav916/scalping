@@ -765,6 +765,115 @@ async def api_user_watched_pairs_get(ctx: AuthContext = Depends(auth_context)):
     return {"pairs": pairs, "cap": cap, "tier": tier}
 
 
+# ─── Settings client : liste paires dispos + préférence confiance ─────
+# Chantier 2026-06-14 : permettre au client Premium de moduler ses prefs
+# depuis /v2/settings. watched-pairs existe déjà (au-dessus), on ajoute :
+# - /api/available-pairs : liste les paires sélectionnables groupées par classe
+# - /api/user/trading-prefs : GET/PATCH du min_confidence
+@app.get("/api/available-pairs")
+async def api_available_pairs(ctx: AuthContext = Depends(auth_context)):
+    """Liste des paires disponibles côté SaaS, groupées par classe d'actif.
+
+    Source de vérité : ``WATCHED_PAIRS`` env (la liste globale que le radar
+    analyse). Le client choisit son subset depuis ce pool.
+    """
+    from config.settings import WATCHED_PAIRS, asset_class_for
+
+    # Labels FR pour affichage UI lambda-friendly
+    _PAIR_FR = {
+        "EUR/USD": "Euro / Dollar US",
+        "GBP/USD": "Livre / Dollar US",
+        "USD/JPY": "Dollar US / Yen",
+        "EUR/GBP": "Euro / Livre",
+        "USD/CHF": "Dollar US / Franc suisse",
+        "AUD/USD": "Dollar australien / Dollar US",
+        "USD/CAD": "Dollar US / Dollar canadien",
+        "EUR/JPY": "Euro / Yen",
+        "GBP/JPY": "Livre / Yen",
+        "XAU/USD": "Or (XAU)",
+        "XAG/USD": "Argent (XAG)",
+        "WTI/USD": "Pétrole WTI",
+        "SPX": "S&P 500",
+        "NDX": "Nasdaq 100",
+        "BTC/USD": "Bitcoin",
+        "ETH/USD": "Ethereum",
+        "SOL/USD": "Solana",
+        "ADA/USD": "Cardano",
+        "XRP/USD": "XRP",
+        "LTC/USD": "Litecoin",
+        "BCH/USD": "Bitcoin Cash",
+        "DOT/USD": "Polkadot",
+    }
+    _CLASS_FR = {
+        "forex": "Forex (devises)",
+        "metal": "Métaux précieux",
+        "energy": "Énergie",
+        "equity_index": "Indices boursiers",
+        "crypto": "Crypto-monnaies",
+    }
+    groups: dict[str, list[dict]] = {}
+    for pair in WATCHED_PAIRS:
+        ac = asset_class_for(pair) or "other"
+        groups.setdefault(ac, []).append({
+            "pair": pair,
+            "label": _PAIR_FR.get(pair, pair),
+        })
+    # Format final : liste de groupes triés par ordre logique
+    _ORDER = ["forex", "metal", "energy", "equity_index", "crypto", "other"]
+    result = []
+    for ac in _ORDER:
+        if ac in groups:
+            result.append({
+                "asset_class": ac,
+                "label": _CLASS_FR.get(ac, ac),
+                "pairs": sorted(groups[ac], key=lambda x: x["pair"]),
+            })
+    return {"groups": result, "total": sum(len(g["pairs"]) for g in result)}
+
+
+@app.get("/api/user/trading-prefs")
+async def api_user_trading_prefs_get(ctx: AuthContext = Depends(auth_context)):
+    """Retourne les préférences trading du user : min_confidence + bornes."""
+    if ctx.user_id is None:
+        # User env legacy : pas de prefs DB, retourne la valeur courante du global.
+        return {
+            "min_confidence": 50.0,
+            "floor": users_service.MIN_CONFIDENCE_FLOOR,
+            "ceiling": users_service.MIN_CONFIDENCE_CEILING,
+            "tier": "legacy",
+            "editable": False,
+        }
+    user = users_service.get_user_by_id(ctx.user_id) or {}
+    return {
+        "min_confidence": users_service.get_min_confidence(ctx.user_id, default=70.0),
+        "floor": users_service.MIN_CONFIDENCE_FLOOR,
+        "ceiling": users_service.MIN_CONFIDENCE_CEILING,
+        "tier": user.get("tier", "free"),
+        "editable": True,
+    }
+
+
+@app.patch("/api/user/trading-prefs")
+async def api_user_trading_prefs_patch(
+    payload: dict,
+    ctx: AuthContext = Depends(auth_context),
+):
+    """Met à jour les préférences trading du user.
+
+    Body : ``{min_confidence: float}``. Validation 50-95.
+    """
+    if ctx.user_id is None:
+        raise HTTPException(status_code=400, detail="user legacy env, edit via .env")
+    raw = (payload or {}).get("min_confidence")
+    if raw is None:
+        raise HTTPException(status_code=400, detail="min_confidence requis")
+    try:
+        saved = users_service.update_min_confidence(ctx.user_id, raw)
+    except (TypeError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True, "min_confidence": saved}
+
+
 @app.put("/api/user/watched-pairs")
 async def api_user_watched_pairs_put(
     payload: dict,

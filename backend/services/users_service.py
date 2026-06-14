@@ -580,6 +580,46 @@ def update_auto_exec_enabled(user_id: int, enabled: bool) -> None:
         )
 
 
+# Bornes pour la préférence min_confidence client (Settings UI 2026-06-14).
+MIN_CONFIDENCE_FLOOR = 50.0
+MIN_CONFIDENCE_CEILING = 95.0
+
+
+def update_min_confidence(user_id: int, value: float) -> float:
+    """Persiste la préférence ``min_confidence`` du client dans broker_config.
+
+    Cette valeur est ensuite lue par ``bridge_destinations._user_destinations``
+    pour filtrer les setups envoyés à l'EA du client — seuls ceux avec
+    ``confidence_score >= min_confidence`` lui sont dispatchés.
+
+    Valide ``value`` dans [50, 95]. Lève ``ValueError`` si hors plage.
+    """
+    v = float(value)
+    if not (MIN_CONFIDENCE_FLOOR <= v <= MIN_CONFIDENCE_CEILING):
+        raise ValueError(
+            f"min_confidence doit être entre {MIN_CONFIDENCE_FLOOR:.0f} et "
+            f"{MIN_CONFIDENCE_CEILING:.0f} (reçu : {v})"
+        )
+    cfg = get_broker_config(user_id)
+    cfg["min_confidence"] = v
+    with _conn() as c:
+        c.execute(
+            "UPDATE users SET broker_config = ? WHERE id = ?",
+            (json.dumps(cfg), user_id),
+        )
+    return v
+
+
+def get_min_confidence(user_id: int, default: float = 70.0) -> float:
+    """Lit ``min_confidence`` du broker_config. Fallback ``default`` si absent."""
+    cfg = get_broker_config(user_id)
+    raw = cfg.get("min_confidence")
+    try:
+        return float(raw) if raw is not None else float(default)
+    except (TypeError, ValueError):
+        return float(default)
+
+
 def find_user_by_bridge_api_key(api_key: str) -> Optional[dict]:
     """Cherche un user dont ``broker_config.bridge_api_key == api_key``.
 
