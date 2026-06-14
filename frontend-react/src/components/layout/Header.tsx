@@ -204,16 +204,17 @@ export function Header() {
           <NavLink
             to="/settings"
             className={({ isActive }) =>
-              `text-xs px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-lg border transition-all ${
+              `text-xs px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg border transition-all inline-flex items-center gap-1.5 ${
                 isActive
                   ? 'border-cyan-400/40 text-cyan-200 bg-cyan-400/10'
                   : 'border-glass-soft hover:border-glass-strong hover:bg-white/5 text-white/70'
               }`
             }
-            title="Paramètres du compte"
+            title="Paramètres du compte (paires + niveau de confiance + EA)"
             aria-label="Paramètres"
           >
             <span>⚙</span>
+            <span className="hidden sm:inline">Paramètres</span>
           </NavLink>
         )}
         {/* Logout */}
