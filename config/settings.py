@@ -167,6 +167,14 @@ MT5_BRIDGE_LIVE_ALLOWED_ASSET_CLASSES = [
 MT5_BRIDGE_LIVE_EXTRA_PAIRS = frozenset(
     p.strip().upper() for p in os.getenv("MT5_BRIDGE_LIVE_EXTRA_PAIRS", "").split(",") if p.strip()
 )
+# Paires supplémentaires autorisées globalement (Demo + Live + autres
+# destinations multi-tenant) en plus des stars XAU/XAG/WTI/ETH. Sert à
+# élargir l'auto-exec aux paires promues manuellement en AUTO_EXEC via
+# pair_admission_state sans toucher au filtre _STAR_PAIRS_SET legacy.
+# Format CSV : "BTC/USD,SOL/USD,ADA/USD".
+MT5_BRIDGE_EXTRA_PAIRS_GLOBAL = frozenset(
+    p.strip().upper() for p in os.getenv("MT5_BRIDGE_EXTRA_PAIRS_GLOBAL", "").split(",") if p.strip()
+)
 # Seuil strict — 90 par défaut. Stricter que le push Telegram (80) : on
 # n'auto-trade qu'avec haute conviction.
 MT5_BRIDGE_MIN_CONFIDENCE = float(os.getenv("MT5_BRIDGE_MIN_CONFIDENCE", "90"))

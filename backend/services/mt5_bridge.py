@@ -649,7 +649,11 @@ async def send_setups(setups: list) -> None:
         from config.settings import MT5_BRIDGE_LIVE_EXTRA_PAIRS as _live_extras
     except Exception:
         _live_extras = frozenset()
-    allowed_pairs = _STAR_PAIRS_SET | _live_extras
+    try:
+        from config.settings import MT5_BRIDGE_EXTRA_PAIRS_GLOBAL as _global_extras
+    except Exception:
+        _global_extras = frozenset()
+    allowed_pairs = _STAR_PAIRS_SET | _live_extras | _global_extras
     setups = [s for s in setups if s.pair in allowed_pairs]
     if not setups:
         return
