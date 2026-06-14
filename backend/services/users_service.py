@@ -775,7 +775,7 @@ def get_watched_pairs(user_id: int) -> list[str]:
 
 
 # Cap nombre de pairs par tier (SaaS).
-MAX_PAIRS_PER_TIER = {"free": 1, "pro": 5, "premium": 16}
+MAX_PAIRS_PER_TIER = {"free": 1, "pro": 5, "premium": 22}
 
 # Paires pré-sélectionnées au signup pour que l'user voit immédiatement le
 # radar tourner (zéro friction onboarding). Ordonnées par popularité / volume.
@@ -784,6 +784,8 @@ DEFAULT_PAIRS_ORDERED = [
     "EUR/USD", "GBP/USD", "USD/JPY", "XAU/USD", "BTC/USD",
     "EUR/JPY", "AUD/USD", "USD/CAD", "GBP/JPY", "XAG/USD",
     "ETH/USD", "SPX", "NDX", "WTI/USD", "USD/CHF", "EUR/GBP",
+    # 2026-06-14 : 6 nouvelles cryptos activées chez IC Markets EU
+    "SOL/USD", "ADA/USD", "XRP/USD", "LTC/USD", "BCH/USD", "DOT/USD",
 ]
 
 
