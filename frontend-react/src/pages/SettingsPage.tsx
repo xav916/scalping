@@ -18,12 +18,41 @@ import { Header } from '@/components/layout/Header';
  *     mais ce n'est plus requis ni central au produit.
  */
 
+// 2026-06-14 : étendu aux 6 nouvelles cryptos activées chez IC Markets EU
+// (cf. project_manual_crypto_promotion_2026_06_13.md).
 const ALL_PAIRS = [
   'EUR/USD', 'GBP/USD', 'USD/JPY', 'EUR/GBP', 'USD/CHF',
   'AUD/USD', 'USD/CAD', 'EUR/JPY', 'GBP/JPY',
   'XAU/USD', 'XAG/USD',
-  'BTC/USD', 'ETH/USD',
+  'BTC/USD', 'ETH/USD', 'SOL/USD', 'ADA/USD', 'XRP/USD', 'LTC/USD', 'BCH/USD', 'DOT/USD',
   'SPX', 'NDX', 'WTI/USD',
+];
+
+// 3 niveaux de confiance prédéfinis (mappés sur la borne min_confidence).
+// Wording lambda-friendly. Le slider continu reste utilisable pour les
+// power users via l'input number.
+const CONFIDENCE_TIERS = [
+  {
+    value: 50,
+    name: 'Permissif',
+    emoji: '🌊',
+    desc: 'Maximum d\'opportunités. Le radar pousse plus de signaux mais avec un score plus bas.',
+    detail: 'Convient si tu veux beaucoup d\'activité et que tu acceptes plus de faux signaux.',
+  },
+  {
+    value: 70,
+    name: 'Standard',
+    emoji: '⚖️',
+    desc: 'Équilibre qualité/quantité (recommandé).',
+    detail: 'Le bon mix pour démarrer. Seuls les signaux jugés solides par le radar sont envoyés.',
+  },
+  {
+    value: 85,
+    name: 'Strict',
+    emoji: '🎯',
+    desc: 'Très peu de signaux mais très haute confiance.',
+    detail: 'Convient si tu préfères 1-2 trades par jour de très bonne qualité plutôt qu\'un volume élevé.',
+  },
 ];
 
 // Pré-remplit l'input InpSymbolMap de l'EA selon le broker. Évite à chaque
@@ -67,6 +96,25 @@ export function SettingsPage() {
     queryFn: api.userWatchedPairsGet,
     staleTime: 60_000,
   });
+
+  const tradingPrefsQ = useQuery({
+    queryKey: ['user', 'trading-prefs'],
+    queryFn: api.userTradingPrefsGet,
+    staleTime: 60_000,
+  });
+
+  const [pendingMinConf, setPendingMinConf] = useState<number | null>(null);
+
+  const saveTradingPrefsMut = useMutation({
+    mutationFn: (value: number) => api.userTradingPrefsPatch(value),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['user', 'trading-prefs'] });
+      setPendingMinConf(null);
+    },
+  });
+
+  const currentMinConf = tradingPrefsQ.data?.min_confidence ?? 70;
+  const displayedMinConf = pendingMinConf ?? currentMinConf;
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
@@ -412,6 +460,98 @@ export function SettingsPage() {
               className="text-xs text-emerald-400 mt-3"
             >
               Paires enregistrées ✓
+            </motion.p>
+          )}
+        </GlassCard>
+
+        {/* ─── Niveau de confiance (2026-06-14) ─── */}
+        <GlassCard variant="elevated" className="p-6">
+          <div className="flex items-start justify-between mb-4 flex-wrap gap-2">
+            <div>
+              <h2 className="text-lg font-semibold mb-1">Niveau de confiance</h2>
+              <p className="text-sm text-white/50">
+                Quel score minimum les signaux doivent atteindre pour être envoyés à ton robot ?
+              </p>
+            </div>
+            {pendingMinConf !== null && pendingMinConf !== currentMinConf && (
+              <button
+                onClick={() => saveTradingPrefsMut.mutate(pendingMinConf)}
+                disabled={saveTradingPrefsMut.isPending}
+                className="px-4 py-2 rounded-xl bg-gradient-to-br from-cyan-400 to-pink-500 text-slate-900 text-sm font-semibold disabled:opacity-40"
+              >
+                {saveTradingPrefsMut.isPending ? 'Enregistrement…' : 'Enregistrer'}
+              </button>
+            )}
+          </div>
+
+          {/* 3 tiers cliquables */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+            {CONFIDENCE_TIERS.map((tier) => {
+              const isActive = displayedMinConf === tier.value;
+              return (
+                <button
+                  key={tier.value}
+                  onClick={() => setPendingMinConf(tier.value)}
+                  className={`p-4 rounded-xl text-left transition-all ${
+                    isActive
+                      ? 'bg-cyan-400/15 border-2 border-cyan-400/60'
+                      : 'bg-white/5 border-2 border-white/10 hover:border-white/20'
+                  }`}
+                >
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-2xl">{tier.emoji}</span>
+                    <span className={`font-semibold ${isActive ? 'text-cyan-200' : 'text-white/80'}`}>
+                      {tier.name}
+                    </span>
+                    <span className="ml-auto text-xs text-white/40 font-mono">
+                      ≥{tier.value}
+                    </span>
+                  </div>
+                  <p className="text-xs text-white/60 leading-relaxed">{tier.desc}</p>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Slider continu pour réglage fin */}
+          <div className="mt-4 p-4 rounded-lg bg-white/5 border border-white/10">
+            <div className="flex items-center justify-between mb-2 text-xs text-white/50">
+              <span>Réglage fin</span>
+              <span className="font-mono text-cyan-300">
+                Seuil actuel : <strong>{displayedMinConf}</strong> / 100
+              </span>
+            </div>
+            <input
+              type="range"
+              min={tradingPrefsQ.data?.floor ?? 50}
+              max={tradingPrefsQ.data?.ceiling ?? 95}
+              step={1}
+              value={displayedMinConf}
+              onChange={(e) => setPendingMinConf(Number(e.target.value))}
+              className="w-full accent-cyan-400"
+            />
+            <div className="flex justify-between text-[10px] text-white/30 mt-1 font-mono">
+              <span>50 (permissif)</span>
+              <span>70 (standard)</span>
+              <span>85 (strict)</span>
+              <span>95 (max)</span>
+            </div>
+          </div>
+
+          <p className="text-xs text-white/40 mt-3 leading-relaxed">
+            ℹ️ Le radar attribue un score à chaque signal (basé sur la qualité du pattern, le
+            contexte macro, la session, etc.). Plus le seuil est haut, moins tu reçois de signaux,
+            mais ceux qui passent sont jugés plus solides. Le changement prend effet immédiatement —
+            ton robot va recevoir uniquement les signaux qui atteignent ton seuil.
+          </p>
+
+          {saveTradingPrefsMut.isSuccess && (
+            <motion.p
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="text-xs text-emerald-400 mt-3"
+            >
+              Niveau de confiance enregistré ✓
             </motion.p>
           )}
         </GlassCard>

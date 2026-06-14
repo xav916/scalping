@@ -112,6 +112,27 @@ export const api = {
       body: JSON.stringify({ pairs }),
     }),
 
+  availablePairs: () =>
+    request<{
+      groups: { asset_class: string; label: string; pairs: { pair: string; label: string }[] }[];
+      total: number;
+    }>('/api/available-pairs'),
+
+  userTradingPrefsGet: () =>
+    request<{
+      min_confidence: number;
+      floor: number;
+      ceiling: number;
+      tier: string;
+      editable: boolean;
+    }>('/api/user/trading-prefs'),
+
+  userTradingPrefsPatch: (min_confidence: number) =>
+    request<{ ok: true; min_confidence: number }>('/api/user/trading-prefs', {
+      method: 'PATCH',
+      body: JSON.stringify({ min_confidence }),
+    }),
+
   // ─── Billing (Chantier 5 SaaS) ────────────────────────────────
   userTier: () =>
     request<{
