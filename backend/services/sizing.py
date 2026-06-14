@@ -86,7 +86,7 @@ def compute_risk_money(setup) -> dict:
     base = TRADING_CAPITAL * (RISK_PER_TRADE_PCT / 100.0)
     conf_mult = confidence_multiplier(getattr(setup, "confidence_score", None))
     pnl_mult = recent_pnl_multiplier()
-    session_mult = session_service.activity_multiplier()
+    session_mult = session_service.activity_multiplier(pair=getattr(setup, "pair", None))
     session_label = session_service.label()
     direction = (
         setup.direction.value

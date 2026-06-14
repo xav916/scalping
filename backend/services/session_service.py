@@ -84,15 +84,22 @@ def label(dt: datetime | None = None) -> str:
     return "off_hours"
 
 
-def activity_multiplier(dt: datetime | None = None) -> float:
+def activity_multiplier(dt: datetime | None = None, pair: str | None = None) -> float:
     """Multiplicateur d'activite a appliquer au risk_money.
 
     La grille est volontairement modeste (0.7x-1.2x) : on n'a pas encore
     les 500+ trades necessaires pour calibrer un edge session fort, mais
     on introduit deja le biais dans le bon sens.
+
+    Cas crypto en weekend : depuis 2026-06-14, on respecte le fait que
+    crypto = 24/7. Sans pair fourni, on garde l'ancien comportement
+    (weekend = 0). Avec pair crypto, on retourne 0.7 (équiv. Asian) au
+    lieu de 0 pour ne pas tuer risk_money et permettre l'auto-exec.
+    Même pattern que le fix coaching.py du matin (cf. memo
+    feedback_crypto_weekend_market_closed_bug).
     """
     lbl = label(dt)
-    return {
+    grid = {
         "london_ny_overlap": 1.2,
         "new_york": 1.0,
         "london": 1.0,
@@ -100,4 +107,13 @@ def activity_multiplier(dt: datetime | None = None) -> float:
         "sydney": 0.7,
         "off_hours": 0.5,
         "weekend": 0.0,
-    }.get(lbl, 1.0)
+    }
+    mult = grid.get(lbl, 1.0)
+    if lbl == "weekend" and pair:
+        try:
+            from backend.services.market_hours import asset_class_for
+            if asset_class_for(pair) == "crypto":
+                return 0.7
+        except Exception:
+            pass
+    return mult
