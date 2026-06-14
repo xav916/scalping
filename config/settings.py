@@ -84,7 +84,7 @@ def asset_class_for(pair: str) -> str:
     p = pair.upper()
     if p in _asset_overrides:
         return _asset_overrides[p]
-    if p.startswith(("BTC", "ETH", "LTC", "XRP", "SOL", "ADA", "DOGE")) or p.endswith(("/BTC", "/ETH")):
+    if p.startswith(("BTC", "ETH", "LTC", "XRP", "SOL", "ADA", "DOGE", "BCH", "DOT")) or p.endswith(("/BTC", "/ETH")):
         return "crypto"
     if p.startswith(("XAU", "XAG", "XPT", "XPD")):
         return "metal"
