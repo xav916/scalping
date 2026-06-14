@@ -53,13 +53,33 @@ def fetch_health_data():
         return None, "ERROR", str(e)
 
 
+# Mapping email → prénom client (préfixé dans les alertes infra 2026-06-14).
+# Ajouter ici tout nouveau Premium pour avoir "Compte client X" au lieu de "user_N".
+_USER_DISPLAY_NAME = {
+    "c.chaussis@icloud.com": "Cédric",
+    "couderc.xavier@gmail.com": "Xavier",
+    "pascal.p.couderc@gmail.com": "Pascal",
+}
+
+
+def _client_label(user):
+    """Retourne un label lisible 'Compte client <Prénom>' pour un user.
+    Fallback : 'Compte client #N' si email pas dans le mapping.
+    """
+    email = (user.get("email") or "").lower()
+    uid = user.get("user_id")
+    name = _USER_DISPLAY_NAME.get(email)
+    if name:
+        return f"Compte client {name}"
+    return f"Compte client #{uid}"
+
+
 def detect_anomalies(data):
     """Parse health data and detect anomalies."""
     issues = []
 
     for user in data.get("users", []):
-        uid = user.get("user_id")
-        label = user.get("email") or f"user_{uid}"
+        client = _client_label(user)
 
         # 1) Heartbeat OFFLINE ou stale > 30 min
         hb = user.get("heartbeat") or {}
@@ -67,7 +87,7 @@ def detect_anomalies(data):
         status = hb.get("status") or "UNKNOWN"
         if status != "LIVE" and age > HEARTBEAT_STALE_THRESHOLD:
             issues.append(
-                f"{label} (id={uid}) heartbeat {status} — last seen {age}s ago"
+                f"{client} : robot {status.lower()} — dernier signe de vie il y a {age}s"
             )
 
         # 2) Zombies (sent_stale ou pending_overdue)
@@ -75,8 +95,8 @@ def detect_anomalies(data):
         ztotal = z.get("total") or 0
         if ztotal > 0:
             issues.append(
-                f"{label} (id={uid}) {ztotal} ordres zombies "
-                f"(sent_stale={z.get('sent_stale', 0)} pending_overdue={z.get('pending_overdue', 0)})"
+                f"{client} : {ztotal} ordres bloqués en attente "
+                f"(envoyés trop vieux : {z.get('sent_stale', 0)}, en attente trop long : {z.get('pending_overdue', 0)})"
             )
 
         # 3) Low executed_rate sur >=3 ordres résolus
@@ -88,18 +108,19 @@ def detect_anomalies(data):
             failed_by_pair = o.get("failed_by_pair") or {}
             if failed_by_pair:
                 worst = max(failed_by_pair.items(), key=lambda x: x[1])
-                top = f"{worst[0]}:{worst[1]}"
+                top = f"{worst[0]} ({worst[1]} échecs)"
             else:
                 top = "?"
             issues.append(
-                f"{label} (id={uid}) exec_rate={int(exec_rate*100)}% sur {total} ordres 24h "
-                f"(EXEC={by_status.get('EXECUTED', 0)} FAILED={by_status.get('FAILED', 0)}, top FAILED pair={top})"
+                f"{client} : taux d'exécution {int(exec_rate*100)}% sur {total} ordres dernières 24h "
+                f"(réussis : {by_status.get('EXECUTED', 0)}, échoués : {by_status.get('FAILED', 0)}, "
+                f"paire la plus problématique : {top})"
             )
 
     # 4) Totaux globaux
     T = data.get("totals") or {}
     if (T.get("users_offline") or 0) > 0:
-        issues.append(f"GLOBAL: {T['users_offline']} user(s) OFFLINE")
+        issues.append(f"Global : {T['users_offline']} client(s) hors ligne")
 
     return issues
 
