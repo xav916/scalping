@@ -81,6 +81,13 @@ export function Header() {
     return () => clearInterval(id);
   }, []);
 
+  // Préfetch du chunk SettingsPage dès que le Header se monte (= user loggé).
+  // Évite le delay de lazy-load quand l'user clique sur ⚙ Paramètres pour la
+  // première fois. Le chunk est ~30 KB, négligeable en background.
+  useEffect(() => {
+    import('@/pages/SettingsPage').catch(() => {});
+  }, []);
+
   return (
     <header className="sticky top-0 z-20 px-4 sm:px-6 py-3 sm:py-4 flex items-center justify-between gap-2 border-b border-glass-soft backdrop-blur-glass bg-radar-deep/60">
       <div className="flex items-center gap-2 sm:gap-4 min-w-0">

@@ -84,23 +84,39 @@ export function SettingsPage() {
   const qc = useQueryClient();
   const { whoami, logout } = useAuth();
 
+  // placeholderData : évite le spinner blanc pendant le 1er fetch.
+  // L'UI affiche immédiatement des valeurs neutres puis se met à jour quand
+  // l'API répond. Combiné au préfetch du chunk dans Header.tsx, la page
+  // Settings paraît instantanée à l'ouverture (cf. perf review 2026-06-14).
   const tier = useQuery({
     queryKey: ['user', 'tier'],
     queryFn: api.userTier,
     retry: 0,
     staleTime: 60_000,
+    placeholderData: {
+      tier: 'premium',
+      stripe_customer_set: false,
+    },
   });
 
   const pairsQ = useQuery({
     queryKey: ['user', 'watched-pairs'],
     queryFn: api.userWatchedPairsGet,
     staleTime: 60_000,
+    placeholderData: { pairs: [], cap: 22, tier: 'premium' },
   });
 
   const tradingPrefsQ = useQuery({
     queryKey: ['user', 'trading-prefs'],
     queryFn: api.userTradingPrefsGet,
     staleTime: 60_000,
+    placeholderData: {
+      min_confidence: 70,
+      floor: 50,
+      ceiling: 95,
+      tier: 'premium',
+      editable: true,
+    },
   });
 
   const [pendingMinConf, setPendingMinConf] = useState<number | null>(null);
@@ -176,6 +192,14 @@ export function SettingsPage() {
     queryFn: api.userBrokerGet,
     retry: 0,
     staleTime: 60_000,
+    placeholderData: {
+      bridge_url: '',
+      broker_name: '',
+      api_key_set: false,
+      auto_exec_enabled: false,
+      last_ea_heartbeat: null,
+      mode: 'none' as const,
+    },
   });
   const [eaOpen, setEaOpen] = useState(false);
   // Auto-ouvre la section Auto-exec MT5 si l'user a déjà une api_key configurée
