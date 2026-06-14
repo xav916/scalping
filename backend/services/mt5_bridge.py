@@ -160,6 +160,13 @@ def _check_rejection(setup, dest=None) -> str | None:
     """
     if dest is None and not is_configured():
         return "_not_configured"  # privé, non enregistré
+    # Per-user excluded_pairs (Cédric & futurs clients Premium avec garde-fou
+    # sur les paires non-validées). Court-circuit avant tous les autres checks
+    # car c'est une décision policy explicite, pas un état système.
+    if dest is not None:
+        excluded = getattr(dest, "excluded_pairs", None) or frozenset()
+        if setup.pair in excluded:
+            return "_user_excluded_pair"  # privé, non enregistré
     # Source de vérité pour l'éligibilité auto-exec : pair_admission_controller
     # (= state machine pair × direction). Migration douce : si (pair, direction)
     # n'a JAMAIS été enregistrée dans le controller (= row absente, pré-backfill

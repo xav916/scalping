@@ -59,6 +59,12 @@ class BridgeConfig:
         cette destination. Permet d'élargir Live aux forex majors quand le
         capital est trop petit pour les stars métaux. Empty = stars-only.
         Cf. driver 2026-06-12 IC Markets €100.
+    excluded_pairs : frozenset[str]
+        Pairs explicitement BLOQUÉES pour cette destination, indépendamment du
+        pair_admission_state global. Permet de mettre un client Premium en
+        garde-fou sur les paires non-validées (ex: les 6 nouvelles cryptos
+        promues manuellement par admin sans historique EV). Empty = aucune
+        exclusion. Cf. memo profil Client Premium 2026-06-14.
     """
 
     destination_id: str
@@ -70,6 +76,7 @@ class BridgeConfig:
     auto_exec_enabled: bool
     symbol_map: dict[str, str] | None = None
     extra_pairs_allowed: frozenset[str] = frozenset()
+    excluded_pairs: frozenset[str] = frozenset()
 
 
 def _admin_legacy_destination() -> BridgeConfig | None:
@@ -162,6 +169,15 @@ def _user_destinations(setup: Any) -> list[BridgeConfig]:
         cfg = user["broker_config"]
         raw_map = cfg.get("symbol_map")
         symbol_map = raw_map if isinstance(raw_map, dict) and raw_map else None
+        # Per-user min_confidence override (defaults au global si absent)
+        raw_min_conf = cfg.get("min_confidence")
+        try:
+            user_min_conf = float(raw_min_conf) if raw_min_conf is not None else float(mb.MT5_BRIDGE_MIN_CONFIDENCE)
+        except (TypeError, ValueError):
+            user_min_conf = float(mb.MT5_BRIDGE_MIN_CONFIDENCE)
+        # Per-user excluded_pairs (paires explicitement bloquées pour ce user)
+        raw_excluded = cfg.get("excluded_pairs") or []
+        excluded_pairs = frozenset(p for p in raw_excluded if isinstance(p, str)) if isinstance(raw_excluded, list) else frozenset()
         try:
             destinations.append(
                 BridgeConfig(
@@ -172,12 +188,13 @@ def _user_destinations(setup: Any) -> list[BridgeConfig]:
                     # Conservé en str pour le dataclass, fallback "" si absent.
                     bridge_url=(cfg.get("bridge_url") or "").rstrip("/"),
                     bridge_api_key=cfg["bridge_api_key"],
-                    min_confidence=float(mb.MT5_BRIDGE_MIN_CONFIDENCE),
+                    min_confidence=user_min_conf,
                     allowed_asset_classes=frozenset(
                         mb.MT5_BRIDGE_ALLOWED_ASSET_CLASSES
                     ),
                     auto_exec_enabled=True,
                     symbol_map=symbol_map,
+                    excluded_pairs=excluded_pairs,
                 )
             )
         except (KeyError, TypeError, ValueError):
