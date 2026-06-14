@@ -155,11 +155,44 @@ def _notify_circuit_breaker_block(pair: str, direction: str | None, n_recent: in
 
         import asyncio
         from backend.services.telegram_service import send_text
+        # Mapping FR vulgarisé 2026-06-14 (cohérent avec autres msg ScalpingRadar)
+        _PAIR_FR_LOCAL = {
+            "XAU/USD": "Or",
+            "XAG/USD": "Argent",
+            "WTI/USD": "Pétrole",
+            "BTC/USD": "Bitcoin",
+            "ETH/USD": "Ethereum",
+            "SOL/USD": "Solana",
+            "ADA/USD": "Cardano",
+            "XRP/USD": "XRP",
+            "LTC/USD": "Litecoin",
+            "BCH/USD": "Bitcoin Cash",
+            "DOT/USD": "Polkadot",
+            "SPX": "S&P 500",
+            "NDX": "Nasdaq",
+        }
+        pair_fr = _PAIR_FR_LOCAL.get(pair, pair)
+        dir_label = ""
+        if direction == "buy":
+            dir_label = " (sens achat)"
+        elif direction == "sell":
+            dir_label = " (sens vente)"
         msg = (
-            f"🚨 *Circuit breaker PAC*\n"
-            f"DEMOTE bloquée pour `{pair}` `{direction or '*'}` "
-            f"({n_recent} demotes auto / {_breaker_window()}j ≥ {_breaker_threshold()}).\n"
-            f"_Action humaine requise pour éjecter manuellement si vraiment nécessaire._"
+            f"🚨 *Sécurité activée — paire à problème*\n"
+            f"\n"
+            f"⚠️ La paire *{pair_fr}* ({pair}){dir_label} a déjà été rétrogradée "
+            f"*{n_recent} fois* par le système sur les {_breaker_window()} derniers jours.\n"
+            f"\n"
+            f"ℹ️ *Pourquoi ce message ?*\n"
+            f"Quand une paire se fait rétrograder à répétition, le radar arrête "
+            f"de la faire passer d'un mode à l'autre automatiquement et te "
+            f"demande de vérifier manuellement. C'est un garde-fou anti-yoyo "
+            f"pour éviter d'enchaîner les ajustements pendant que tu dors.\n"
+            f"\n"
+            f"🛠️ *À faire de ton côté*\n"
+            f"Décide si tu veux désactiver complètement la paire (mode pause) "
+            f"ou si tu acceptes qu'elle reste dans son état actuel. Va sur "
+            f"`/v2/cockpit` → section Admission paires pour agir."
         )
         coro = send_text(msg)
         try:
