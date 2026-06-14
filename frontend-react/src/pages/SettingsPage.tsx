@@ -132,6 +132,35 @@ export function SettingsPage() {
   const currentMinConf = tradingPrefsQ.data?.min_confidence ?? 70;
   const displayedMinConf = pendingMinConf ?? currentMinConf;
 
+  // ─── Telegram per-user (chantier 2026-06-14) ─────────────────
+  const telegramQ = useQuery({
+    queryKey: ['user', 'telegram'],
+    queryFn: api.userTelegramGet,
+    staleTime: 60_000,
+    placeholderData: { connected: false, chat_id_masked: null, editable: true },
+  });
+  const [tgChatIdInput, setTgChatIdInput] = useState('');
+  const [tgError, setTgError] = useState<string | null>(null);
+
+  const linkTgMut = useMutation({
+    mutationFn: () => api.userTelegramLink(tgChatIdInput.trim()),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['user', 'telegram'] });
+      setTgChatIdInput('');
+      setTgError(null);
+    },
+    onError: (err) => {
+      setTgError(err instanceof ApiError ? err.message || 'Erreur' : 'Erreur');
+    },
+  });
+
+  const unlinkTgMut = useMutation({
+    mutationFn: () => api.userTelegramUnlink(),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['user', 'telegram'] });
+    },
+  });
+
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
   // Hydrate l'état local depuis l'API quand la query répond.
@@ -586,6 +615,115 @@ export function SettingsPage() {
               Niveau de confiance enregistré ✓
             </motion.p>
           )}
+        </GlassCard>
+
+        {/* ─── Telegram personnalisé (chantier 2026-06-14) ─── */}
+        <GlassCard variant="elevated" className="p-6">
+          <div className="flex items-start justify-between mb-3 flex-wrap gap-2">
+            <div>
+              <h2 className="text-lg font-semibold mb-1 flex items-center gap-2">
+                Notifications Telegram
+                <span className="px-2 py-0.5 rounded-full text-[10px] uppercase tracking-wider bg-cyan-400/20 text-cyan-300 border border-cyan-400/30">
+                  Optionnel
+                </span>
+              </h2>
+              <p className="text-sm text-white/50">
+                Reçois tes signaux personnalisés directement sur Telegram.
+              </p>
+            </div>
+            {telegramQ.data?.connected && (
+              <span className="text-xs px-2 py-1 rounded-lg bg-emerald-400/15 border border-emerald-400/40 text-emerald-300">
+                ✓ Connecté
+              </span>
+            )}
+          </div>
+
+          {!telegramQ.data?.connected ? (
+            <div className="mt-4 space-y-3">
+              <div className="p-4 rounded-lg bg-white/5 border border-white/10">
+                <p className="text-sm text-white/70 leading-relaxed">
+                  <strong>Étape 1.</strong> Ouvre Telegram et cherche{' '}
+                  <a
+                    href="https://t.me/userinfobot"
+                    target="_blank"
+                    rel="noopener"
+                    className="text-cyan-300 hover:underline"
+                  >
+                    @userinfobot
+                  </a>{' '}
+                  → envoie-lui <code className="text-cyan-300">/start</code> → il te répondra
+                  avec ton <strong>chat ID</strong> (un nombre).
+                </p>
+                <p className="text-sm text-white/70 leading-relaxed mt-2">
+                  <strong>Étape 2.</strong> Ouvre maintenant le bot{' '}
+                  <a
+                    href="https://t.me/ScalpingRadar"
+                    target="_blank"
+                    rel="noopener"
+                    className="text-cyan-300 hover:underline"
+                  >
+                    @ScalpingRadar
+                  </a>{' '}
+                  → envoie-lui <code className="text-cyan-300">/start</code> (sinon il ne pourra
+                  pas t'écrire).
+                </p>
+                <p className="text-sm text-white/70 leading-relaxed mt-2">
+                  <strong>Étape 3.</strong> Colle ton chat ID ici :
+                </p>
+              </div>
+              <div className="flex gap-2 flex-wrap">
+                <input
+                  type="text"
+                  value={tgChatIdInput}
+                  onChange={(e) => {
+                    setTgChatIdInput(e.target.value);
+                    setTgError(null);
+                  }}
+                  placeholder="Exemple : 123456789"
+                  className="flex-1 min-w-[200px] px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-sm font-mono focus:outline-none focus:border-cyan-400/40"
+                />
+                <button
+                  onClick={() => linkTgMut.mutate()}
+                  disabled={!tgChatIdInput.trim() || linkTgMut.isPending}
+                  className="px-4 py-2 rounded-lg bg-gradient-to-br from-cyan-400 to-pink-500 text-slate-900 text-sm font-semibold disabled:opacity-40"
+                >
+                  {linkTgMut.isPending ? 'Test en cours…' : 'Connecter'}
+                </button>
+              </div>
+              {tgError && (
+                <p className="text-xs text-rose-400 mt-1">{tgError}</p>
+              )}
+            </div>
+          ) : (
+            <div className="mt-4 space-y-3">
+              <div className="p-4 rounded-lg bg-white/5 border border-white/10 text-sm text-white/70">
+                <p>
+                  Chat connecté :{' '}
+                  <code className="text-cyan-300 font-mono">
+                    {telegramQ.data?.chat_id_masked}
+                  </code>
+                </p>
+                <p className="text-xs text-white/40 mt-2">
+                  Tu reçois automatiquement tes signaux selon ton niveau de confiance et tes
+                  paires sélectionnées plus haut. Pour modifier ce que tu reçois, ajuste les
+                  sections au-dessus.
+                </p>
+              </div>
+              <button
+                onClick={() => unlinkTgMut.mutate()}
+                disabled={unlinkTgMut.isPending}
+                className="px-4 py-2 rounded-lg bg-white/5 border border-rose-400/30 text-rose-300 text-sm hover:bg-rose-400/10"
+              >
+                {unlinkTgMut.isPending ? 'Déconnexion…' : 'Déconnecter'}
+              </button>
+            </div>
+          )}
+
+          <p className="text-xs text-white/40 mt-4 leading-relaxed">
+            ℹ️ Une fois connecté, tu reçois UNIQUEMENT les signaux qui matchent tes paires +
+            ton niveau de confiance. Aucun autre client ne voit tes notifs. Tu peux te
+            déconnecter à tout moment.
+          </p>
         </GlassCard>
 
         {/* ─── Auto-exec EA MQL5 (Phase MQL.E) ─── */}

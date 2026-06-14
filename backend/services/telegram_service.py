@@ -54,7 +54,7 @@ def is_configured() -> bool:
 
 
 def _destinataires() -> list[tuple[str, str]]:
-    """Retourne la liste (user, chat_id) a qui envoyer.
+    """Retourne la liste (user, chat_id) a qui envoyer (config env legacy).
 
     Si TELEGRAM_CHATS est defini : un (user, chat_id) par user configure.
     Sinon fallback sur TELEGRAM_CHAT_ID (broadcast a 1 destinataire anonymous).
@@ -64,6 +64,69 @@ def _destinataires() -> list[tuple[str, str]]:
     if TELEGRAM_CHAT_ID:
         return [("__any__", TELEGRAM_CHAT_ID)]
     return []
+
+
+def _per_user_chat_ids_for_setup(setup) -> list[tuple[str, str]]:
+    """Liste des (email, chat_id) des users DB qui doivent recevoir ce setup.
+
+    Filtre par les prefs personnelles du user :
+    - watched_pairs : le pair du setup doit y être
+    - min_confidence : confidence_score doit ≥ seuil
+    Chantier 2026-06-14 : feature notifs perso par client.
+    """
+    try:
+        from backend.services import users_service
+        candidates = users_service.list_users_with_telegram()
+    except Exception as e:
+        logger.warning(f"_per_user_chat_ids_for_setup: list users failed: {e}")
+        return []
+    pair = getattr(setup, "pair", None)
+    conf = getattr(setup, "confidence_score", None) or 0.0
+    out = []
+    for u in candidates:
+        if pair and pair not in u.get("watched_pairs", []):
+            continue
+        if conf < u.get("min_confidence", 70.0):
+            continue
+        out.append((u["email"], u["chat_id"]))
+    return out
+
+
+async def send_test_to_chat_id(chat_id: str, display_name: str) -> tuple[bool, str]:
+    """Envoie un message test à un chat_id pour valider la liaison Telegram.
+
+    Utilisé par l'endpoint POST /api/user/telegram/link au moment où le user
+    clique "Connecter". Retourne (True, "") si OK, (False, err_msg) si échec.
+    """
+    if not (TELEGRAM_BOT_TOKEN and chat_id):
+        return False, "Telegram bot non configuré côté serveur"
+    msg = (
+        f"✅ *Connexion réussie !*\n\n"
+        f"Tu es maintenant connecté à Scalping Radar en tant que *{display_name}*.\n\n"
+        f"Tu recevras ici tes signaux personnalisés selon tes paires sélectionnées "
+        f"et ton niveau de confiance choisis dans /v2/settings.\n\n"
+        f"Pour te déconnecter à tout moment : /v2/settings → section Telegram → Déconnecter."
+    )
+    url = TELEGRAM_API.format(token=TELEGRAM_BOT_TOKEN)
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.post(url, json={
+                "chat_id": chat_id,
+                "text": msg,
+                "parse_mode": "Markdown",
+                "disable_web_page_preview": True,
+            })
+            if r.status_code == 200:
+                return True, ""
+            # Parser le message d'erreur Telegram pour aider le user
+            try:
+                err_json = r.json()
+                err_desc = err_json.get("description", r.text[:200])
+            except Exception:
+                err_desc = r.text[:200]
+            return False, f"Telegram a refusé : {err_desc}"
+    except Exception as e:
+        return False, f"Erreur réseau : {e}"
 
 
 def _format_signal(signal: ScalpingSignal) -> str:
@@ -618,14 +681,21 @@ async def send_setup(setup) -> None:
         return
     _sent_setups_today.add(key)
 
+    # Envoi legacy (Xavier env TELEGRAM_CHATS / TELEGRAM_CHAT_ID)
     destinataires = _destinataires()
-    if not destinataires:
-        return
     for user, chat_id in destinataires:
         if user != "__any__" and trade_log_service.silent_mode_active_for_user(user):
             logger.info(f"Mode silencieux actif pour {user}, setup {setup.pair} skip")
             continue
         await _send_setup_to(chat_id, setup, who=user)
+
+    # Envoi per-user DB (chantier 2026-06-14) : chaque user Premium qui a
+    # connecté son Telegram reçoit UNIQUEMENT les setups qui matchent ses
+    # watched_pairs + min_confidence. Filtrage déjà appliqué dans
+    # _per_user_chat_ids_for_setup. Aucune intervention env.
+    per_user = _per_user_chat_ids_for_setup(setup)
+    for email, chat_id in per_user:
+        await _send_setup_to(chat_id, setup, who=f"db:{email}")
 
 
 async def send_setups(setups: list) -> None:

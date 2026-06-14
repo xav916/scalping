@@ -133,6 +133,22 @@ export const api = {
       body: JSON.stringify({ min_confidence }),
     }),
 
+  userTelegramGet: () =>
+    request<{ connected: boolean; chat_id_masked: string | null; editable: boolean }>(
+      '/api/user/telegram'
+    ),
+
+  userTelegramLink: (chat_id: string) =>
+    request<{ ok: true; connected: true }>('/api/user/telegram/link', {
+      method: 'POST',
+      body: JSON.stringify({ chat_id }),
+    }),
+
+  userTelegramUnlink: () =>
+    request<{ ok: true; connected: false }>('/api/user/telegram/unlink', {
+      method: 'POST',
+    }),
+
   // ─── Billing (Chantier 5 SaaS) ────────────────────────────────
   userTier: () =>
     request<{

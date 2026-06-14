@@ -874,6 +874,64 @@ async def api_user_trading_prefs_patch(
     return {"ok": True, "min_confidence": saved}
 
 
+# ─── Telegram per-user notifs (chantier 2026-06-14) ─────────────────
+@app.get("/api/user/telegram")
+async def api_user_telegram_get(ctx: AuthContext = Depends(auth_context)):
+    """Retourne le statut de connexion Telegram du user (sans exposer le chat_id complet)."""
+    if ctx.user_id is None:
+        return {"connected": False, "chat_id_masked": None, "editable": False}
+    chat_id = users_service.get_telegram_chat_id(ctx.user_id)
+    if chat_id:
+        masked = chat_id[:3] + "..." + chat_id[-3:] if len(chat_id) > 6 else chat_id
+        return {"connected": True, "chat_id_masked": masked, "editable": True}
+    return {"connected": False, "chat_id_masked": None, "editable": True}
+
+
+@app.post("/api/user/telegram/link")
+@limiter.limit("5/minute")
+async def api_user_telegram_link(
+    request: Request,
+    payload: dict,
+    ctx: AuthContext = Depends(auth_context),
+):
+    """Lie un chat_id Telegram au user.
+
+    Body : ``{chat_id: str}``. Le backend envoie un message test au chat_id ;
+    si Telegram répond OK, le chat_id est persisté. Sinon HTTP 400.
+    """
+    if ctx.user_id is None:
+        raise HTTPException(status_code=400, detail="user legacy env, edit via .env")
+    raw = (payload or {}).get("chat_id", "")
+    chat_id = str(raw).strip()
+    # Valide format : entier positif (Telegram chat_id) ou string compatible
+    if not chat_id or not chat_id.lstrip("-").isdigit():
+        raise HTTPException(
+            status_code=400,
+            detail="chat_id invalide. Récupère-le en envoyant /start à @userinfobot dans Telegram.",
+        )
+    # Test d'envoi d'un message de confirmation
+    from backend.services.telegram_service import send_test_to_chat_id
+
+    ok, err = await send_test_to_chat_id(chat_id, ctx.username or "Utilisateur")
+    if not ok:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Impossible d'envoyer un message au chat_id {chat_id} : {err}. "
+                   "Vérifie que tu as bien envoyé /start au bot @ScalpingRadar avant.",
+        )
+    users_service.set_telegram_chat_id(ctx.user_id, chat_id)
+    return {"ok": True, "connected": True}
+
+
+@app.post("/api/user/telegram/unlink")
+async def api_user_telegram_unlink(ctx: AuthContext = Depends(auth_context)):
+    """Déconnecte Telegram pour ce user."""
+    if ctx.user_id is None:
+        raise HTTPException(status_code=400, detail="user legacy env, edit via .env")
+    users_service.clear_telegram_chat_id(ctx.user_id)
+    return {"ok": True, "connected": False}
+
+
 @app.put("/api/user/watched-pairs")
 async def api_user_watched_pairs_put(
     payload: dict,

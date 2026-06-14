@@ -202,6 +202,11 @@ def init_users_schema() -> None:
             c.execute("ALTER TABLE users ADD COLUMN terms_accepted_at TEXT")
         if "terms_version" not in user_cols:
             c.execute("ALTER TABLE users ADD COLUMN terms_version TEXT")
+        # Telegram notifs personnalisées (chantier 2026-06-14) : chaque user
+        # peut lier son chat_id Telegram pour recevoir UNIQUEMENT ses propres
+        # signaux selon ses watched_pairs + min_confidence.
+        if "telegram_chat_id" not in user_cols:
+            c.execute("ALTER TABLE users ADD COLUMN telegram_chat_id TEXT")
 
         # Migration douce : personal_trades.user_id (nullable) — pas encore
         # utilisé, simple placeholder pour chantier 3.
@@ -618,6 +623,63 @@ def get_min_confidence(user_id: int, default: float = 70.0) -> float:
         return float(raw) if raw is not None else float(default)
     except (TypeError, ValueError):
         return float(default)
+
+
+# ─── Telegram chat_id per-user (notifs personnalisées 2026-06-14) ──
+def get_telegram_chat_id(user_id: int) -> Optional[str]:
+    """Retourne le chat_id Telegram lié à ce user, ou None si non connecté."""
+    with _conn() as c:
+        row = c.execute(
+            "SELECT telegram_chat_id FROM users WHERE id = ?", (user_id,)
+        ).fetchone()
+    return row[0] if row and row[0] else None
+
+
+def set_telegram_chat_id(user_id: int, chat_id: str) -> None:
+    """Persiste le chat_id Telegram du user."""
+    with _conn() as c:
+        c.execute(
+            "UPDATE users SET telegram_chat_id = ? WHERE id = ?",
+            (str(chat_id), user_id),
+        )
+
+
+def clear_telegram_chat_id(user_id: int) -> None:
+    """Déconnecte Telegram pour ce user (set chat_id à NULL)."""
+    with _conn() as c:
+        c.execute(
+            "UPDATE users SET telegram_chat_id = NULL WHERE id = ?", (user_id,)
+        )
+
+
+def list_users_with_telegram() -> list[dict]:
+    """Retourne tous les users qui ont un chat_id Telegram connecté.
+
+    Format : ``[{"id": int, "email": str, "chat_id": str, "watched_pairs": list,
+    "min_confidence": float}, ...]``. Utilisé par ``telegram_service`` pour
+    filtrer les setups selon les prefs de chacun.
+    """
+    out = []
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT id, email, telegram_chat_id, broker_config, watched_pairs "
+            "FROM users WHERE telegram_chat_id IS NOT NULL AND telegram_chat_id != ''"
+        ).fetchall()
+    for row in rows:
+        try:
+            cfg = json.loads(row["broker_config"]) if row["broker_config"] else {}
+            pairs = json.loads(row["watched_pairs"]) if row["watched_pairs"] else []
+            min_conf = cfg.get("min_confidence")
+            out.append({
+                "id": row["id"],
+                "email": row["email"],
+                "chat_id": row["telegram_chat_id"],
+                "watched_pairs": pairs if isinstance(pairs, list) else [],
+                "min_confidence": float(min_conf) if min_conf is not None else 70.0,
+            })
+        except (json.JSONDecodeError, TypeError, ValueError):
+            continue
+    return out
 
 
 def find_user_by_bridge_api_key(api_key: str) -> Optional[dict]:
