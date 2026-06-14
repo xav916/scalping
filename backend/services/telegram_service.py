@@ -258,6 +258,46 @@ async def send_infra_text(text: str, parse_mode: str = "HTML") -> bool:
         return False
 
 
+async def send_sales_text(text: str, parse_mode: str = "HTML") -> bool:
+    """Envoie un texte vers le canal business/sales dédié.
+
+    Sépare les notifs commerciales (nouveau client payant, upgrade, churn)
+    du bruit infra et des signaux user. Lit SALES_TELEGRAM_BOT_TOKEN +
+    SALES_TELEGRAM_CHAT_ID — si non configuré, no-op silencieux. Même
+    contrat que send_infra_text (HTML par défaut, fallback plain pour
+    Markdown legacy).
+
+    Retourne True si envoyé, False sinon.
+    """
+    from config.settings import SALES_TELEGRAM_BOT_TOKEN, SALES_TELEGRAM_CHAT_ID
+    if not SALES_TELEGRAM_BOT_TOKEN or not SALES_TELEGRAM_CHAT_ID:
+        logger.info("send_sales_text: SALES_TELEGRAM_* non configure, skip")
+        return False
+    url = TELEGRAM_API.format(token=SALES_TELEGRAM_BOT_TOKEN)
+    payload: dict = {
+        "chat_id": SALES_TELEGRAM_CHAT_ID,
+        "text": text[:4000],
+        "disable_web_page_preview": True,
+    }
+    if parse_mode == "HTML":
+        payload["parse_mode"] = "HTML"
+    elif parse_mode == "Markdown" or parse_mode == "MarkdownV2":
+        logger.info(
+            "send_sales_text: parse_mode=%s deprecated, envoi en plain text",
+            parse_mode,
+        )
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.post(url, json=payload)
+        if r.status_code != 200:
+            logger.warning(f"send_sales_text: HTTP {r.status_code} {r.text[:200]}")
+            return False
+        return True
+    except Exception as e:
+        logger.warning(f"send_sales_text: erreur {e}")
+        return False
+
+
 async def send_signal(signal: ScalpingSignal) -> None:
     """DEPRECIE — le path "signal-based" Telegram pollue le canal :
     il filtre uniquement par signal_strength (weak/moderate/strong) sans

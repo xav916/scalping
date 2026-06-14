@@ -123,6 +123,12 @@ TELEGRAM_MIN_STRENGTH = os.getenv("TELEGRAM_MIN_STRENGTH", "strong")
 INFRA_TELEGRAM_BOT_TOKEN = os.getenv("INFRA_TELEGRAM_BOT_TOKEN", "")
 INFRA_TELEGRAM_CHAT_ID = os.getenv("INFRA_TELEGRAM_CHAT_ID", "")
 
+# Canal Telegram dédié aux notifs business (nouveau client payant, churn,
+# upgrades). Sépare le bruit infra (bridge down, EA crash) du business.
+# Si vide, les notifs sales sont skip silencieusement.
+SALES_TELEGRAM_BOT_TOKEN = os.getenv("SALES_TELEGRAM_BOT_TOKEN", "")
+SALES_TELEGRAM_CHAT_ID = os.getenv("SALES_TELEGRAM_CHAT_ID", "")
+
 # ─── Bridge MT5 (auto-exec sur MetaTrader 5 desktop local) ──────────
 # URL du bridge MT5 accessible via Tailscale (ex: http://100.122.188.8:8787).
 # Le bridge doit tourner sur le PC Windows de l'utilisateur.
