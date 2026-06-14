@@ -486,6 +486,14 @@ export function SettingsPage() {
               Paires enregistrées ✓
             </motion.p>
           )}
+
+          <p className="text-xs text-white/40 mt-4 leading-relaxed">
+            ℹ️ <strong className="text-white/60">Changement effectif immédiatement</strong>.
+            Au prochain cycle radar (max 3 min), tes paires sélectionnées sont prises en compte.
+            Ton robot MT5 activera automatiquement chaque nouvelle paire dans son Market Watch
+            au premier ordre — aucune action manuelle requise de ton côté. Si une paire n'existe
+            pas chez ton broker, l'ordre est rejeté proprement et noté dans les logs.
+          </p>
         </GlassCard>
 
         {/* ─── Niveau de confiance (2026-06-14) ─── */}
