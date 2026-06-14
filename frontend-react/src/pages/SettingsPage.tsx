@@ -65,7 +65,7 @@ const BROKER_PRESETS: Record<string, { label: string; symbolMap: string; note: s
   pepperstone: {
     label: 'Pepperstone (UK / EU / Demo)',
     symbolMap: 'WTI/USD=USOIL,SPX=SPX500,NDX=NAS100',
-    note: 'Validé en prod (admin Xavier compte 62119130 + Cédric compte 62120807, PepperstoneUK-Demo).',
+    note: 'Validé en prod (admin Xavier compte 62119130 + Cédric compte 62123089, PepperstoneUK-Demo).',
   },
   generic: {
     label: 'Broker générique (strip-slash)',
