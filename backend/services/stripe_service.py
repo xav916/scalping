@@ -227,6 +227,30 @@ def handle_webhook(payload: bytes, sig_header: str) -> dict:
                 )
             except Exception:
                 logger.exception("email sub_confirmed a échoué pour uid=%s", user["id"])
+            # Notif infra Telegram pour onboarding manuel sur VPS multi-tenant.
+            # Niveau 1 d'automation (cf. 2026-06-14) : on alerte l'admin
+            # qu'un nouveau client a payé, à lui ensuite de récupérer les
+            # creds broker du user et lancer add-client.ps1 sur le VPS.
+            try:
+                tier_label = "Beta Lifetime" if tier == "pro" else "Standard"
+                cycle_label = "mensuel" if cycle == "monthly" else ("annuel" if cycle == "yearly" else cycle or "?")
+                msg = (
+                    "🎉 <b>Nouveau client payant</b> — " + tier_label + "\n"
+                    f"\n📧 Email : <code>{user.get('email', '')}</code>"
+                    f"\n👤 User ID : <code>{user['id']}</code>"
+                    f"\n💳 Abo : {tier_label} ({cycle_label})"
+                    "\n\nℹ️ <b>Action requise pour activer son auto-exec</b>"
+                    "\n1) Demande-lui ses identifiants MT5 (login + serveur broker)"
+                    "\n2) RDP au VPS Cédric → <code>C:\\Scalping\\multi-tenant\\add-client.ps1</code>"
+                    "\n3) Confirme-lui par email que c'est actif"
+                    f"\n\n<i>Sub : {obj.get('id')}</i>"
+                    f"\n<i>Customer : {customer_id}</i>"
+                )
+                from backend.services import telegram_service as _tg
+                import asyncio as _asyncio
+                _asyncio.create_task(_tg.send_infra_text(msg, parse_mode="HTML"))
+            except Exception:
+                logger.exception("notif infra new_client a échoué pour uid=%s", user["id"])
         return {
             "applied": "subscription",
             "user_id": user["id"],
