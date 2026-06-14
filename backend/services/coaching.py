@@ -240,25 +240,31 @@ def compute_verdict(
         warnings.append(f"Conflit MTF : tendance 1h = {h1_trend}")
 
     # Decision finale
-    # Seuil SKIP plus permissif pour crypto weekend (2026-06-14) : observé
-    # plafond score=69 cap sur ETH/BTC/BCH weekend → 100% SKIP avec seuil 75.
-    # Crypto = 24/7 mais volatilité plus basse weekend → patterns moins forts.
-    # On accepte score 65+ uniquement pour la combinaison crypto + weekend.
+    # Cas crypto + weekend (2026-06-14) : volatilité plus basse →
+    # patterns scorés ~65-70 → la logique standard les coince en SKIP
+    # (score<75) ou WAIT (warnings>=1 et score<85). Or WAIT bloque les
+    # pushes vers le bridge → annule l'intérêt de promouvoir AUTO_EXEC.
+    # On simplifie : pas de WAIT, seuil SKIP plus bas (65).
     from config.settings import asset_class_for as _ac
     from backend.services import session_service as _ss
+    is_crypto_weekend = _ac(setup.pair) == "crypto" and _ss.is_weekend()
 
-    skip_threshold = 75
-    if _ac(setup.pair) == "crypto" and _ss.is_weekend():
-        skip_threshold = 65
-
-    if blockers:
-        action = "SKIP"
-    elif score < skip_threshold or len(warnings) >= 3:
-        action = "SKIP"
-    elif len(warnings) >= 1 and score < 85:
-        action = "WAIT"
+    if is_crypto_weekend:
+        if blockers:
+            action = "SKIP"
+        elif score < 65 or len(warnings) >= 3:
+            action = "SKIP"
+        else:
+            action = "TAKE"
     else:
-        action = "TAKE"
+        if blockers:
+            action = "SKIP"
+        elif score < 75 or len(warnings) >= 3:
+            action = "SKIP"
+        elif len(warnings) >= 1 and score < 85:
+            action = "WAIT"
+        else:
+            action = "TAKE"
 
     action_label = {
         "TAKE": "✅ PRENDRE",
