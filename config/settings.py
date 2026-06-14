@@ -433,8 +433,8 @@ STRIPE_PRICE_PREMIUM_YEARLY = os.getenv("STRIPE_PRICE_PREMIUM_YEARLY", "")
 STRIPE_PRICE_PRO = STRIPE_PRICE_PRO_MONTHLY
 STRIPE_PRICE_PREMIUM = STRIPE_PRICE_PREMIUM_MONTHLY
 # URL publique pour rediriger après checkout success/cancel.
-STRIPE_SUCCESS_URL = os.getenv("STRIPE_SUCCESS_URL", "https://app.scalping-radar.com/v2/?upgrade=success")
-STRIPE_CANCEL_URL = os.getenv("STRIPE_CANCEL_URL", "https://app.scalping-radar.com/v2/pricing?upgrade=cancel")
+STRIPE_SUCCESS_URL = os.getenv("STRIPE_SUCCESS_URL", "https://app.scalping-radar.online/v2/?upgrade=success")
+STRIPE_CANCEL_URL = os.getenv("STRIPE_CANCEL_URL", "https://app.scalping-radar.online/v2/pricing?upgrade=cancelled")
 
 # Refresh cadence and cache tolerance
 MACRO_REFRESH_INTERVAL_SEC = int(os.getenv("MACRO_REFRESH_INTERVAL_SEC", "900"))  # 15 min

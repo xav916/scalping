@@ -73,13 +73,20 @@ def create_checkout_session(
     _assert_enabled()
     price_id = _price_for_tier(tier, billing_cycle)
 
+    # metadata est dupliqué sur la Subscription via subscription_data pour
+    # que le handler customer.subscription.created puisse retrouver le user
+    # même quand l'event arrive avant checkout.session.completed (race
+    # observée en prod : Stripe envoie parfois sub.created en premier, et
+    # le stripe_customer_id n'est pas encore lié à l'user).
+    sub_metadata = {"user_id": str(user_id), "tier": tier, "billing_cycle": billing_cycle}
     kwargs: dict[str, Any] = {
         "mode": "subscription",
         "line_items": [{"price": price_id, "quantity": 1}],
         "success_url": settings.STRIPE_SUCCESS_URL,
         "cancel_url": settings.STRIPE_CANCEL_URL,
         "client_reference_id": str(user_id),
-        "metadata": {"user_id": str(user_id), "tier": tier, "billing_cycle": billing_cycle},
+        "metadata": sub_metadata,
+        "subscription_data": {"metadata": sub_metadata},
     }
     # Si le user a déjà un customer Stripe, le réutiliser (sinon Stripe
     # crée automatiquement un customer vu l'email).
@@ -180,7 +187,26 @@ def handle_webhook(payload: bytes, sig_header: str) -> dict:
         cycle = _cycle_from_subscription(obj)
         user = users_service.get_user_by_stripe_customer_id(customer_id)
         if not user:
-            logger.warning("Webhook %s : aucun user avec customer_id=%s", event_type, customer_id)
+            # Fallback : Stripe envoie parfois sub.created avant
+            # checkout.session.completed (race), donc stripe_customer_id
+            # n'est pas encore lié au user. On récupère l'user via
+            # metadata.user_id que create_checkout_session a propagé sur
+            # la Subscription via subscription_data.
+            meta_uid = (obj.get("metadata") or {}).get("user_id")
+            try:
+                uid_int = int(meta_uid) if meta_uid else 0
+            except (TypeError, ValueError):
+                uid_int = 0
+            if uid_int:
+                user = users_service.get_user_by_id(uid_int)
+                if user and customer_id:
+                    # Profite-en pour rattraper le lien customer_id manquant.
+                    users_service.update_stripe_customer_id(user["id"], customer_id)
+        if not user:
+            logger.warning(
+                "Webhook %s : aucun user avec customer_id=%s ni metadata.user_id exploitable",
+                event_type, customer_id,
+            )
             return {"applied": None, "reason": "user_not_found"}
         was_free = user.get("tier") == "free" or not user.get("stripe_subscription_id")
         users_service.update_stripe_subscription(

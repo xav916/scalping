@@ -38,14 +38,15 @@ const TIERS: Tier[] = [
   },
   {
     id: 'pro',
-    name: 'Pro',
-    price_monthly: 49,
-    price_yearly_total: 490,
-    tagline: 'Pour trader sérieusement',
+    name: 'Beta Lifetime',
+    price_monthly: 29,
+    price_yearly_total: 290,
+    tagline: 'Réservé aux 20 premiers — tarif bloqué à vie',
     highlight: true,
     features: [
       'Les 6 setups validés en temps réel',
       'Alertes Telegram instantanées',
+      'Auto-exec MT5 sur VPS managé partagé',
       'Analytics complètes (par star, régime, pattern)',
       'Journal de trades exportable',
       'Historique illimité',
@@ -54,14 +55,13 @@ const TIERS: Tier[] = [
   },
   {
     id: 'premium',
-    name: 'Premium',
-    price_monthly: 99,
-    price_yearly_total: 990,
-    tagline: 'Pour les traders avancés',
+    name: 'Standard',
+    price_monthly: 49,
+    price_yearly_total: 490,
+    tagline: 'Accès complet — multi-asset, IA macro, auto-exec',
     features: [
-      'Tout Pro +',
-      'Auto-exec MT5 (bridge self-hosted)',
-      'Discord VIP (Q&A live, deep dives)',
+      'Tout Beta Lifetime +',
+      'Bridge MT5 self-hosted (option avancée)',
       'Onboarding 1:1 mensuel (30 min)',
       'Support prioritaire',
       'API access (programmable)',
@@ -195,7 +195,7 @@ export function PricingPage() {
             >
               <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
               <span className="text-xs text-cyan-200">
-                Trial Pro actif — il te reste{' '}
+                Essai Beta Lifetime actif — il te reste{' '}
                 <strong>
                   {tierInfo.data.trial_days_left}{' '}
                   jour{(tierInfo.data.trial_days_left ?? 0) > 1 ? 's' : ''}
