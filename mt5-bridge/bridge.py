@@ -498,8 +498,14 @@ def _apply_sltp_from_fill(*, symbol: str, ticket: int, is_buy: bool, fill: float
     # calcul et send (~1-2 ticks).
     stops_lvl = getattr(info, "trade_stops_level", 0) or 0
     tick = mt5.symbol_info_tick(symbol)
-    if tick and stops_lvl > 0 and tick.bid > 0 and tick.ask > 0:
-        min_dist = stops_lvl * point * 1.2
+    if tick and tick.bid > 0 and tick.ask > 0:
+        # Buffer mini = max(stops_level × 1.2, 5 ticks). Le `5 ticks` est
+        # crucial pour les brokers qui retournent stops_level=0 (observé
+        # 2026-06-14 sur Pepperstone Demo ETHUSD) : sans floor minimum, le
+        # SL d'un SELL pouvait être posé SOUS l'ask courant, ce que MT5
+        # rejette avec retcode=10016 puisque l'ask est le prix de clôture
+        # d'un SELL (le SL serait déjà touché).
+        min_dist = max(stops_lvl * point * 1.2, point * 5)
         if is_buy:
             # BUY position : SL closes via SELL (price=bid). Doit être
             # bid - min_dist au plus haut (sinon "trop près").
