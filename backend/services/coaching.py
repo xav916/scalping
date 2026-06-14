@@ -179,15 +179,28 @@ def compute_verdict(
         warnings.append(f"Score faible ({score:.0f}/100)")
 
     # Session
-    active = _active_sessions_utc(now)
-    if not active:
+    # Fix 2026-06-14 : utilise is_market_open_for() qui gère crypto 24/7.
+    # Avant : _active_sessions_utc ne connaissait que les sessions forex/equity,
+    # donc tous les weekends ETH/BTC/etc étaient bloqués "Marche ferme" alors
+    # que crypto = 24/7 ouvert.
+    from backend.services.market_hours import is_market_open_for
+    from config.settings import asset_class_for
+
+    if not is_market_open_for(setup.pair, now):
         blockers.append("Marche ferme (pas de session active)")
     else:
-        is_best, sess_label = _is_best_session(setup.pair, active)
-        if is_best:
-            reasons.append(f"Session favorable : {sess_label}")
+        ac = asset_class_for(setup.pair)
+        if ac == "crypto":
+            # Crypto 24/7 — pas de notion de "session favorable"
+            reasons.append("Marche crypto 24/7 — toujours actif")
         else:
-            warnings.append(f"Session sous-optimale : {sess_label}")
+            active = _active_sessions_utc(now)
+            if active:
+                is_best, sess_label = _is_best_session(setup.pair, active)
+                if is_best:
+                    reasons.append(f"Session favorable : {sess_label}")
+                else:
+                    warnings.append(f"Session sous-optimale : {sess_label}")
 
     # Tendance
     if trend:
