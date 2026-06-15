@@ -454,9 +454,17 @@ _PIP_VALUE_AT_001_LOT_EUR: dict[str, float] = {
     "XAG/USD": 45.0,   # 1 unité prix × 5000 × 0.01 = $50 ≈ €45
     # Energy (1 lot = 1000 barrels)
     "WTI/USD": 9.0,    # 1 unité prix × 1000 × 0.01 = $10 ≈ €9
-    # Crypto (1 lot = 1 unité ; varie selon broker, approximation)
-    "ETH/USD": 0.009,  # 1 unité prix × 1 × 0.01 = $0.01 ≈ €0.009
+    # Crypto (1 lot = 1 unité de la crypto ; pip_value uniforme par convention
+    # broker = 1 tick × 0.01 lot × $1/unit ≈ €0.009). Ajout 2026-06-16 des 6
+    # cryptos promues 13/06 pour uniformiser notifs Telegram trade_opened/close.
+    "ETH/USD": 0.009,
     "BTC/USD": 0.009,
+    "SOL/USD": 0.009,
+    "ADA/USD": 0.009,
+    "XRP/USD": 0.009,
+    "LTC/USD": 0.009,
+    "BCH/USD": 0.009,
+    "DOT/USD": 0.009,
     # Forex : NON mappé volontairement (risk_pips arrondi à 0.00 → affichage
     # €0.00 trompeur). À reactiver quand on aura un pipeline qui conserve la
     # précision (e.g. risk_money directement en EUR).
@@ -484,6 +492,13 @@ _MARGIN_AT_001_LOT_EUR: dict[str, float] = {
     # Crypto (1:2 leverage retail EU)
     "ETH/USD": 8.0,    # 0.01 ETH × $1700 ÷ 2 ≈ $8.50 ≈ €7.65
     "BTC/USD": 450.0,  # 0.01 BTC × $100000 ÷ 2 ≈ €450 (probable NO_MONEY sur €300 cap)
+    # 6 altcoins promues 2026-06-13 (ajout 2026-06-16). Prix ~mi-juin 2026.
+    "SOL/USD": 0.30,   # 0.01 × $67 ÷ 2 ≈ €0.30
+    "BCH/USD": 1.00,   # 0.01 × $220 ÷ 2 ≈ €1.00
+    "LTC/USD": 0.20,   # 0.01 × $45 ÷ 2 ≈ €0.20
+    "ADA/USD": 0.01,   # 0.01 × $0.17 ÷ 2 — trop petit pour affichage utile
+    "XRP/USD": 0.01,   # 0.01 × $1.14 ÷ 2 — idem
+    "DOT/USD": 0.01,   # 0.01 × $1.0 ÷ 2 — idem
 }
 
 
