@@ -247,12 +247,26 @@ def compute_verdict(
     # On simplifie : pas de WAIT, seuil SKIP plus bas (65).
     from config.settings import asset_class_for as _ac
     from backend.services import session_service as _ss
-    is_crypto_weekend = _ac(setup.pair) == "crypto" and _ss.is_weekend()
+    _ac_pair = _ac(setup.pair)
+    is_crypto_weekend = _ac_pair == "crypto" and _ss.is_weekend()
+    # Energy (WTI/USD) : décision Xavier 2026-06-15 → permissive comme
+    # crypto weekend (seuil 60, pas de WAIT, juste binary SKIP/TAKE).
+    # Justification : WTI rarement au-dessus de 70 weekend/Asie/début London.
+    # On accepte plus de bruit pour avoir des trades, le risk management
+    # bridge (BE+trailing) compense.
+    is_energy = _ac_pair == "energy"
 
     if is_crypto_weekend:
         if blockers:
             action = "SKIP"
         elif score < 65 or len(warnings) >= 3:
+            action = "SKIP"
+        else:
+            action = "TAKE"
+    elif is_energy:
+        if blockers:
+            action = "SKIP"
+        elif score < 60 or len(warnings) >= 3:
             action = "SKIP"
         else:
             action = "TAKE"
