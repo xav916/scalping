@@ -389,6 +389,27 @@ _PAIR_FR_LABEL: dict[str, str] = {
     "WTI/USD": "Pétrole WTI",
     "ETH/USD": "Ethereum",
     "BTC/USD": "Bitcoin",
+    # 6 cryptos promues AUTO_EXEC le 2026-06-13 (cf. project_manual_crypto_promotion_2026_06_13)
+    # → ajout 2026-06-16 pour uniformiser les notifs Telegram trade_opened / close.
+    "SOL/USD": "Solana",
+    "ADA/USD": "Cardano",
+    "XRP/USD": "Ripple",
+    "LTC/USD": "Litecoin",
+    "BCH/USD": "Bitcoin Cash",
+    "DOT/USD": "Polkadot",
+    # Autres paires watched (forex majors + équités) — labels lisibles pour
+    # cohérence en cas de push futur.
+    "EUR/USD": "Euro / Dollar",
+    "GBP/USD": "Livre / Dollar",
+    "USD/JPY": "Dollar / Yen",
+    "EUR/GBP": "Euro / Livre",
+    "USD/CHF": "Dollar / Franc Suisse",
+    "AUD/USD": "Dollar Australien",
+    "USD/CAD": "Dollar / Dollar Canadien",
+    "EUR/JPY": "Euro / Yen",
+    "GBP/JPY": "Livre / Yen",
+    "SPX": "S&P 500",
+    "NDX": "Nasdaq 100",
 }
 
 _PATTERN_EXPLAIN_FR: dict[str, str] = {
