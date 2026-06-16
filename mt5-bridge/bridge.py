@@ -991,6 +991,37 @@ def tick(pair):
     })
 
 
+@app.route("/symbol_specs/<path:pair>", methods=["GET"])
+@require_api_key
+def symbol_specs(pair):
+    """Specs broker complètes pour une pair : volume_min/max/step,
+    trade_contract_size, trade_tick_value, point, digits — utilisé pour
+    debugger les retcode=10014 (INVALID_VOLUME).
+    """
+    if not ensure_mt5_connected():
+        return jsonify({"error": "MT5 not connected"}), 503
+    sym = resolve_symbol(pair)
+    if not sym:
+        return jsonify({"error": f"symbol not found for {pair}"}), 404
+    info = mt5.symbol_info(sym)
+    if info is None:
+        return jsonify({"error": f"symbol_info None for {sym}"}), 503
+    return jsonify({
+        "pair": pair,
+        "symbol": sym,
+        "volume_min": info.volume_min,
+        "volume_max": info.volume_max,
+        "volume_step": info.volume_step,
+        "trade_contract_size": info.trade_contract_size,
+        "trade_tick_value": info.trade_tick_value,
+        "point": info.point,
+        "digits": info.digits,
+        "trade_stops_level": info.trade_stops_level,
+        "filling_mode": info.filling_mode,
+        "trade_mode": info.trade_mode,
+    })
+
+
 @app.route("/symbols", methods=["GET"])
 @require_api_key
 def symbols():
