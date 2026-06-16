@@ -243,11 +243,34 @@ def extract_features_for_setup(setup: Any, candles: list[Candle]) -> dict[str, A
         from backend.services import binance_funding_service as _bf
         features.update(_bf.get_features_for_setup(getattr(setup, "pair", "")))
     except Exception:
-        # Service indispo / erreur : on retombe sur features par défaut (0)
         features.update({
             "funding_rate": 0.0,
             "funding_extreme_positive": 0,
             "funding_extreme_negative": 0,
             "funding_available": 0,
+        })
+    # VIX features (cross-asset stress indicator). Pertinent surtout pour
+    # SPX/NDX/cryptos (risk-on/off corrélation).
+    try:
+        from backend.services import vix_service as _vix
+        features.update(_vix.get_features())
+    except Exception:
+        features.update({
+            "vix_value": 0.0, "vix_change_pct": 0.0,
+            "vix_low": 0, "vix_medium": 0, "vix_high": 0, "vix_extreme": 0,
+            "vix_available": 0,
+        })
+    # EIA petroleum features (pertinent uniquement WTI/USD ; flag wednesday
+    # window utile pour tous les actifs car régime macro change après le report).
+    try:
+        from backend.services import eia_petroleum_service as _eia
+        features.update(_eia.get_features(getattr(setup, "pair", "")))
+    except Exception:
+        features.update({
+            "eia_is_wti": 0, "eia_in_wednesday_window": 0,
+            "eia_wti_in_window": 0,
+            "eia_crude_delta_pct": 0.0, "eia_gasoline_delta_pct": 0.0,
+            "eia_crude_build": 0, "eia_crude_draw": 0,
+            "eia_available": 0,
         })
     return features

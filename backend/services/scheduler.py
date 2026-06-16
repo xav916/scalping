@@ -669,10 +669,41 @@ def start_scheduler() -> AsyncIOScheduler:
             id="binance_funding_refresh",
             name="Refresh Binance funding rates",
             replace_existing=True,
-            next_run_time=datetime.now(timezone.utc),  # 1er run immediat
+            next_run_time=datetime.now(timezone.utc),
         )
     except Exception as _e:
         logger.warning(f"scheduler: binance_funding_refresh non installé : {_e}")
+    # Refresh VIX toutes les 5 min (feature ML 2026-06-16).
+    # Source : Yahoo Finance ^VIX (public, no auth).
+    try:
+        from backend.services import vix_service as _vix_svc
+        _scheduler.add_job(
+            _vix_svc.refresh,
+            "interval",
+            minutes=5,
+            id="vix_refresh",
+            name="Refresh VIX (CBOE Volatility Index)",
+            replace_existing=True,
+            next_run_time=datetime.now(timezone.utc),
+        )
+    except Exception as _e:
+        logger.warning(f"scheduler: vix_refresh non installé : {_e}")
+    # Refresh EIA petroleum stocks toutes les 6h (data hebdo, publication mercredi 14h30 UTC).
+    # No-op si EIA_API_KEY non set. Pour activer : signup gratuit sur
+    # https://www.eia.gov/opendata/register.php puis EIA_API_KEY=xxx dans .env.
+    try:
+        from backend.services import eia_petroleum_service as _eia_svc
+        _scheduler.add_job(
+            _eia_svc.refresh_all,
+            "interval",
+            hours=6,
+            id="eia_petroleum_refresh",
+            name="Refresh EIA Weekly Petroleum",
+            replace_existing=True,
+            next_run_time=datetime.now(timezone.utc),
+        )
+    except Exception as _e:
+        logger.warning(f"scheduler: eia_petroleum_refresh non installé : {_e}")
     if MACRO_SCORING_ENABLED:
         _scheduler.add_job(
             refresh_macro_context,
