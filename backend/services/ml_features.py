@@ -273,4 +273,41 @@ def extract_features_for_setup(setup: Any, candles: list[Candle]) -> dict[str, A
             "eia_crude_build": 0, "eia_crude_draw": 0,
             "eia_available": 0,
         })
+    # Crypto Fear & Greed (alternative.me) — pertinent BTC/ETH/altcoins.
+    try:
+        from backend.services import crypto_fear_greed_service as _cfg
+        features.update(_cfg.get_features(getattr(setup, "pair", "")))
+    except Exception:
+        features.update({
+            "cfg_value": 0, "cfg_extreme_fear": 0, "cfg_fear": 0,
+            "cfg_greed": 0, "cfg_extreme_greed": 0, "cfg_available": 0,
+        })
+    # Binance long/short account ratio — pertinent cryptos suivies.
+    try:
+        from backend.services import binance_lsr_service as _lsr
+        features.update(_lsr.get_features(getattr(setup, "pair", "")))
+    except Exception:
+        features.update({
+            "lsr_ratio": 0, "lsr_long_pct": 0, "lsr_short_pct": 0,
+            "lsr_excess_long": 0, "lsr_excess_short": 0, "lsr_available": 0,
+        })
+    # CFTC COT positionning (forex, métaux, énergie, SPX/NDX, BTC) — z-score
+    # vs 52 semaines, plus flags smart_long / smart_short.
+    try:
+        from backend.services import cot_service as _cot
+        features.update(_cot.get_features(getattr(setup, "pair", "")))
+    except Exception:
+        features.update({
+            "cot_lev_net": 0.0, "cot_lev_z": 0.0, "cot_nr_z": 0.0,
+            "cot_smart_long": 0, "cot_smart_short": 0, "cot_available": 0,
+        })
+    # FRED TIPS 10Y real yields — driver historique XAU/XAG (-85% correl).
+    try:
+        from backend.services import fred_tips_yields_service as _fred
+        features.update(_fred.get_features(getattr(setup, "pair", "")))
+    except Exception:
+        features.update({
+            "tips_yield": 0, "tips_delta_bp": 0,
+            "tips_high_yield": 0, "tips_low_yield": 0, "tips_available": 0,
+        })
     return features

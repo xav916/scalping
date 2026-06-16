@@ -704,6 +704,65 @@ def start_scheduler() -> AsyncIOScheduler:
         )
     except Exception as _e:
         logger.warning(f"scheduler: eia_petroleum_refresh non installé : {_e}")
+    # Refresh Crypto Fear & Greed (alternative.me) toutes les heures.
+    # Mise à jour quotidienne côté source ; refresh 1h sécurise contre
+    # glitches.
+    try:
+        from backend.services import crypto_fear_greed_service as _cfg_svc
+        _scheduler.add_job(
+            _cfg_svc.refresh,
+            "interval",
+            hours=1,
+            id="crypto_fear_greed_refresh",
+            name="Refresh crypto Fear & Greed (alternative.me)",
+            replace_existing=True,
+            next_run_time=datetime.now(timezone.utc),
+        )
+    except Exception as _e:
+        logger.warning(f"scheduler: crypto_fear_greed_refresh non installé : {_e}")
+    # Refresh Binance Long/Short Account Ratio toutes les 15 min.
+    # Source : Binance Futures public API, période 5min.
+    try:
+        from backend.services import binance_lsr_service as _lsr_svc
+        _scheduler.add_job(
+            _lsr_svc.refresh_all,
+            "interval",
+            minutes=15,
+            id="binance_lsr_refresh",
+            name="Refresh Binance long/short account ratio",
+            replace_existing=True,
+            next_run_time=datetime.now(timezone.utc),
+        )
+    except Exception as _e:
+        logger.warning(f"scheduler: binance_lsr_refresh non installé : {_e}")
+    # Refresh CFTC COT report 1× / jour (publication vendredi 20h UTC, suffit).
+    try:
+        from backend.services import cot_service as _cot_svc
+        _scheduler.add_job(
+            _cot_svc.sync_latest,
+            "interval",
+            hours=24,
+            id="cot_sync",
+            name="Sync CFTC COT report",
+            replace_existing=True,
+            next_run_time=datetime.now(timezone.utc),
+        )
+    except Exception as _e:
+        logger.warning(f"scheduler: cot_sync non installé : {_e}")
+    # Refresh FRED TIPS 10Y real yields toutes les 6h. Publi quotidienne côté FRED.
+    try:
+        from backend.services import fred_tips_yields_service as _fred_svc
+        _scheduler.add_job(
+            _fred_svc.refresh,
+            "interval",
+            hours=6,
+            id="fred_tips_refresh",
+            name="Refresh FRED TIPS 10Y real yields",
+            replace_existing=True,
+            next_run_time=datetime.now(timezone.utc),
+        )
+    except Exception as _e:
+        logger.warning(f"scheduler: fred_tips_refresh non installé : {_e}")
     if MACRO_SCORING_ENABLED:
         _scheduler.add_job(
             refresh_macro_context,

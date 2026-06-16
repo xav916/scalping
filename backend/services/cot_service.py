@@ -314,3 +314,41 @@ def find_extremes() -> list[dict]:
                 "signals": signals,
             })
     return items
+
+
+def get_features(pair: str) -> dict[str, float]:
+    """Renvoie 6 features COT pour une pair donnee, pour ml_features.
+
+    cot_lev_net          : position nette leveraged funds (smart money)
+    cot_lev_z            : z-score 52s du net leveraged funds
+    cot_nr_z             : z-score 52s des non-reportables (retail contrarien)
+    cot_smart_long       : 1 si lev_z >= +2 (smart money tres long)
+    cot_smart_short      : 1 si lev_z <= -2 (smart money tres short)
+    cot_available        : 1 si donnees disponibles pour cette pair
+
+    Pour les paires non couvertes par COT (forex exotiques, alts crypto, energies hors WTI),
+    renvoie zeros + available=0.
+    """
+    fallback = {
+        "cot_lev_net": 0.0, "cot_lev_z": 0.0, "cot_nr_z": 0.0,
+        "cot_smart_long": 0, "cot_smart_short": 0, "cot_available": 0,
+    }
+    if pair not in _CONTRACT_MAP.values():
+        return fallback
+    try:
+        for entry in get_latest():
+            if entry["pair"] != pair:
+                continue
+            lev_z = entry.get("lev_funds_z") or 0
+            nr_z = entry.get("non_reportables_z") or 0
+            return {
+                "cot_lev_net": entry.get("lev_funds_net") or 0,
+                "cot_lev_z": lev_z,
+                "cot_nr_z": nr_z,
+                "cot_smart_long": 1 if lev_z >= _EXTREME_ZSCORE_THRESHOLD else 0,
+                "cot_smart_short": 1 if lev_z <= -_EXTREME_ZSCORE_THRESHOLD else 0,
+                "cot_available": 1,
+            }
+    except Exception as e:
+        logger.warning(f"cot get_features({pair}) failed: {e}")
+    return fallback
