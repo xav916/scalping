@@ -998,6 +998,24 @@ def _build_trade_justification(pattern_value, confidence_score) -> list[str]:
             else:
                 qual = "signal limite"
             lines.append(f"• Score IA : *{score:.0f}/100* ({qual})")
+    # Climat de marché tiré du VIX (indice du stress des marchés US, proxy
+    # cross-asset). Silencieux si data non disponible ou périmée.
+    try:
+        from backend.services import vix_service as _vix
+        d = _vix.get_current()
+        if d.get("available") and d.get("is_fresh"):
+            v = float(d["value"])
+            if v < 15:
+                climate = "calme (peu de stress)"
+            elif v < 25:
+                climate = "normal"
+            elif v < 35:
+                climate = "tendu (stress modéré)"
+            else:
+                climate = "panique"
+            lines.append(f"• Climat de marché : *{climate}* (VIX {v:.1f})")
+    except Exception:
+        pass
     return lines
 
 
