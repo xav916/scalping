@@ -931,7 +931,6 @@ def start_scheduler() -> AsyncIOScheduler:
     # Cache warmup pour les endpoints cold-prone (shadow summary surtout) :
     # exec immédiat au boot via next_run_time + repeat toutes les 5 min pour
     # garder les caches chauds entre les visites users.
-    from datetime import datetime
     _scheduler.add_job(
         cache_warmup_cycle,
         "interval",
