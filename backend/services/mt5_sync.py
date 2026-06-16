@@ -306,8 +306,8 @@ def _fetch_closed_trade_for_notify(ticket: int) -> dict[str, Any] | None:
         c.row_factory = sqlite3.Row
         row = c.execute(
             "SELECT pair, direction, entry_price, exit_price, pnl, "
-            "close_reason, signal_confidence, mt5_ticket, created_at, "
-            "closed_at, size_lot FROM personal_trades WHERE mt5_ticket=?",
+            "close_reason, signal_pattern, signal_confidence, mt5_ticket, "
+            "created_at, closed_at, size_lot FROM personal_trades WHERE mt5_ticket=?",
             (ticket,),
         ).fetchone()
     return dict(row) if row else None

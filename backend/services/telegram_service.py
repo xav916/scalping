@@ -868,8 +868,16 @@ def _format_close(trade: dict) -> str:
         f"{verb_open} à {entry_str} → {verb_close} à {exit_str}",
         explain,
         "",
-        f"`#{ticket}`",
     ]
+    # Rappel de la justification d'origine (pattern + score IA), si dispo
+    just_lines = _build_trade_justification(
+        trade.get("signal_pattern"),
+        trade.get("signal_confidence"),
+    )
+    if just_lines:
+        lines.extend(just_lines)
+        lines.append("")
+    lines.append(f"`#{ticket}`")
     return "\n".join(lines)
 
 
@@ -938,6 +946,61 @@ async def send_close(trade: dict) -> None:
 _veto_notified_today: set[tuple[str, str, str]] = set()
 
 
+# Pattern → texte vulgarisé (1 phrase courte, < 110 chars pour rentrer en mobile).
+# Indexé par string PatternType.value pour pouvoir être appelé à la close
+# (le dict trade ne contient qu'une string signal_pattern, pas l'enum).
+_PATTERN_FR_SHORT: dict[str, str] = {
+    "breakout_up": "Cassure de résistance — accélération haussière probable.",
+    "breakout_down": "Cassure de support — accélération baissière probable.",
+    "momentum_up": "Élan acheteur (plusieurs bougies vertes successives).",
+    "momentum_down": "Élan vendeur (plusieurs bougies rouges successives).",
+    "range_bounce_up": "Rebond sur support — entrée bas dans une zone d'achat.",
+    "range_bounce_down": "Rejet sur résistance — entrée haut dans une zone de vente.",
+    "mean_reversion_up": "Retour à la moyenne — prix trop bas, rebond attendu.",
+    "mean_reversion_down": "Retour à la moyenne — prix trop haut, baisse attendue.",
+    "engulfing_bullish": "Englobante haussière — retournement à la hausse probable.",
+    "engulfing_bearish": "Englobante baissière — retournement à la baisse probable.",
+    "pin_bar_up": "Pin bar haussière — rejet violent du prix bas.",
+    "pin_bar_down": "Pin bar baissière — rejet violent du prix haut.",
+}
+
+
+def _build_trade_justification(pattern_value, confidence_score) -> list[str]:
+    """Retourne 0-3 lignes vulgarisées expliquant pourquoi le radar a pris ce trade.
+
+    Args:
+        pattern_value: string PatternType.value (ex: "breakout_up") ou None
+        confidence_score: score IA 0-100 ou None
+
+    Renvoie une liste de lignes Markdown prête à splice dans le message.
+    Liste vide si rien d'exploitable (silencieux, pas de bruit user).
+    """
+    lines: list[str] = []
+    pat_text = None
+    if pattern_value:
+        key = str(pattern_value).lower()
+        pat_text = _PATTERN_FR_SHORT.get(key)
+    if not pat_text and confidence_score is None:
+        return lines
+    lines.append("📊 *Pourquoi ce trade ?*")
+    if pat_text:
+        lines.append(f"• {pat_text}")
+    if confidence_score is not None:
+        try:
+            score = float(confidence_score)
+        except (TypeError, ValueError):
+            score = None
+        if score is not None:
+            if score >= 75:
+                qual = "signal fort"
+            elif score >= 65:
+                qual = "signal correct"
+            else:
+                qual = "signal limite"
+            lines.append(f"• Score IA : *{score:.0f}/100* ({qual})")
+    return lines
+
+
 def _format_trade_opened(setup, ticket: int, fill_price: float, volume: float, mode: str) -> str:
     """Format vulgarisé : 'qu'est-ce qui se passe, combien je gagne/perds, pourquoi'.
 
@@ -969,6 +1032,16 @@ def _format_trade_opened(setup, ticket: int, fill_price: float, volume: float, m
         lines.append(f"💰 Gain visé : *+€{gain_visee:.2f}*")
         lines.append(f"🛑 Perte max : *−€{perte_max:.2f}*")
         lines.append(f"⏱ Durée moyenne : 1 à 4h")
+        lines.append("")
+
+    # Justification du trade (pattern + score IA), vulgarisée
+    try:
+        pat_val = setup.pattern.pattern.value if hasattr(setup.pattern.pattern, "value") else str(setup.pattern.pattern)
+    except AttributeError:
+        pat_val = None
+    just_lines = _build_trade_justification(pat_val, getattr(setup, "confidence_score", None))
+    if just_lines:
+        lines.extend(just_lines)
         lines.append("")
 
     lines.append("ℹ️ Le radar a lancé un ordre auto chez ton broker. Le trade tourne seul jusqu'à toucher son objectif ou son stop.")
