@@ -657,6 +657,22 @@ def start_scheduler() -> AsyncIOScheduler:
         name="Push cockpit via WebSocket",
         replace_existing=True,
     )
+    # Refresh Binance funding rates toutes les 30 min (feature ML 2026-06-16).
+    # Funding rates Binance publiees toutes les 8h ; 30 min cache OK.
+    # Free API public, no auth.
+    try:
+        from backend.services import binance_funding_service as _bf_svc
+        _scheduler.add_job(
+            _bf_svc.refresh_all,
+            "interval",
+            minutes=30,
+            id="binance_funding_refresh",
+            name="Refresh Binance funding rates",
+            replace_existing=True,
+            next_run_time=datetime.now(timezone.utc),  # 1er run immediat
+        )
+    except Exception as _e:
+        logger.warning(f"scheduler: binance_funding_refresh non installé : {_e}")
     if MACRO_SCORING_ENABLED:
         _scheduler.add_job(
             refresh_macro_context,

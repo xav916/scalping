@@ -219,13 +219,18 @@ def extract_features_for_setup(setup: Any, candles: list[Candle]) -> dict[str, A
     pour l'analyse — pour le ML il faudrait idéalement des candles 1h
     (ou re-aggregé). On utilise donc l'historique fourni tel quel et on
     accepte une légère divergence : c'est un shadow log.
+
+    Depuis 2026-06-16, ajoute aussi 4 features dérivées du funding rate
+    Binance (cryptos uniquement) : funding_rate, funding_extreme_positive,
+    funding_extreme_negative, funding_available. Pour les non-cryptos,
+    funding_available=0 et les autres sont à 0 (modèle apprend à ignorer).
     """
     try:
         pattern_type = setup.pattern.pattern.value if hasattr(setup.pattern.pattern, "value") else str(setup.pattern.pattern)
     except AttributeError:
         return {}
     direction = setup.direction.value if hasattr(setup.direction, "value") else str(setup.direction)
-    return extract_features(
+    features = extract_features(
         candles,
         pattern_type,
         direction,
@@ -233,3 +238,16 @@ def extract_features_for_setup(setup: Any, candles: list[Candle]) -> dict[str, A
         setup.stop_loss,
         setup.take_profit_1,
     )
+    # Augmente avec features Binance funding (live shadow log, training à terme)
+    try:
+        from backend.services import binance_funding_service as _bf
+        features.update(_bf.get_features_for_setup(getattr(setup, "pair", "")))
+    except Exception:
+        # Service indispo / erreur : on retombe sur features par défaut (0)
+        features.update({
+            "funding_rate": 0.0,
+            "funding_extreme_positive": 0,
+            "funding_extreme_negative": 0,
+            "funding_available": 0,
+        })
+    return features
