@@ -873,6 +873,7 @@ def _format_close(trade: dict) -> str:
     just_lines = _build_trade_justification(
         trade.get("signal_pattern"),
         trade.get("signal_confidence"),
+        pair=trade.get("pair"),
     )
     if just_lines:
         lines.extend(just_lines)
@@ -965,12 +966,13 @@ _PATTERN_FR_SHORT: dict[str, str] = {
 }
 
 
-def _build_trade_justification(pattern_value, confidence_score) -> list[str]:
-    """Retourne 0-3 lignes vulgarisées expliquant pourquoi le radar a pris ce trade.
+def _build_trade_justification(pattern_value, confidence_score, pair: str | None = None) -> list[str]:
+    """Retourne 0-4 lignes vulgarisées expliquant pourquoi le radar a pris ce trade.
 
     Args:
         pattern_value: string PatternType.value (ex: "breakout_up") ou None
         confidence_score: score IA 0-100 ou None
+        pair: ex "BTC/USD" — active la ligne sentiment crypto si pair crypto
 
     Renvoie une liste de lignes Markdown prête à splice dans le message.
     Liste vide si rien d'exploitable (silencieux, pas de bruit user).
@@ -1016,6 +1018,25 @@ def _build_trade_justification(pattern_value, confidence_score) -> list[str]:
             lines.append(f"• Climat de marché : *{climate}* (VIX {v:.1f})")
     except Exception:
         pass
+    # Sentiment crypto (alternative.me F&G) — pertinent uniquement BTC/ETH/altcoins.
+    # Silencieux si pair non crypto ou cache périmé (>2 jours).
+    if pair:
+        try:
+            from backend.services import crypto_fear_greed_service as _cfg
+            feats = _cfg.get_features(pair)
+            if feats.get("cfg_available"):
+                v = float(feats.get("cfg_value") or 0)
+                if v < 25:
+                    label = "peur extrême (souvent fond de marché)"
+                elif v < 50:
+                    label = "peur"
+                elif v < 75:
+                    label = "optimisme"
+                else:
+                    label = "euphorie (souvent top de marché)"
+                lines.append(f"• Sentiment crypto : *{label}* (F&G {v:.0f}/100)")
+        except Exception:
+            pass
     return lines
 
 
@@ -1057,7 +1078,11 @@ def _format_trade_opened(setup, ticket: int, fill_price: float, volume: float, m
         pat_val = setup.pattern.pattern.value if hasattr(setup.pattern.pattern, "value") else str(setup.pattern.pattern)
     except AttributeError:
         pat_val = None
-    just_lines = _build_trade_justification(pat_val, getattr(setup, "confidence_score", None))
+    just_lines = _build_trade_justification(
+        pat_val,
+        getattr(setup, "confidence_score", None),
+        pair=getattr(setup, "pair", None),
+    )
     if just_lines:
         lines.extend(just_lines)
         lines.append("")
