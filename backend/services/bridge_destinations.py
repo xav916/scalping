@@ -77,6 +77,13 @@ class BridgeConfig:
     symbol_map: dict[str, str] | None = None
     extra_pairs_allowed: frozenset[str] = frozenset()
     excluded_pairs: frozenset[str] = frozenset()
+    # bridge_type: "mt5" pour les bridges MT5 (admin_legacy, admin_live, user
+    # premium), "binance" pour le bridge Binance Futures (USDⓈ-M perp).
+    # Le dispatcher dans mt5_bridge._push_to_destination utilise ce flag pour
+    # router vers le client approprié et adapter le payload.
+    bridge_type: str = "mt5"
+    # leverage pour les destinations Binance (ignoré côté MT5, broker fixe).
+    leverage: int | None = None
 
 
 def _admin_legacy_destination() -> BridgeConfig | None:
@@ -131,6 +138,39 @@ def _admin_live_destination() -> BridgeConfig | None:
         allowed_asset_classes=frozenset(st.MT5_BRIDGE_LIVE_ALLOWED_ASSET_CLASSES),
         auto_exec_enabled=True,
         extra_pairs_allowed=getattr(st, "MT5_BRIDGE_LIVE_EXTRA_PAIRS", frozenset()),
+    )
+
+
+def _admin_binance_destination() -> BridgeConfig | None:
+    """Retourne la config Binance Futures (testnet ou live), ou ``None``.
+
+    Lance Phase 2 du Palier 2 (migration vers vrais cryptos) : pousser les
+    signaux crypto vers Binance USDⓈ-M en parallèle des destinations MT5.
+    En testnet : zéro coût, validation comparative MT5 Demo vs Binance.
+
+    Conditions activation :
+    - BINANCE_BRIDGE_ENABLED=true
+    - BINANCE_BRIDGE_URL set (typique http://127.0.0.1:8789)
+    - bridge_type="binance" déclenche le dispatch vers binance_bridge_client
+      au lieu du push MT5 standard.
+    """
+    from config import settings as st
+
+    if not (
+        getattr(st, "BINANCE_BRIDGE_ENABLED", False)
+        and getattr(st, "BINANCE_BRIDGE_URL", "")
+    ):
+        return None
+    return BridgeConfig(
+        destination_id="admin_binance",
+        user_id=None,
+        bridge_url=st.BINANCE_BRIDGE_URL.rstrip("/"),
+        bridge_api_key=getattr(st, "BINANCE_BRIDGE_API_KEY", "") or "",
+        min_confidence=float(getattr(st, "BINANCE_BRIDGE_MIN_CONFIDENCE", 50)),
+        allowed_asset_classes=frozenset({"crypto"}),
+        auto_exec_enabled=True,
+        bridge_type="binance",
+        leverage=int(getattr(st, "BINANCE_BRIDGE_LEVERAGE", 5)),
     )
 
 
@@ -217,5 +257,8 @@ def resolve_destinations(setup: Any) -> list[BridgeConfig]:
     admin_live = _admin_live_destination()
     if admin_live is not None:
         destinations.append(admin_live)
+    admin_binance = _admin_binance_destination()
+    if admin_binance is not None:
+        destinations.append(admin_binance)
     destinations.extend(_user_destinations(setup))
     return destinations

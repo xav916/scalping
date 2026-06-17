@@ -167,6 +167,18 @@ MT5_BRIDGE_LIVE_ALLOWED_ASSET_CLASSES = [
 MT5_BRIDGE_LIVE_EXTRA_PAIRS = frozenset(
     p.strip().upper() for p in os.getenv("MT5_BRIDGE_LIVE_EXTRA_PAIRS", "").split(",") if p.strip()
 )
+
+# ─── Binance Futures bridge (Phase 2 R&D Palier 2 — 2026-06-17) ───────
+# Routing destination parallèle aux bridges MT5 pour cryptos. En testnet :
+# zéro coût, validation comparative MT5 Demo vs Binance USDⓈ-M sur fills
+# et slippage. Le binance-bridge tourne sur EC2 port 8789 (systemd-run
+# binance-bridge-rd.service), watcher SL/TP émulé côté bridge car le
+# testnet Binance rejette STOP_MARKET via /fapi/v1/order (-4120).
+BINANCE_BRIDGE_ENABLED = os.getenv("BINANCE_BRIDGE_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+BINANCE_BRIDGE_URL = os.getenv("BINANCE_BRIDGE_URL", "")
+BINANCE_BRIDGE_API_KEY = os.getenv("BINANCE_BRIDGE_API_KEY", "")
+BINANCE_BRIDGE_MIN_CONFIDENCE = float(os.getenv("BINANCE_BRIDGE_MIN_CONFIDENCE", "50"))
+BINANCE_BRIDGE_LEVERAGE = int(os.getenv("BINANCE_BRIDGE_LEVERAGE", "5"))
 # Paires supplémentaires autorisées globalement (Demo + Live + autres
 # destinations multi-tenant) en plus des stars XAU/XAG/WTI/ETH. Sert à
 # élargir l'auto-exec aux paires promues manuellement en AUTO_EXEC via

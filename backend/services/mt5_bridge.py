@@ -439,6 +439,18 @@ async def _push_to_destination(setup, dest) -> None:
     key = _dedup_key(setup, dest.destination_id)
     if key in _sent_setups_today:
         return
+    # ─── Dispatch Binance bridge (Phase 2 R&D — 2026-06-17) ──────────
+    # Quand la destination est de type "binance", déléguer au client dédié
+    # qui formate le payload (qty au lieu de lots, leverage, isolated) et
+    # gère la réponse Binance-shaped. Le client persiste dans mt5_pushes
+    # (même destination_id="admin_binance") pour comparaison MT5 vs Binance.
+    if getattr(dest, "bridge_type", "mt5") == "binance":
+        _sent_setups_today.add(key)
+        from backend.services import sizing
+        from backend.services import binance_bridge_client
+        sz = sizing.compute_risk_money(setup)
+        await binance_bridge_client.push_to_binance(setup, sz, dest)
+        return
     # Dedup atomique en DB (UNIQUE constraint INSERT OR IGNORE) — source de
     # vérité partagée multi-process. Le set in-memory reste en parallèle pour
     # rétro-compat des tests existants. Best-effort : si la DB est
