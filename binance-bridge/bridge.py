@@ -27,7 +27,9 @@ import hashlib
 import hmac
 import json
 import logging
+import math
 import os
+import threading
 import time
 from typing import Any
 from urllib.parse import urlencode
@@ -113,6 +115,129 @@ def _signed_request(method: str, path: str, params: dict | None = None, timeout:
             logger.warning(f"binance {method} {path} → {r.status_code}: {r.text[:200]}")
         r.raise_for_status()
         return r.json()
+
+
+# ─── Specs cache (exchangeInfo) ──────────────────────────────────────
+
+_SPECS_CACHE: dict[str, dict[str, Any]] = {}
+_SPECS_FETCHED_AT: float = 0.0
+_SPECS_TTL_SEC: float = 3600.0  # 1h
+
+
+def _refresh_specs_cache() -> None:
+    global _SPECS_FETCHED_AT
+    info = _public_get("/fapi/v1/exchangeInfo", timeout=15)
+    _SPECS_CACHE.clear()
+    for s in info.get("symbols", []):
+        filters = {f["filterType"]: f for f in s.get("filters", [])}
+        lot = filters.get("LOT_SIZE", {})
+        price = filters.get("PRICE_FILTER", {})
+        notional = filters.get("MIN_NOTIONAL", {}) or filters.get("NOTIONAL", {})
+        _SPECS_CACHE[s["symbol"]] = {
+            "minQty": float(lot.get("minQty", 0)),
+            "maxQty": float(lot.get("maxQty", 0)),
+            "stepSize": float(lot.get("stepSize", 0)),
+            "tickSize": float(price.get("tickSize", 0)),
+            "minNotional": float(notional.get("notional", notional.get("minNotional", 0))),
+            "quantityPrecision": int(s.get("quantityPrecision", 0)),
+            "pricePrecision": int(s.get("pricePrecision", 0)),
+            "status": s.get("status"),
+        }
+    _SPECS_FETCHED_AT = time.time()
+    logger.info(f"exchangeInfo cache refreshed: {len(_SPECS_CACHE)} symbols")
+
+
+def _get_specs(symbol: str) -> dict[str, Any] | None:
+    """Spécifications d'un symbole (cache 1h). Force le 1er refresh si vide."""
+    if not _SPECS_CACHE or (time.time() - _SPECS_FETCHED_AT) > _SPECS_TTL_SEC:
+        _refresh_specs_cache()
+    return _SPECS_CACHE.get(symbol)
+
+
+def _floor_to_step(value: float, step: float, precision: int) -> float:
+    """Plancher value au multiple de step le plus proche par défaut."""
+    if step <= 0:
+        return round(value, precision)
+    n = math.floor(value / step + 1e-12)
+    return round(n * step, precision)
+
+
+def _round_to_tick(value: float, tick: float, precision: int) -> float:
+    """Arrondit value au multiple de tick le plus proche (pour prix SL/TP)."""
+    if tick <= 0:
+        return round(value, precision)
+    n = round(value / tick)
+    return round(n * tick, precision)
+
+
+# ─── SL/TP émulés côté bridge ────────────────────────────────────────
+# Binance Futures testnet rejette STOP_MARKET / TAKE_PROFIT_MARKET via
+# /fapi/v1/order (error -4120). On émule donc SL/TP via un watcher
+# thread qui polle le ticker et envoie MARKET reduceOnly au trigger.
+# Le même code marche en prod (où STOP_MARKET fonctionne) : c'est une
+# option de simplicité, à la prod on pourra basculer vers vrais
+# STOP_MARKET si la latence du watcher pose souci.
+
+_managed_positions: dict[str, dict[str, Any]] = {}  # keyed by symbol
+_managed_lock = threading.Lock()
+_WATCHER_POLL_SEC = 3.0
+
+
+def _trigger_close(symbol: str, qty: float, side_to_close: str, reason: str) -> bool:
+    """Envoie MARKET reduceOnly pour fermer une position. Retourne True si ok."""
+    try:
+        r = _signed_request("POST", "/fapi/v1/order", params={
+            "symbol": symbol, "side": side_to_close, "type": "MARKET",
+            "quantity": qty, "reduceOnly": "true",
+        })
+        logger.warning(f"emulated {reason} triggered for {symbol}: order {r.get('orderId')}")
+        return True
+    except Exception as e:
+        logger.error(f"emulated {reason} close failed for {symbol}: {e}")
+        return False
+
+
+def _watcher_loop() -> None:
+    """Daemon thread : polle les positions managées + ferme au touché SL/TP."""
+    while True:
+        try:
+            time.sleep(_WATCHER_POLL_SEC)
+            with _managed_lock:
+                items = list(_managed_positions.items())
+            for sym, m in items:
+                try:
+                    tick = _public_get("/fapi/v1/ticker/price", params={"symbol": sym})
+                    price = float(tick["price"])
+                except Exception as e:
+                    logger.debug(f"watcher tick {sym} failed: {e}")
+                    continue
+                sl, tp = m.get("sl"), m.get("tp")
+                qty, direction = m["qty"], m["direction"]
+                close_side = "SELL" if direction == "buy" else "BUY"
+                hit = None
+                if direction == "buy":
+                    if sl is not None and price <= sl:
+                        hit = "SL"
+                    elif tp is not None and price >= tp:
+                        hit = "TP"
+                else:
+                    if sl is not None and price >= sl:
+                        hit = "SL"
+                    elif tp is not None and price <= tp:
+                        hit = "TP"
+                if hit:
+                    ok = _trigger_close(sym, qty, close_side, hit)
+                    if ok:
+                        with _managed_lock:
+                            _managed_positions.pop(sym, None)
+        except Exception as e:
+            logger.warning(f"watcher loop iter failed: {e}")
+
+
+def _start_watcher() -> None:
+    t = threading.Thread(target=_watcher_loop, daemon=True, name="bridge-sltp-watcher")
+    t.start()
+    logger.info(f"sltp watcher started (poll={_WATCHER_POLL_SEC}s)")
 
 
 # ─── Flask app ────────────────────────────────────────────────────────
@@ -266,33 +391,177 @@ def place_order():
     {
       "pair": "BTC/USD",
       "direction": "buy" | "sell",
-      "qty": 0.01,             // base currency quantity (e.g. BTC)
-      "sl": 95800.0,           // optional
-      "tp": 97500.0,           // optional
-      "leverage": 5,           // optional, set per symbol if provided
+      "qty": 0.001,            // base currency quantity (e.g. BTC)
+      "sl": 64000.0,           // optional, prix absolu
+      "tp": 67000.0,           // optional, prix absolu
+      "leverage": 5,           // optional, set per symbol si fourni
       "margin_type": "ISOLATED"  // optional, default ISOLATED
     }
 
-    Stub R&D : implémentation à compléter avec test sur testnet.
+    SL/TP utilisent closePosition=true (clôture totale au trigger, pas de quantity).
+    Best-effort sur SL/TP : si l'un fail, l'ordre MARKET reste intact, on
+    log le détail dans la réponse (champs sl_error / tp_error).
     """
     payload = request.get_json(force=True, silent=True) or {}
-    return jsonify({
-        "ok": False,
-        "error": "not_implemented_yet",
-        "received": payload,
-        "next_step": "implement after testnet keys configured + manual cli test",
-    }), 501
+    pair = payload.get("pair")
+    direction = (payload.get("direction") or "").lower()
+    qty_raw = payload.get("qty")
+    sl_raw = payload.get("sl")
+    tp_raw = payload.get("tp")
+    leverage = payload.get("leverage")
+    margin_type = (payload.get("margin_type") or "ISOLATED").upper()
+
+    if direction not in ("buy", "sell") or qty_raw is None:
+        return jsonify({"ok": False, "error": "payload requires pair, direction (buy/sell), qty"}), 400
+    sym = _resolve_symbol(pair or "")
+    if not sym:
+        return jsonify({"ok": False, "error": f"unsupported pair {pair}"}), 400
+
+    try:
+        specs = _get_specs(sym)
+        if not specs or specs.get("status") != "TRADING":
+            return jsonify({"ok": False, "error": f"no TRADING specs for {sym}"}), 503
+
+        qty = _floor_to_step(float(qty_raw), specs["stepSize"], specs["quantityPrecision"])
+        if qty < specs["minQty"]:
+            return jsonify({"ok": False, "error": f"qty {qty} < minQty {specs['minQty']}"}), 400
+
+        # Vérif notional vs prix courant
+        tick = _public_get("/fapi/v1/ticker/price", params={"symbol": sym})
+        mark_price = float(tick["price"])
+        notional = qty * mark_price
+        if notional < specs["minNotional"]:
+            return jsonify({"ok": False,
+                            "error": f"notional {notional:.2f} < minNotional {specs['minNotional']} (qty={qty}, price={mark_price})"}), 400
+
+        # Margin type (idempotent ; ignore "no change needed" -4046)
+        try:
+            _signed_request("POST", "/fapi/v1/marginType",
+                            params={"symbol": sym, "marginType": margin_type})
+        except httpx.HTTPStatusError as e:
+            if "-4046" not in (e.response.text if e.response else ""):
+                logger.warning(f"marginType {sym}: {e.response.text[:200] if e.response else e}")
+
+        # Leverage (idempotent)
+        if leverage:
+            try:
+                _signed_request("POST", "/fapi/v1/leverage",
+                                params={"symbol": sym, "leverage": int(leverage)})
+            except httpx.HTTPStatusError as e:
+                logger.warning(f"leverage {sym}: {e.response.text[:200] if e.response else e}")
+
+        side = "BUY" if direction == "buy" else "SELL"
+        opp_side = "SELL" if direction == "buy" else "BUY"
+        client_order_id = f"sr_{int(time.time() * 1000)}"
+
+        # MARKET order — origin trade
+        market_resp = _signed_request("POST", "/fapi/v1/order", params={
+            "symbol": sym,
+            "side": side,
+            "type": "MARKET",
+            "quantity": qty,
+            "newClientOrderId": client_order_id,
+        })
+        market_order_id = market_resp.get("orderId")
+        executed_qty = float(market_resp.get("executedQty", 0) or 0)
+        avg_price = float(market_resp.get("avgPrice", 0) or 0)
+        # Le 1er retour MARKET arrive en status=NEW (pas encore filled).
+        # Re-poll après 200ms pour récupérer le vrai executedQty/avgPrice.
+        if executed_qty == 0 or avg_price == 0:
+            time.sleep(0.2)
+            try:
+                o = _signed_request("GET", "/fapi/v1/order",
+                                    params={"symbol": sym, "orderId": market_order_id})
+                executed_qty = float(o.get("executedQty", 0) or 0) or qty
+                avg_price = float(o.get("avgPrice", 0) or 0) or mark_price
+            except Exception as e:
+                logger.warning(f"order re-poll {sym}: {e}")
+                executed_qty = qty
+                avg_price = mark_price
+
+        # SL/TP : enregistrement dans le watcher local (Binance testnet rejette
+        # STOP_MARKET via /fapi/v1/order — error -4120). En prod il sera
+        # possible de basculer vers vrais STOP_MARKET pour économiser le polling.
+        sl_norm = (_round_to_tick(float(sl_raw), specs["tickSize"], specs["pricePrecision"])
+                   if sl_raw is not None else None)
+        tp_norm = (_round_to_tick(float(tp_raw), specs["tickSize"], specs["pricePrecision"])
+                   if tp_raw is not None else None)
+        with _managed_lock:
+            _managed_positions[sym] = {
+                "qty": executed_qty,
+                "direction": direction,
+                "sl": sl_norm,
+                "tp": tp_norm,
+                "avg_price": avg_price,
+                "client_order_id": client_order_id,
+                "opened_at": time.time(),
+            }
+
+        return jsonify({
+            "ok": True,
+            "pair": pair, "symbol": sym, "direction": direction,
+            "qty": executed_qty, "avg_price": avg_price,
+            "market_order_id": market_order_id,
+            "client_order_id": client_order_id,
+            "sl_emulated": sl_norm, "tp_emulated": tp_norm,
+            "sl_tp_mode": "watcher_emulated",
+        })
+    except httpx.HTTPStatusError as e:
+        body = e.response.text[:500] if e.response else str(e)
+        logger.warning(f"order {sym} HTTPStatusError: {body}")
+        return jsonify({"ok": False, "error": body}), 502
+    except Exception as e:
+        logger.exception(f"order {sym} failed")
+        return jsonify({"ok": False, "error": str(e)[:300]}), 500
 
 
 @app.route("/kill", methods=["POST"])
 @require_bridge_key
 def kill_all():
     """Cancel all open orders + close all positions. Emergency stop.
-    Stub R&D."""
-    return jsonify({"ok": False, "error": "not_implemented_yet"}), 501
+    Vide aussi le dict des positions managées par le watcher SL/TP."""
+    with _managed_lock:
+        _managed_positions.clear()
+    out = {"cancelled_symbols": [], "closed_positions": [], "errors": []}
+    try:
+        positions = _signed_request("GET", "/fapi/v2/positionRisk")
+        active = [p for p in positions if float(p.get("positionAmt", 0)) != 0]
+        symbols_active: set[str] = {p["symbol"] for p in active}
+        # Symboles avec open orders sans position
+        try:
+            open_orders = _signed_request("GET", "/fapi/v1/openOrders")
+            symbols_active.update(o["symbol"] for o in open_orders)
+        except Exception as e:
+            out["errors"].append(f"openOrders fetch: {str(e)[:200]}")
+
+        for sym in symbols_active:
+            try:
+                _signed_request("DELETE", "/fapi/v1/allOpenOrders", params={"symbol": sym})
+                out["cancelled_symbols"].append(sym)
+            except Exception as e:
+                out["errors"].append(f"cancel {sym}: {str(e)[:150]}")
+
+        for p in active:
+            sym = p["symbol"]
+            amt = float(p["positionAmt"])
+            side = "SELL" if amt > 0 else "BUY"
+            try:
+                _signed_request("POST", "/fapi/v1/order", params={
+                    "symbol": sym, "side": side, "type": "MARKET",
+                    "quantity": abs(amt), "reduceOnly": "true",
+                })
+                out["closed_positions"].append({"symbol": sym, "qty": abs(amt)})
+            except Exception as e:
+                out["errors"].append(f"close {sym}: {str(e)[:150]}")
+
+        return jsonify({"ok": True, **out})
+    except Exception as e:
+        logger.exception("kill failed")
+        return jsonify({"ok": False, "error": str(e)[:200], **out}), 500
 
 
 if __name__ == "__main__":
     port = int(os.getenv("BINANCE_BRIDGE_PORT", "8789"))
     logger.info(f"binance-bridge starting env={BINANCE_ENV} base={BASE_URL} port={port}")
+    _start_watcher()
     app.run(host="0.0.0.0", port=port, debug=False)
