@@ -16,6 +16,7 @@ Si la sync rejoue (crash, re-pull), les INSERT sont UPSERT (pas de doublons).
 import asyncio
 import json
 import logging
+import os
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -41,19 +42,37 @@ _STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
 def _load_last_synced_id() -> int:
-    try:
-        import json
-        if _STATE_PATH.exists():
-            return int(json.loads(_STATE_PATH.read_text())["last_id"])
-    except Exception:
-        pass
-    return 0
+    """Compat legacy : retourne last_id du bridge admin_legacy uniquement."""
+    return _load_state().get("bridges", {}).get("legacy", 0)
 
 
 def _save_last_synced_id(last_id: int) -> None:
-    import json
+    """Compat legacy : écrit last_id pour admin_legacy uniquement."""
+    state = _load_state()
+    state.setdefault("bridges", {})["legacy"] = int(last_id)
+    _save_state(state)
+
+
+def _load_state() -> dict:
+    """Charge l'état multi-bridge {bridges: {<name>: last_id}}.
+
+    Migre transparent l'ancien format {'last_id': N} → {'bridges': {'legacy': N}}.
+    """
     try:
-        _STATE_PATH.write_text(json.dumps({"last_id": last_id}))
+        if _STATE_PATH.exists():
+            data = json.loads(_STATE_PATH.read_text())
+            if isinstance(data, dict):
+                if "bridges" not in data and "last_id" in data:
+                    return {"bridges": {"legacy": int(data["last_id"])}}
+                return data
+    except Exception:
+        pass
+    return {"bridges": {}}
+
+
+def _save_state(state: dict) -> None:
+    try:
+        _STATE_PATH.write_text(json.dumps(state))
     except Exception as e:
         logger.warning(f"mt5_sync: write state failed: {e}")
 
@@ -423,52 +442,43 @@ async def _reconcile_open_trades() -> None:
         )
 
 
-async def sync_from_bridge() -> None:
-    """Pull incrémental des événements audit du bridge et sync vers personal_trades.
+async def _sync_one(name: str, base_url: str, api_key: str) -> tuple[int, int]:
+    """Pull /audit d'un bridge MT5 + applique à personal_trades. Retourne (n_open, n_closed).
 
-    Appelé périodiquement par le scheduler. No-op si MT5_SYNC_ENABLED=false
-    ou si le bridge n'est pas configuré."""
-    if not (MT5_SYNC_ENABLED and MT5_BRIDGE_URL and MT5_BRIDGE_API_KEY):
-        return
-
-    last_id = _load_last_synced_id()
-    url = f"{MT5_BRIDGE_URL.rstrip('/')}/audit"
-    headers = {"X-API-Key": MT5_BRIDGE_API_KEY}
-
+    Le bridge non-joignable est silencieux (PC éteint, VPS down — no-op).
+    """
+    state = _load_state()
+    last_id = int(state.get("bridges", {}).get(name, 0))
+    url = f"{base_url.rstrip('/')}/audit"
+    headers = {"X-API-Key": api_key} if api_key else {}
     try:
         async with httpx.AsyncClient(timeout=8.0) as client:
             r = await client.get(
-                url,
-                headers=headers,
+                url, headers=headers,
                 params={"since_id": last_id, "limit": 100},
             )
         if r.status_code != 200:
-            logger.warning(f"mt5_sync: bridge /audit {r.status_code}: {r.text[:200]}")
-            return
+            logger.warning(f"mt5_sync[{name}]: /audit {r.status_code}: {r.text[:200]}")
+            return (0, 0)
         orders = r.json().get("orders", [])
     except Exception as e:
-        # Bridge joignable est optionnel — PC éteint = no-op silencieux
-        logger.debug(f"mt5_sync: bridge unreachable: {e}")
-        return
+        logger.debug(f"mt5_sync[{name}]: unreachable: {e}")
+        return (0, 0)
 
     if not orders:
-        await _reconcile_open_trades()
-        return
+        return (0, 0)
 
     user = _resolve_auto_user()
     new_open = 0
     new_closed = 0
     max_id = last_id
-
     for row in orders:
         rid = row.get("id", 0)
         if rid > max_id:
             max_id = rid
-        status = row.get("status")
-        mode = row.get("mode")
-        # Ne sync que les events LIVE (paper reste local au bridge)
-        if mode != "live":
+        if row.get("mode") != "live":
             continue
+        status = row.get("status")
         if status == "filled":
             _upsert_open_trade(row, user)
             new_open += 1
@@ -479,10 +489,35 @@ async def sync_from_bridge() -> None:
             if ticket:
                 await _notify_close_telegram(int(ticket))
 
+    state.setdefault("bridges", {})[name] = max_id
+    _save_state(state)
     if new_open or new_closed:
         logger.info(
-            f"mt5_sync: {new_open} nouveaux trades auto, {new_closed} fermés "
+            f"mt5_sync[{name}]: {new_open} nouveaux open, {new_closed} closed "
             f"(user={user}, last_id={max_id})"
         )
-    _save_last_synced_id(max_id)
+    return (new_open, new_closed)
+
+
+async def sync_from_bridge() -> None:
+    """Pull incrémental des événements audit des bridges MT5 configurés.
+
+    Itère sur :
+    - legacy : MT5_BRIDGE_URL + MT5_BRIDGE_API_KEY (Pepperstone Demo)
+    - live   : MT5_BRIDGE_LIVE_URL + MT5_BRIDGE_LIVE_API_KEY (IC Markets Live)
+
+    Chaque bridge a son propre last_id dans state['bridges'][name]. Un bridge
+    injoignable est silencieux (no-op pour ce cycle).
+    """
+    if not MT5_SYNC_ENABLED:
+        return
+
+    if MT5_BRIDGE_URL and MT5_BRIDGE_API_KEY:
+        await _sync_one("legacy", MT5_BRIDGE_URL, MT5_BRIDGE_API_KEY)
+
+    live_url = os.getenv("MT5_BRIDGE_LIVE_URL", "")
+    live_key = os.getenv("MT5_BRIDGE_LIVE_API_KEY", "")
+    if live_url and live_key:
+        await _sync_one("live", live_url, live_key)
+
     await _reconcile_open_trades()
