@@ -135,6 +135,22 @@ async def fetch_candles(
         logger.warning(f"MT5 indisponible pour {pair}, pair ignorée ce cycle")
         return [], False
 
+    # Source Binance Futures public klines pour cryptos (Phase 2 Palier 2,
+    # chantier #1 2026-06-18). Native + gratuit + illimité, plus fidèle au
+    # marché réel que Twelve Data CFD-routed. Feature flag pour rollback.
+    try:
+        from config.settings import BINANCE_KLINES_ENABLED
+    except Exception:
+        BINANCE_KLINES_ENABLED = False
+    if BINANCE_KLINES_ENABLED:
+        from backend.services import binance_klines_service
+        if binance_klines_service.is_crypto_pair(pair):
+            candles = await binance_klines_service.fetch_klines(pair, interval, outputsize)
+            if candles:
+                _cache_store_candles(pair, interval, candles)
+                return candles, False
+            logger.warning(f"Binance klines indisponible pour {pair}, fallback Twelve Data")
+
     # Source Twelve Data (polling)
     candles = await _fetch_twelvedata(pair, interval, outputsize)
     if candles:
@@ -159,6 +175,27 @@ async def fetch_current_price(pair: str) -> float | None:
             _cache_store_price(pair, price)
             return price
         return None
+
+    # Crypto routing Binance natif (cf. fetch_candles ci-dessus).
+    try:
+        from config.settings import BINANCE_KLINES_ENABLED
+    except Exception:
+        BINANCE_KLINES_ENABLED = False
+    if BINANCE_KLINES_ENABLED:
+        from backend.services import binance_klines_service
+        if binance_klines_service.is_crypto_pair(pair):
+            try:
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    r = await client.get(
+                        "https://fapi.binance.com/fapi/v1/ticker/price",
+                        params={"symbol": binance_klines_service._PAIR_TO_SYMBOL[pair]},
+                    )
+                    r.raise_for_status()
+                    price = float(r.json()["price"])
+                    _cache_store_price(pair, price)
+                    return price
+            except Exception as e:
+                logger.warning(f"Binance ticker indisponible pour {pair}, fallback Twelve Data: {e}")
 
     symbol = SYMBOL_MAP.get(pair, pair)
 
