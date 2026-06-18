@@ -778,6 +778,39 @@ def enrich_trade_setup(
         except Exception as e:
             logger.debug(f"oi scoring error: {e}")
 
+    # ── Multi-timeframe alignment (Tier 2 chantier #14) ────────────────
+    try:
+        from config.settings import BINANCE_MTF_SCORING_ENABLED
+    except Exception:
+        BINANCE_MTF_SCORING_ENABLED = False
+    if BINANCE_MTF_SCORING_ENABLED:
+        try:
+            from backend.services import binance_mtf_scoring
+            mtf_mult, mtf_reason = binance_mtf_scoring.apply_mtf_filter(
+                setup.pair, setup.direction.value
+            )
+            if mtf_mult != 1.0:
+                prev_score = setup.confidence_score
+                new_score = round(min(100, max(0, prev_score * mtf_mult)), 1)
+                setup.confidence_score = new_score
+                factors.append(
+                    ConfidenceFactor(
+                        name="Multi-timeframe Binance",
+                        score=round((mtf_mult - 1.0) * 100, 1),
+                        detail=f"×{mtf_mult:.2f} — {mtf_reason}",
+                        positive=False,
+                        source="microstructure",
+                        metadata={"multiplier": mtf_mult, "reason": mtf_reason},
+                    )
+                )
+                setup.confidence_factors = factors
+                logger.info(
+                    f"mtf_applied pair={setup.pair} dir={setup.direction.value} "
+                    f"prev={prev_score} mult={mtf_mult} final={new_score} reason={mtf_reason}"
+                )
+        except Exception as e:
+            logger.debug(f"mtf scoring error: {e}")
+
     # ── Geopolitical veto (Polymarket + GDELT hard rules) ──────────────
     # Lazy import : évite les cycles + permet aux tests de patcher poly/gdelt
     # snapshots sans setup top-level.
