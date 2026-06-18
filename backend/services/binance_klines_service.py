@@ -60,8 +60,15 @@ def is_crypto_pair(pair: str) -> bool:
     return pair in _PAIR_TO_SYMBOL
 
 
-async def fetch_klines(pair: str, interval: str, limit: int = 50) -> list[Candle]:
-    """Récupère les bougies OHLC depuis Binance Futures public API.
+async def fetch_klines(pair: str, interval: str, limit: int = 50, _bypass_ws: bool = False) -> list[Candle]:
+    """Récupère les bougies OHLC depuis Binance Futures.
+
+    Si chantier #7 WebSocket activé (BINANCE_KLINES_WS_ENABLED) et que la
+    pair × interval est streamée, retourne le cache WS (latence ~0 ms).
+    Sinon fallback REST API (latence 100-500 ms).
+
+    ``_bypass_ws`` est réservé au pré-amorçage du cache WS lui-même
+    (binance_klines_ws._prime_cache_via_rest) pour éviter la boucle.
 
     Returns list[Candle] triée chronologique (oldest → newest), identique
     en shape à ce que retourne ``_fetch_twelvedata``.
@@ -70,6 +77,15 @@ async def fetch_klines(pair: str, interval: str, limit: int = 50) -> list[Candle
     une liste vide. Le caller (price_service) doit alors fallback ailleurs
     (Twelve Data) ou skip la pair pour ce cycle.
     """
+    if not _bypass_ws:
+        from backend.services import binance_klines_ws
+        if binance_klines_ws.is_ws_supported(pair, interval):
+            await binance_klines_ws.ensure_started()
+            cached = binance_klines_ws.get_cached_candles(pair, interval, limit)
+            if len(cached) >= min(limit, 20):
+                return cached
+            # cache insuffisant (pas encore peuplé) → fallback REST silencieux
+
     symbol = _PAIR_TO_SYMBOL.get(pair)
     if not symbol:
         return []
