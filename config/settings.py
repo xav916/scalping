@@ -188,6 +188,8 @@ BINANCE_KLINES_ENABLED = os.getenv("BINANCE_KLINES_ENABLED", "false").lower() in
 # filtre contrarien soft sur les setups crypto. Multiplier 0.85 (= veto soft)
 # si funding extrême + direction surcrowdée. Feature flag pour rollback.
 BINANCE_FUNDING_SCORING_ENABLED = os.getenv("BINANCE_FUNDING_SCORING_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+# Chantier #3 (2026-06-18) : LSR Binance comme filtre contrarien soft.
+BINANCE_LSR_SCORING_ENABLED = os.getenv("BINANCE_LSR_SCORING_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 # Paires supplémentaires autorisées globalement (Demo + Live + autres
 # destinations multi-tenant) en plus des stars XAU/XAG/WTI/ETH. Sert à
 # élargir l'auto-exec aux paires promues manuellement en AUTO_EXEC via

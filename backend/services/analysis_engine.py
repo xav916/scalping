@@ -636,6 +636,42 @@ def enrich_trade_setup(
         except Exception as e:
             logger.debug(f"funding scoring error: {e}")
 
+    # ── Binance Long/Short Account Ratio scoring (chantier #3 — 2026-06-18)
+    # Filtre contrarien soft complémentaire au funding (chantier #2) : mesure
+    # la concentration des comptes long vs short. Soft veto ×0.85 si la
+    # direction du setup est déjà surcrowdée côté retail.
+    try:
+        from config.settings import BINANCE_LSR_SCORING_ENABLED
+    except Exception:
+        BINANCE_LSR_SCORING_ENABLED = False
+    if BINANCE_LSR_SCORING_ENABLED:
+        try:
+            from backend.services import binance_lsr_scoring
+            lsr_mult, lsr_reason = binance_lsr_scoring.apply_lsr_filter(
+                setup.pair, setup.direction.value
+            )
+            if lsr_mult != 1.0:
+                prev_score = setup.confidence_score
+                new_score = round(min(100, max(0, prev_score * lsr_mult)), 1)
+                setup.confidence_score = new_score
+                factors.append(
+                    ConfidenceFactor(
+                        name="LSR Binance",
+                        score=round((lsr_mult - 1.0) * 100, 1),
+                        detail=f"×{lsr_mult:.2f} — {lsr_reason}",
+                        positive=False,
+                        source="microstructure",
+                        metadata={"multiplier": lsr_mult, "reason": lsr_reason},
+                    )
+                )
+                setup.confidence_factors = factors
+                logger.info(
+                    f"lsr_applied pair={setup.pair} dir={setup.direction.value} "
+                    f"prev={prev_score} mult={lsr_mult} final={new_score} reason={lsr_reason}"
+                )
+        except Exception as e:
+            logger.debug(f"lsr scoring error: {e}")
+
     # ── Geopolitical veto (Polymarket + GDELT hard rules) ──────────────
     # Lazy import : évite les cycles + permet aux tests de patcher poly/gdelt
     # snapshots sans setup top-level.
