@@ -707,6 +707,41 @@ def enrich_trade_setup(
         except Exception as e:
             logger.debug(f"orderbook scoring error: {e}")
 
+    # ── Binance aggressor side / orderflow scoring (chantier #5 — 2026-06-18)
+    # Mesure quel camp frappe le carnet à market (taker buy vs sell ratio).
+    # Soft veto ×0.85 si momentum aggressor opposé à la direction du setup.
+    try:
+        from config.settings import BINANCE_ORDERFLOW_SCORING_ENABLED
+    except Exception:
+        BINANCE_ORDERFLOW_SCORING_ENABLED = False
+    if BINANCE_ORDERFLOW_SCORING_ENABLED:
+        try:
+            from backend.services import binance_orderflow_scoring
+            of_mult, of_reason = binance_orderflow_scoring.apply_orderflow_filter(
+                setup.pair, setup.direction.value
+            )
+            if of_mult != 1.0:
+                prev_score = setup.confidence_score
+                new_score = round(min(100, max(0, prev_score * of_mult)), 1)
+                setup.confidence_score = new_score
+                factors.append(
+                    ConfidenceFactor(
+                        name="Orderflow Binance",
+                        score=round((of_mult - 1.0) * 100, 1),
+                        detail=f"×{of_mult:.2f} — {of_reason}",
+                        positive=False,
+                        source="microstructure",
+                        metadata={"multiplier": of_mult, "reason": of_reason},
+                    )
+                )
+                setup.confidence_factors = factors
+                logger.info(
+                    f"orderflow_applied pair={setup.pair} dir={setup.direction.value} "
+                    f"prev={prev_score} mult={of_mult} final={new_score} reason={of_reason}"
+                )
+        except Exception as e:
+            logger.debug(f"orderflow scoring error: {e}")
+
     # ── Geopolitical veto (Polymarket + GDELT hard rules) ──────────────
     # Lazy import : évite les cycles + permet aux tests de patcher poly/gdelt
     # snapshots sans setup top-level.
