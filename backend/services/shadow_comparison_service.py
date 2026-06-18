@@ -40,7 +40,9 @@ _KNOWN_DESTINATIONS = ("admin_legacy", "admin_live", "admin_binance")
 def _extract_fill(bridge_response_json: str | None) -> float | None:
     """Extrait avg_price (Binance) ou price (MT5) depuis le JSON bridge.
 
-    Retourne None si parsing fail.
+    Retourne None si parsing fail OU si la valeur est 0.0 (le bridge MT5
+    IC Markets renvoie price=0.0 quand il n'a pas le fill réel — traiter
+    comme "no data" plutôt que comme un slippage de -100%).
     """
     if not bridge_response_json:
         return None
@@ -49,11 +51,16 @@ def _extract_fill(bridge_response_json: str | None) -> float | None:
         # Binance bridge → avg_price ; MT5 bridge → price ; fallback fill
         for key in ("avg_price", "price", "fill", "fillPrice"):
             v = data.get(key)
-            if v is not None:
-                try:
-                    return float(v)
-                except (TypeError, ValueError):
-                    continue
+            if v is None:
+                continue
+            try:
+                val = float(v)
+            except (TypeError, ValueError):
+                continue
+            if val == 0.0:
+                # bridge IC Markets renvoie 0.0 quand pas de fill réel — skip
+                continue
+            return val
     except (json.JSONDecodeError, AttributeError):
         pass
     return None
