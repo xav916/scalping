@@ -66,6 +66,12 @@ elif _USE_REAL_STOPS_RAW in ("false", "0", "no"):
 else:
     USE_REAL_STOPS = BINANCE_ENV == "live"  # auto-true en live, false sinon
 
+# Maker orders post-only LIMIT (chantier #11) — fee 0.02% vs 0.05% taker +
+# meilleur prix d'exécution. Fallback MARKET si non rempli dans le timeout.
+USE_MAKER_ORDERS = os.getenv("BINANCE_USE_MAKER_ORDERS", "false").strip().lower() in ("true", "1", "yes")
+MAKER_TIMEOUT_SEC = float(os.getenv("BINANCE_MAKER_TIMEOUT_SEC", "30"))
+MAKER_POLL_SEC = float(os.getenv("BINANCE_MAKER_POLL_SEC", "2"))
+
 # Mapping pair scalping-radar → symbole Binance USDⓈ-M futures.
 # Convention : BASE/USD → BASEUSDT (Binance perp collatéralisé USDT).
 _PAIR_TO_SYMBOL: dict[str, str] = {
@@ -191,6 +197,80 @@ def _round_to_tick(value: float, tick: float, precision: int) -> float:
 _managed_positions: dict[str, dict[str, Any]] = {}  # keyed by symbol
 _managed_lock = threading.Lock()
 _WATCHER_POLL_SEC = 3.0
+
+
+def _place_maker_or_market(
+    sym: str, side: str, qty: float, entry_norm: float | None,
+    client_order_id: str, specs: dict[str, Any],
+) -> tuple[dict[str, Any], str]:
+    """Place un ordre d'entrée. Si USE_MAKER_ORDERS + entry_norm → tente LIMIT
+    post-only (timeInForce=GTX), polle jusqu'à MAKER_TIMEOUT_SEC, fallback
+    MARKET si pas rempli. Retourne (order_response, mode_used).
+
+    mode_used ∈ {"maker_filled", "maker_partial_fallback_market", "market"}.
+    """
+    if USE_MAKER_ORDERS and entry_norm is not None:
+        try:
+            limit_resp = _signed_request("POST", "/fapi/v1/order", params={
+                "symbol": sym, "side": side, "type": "LIMIT",
+                "timeInForce": "GTX",  # post-only — rejette si match immédiat
+                "price": entry_norm, "quantity": qty,
+                "newClientOrderId": f"{client_order_id}_maker",
+            })
+            limit_order_id = limit_resp.get("orderId")
+            deadline = time.time() + MAKER_TIMEOUT_SEC
+            while time.time() < deadline:
+                time.sleep(MAKER_POLL_SEC)
+                try:
+                    o = _signed_request("GET", "/fapi/v1/order",
+                                        params={"symbol": sym, "orderId": limit_order_id})
+                    status = o.get("status")
+                    executed = float(o.get("executedQty", 0) or 0)
+                    if status == "FILLED":
+                        return o, "maker_filled"
+                    if status in ("CANCELED", "REJECTED", "EXPIRED"):
+                        logger.info(f"maker {sym} status={status} → fallback MARKET (executed={executed})")
+                        break
+                except Exception as e:
+                    logger.warning(f"maker poll {sym}: {e}")
+                    break
+            # Timeout ou rejet : cancel le LIMIT restant + fallback MARKET avec
+            # quantity = qty restant (= qty - executed sur partial fill).
+            try:
+                cancel_resp = _signed_request("DELETE", "/fapi/v1/order",
+                                              params={"symbol": sym, "orderId": limit_order_id})
+                executed_so_far = float(cancel_resp.get("executedQty", 0) or 0)
+            except Exception as e:
+                logger.warning(f"maker cancel {sym}: {e}")
+                executed_so_far = 0.0
+            remaining = _floor_to_step(qty - executed_so_far, specs["stepSize"], specs["quantityPrecision"])
+            if remaining < specs["minQty"]:
+                # Partial fill suffisant : ne pas re-MARKET, garder le partial
+                logger.info(f"maker {sym} partial fill {executed_so_far}/{qty}, no fallback (remaining {remaining} < minQty)")
+                return {"executedQty": executed_so_far, "avgPrice": entry_norm}, "maker_partial_no_fallback"
+            mode = "maker_partial_fallback_market" if executed_so_far > 0 else "market"
+            market_resp = _signed_request("POST", "/fapi/v1/order", params={
+                "symbol": sym, "side": side, "type": "MARKET",
+                "quantity": remaining,
+                "newClientOrderId": f"{client_order_id}_mkt",
+            })
+            return market_resp, mode
+        except httpx.HTTPStatusError as e:
+            body = e.response.text[:300] if e.response else str(e)
+            # GTX rejette avec -2021 si "Order would immediately match" — fallback silencieux
+            if "-2021" in body or "would immediately" in body.lower():
+                logger.info(f"maker {sym} would cross → MARKET fallback")
+            else:
+                logger.warning(f"maker {sym} HTTPError: {body}")
+        except Exception as e:
+            logger.warning(f"maker {sym} exception, fallback MARKET: {e}")
+
+    # MARKET par défaut (ou fallback après échec maker)
+    market_resp = _signed_request("POST", "/fapi/v1/order", params={
+        "symbol": sym, "side": side, "type": "MARKET",
+        "quantity": qty, "newClientOrderId": client_order_id,
+    })
+    return market_resp, "market"
 
 
 def _place_real_stop_market(
@@ -324,6 +404,8 @@ def health():
             "api_key_set": bool(API_KEY),
             "api_secret_set": bool(API_SECRET),
             "use_real_stops": USE_REAL_STOPS,
+            "use_maker_orders": USE_MAKER_ORDERS,
+            "maker_timeout_sec": MAKER_TIMEOUT_SEC,
         })
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 503
@@ -463,6 +545,7 @@ def place_order():
     qty_raw = payload.get("qty")
     sl_raw = payload.get("sl")
     tp_raw = payload.get("tp")
+    entry_raw = payload.get("entry")  # optional — utilisé pour maker LIMIT post-only
     leverage = payload.get("leverage")
     margin_type = (payload.get("margin_type") or "ISOLATED").upper()
 
@@ -508,21 +591,18 @@ def place_order():
         side = "BUY" if direction == "buy" else "SELL"
         opp_side = "SELL" if direction == "buy" else "BUY"
         client_order_id = f"sr_{int(time.time() * 1000)}"
+        entry_norm = (_round_to_tick(float(entry_raw), specs["tickSize"], specs["pricePrecision"])
+                      if entry_raw is not None else None)
 
-        # MARKET order — origin trade
-        market_resp = _signed_request("POST", "/fapi/v1/order", params={
-            "symbol": sym,
-            "side": side,
-            "type": "MARKET",
-            "quantity": qty,
-            "newClientOrderId": client_order_id,
-        })
-        market_order_id = market_resp.get("orderId")
-        executed_qty = float(market_resp.get("executedQty", 0) or 0)
-        avg_price = float(market_resp.get("avgPrice", 0) or 0)
-        # Le 1er retour MARKET arrive en status=NEW (pas encore filled).
-        # Re-poll après 200ms pour récupérer le vrai executedQty/avgPrice.
-        if executed_qty == 0 or avg_price == 0:
+        # Entry — MARKET ou maker LIMIT post-only (selon USE_MAKER_ORDERS)
+        entry_resp, entry_mode = _place_maker_or_market(
+            sym, side, qty, entry_norm, client_order_id, specs,
+        )
+        market_order_id = entry_resp.get("orderId")
+        executed_qty = float(entry_resp.get("executedQty", 0) or 0)
+        avg_price = float(entry_resp.get("avgPrice", 0) or 0)
+        # Re-poll si NEW pas encore filled (peut arriver sur MARKET aussi).
+        if (executed_qty == 0 or avg_price == 0) and market_order_id:
             time.sleep(0.2)
             try:
                 o = _signed_request("GET", "/fapi/v1/order",
@@ -533,6 +613,10 @@ def place_order():
                 logger.warning(f"order re-poll {sym}: {e}")
                 executed_qty = qty
                 avg_price = mark_price
+        if avg_price == 0:
+            avg_price = mark_price
+        if executed_qty == 0:
+            executed_qty = qty
 
         # SL/TP — 2 modes :
         # - USE_REAL_STOPS=true (prod live default) : STOP_MARKET + TAKE_PROFIT_MARKET
@@ -584,6 +668,7 @@ def place_order():
             "client_order_id": client_order_id,
             "sl_emulated": sl_norm, "tp_emulated": tp_norm,
             "sl_tp_mode": sltp_mode,
+            "entry_mode": entry_mode,
             **real_stops_info,
         })
     except httpx.HTTPStatusError as e:
