@@ -21,16 +21,17 @@ import logging
 import sqlite3
 from datetime import date as date_cls
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_DB_PATH = (
-    Path("/app/data/mt5_pushes.db")
-    if Path("/app/data").exists()
-    else Path("mt5_pushes.db")
-)
+
+def _db_path() -> str:
+    """La table mt5_pushes vit dans la même DB que trade_log_service
+    (cf. mt5_pushes_service._db_path()). Indirection lazy pour respecter
+    les éventuels patches de tests."""
+    from backend.services.trade_log_service import _DB_PATH
+    return str(_DB_PATH)
 
 # Destinations attendues (les 3 actives + futurs Premium éventuels).
 _KNOWN_DESTINATIONS = ("admin_legacy", "admin_live", "admin_binance")
@@ -114,7 +115,7 @@ def get_shadow_comparison(
     """
 
     try:
-        with sqlite3.connect(_DB_PATH) as con:
+        with sqlite3.connect(_db_path()) as con:
             con.row_factory = sqlite3.Row
             rows = con.execute(sql, params).fetchall()
     except Exception as e:

@@ -33,7 +33,8 @@ def temp_db(tmp_path):
             """
         )
         con.commit()
-    with patch.object(svc, "_DB_PATH", db):
+    from backend.services import trade_log_service
+    with patch.object(trade_log_service, "_DB_PATH", db):
         yield db
 
 
