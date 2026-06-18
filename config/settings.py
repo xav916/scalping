@@ -184,6 +184,10 @@ BINANCE_BRIDGE_LEVERAGE = int(os.getenv("BINANCE_BRIDGE_LEVERAGE", "5"))
 # restent sur Twelve Data. Feature flag pour rollback instantané. Cf.
 # project_binance_phase2_chantier1_native_klines_2026_06_18.md
 BINANCE_KLINES_ENABLED = os.getenv("BINANCE_KLINES_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+# Phase 2 Palier 2 chantier #2 (2026-06-18) : funding rate Binance comme
+# filtre contrarien soft sur les setups crypto. Multiplier 0.85 (= veto soft)
+# si funding extrême + direction surcrowdée. Feature flag pour rollback.
+BINANCE_FUNDING_SCORING_ENABLED = os.getenv("BINANCE_FUNDING_SCORING_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 # Paires supplémentaires autorisées globalement (Demo + Live + autres
 # destinations multi-tenant) en plus des stars XAU/XAG/WTI/ETH. Sert à
 # élargir l'auto-exec aux paires promues manuellement en AUTO_EXEC via

@@ -600,6 +600,42 @@ def enrich_trade_setup(
         else:
             logger.debug("macro: snapshot stale or missing, neutral mode")
 
+    # ── Binance funding rate scoring (Phase 2 Palier 2 chantier #2 — 2026-06-18)
+    # Filtre contrarien soft : si funding extrême + direction surcrowdée,
+    # multiplier 0.85 disqualifie les setups borderline. Crypto uniquement.
+    # Feature-flagged via BINANCE_FUNDING_SCORING_ENABLED env var.
+    try:
+        from config.settings import BINANCE_FUNDING_SCORING_ENABLED
+    except Exception:
+        BINANCE_FUNDING_SCORING_ENABLED = False
+    if BINANCE_FUNDING_SCORING_ENABLED:
+        try:
+            from backend.services import binance_funding_scoring
+            fund_mult, fund_reason = binance_funding_scoring.apply_funding_filter(
+                setup.pair, setup.direction.value
+            )
+            if fund_mult != 1.0:
+                prev_score = setup.confidence_score
+                new_score = round(min(100, max(0, prev_score * fund_mult)), 1)
+                setup.confidence_score = new_score
+                factors.append(
+                    ConfidenceFactor(
+                        name="Funding rate Binance",
+                        score=round((fund_mult - 1.0) * 100, 1),
+                        detail=f"×{fund_mult:.2f} — {fund_reason}",
+                        positive=False,
+                        source="microstructure",
+                        metadata={"multiplier": fund_mult, "reason": fund_reason},
+                    )
+                )
+                setup.confidence_factors = factors
+                logger.info(
+                    f"funding_applied pair={setup.pair} dir={setup.direction.value} "
+                    f"prev={prev_score} mult={fund_mult} final={new_score} reason={fund_reason}"
+                )
+        except Exception as e:
+            logger.debug(f"funding scoring error: {e}")
+
     # ── Geopolitical veto (Polymarket + GDELT hard rules) ──────────────
     # Lazy import : évite les cycles + permet aux tests de patcher poly/gdelt
     # snapshots sans setup top-level.
