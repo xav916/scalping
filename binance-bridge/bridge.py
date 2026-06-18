@@ -56,6 +56,16 @@ API_KEY = os.getenv("BINANCE_API_KEY", "")
 API_SECRET = os.getenv("BINANCE_API_SECRET", "")
 BRIDGE_API_KEY = os.getenv("BINANCE_BRIDGE_API_KEY", "")  # protège ce bridge
 
+# STOP_MARKET réels (Phase 2 Palier 2 — chantier #8). Testnet rejette via
+# -4120 donc default false ; on bascule true en live ou explicit.
+_USE_REAL_STOPS_RAW = os.getenv("BINANCE_USE_REAL_STOPS", "").strip().lower()
+if _USE_REAL_STOPS_RAW in ("true", "1", "yes"):
+    USE_REAL_STOPS = True
+elif _USE_REAL_STOPS_RAW in ("false", "0", "no"):
+    USE_REAL_STOPS = False
+else:
+    USE_REAL_STOPS = BINANCE_ENV == "live"  # auto-true en live, false sinon
+
 # Mapping pair scalping-radar → symbole Binance USDⓈ-M futures.
 # Convention : BASE/USD → BASEUSDT (Binance perp collatéralisé USDT).
 _PAIR_TO_SYMBOL: dict[str, str] = {
@@ -183,6 +193,50 @@ _managed_lock = threading.Lock()
 _WATCHER_POLL_SEC = 3.0
 
 
+def _place_real_stop_market(
+    sym: str, opp_side: str, sl_norm: float | None, tp_norm: float | None,
+    client_order_id: str,
+) -> dict[str, Any]:
+    """Place les vrais STOP_MARKET + TAKE_PROFIT_MARKET via /fapi/v1/order.
+
+    Both use closePosition=true (Binance ferme la position complète au trigger,
+    indépendamment du qty). Retourne {sl_order_id, tp_order_id, sl_error, tp_error}.
+    Best-effort : si un échoue, l'autre est tenté. Errors loggées.
+    """
+    out: dict[str, Any] = {}
+    if sl_norm is not None:
+        try:
+            r = _signed_request("POST", "/fapi/v1/order", params={
+                "symbol": sym, "side": opp_side, "type": "STOP_MARKET",
+                "stopPrice": sl_norm, "closePosition": "true",
+                "newClientOrderId": f"{client_order_id}_sl",
+                "workingType": "MARK_PRICE",  # trigger sur mark, plus stable vs spot wick
+            })
+            out["sl_order_id"] = r.get("orderId")
+        except httpx.HTTPStatusError as e:
+            body = e.response.text[:200] if e.response else str(e)
+            logger.warning(f"STOP_MARKET {sym} failed: {body}")
+            out["sl_error"] = body
+        except Exception as e:
+            out["sl_error"] = str(e)[:200]
+    if tp_norm is not None:
+        try:
+            r = _signed_request("POST", "/fapi/v1/order", params={
+                "symbol": sym, "side": opp_side, "type": "TAKE_PROFIT_MARKET",
+                "stopPrice": tp_norm, "closePosition": "true",
+                "newClientOrderId": f"{client_order_id}_tp",
+                "workingType": "MARK_PRICE",
+            })
+            out["tp_order_id"] = r.get("orderId")
+        except httpx.HTTPStatusError as e:
+            body = e.response.text[:200] if e.response else str(e)
+            logger.warning(f"TAKE_PROFIT_MARKET {sym} failed: {body}")
+            out["tp_error"] = body
+        except Exception as e:
+            out["tp_error"] = str(e)[:200]
+    return out
+
+
 def _trigger_close(symbol: str, qty: float, side_to_close: str, reason: str) -> bool:
     """Envoie MARKET reduceOnly pour fermer une position. Retourne True si ok."""
     try:
@@ -269,6 +323,7 @@ def health():
             "base_url": BASE_URL,
             "api_key_set": bool(API_KEY),
             "api_secret_set": bool(API_SECRET),
+            "use_real_stops": USE_REAL_STOPS,
         })
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 503
@@ -479,23 +534,47 @@ def place_order():
                 executed_qty = qty
                 avg_price = mark_price
 
-        # SL/TP : enregistrement dans le watcher local (Binance testnet rejette
-        # STOP_MARKET via /fapi/v1/order — error -4120). En prod il sera
-        # possible de basculer vers vrais STOP_MARKET pour économiser le polling.
+        # SL/TP — 2 modes :
+        # - USE_REAL_STOPS=true (prod live default) : STOP_MARKET + TAKE_PROFIT_MARKET
+        #   via /fapi/v1/order avec closePosition=true. Trigger natif Binance ~50ms.
+        # - USE_REAL_STOPS=false (testnet default, rejette -4120) : watcher thread
+        #   qui polle le ticker et envoie MARKET reduceOnly au trigger (~3-6s).
+        # En cas d'erreur STOP_MARKET (-4120 ou autre), fallback automatique watcher.
         sl_norm = (_round_to_tick(float(sl_raw), specs["tickSize"], specs["pricePrecision"])
                    if sl_raw is not None else None)
         tp_norm = (_round_to_tick(float(tp_raw), specs["tickSize"], specs["pricePrecision"])
                    if tp_raw is not None else None)
-        with _managed_lock:
-            _managed_positions[sym] = {
-                "qty": executed_qty,
-                "direction": direction,
-                "sl": sl_norm,
-                "tp": tp_norm,
-                "avg_price": avg_price,
-                "client_order_id": client_order_id,
-                "opened_at": time.time(),
-            }
+
+        sltp_mode = "watcher_emulated"
+        real_stops_info: dict[str, Any] = {}
+        if USE_REAL_STOPS and (sl_norm is not None or tp_norm is not None):
+            real_stops_info = _place_real_stop_market(
+                sym, opp_side, sl_norm, tp_norm, client_order_id,
+            )
+            sl_ok = "sl_order_id" in real_stops_info
+            tp_ok = "tp_order_id" in real_stops_info
+            sl_skipped = sl_norm is None
+            tp_skipped = tp_norm is None
+            # Si les ordres demandés sont tous placés, on s'appuie sur les
+            # vrais stops Binance et on skip le watcher. Sinon fallback.
+            if (sl_ok or sl_skipped) and (tp_ok or tp_skipped):
+                sltp_mode = "real_stop_market"
+            else:
+                logger.warning(
+                    f"real stops partial fail for {sym}, fallback to watcher: {real_stops_info}"
+                )
+
+        if sltp_mode == "watcher_emulated":
+            with _managed_lock:
+                _managed_positions[sym] = {
+                    "qty": executed_qty,
+                    "direction": direction,
+                    "sl": sl_norm,
+                    "tp": tp_norm,
+                    "avg_price": avg_price,
+                    "client_order_id": client_order_id,
+                    "opened_at": time.time(),
+                }
 
         return jsonify({
             "ok": True,
@@ -504,7 +583,8 @@ def place_order():
             "market_order_id": market_order_id,
             "client_order_id": client_order_id,
             "sl_emulated": sl_norm, "tp_emulated": tp_norm,
-            "sl_tp_mode": "watcher_emulated",
+            "sl_tp_mode": sltp_mode,
+            **real_stops_info,
         })
     except httpx.HTTPStatusError as e:
         body = e.response.text[:500] if e.response else str(e)
@@ -562,6 +642,9 @@ def kill_all():
 
 if __name__ == "__main__":
     port = int(os.getenv("BINANCE_BRIDGE_PORT", "8789"))
-    logger.info(f"binance-bridge starting env={BINANCE_ENV} base={BASE_URL} port={port}")
+    logger.info(
+        f"binance-bridge starting env={BINANCE_ENV} base={BASE_URL} port={port} "
+        f"use_real_stops={USE_REAL_STOPS}"
+    )
     _start_watcher()
     app.run(host="0.0.0.0", port=port, debug=False)
