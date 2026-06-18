@@ -1061,8 +1061,21 @@ def _format_trade_opened(
     pair_label = _PAIR_FR_LABEL.get(setup.pair, setup.pair)
     paris_now = datetime.now(timezone.utc) + timedelta(hours=2)
     time_str = paris_now.strftime("%H:%M")
-    is_real_money = destination_id == "admin_live"
-    mode_label = "LIVE (argent réel)" if is_real_money else "Démo"
+    # Label broker + statut. destination_id discrimine :
+    # - admin_live   = IC Markets, argent réel (le seul vrai LIVE)
+    # - admin_legacy = Pepperstone, compte Démo
+    # - admin_binance = Binance USDⓈ-M testnet (shadow R&D)
+    # - user:N        = Premium user (bridge MT5 Démo Pepperstone côté EA)
+    if destination_id == "admin_live":
+        mode_label = "IC Markets · LIVE (argent réel)"
+    elif destination_id == "admin_legacy":
+        mode_label = "Pepperstone · Démo"
+    elif destination_id == "admin_binance":
+        mode_label = "Binance · Testnet (R&D)"
+    elif destination_id and destination_id.startswith("user:"):
+        mode_label = "Premium · Démo"
+    else:
+        mode_label = "Démo"
 
     # Prix au format FR (virgule, 2 décimales pour métaux/crypto, 5 pour forex)
     decimals = 2 if any(k in setup.pair for k in ("XAU", "XAG", "BTC", "ETH", "SOL", "LTC", "BCH", "DOT", "ADA", "XRP", "WTI")) else 5
