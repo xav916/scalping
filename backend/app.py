@@ -2004,6 +2004,32 @@ async def cockpit(ctx: AuthContext = Depends(auth_context)):
     return await build_cockpit(ctx.username, user_id=ctx.user_id)
 
 
+@app.get("/api/cockpit/shadow-comparison")
+async def cockpit_shadow_comparison(
+    days: int = 7,
+    pair: str | None = None,
+    direction: str | None = None,
+    limit: int = 200,
+    ctx: AuthContext = Depends(auth_context),
+):
+    """Compare les fills par signal entre admin_legacy / admin_live / admin_binance.
+
+    Chantier #25 Tier 5 — outille la décision Phase 3 en exposant la
+    comparaison MT5 Demo vs MT5 Live vs Binance shadow testnet. Pour
+    chaque signal (date, pair, direction, entry_price), retourne ce que
+    chaque destination a pushé, son fill, et le slippage signé.
+
+    Admin-only par défaut (cohérent avec routes admin watchdog).
+    """
+    from backend.services.shadow_comparison_service import get_shadow_comparison
+    return get_shadow_comparison(
+        days=max(1, min(days, 90)),
+        pair=pair,
+        direction=direction,
+        limit=max(1, min(limit, 1000)),
+    )
+
+
 @app.get("/api/analytics")
 async def analytics(ctx: AuthContext = Depends(auth_context)):
     """Breakdowns du win rate par features : pair, hour, pattern, confidence,
