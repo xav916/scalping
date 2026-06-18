@@ -32,6 +32,38 @@ from config.settings import asset_class_for
 PATTERN_TP1_RR = float(os.getenv("PATTERN_TP1_RR", "1.8"))
 PATTERN_TP2_RR = float(os.getenv("PATTERN_TP2_RR", "3.0"))
 
+# Chantier #10 — Volatility-adjusted SL buffer (2026-06-18).
+# Le SL = recent_extreme ± k × ATR. Le k optimal dépend du régime de
+# volatilité de l'actif : low-vol (forex) tolère mal un SL serré (bruit
+# intra-bar = stop-outs), high-vol (crypto) tolère mal un SL large (R:R
+# dégradé). On adapte k selon vol_pct = ATR / entry.
+#
+# Régimes par défaut :
+# - low (vol_pct < 0.3%) : k=0.5 (forex majeurs typiques)
+# - mid (0.3% ≤ vol_pct ≤ 1.5%) : k=0.3 (status quo — XAU, métaux, indices)
+# - high (vol_pct > 1.5%) : k=0.2 (cryptos)
+#
+# Tous configurables via env pour rollback rapide vers k=0.3 universel.
+ATR_BUFFER_LOW_K = float(os.getenv("PATTERN_ATR_BUFFER_LOW_K", "0.5"))
+ATR_BUFFER_MID_K = float(os.getenv("PATTERN_ATR_BUFFER_MID_K", "0.3"))
+ATR_BUFFER_HIGH_K = float(os.getenv("PATTERN_ATR_BUFFER_HIGH_K", "0.2"))
+ATR_BUFFER_LOW_THRESHOLD = float(os.getenv("PATTERN_ATR_LOW_THRESHOLD_PCT", "0.003"))   # 0.3%
+ATR_BUFFER_HIGH_THRESHOLD = float(os.getenv("PATTERN_ATR_HIGH_THRESHOLD_PCT", "0.015"))  # 1.5%
+
+
+def _atr_buffer_mult(atr: float, entry: float) -> float:
+    """Choisit le multiplicateur ATR à appliquer comme buffer SL.
+    Adapté au régime de volatilité (vol_pct = ATR / entry).
+    """
+    if entry <= 0:
+        return ATR_BUFFER_MID_K
+    vol_pct = atr / entry
+    if vol_pct < ATR_BUFFER_LOW_THRESHOLD:
+        return ATR_BUFFER_LOW_K
+    if vol_pct > ATR_BUFFER_HIGH_THRESHOLD:
+        return ATR_BUFFER_HIGH_K
+    return ATR_BUFFER_MID_K
+
 logger = logging.getLogger(__name__)
 
 # Seuils pour l'or (XAU/USD) en dollars
@@ -282,17 +314,18 @@ def calculate_trade_setup(
     direction = TradeDirection.BUY if is_buy else TradeDirection.SELL
     entry = round(last.close, decimals)
 
+    atr_k = _atr_buffer_mult(atr, entry)
     if is_buy:
         # Achat : SL sous le dernier plus bas, TP au-dessus
         recent_low = min(c.low for c in candles[-5:])
-        stop_loss = round(recent_low - atr * 0.3, decimals)
+        stop_loss = round(recent_low - atr * atr_k, decimals)
         risk = entry - stop_loss
         take_profit_1 = round(entry + risk * PATTERN_TP1_RR, decimals)
         take_profit_2 = round(entry + risk * PATTERN_TP2_RR, decimals)
     else:
         # Vente : SL au-dessus du dernier plus haut, TP en-dessous
         recent_high = max(c.high for c in candles[-5:])
-        stop_loss = round(recent_high + atr * 0.3, decimals)
+        stop_loss = round(recent_high + atr * atr_k, decimals)
         risk = stop_loss - entry
         take_profit_1 = round(entry - risk * PATTERN_TP1_RR, decimals)
         take_profit_2 = round(entry - risk * PATTERN_TP2_RR, decimals)
