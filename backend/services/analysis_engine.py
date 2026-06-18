@@ -742,6 +742,42 @@ def enrich_trade_setup(
         except Exception as e:
             logger.debug(f"orderflow scoring error: {e}")
 
+    # ── Binance Open Interest divergence scoring (chantier #6 — 2026-06-18)
+    # Compare le delta OI 1h avec le delta prix 1h pour détecter les
+    # mouvements épuisés (short squeeze, liquidation longs). Soft veto ×0.85
+    # quand le setup vise dans la direction d'un mouvement déjà fini.
+    try:
+        from config.settings import BINANCE_OI_SCORING_ENABLED
+    except Exception:
+        BINANCE_OI_SCORING_ENABLED = False
+    if BINANCE_OI_SCORING_ENABLED:
+        try:
+            from backend.services import binance_oi_scoring
+            oi_mult, oi_reason = binance_oi_scoring.apply_oi_filter(
+                setup.pair, setup.direction.value
+            )
+            if oi_mult != 1.0:
+                prev_score = setup.confidence_score
+                new_score = round(min(100, max(0, prev_score * oi_mult)), 1)
+                setup.confidence_score = new_score
+                factors.append(
+                    ConfidenceFactor(
+                        name="Open Interest Binance",
+                        score=round((oi_mult - 1.0) * 100, 1),
+                        detail=f"×{oi_mult:.2f} — {oi_reason}",
+                        positive=False,
+                        source="microstructure",
+                        metadata={"multiplier": oi_mult, "reason": oi_reason},
+                    )
+                )
+                setup.confidence_factors = factors
+                logger.info(
+                    f"oi_applied pair={setup.pair} dir={setup.direction.value} "
+                    f"prev={prev_score} mult={oi_mult} final={new_score} reason={oi_reason}"
+                )
+        except Exception as e:
+            logger.debug(f"oi scoring error: {e}")
+
     # ── Geopolitical veto (Polymarket + GDELT hard rules) ──────────────
     # Lazy import : évite les cycles + permet aux tests de patcher poly/gdelt
     # snapshots sans setup top-level.

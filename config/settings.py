@@ -194,6 +194,8 @@ BINANCE_LSR_SCORING_ENABLED = os.getenv("BINANCE_LSR_SCORING_ENABLED", "false").
 BINANCE_ORDERBOOK_SCORING_ENABLED = os.getenv("BINANCE_ORDERBOOK_SCORING_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 # Chantier #5 (2026-06-18) : aggressor side / taker buy ratio comme filtre orderflow.
 BINANCE_ORDERFLOW_SCORING_ENABLED = os.getenv("BINANCE_ORDERFLOW_SCORING_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+# Chantier #6 (2026-06-18) : OI divergence comme filtre squeeze/liquidation 1h.
+BINANCE_OI_SCORING_ENABLED = os.getenv("BINANCE_OI_SCORING_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 # Paires supplémentaires autorisées globalement (Demo + Live + autres
 # destinations multi-tenant) en plus des stars XAU/XAG/WTI/ETH. Sert à
 # élargir l'auto-exec aux paires promues manuellement en AUTO_EXEC via
