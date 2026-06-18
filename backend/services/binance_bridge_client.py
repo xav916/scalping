@@ -194,6 +194,26 @@ async def push_to_binance(setup, sz: dict, dest) -> None:
                     f"qty={payload['qty']:.6f} lev={payload['leverage']}x "
                     f"latency_ms={latency_ms} avg_price={data.get('avg_price')}"
                 )
+                # Notif user "Trade OUVERT" (parité avec MT5). Best-effort.
+                # market_order_id Binance peut être None si le bridge a juste
+                # registered en watcher sans orderId — fallback hash entry_5dp.
+                try:
+                    from backend.services import telegram_service as _tg
+                    ticket_val = data.get("market_order_id") or data.get("client_order_id") or 0
+                    try:
+                        ticket_int = int(ticket_val)
+                    except (TypeError, ValueError):
+                        ticket_int = abs(hash(str(ticket_val))) % (10**9)
+                    await _tg.send_trade_opened(
+                        setup,
+                        ticket=ticket_int,
+                        fill_price=float(data.get("avg_price") or setup.entry_price),
+                        volume=float(data.get("qty") or payload.get("qty") or 0),
+                        mode="testnet",
+                        destination_id=dest.destination_id,
+                    )
+                except Exception as _e:
+                    logger.warning(f"send_trade_opened binance hook error: {_e}")
             else:
                 logger.warning(
                     f"binance bridge[{dest.destination_id}] répondu {r.status_code} "
