@@ -123,10 +123,26 @@ async def push_to_binance(setup, sz: dict, dest) -> None:
     Best-effort : timeout / 4xx / 5xx → record_rejection + return. Pas
     d'exception remontée au cycle d'analyse.
     """
-    from backend.services import mt5_pushes_service
+    from backend.services import binance_drawdown_breaker, mt5_pushes_service
     from backend.services.rejection_service import record_rejection
 
     direction = setup.direction.value if hasattr(setup.direction, "value") else str(setup.direction)
+
+    # Chantier #15 — circuit breaker drawdown wallet. Si tripped, on rejette
+    # le push et le kill_switch global a déjà été activé côté breaker.
+    allowed, breaker_reason = binance_drawdown_breaker.check_and_maybe_trip(dest)
+    if not allowed:
+        logger.warning(
+            f"binance bridge[{dest.destination_id}] DD breaker tripped — skip {setup.pair}: {breaker_reason}"
+        )
+        record_rejection(
+            pair=setup.pair, direction=direction,
+            confidence=getattr(setup, "confidence_score", None),
+            reason_code="binance_dd_breaker",
+            details={"reason": breaker_reason},
+        )
+        return
+
     payload = _build_binance_payload(setup, sz, dest)
     push_date = date.today().isoformat()
     entry_5dp = f"{setup.entry_price:.5f}"
