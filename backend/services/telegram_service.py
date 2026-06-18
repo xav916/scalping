@@ -1040,11 +1040,20 @@ def _build_trade_justification(pattern_value, confidence_score, pair: str | None
     return lines
 
 
-def _format_trade_opened(setup, ticket: int, fill_price: float, volume: float, mode: str) -> str:
+def _format_trade_opened(
+    setup, ticket: int, fill_price: float, volume: float,
+    mode: str, destination_id: str | None = None,
+) -> str:
     """Format vulgarisé : 'qu'est-ce qui se passe, combien je gagne/perds, pourquoi'.
 
     Réécrit 2026-06-13 pour parler au lambda (cf. memo
     feedback_telegram_messages_vulgarized_2026_06_13).
+
+    2026-06-18 fix : "LIVE (argent réel)" ne dépend plus du `mode` du
+    bridge (toujours "live" en exécution réelle, qu'on tape sur Demo
+    Pepperstone ou Live IC Markets), mais du destination_id. Seul
+    `admin_live` = argent réel. Tous les autres (admin_legacy, user:N
+    Premium en Demo, etc.) = Démo.
     """
     from datetime import datetime, timezone, timedelta
     dir_value = setup.direction.value if hasattr(setup.direction, "value") else str(setup.direction)
@@ -1052,7 +1061,8 @@ def _format_trade_opened(setup, ticket: int, fill_price: float, volume: float, m
     pair_label = _PAIR_FR_LABEL.get(setup.pair, setup.pair)
     paris_now = datetime.now(timezone.utc) + timedelta(hours=2)
     time_str = paris_now.strftime("%H:%M")
-    mode_label = "LIVE (argent réel)" if mode == "live" else "Démo"
+    is_real_money = destination_id == "admin_live"
+    mode_label = "LIVE (argent réel)" if is_real_money else "Démo"
 
     # Prix au format FR (virgule, 2 décimales pour métaux/crypto, 5 pour forex)
     decimals = 2 if any(k in setup.pair for k in ("XAU", "XAG", "BTC", "ETH", "SOL", "LTC", "BCH", "DOT", "ADA", "XRP", "WTI")) else 5
@@ -1093,17 +1103,24 @@ def _format_trade_opened(setup, ticket: int, fill_price: float, volume: float, m
     return "\n".join(lines)
 
 
-async def send_trade_opened(setup, ticket: int, fill_price: float, volume: float, mode: str) -> None:
+async def send_trade_opened(
+    setup, ticket: int, fill_price: float, volume: float,
+    mode: str, destination_id: str | None = None,
+) -> None:
     """Push une notif user-facing à la confirmation d'un fill broker.
 
-    Appelée depuis ``mt5_bridge._push_to_destination`` après status 200
-    sur le path admin_legacy. Le ticket vient de la réponse bridge.
+    Appelée depuis ``mt5_bridge._push_to_destination`` après status 200.
+    Le ticket vient de la réponse bridge.
+    ``destination_id`` discrimine admin_live (argent réel) du reste.
     Best-effort : toute exception silencieuse, ne casse jamais le flow trade.
     """
     if not is_configured():
         return
     try:
-        text = _format_trade_opened(setup, ticket, fill_price, volume, mode)
+        text = _format_trade_opened(
+            setup, ticket, fill_price, volume, mode,
+            destination_id=destination_id,
+        )
         destinataires = _destinataires()
         url = TELEGRAM_API.format(token=TELEGRAM_BOT_TOKEN)
         for user, chat_id in destinataires:

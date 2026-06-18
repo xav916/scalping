@@ -559,6 +559,7 @@ async def _push_to_destination(setup, dest) -> None:
                             fill_price=float(data.get("price") or setup.entry_price),
                             volume=float(data.get("volume") or 0),
                             mode=str(data.get("mode") or "?"),
+                            destination_id=dest.destination_id,
                         )
                     except Exception as _e:
                         logger.warning(f"send_trade_opened hook error: {_e}")
