@@ -27,6 +27,15 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+# Gating final (2026-06-18) — refuse les pushes Binance shadow quand le
+# verdict ou le score final disent SKIP. Avant ce gate, le shadow exécutait
+# tous les setups détectés, y compris ceux verdictés SKIP par l'engine
+# (donc invisibles côté MT5) → le wallet testnet saignait sur des trades
+# que le système flaggait déjà comme à éviter. Toggle pour rollback rapide.
+RESPECT_VERDICT = os.getenv("BINANCE_RESPECT_VERDICT", "true").strip().lower() in ("true", "1", "yes")
+MIN_FINAL_CONFIDENCE = float(os.getenv("BINANCE_MIN_FINAL_CONFIDENCE", "50"))
+
+
 # Chantier #9 — Funding-aware sizing.
 # Si direction alignée avec funding receiver (long quand funding négatif,
 # short quand positif), size ×UP. Si counter, size ×DOWN. Caps [DOWN, UP].
@@ -131,6 +140,35 @@ async def push_to_binance(setup, sz: dict, dest) -> None:
     from backend.services.rejection_service import record_rejection
 
     direction = setup.direction.value if hasattr(setup.direction, "value") else str(setup.direction)
+
+    # Final-score gate — n'envoie pas vers Binance ce que l'engine flaggue SKIP
+    # ou ce qui n'atteint pas le seuil de confidence finale (post-microstructure).
+    verdict = getattr(setup, "verdict_action", None)
+    score = float(getattr(setup, "confidence_score", 0) or 0)
+    if RESPECT_VERDICT and verdict == "SKIP":
+        logger.info(
+            f"binance bridge[{dest.destination_id}] skip {setup.pair} {direction}: "
+            f"verdict=SKIP (score={score})"
+        )
+        record_rejection(
+            pair=setup.pair, direction=direction,
+            confidence=score,
+            reason_code="binance_verdict_skip",
+            details={"verdict": verdict, "score": score},
+        )
+        return
+    if score < MIN_FINAL_CONFIDENCE:
+        logger.info(
+            f"binance bridge[{dest.destination_id}] skip {setup.pair} {direction}: "
+            f"final score {score} < {MIN_FINAL_CONFIDENCE}"
+        )
+        record_rejection(
+            pair=setup.pair, direction=direction,
+            confidence=score,
+            reason_code="binance_below_final_confidence",
+            details={"score": score, "threshold": MIN_FINAL_CONFIDENCE},
+        )
+        return
 
     # Chantier #15 — circuit breaker drawdown wallet. Si tripped, on rejette
     # le push et le kill_switch global a déjà été activé côté breaker.
