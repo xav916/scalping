@@ -123,7 +123,11 @@ async def push_to_binance(setup, sz: dict, dest) -> None:
     Best-effort : timeout / 4xx / 5xx → record_rejection + return. Pas
     d'exception remontée au cycle d'analyse.
     """
-    from backend.services import binance_drawdown_breaker, mt5_pushes_service
+    from backend.services import (
+        binance_correlation_guard,
+        binance_drawdown_breaker,
+        mt5_pushes_service,
+    )
     from backend.services.rejection_service import record_rejection
 
     direction = setup.direction.value if hasattr(setup.direction, "value") else str(setup.direction)
@@ -140,6 +144,23 @@ async def push_to_binance(setup, sz: dict, dest) -> None:
             confidence=getattr(setup, "confidence_score", None),
             reason_code="binance_dd_breaker",
             details={"reason": breaker_reason},
+        )
+        return
+
+    # Chantier #13 — position correlation guard. Refuse les nouveaux
+    # pushes crypto qui sur-concentreraient l'exposition risk-on/risk-off.
+    corr_ok, corr_reason = binance_correlation_guard.check_correlation(
+        dest, setup.pair, direction,
+    )
+    if not corr_ok:
+        logger.info(
+            f"binance bridge[{dest.destination_id}] correlation guard — skip {setup.pair} {direction}: {corr_reason}"
+        )
+        record_rejection(
+            pair=setup.pair, direction=direction,
+            confidence=getattr(setup, "confidence_score", None),
+            reason_code="binance_correlation_guard",
+            details={"reason": corr_reason},
         )
         return
 
