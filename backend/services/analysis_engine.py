@@ -672,6 +672,41 @@ def enrich_trade_setup(
         except Exception as e:
             logger.debug(f"lsr scoring error: {e}")
 
+    # ── Binance order book depth scoring (chantier #4 — 2026-06-18)
+    # Mesure le spread relatif top-of-book Binance. Si élargi (>5 bps par
+    # défaut), marché thin = slippage attendu, soft veto ×0.85 sur cryptos.
+    try:
+        from config.settings import BINANCE_ORDERBOOK_SCORING_ENABLED
+    except Exception:
+        BINANCE_ORDERBOOK_SCORING_ENABLED = False
+    if BINANCE_ORDERBOOK_SCORING_ENABLED:
+        try:
+            from backend.services import binance_orderbook_scoring
+            ob_mult, ob_reason = binance_orderbook_scoring.apply_orderbook_filter(
+                setup.pair, setup.direction.value
+            )
+            if ob_mult != 1.0:
+                prev_score = setup.confidence_score
+                new_score = round(min(100, max(0, prev_score * ob_mult)), 1)
+                setup.confidence_score = new_score
+                factors.append(
+                    ConfidenceFactor(
+                        name="Order book Binance",
+                        score=round((ob_mult - 1.0) * 100, 1),
+                        detail=f"×{ob_mult:.2f} — {ob_reason}",
+                        positive=False,
+                        source="microstructure",
+                        metadata={"multiplier": ob_mult, "reason": ob_reason},
+                    )
+                )
+                setup.confidence_factors = factors
+                logger.info(
+                    f"orderbook_applied pair={setup.pair} dir={setup.direction.value} "
+                    f"prev={prev_score} mult={ob_mult} final={new_score} reason={ob_reason}"
+                )
+        except Exception as e:
+            logger.debug(f"orderbook scoring error: {e}")
+
     # ── Geopolitical veto (Polymarket + GDELT hard rules) ──────────────
     # Lazy import : évite les cycles + permet aux tests de patcher poly/gdelt
     # snapshots sans setup top-level.
