@@ -2702,6 +2702,42 @@ async def api_admin_notify_infra_telegram(
     return {"sent": True, "chars": len(text)}
 
 
+@app.get("/api/admin/mt5-bridges-health")
+async def api_admin_mt5_bridges_health(token: str = ""):
+    """Santé des bridges MT5 (legacy = Demo Pepperstone, live = IC Markets).
+
+    Auth-by-token (même hash que notify-infra-telegram / public-summary).
+    Réponse : `{now, legacy: {url, ...health}, live: {url, ...health}}`
+    où chaque sous-objet contient `configured`, `reachable`, `login`,
+    `server`, `paper_mode`, `max_lot_per_class`, etc., récupérés via
+    `/health` du bridge.
+
+    Conçu pour la routine RemoteTrigger qui poll toutes les 30 min et
+    alerte le bot infra Telegram si `live.reachable == false`.
+    """
+    import hashlib
+    from fastapi import HTTPException
+    import secrets as _s
+    from backend.services.mt5_bridge import health_check as bridge_health_check
+    from config.settings import MT5_BRIDGE_URL, MT5_BRIDGE_LIVE_URL
+
+    SHADOW_PUBLIC_TOKEN_HASH = "e980b1ed0b45ca6873caa3f2d6ddcf27f4d8a1d0aa87cf9072f6e3e0909b31ec"
+    if not token:
+        raise HTTPException(status_code=403, detail="token required")
+    provided_hash = hashlib.sha256(token.encode()).hexdigest()
+    if not _s.compare_digest(provided_hash, SHADOW_PUBLIC_TOKEN_HASH):
+        raise HTTPException(status_code=403, detail="invalid token")
+
+    legacy_health = await bridge_health_check(MT5_BRIDGE_URL or None)
+    live_health = await bridge_health_check(MT5_BRIDGE_LIVE_URL or None)
+
+    return {
+        "now": datetime.now(timezone.utc).isoformat(),
+        "legacy": {"url": MT5_BRIDGE_URL or None, **legacy_health},
+        "live": {"url": MT5_BRIDGE_LIVE_URL or None, **live_health},
+    }
+
+
 # ─── Endpoints publics shadow log (no auth) ─────────────────────────────────
 # Pour pages publiques /v2/live et /v2/track-record qui affichent le track
 # record en temps réel sans demander de login. Lecture seule, sanitisé

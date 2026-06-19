@@ -719,12 +719,17 @@ async def get_account() -> dict:
         return {"configured": True, "reachable": False, "error": str(e)[:120]}
 
 
-async def health_check() -> dict:
-    """Retourne l'état du bridge depuis le point de vue du backend.
-    Utile pour un endpoint de debug ou un indicateur UI côté site."""
-    if not is_configured():
+async def health_check(bridge_url: str | None = None) -> dict:
+    """Retourne l'état d'un bridge MT5 depuis le point de vue du backend.
+
+    Par défaut ping `MT5_BRIDGE_URL` (bridge legacy / Demo Pepperstone).
+    Si `bridge_url` est fourni (ex: `MT5_BRIDGE_LIVE_URL` pour IC Markets Live),
+    ping cet URL à la place — utile pour un endpoint multi-bridges-health.
+    """
+    target = (bridge_url or MT5_BRIDGE_URL or "").strip()
+    if not target:
         return {"configured": False}
-    url = MT5_BRIDGE_URL.rstrip("/") + "/health"
+    url = target.rstrip("/") + "/health"
     try:
         async with httpx.AsyncClient(timeout=3.0) as client:
             r = await client.get(url)
