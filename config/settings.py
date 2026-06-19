@@ -128,6 +128,10 @@ INFRA_TELEGRAM_CHAT_ID = os.getenv("INFRA_TELEGRAM_CHAT_ID", "")
 # Si vide, les notifs sales sont skip silencieusement.
 SALES_TELEGRAM_BOT_TOKEN = os.getenv("SALES_TELEGRAM_BOT_TOKEN", "")
 SALES_TELEGRAM_CHAT_ID = os.getenv("SALES_TELEGRAM_CHAT_ID", "")
+# Secret du webhook Telegram sales bot. Telegram envoie ce header
+# `X-Telegram-Bot-Api-Secret-Token` sur chaque POST → l'endpoint webhook le
+# compare en compare_digest. Si vide, le webhook accepte tout (mode dev).
+TELEGRAM_SALES_WEBHOOK_SECRET = os.getenv("TELEGRAM_SALES_WEBHOOK_SECRET", "")
 
 # ─── Bridge MT5 (auto-exec sur MetaTrader 5 desktop local) ──────────
 # URL du bridge MT5 accessible via Tailscale (ex: http://100.122.188.8:8787).

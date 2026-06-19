@@ -725,6 +725,100 @@ def kill_all():
         return jsonify({"ok": False, "error": str(e)[:200], **out}), 500
 
 
+@app.route("/pnl_summary", methods=["GET"])
+@require_bridge_key
+def pnl_summary():
+    """PnL net Binance Futures depuis `since` (ISO UTC ou epoch_ms).
+
+    Reproduit la logique de `scripts/binance_pnl_summary.py` mais expose en
+    JSON pour conso programmatique (ex: webhook Telegram daily recap).
+
+    Query : `?since=2026-06-19T00:00:00Z` (default = 00:00 UTC du jour).
+    Réponse : `{env, since, wallet: {...}, summary: {by_type, by_symbol,
+    total_net, rows_count}}`.
+    """
+    from datetime import datetime, timezone
+
+    since_raw = request.args.get("since", "").strip()
+    if not since_raw:
+        now = datetime.now(timezone.utc)
+        since_dt = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    else:
+        try:
+            if since_raw.isdigit():
+                v = int(since_raw)
+                since_ms_int = v if v > 10**12 else v * 1000
+                since_dt = datetime.fromtimestamp(since_ms_int / 1000, tz=timezone.utc)
+            else:
+                since_dt = datetime.fromisoformat(since_raw.replace("Z", "+00:00"))
+        except Exception as e:
+            return jsonify({"ok": False, "error": f"invalid since: {e}"}), 400
+    since_ms = int(since_dt.timestamp() * 1000)
+
+    try:
+        rows: list[dict[str, Any]] = []
+        cursor = since_ms
+        end_ms = int(time.time() * 1000)
+        while True:
+            batch = _signed_request("GET", "/fapi/v1/income", params={
+                "startTime": cursor, "endTime": end_ms, "limit": 1000,
+            })
+            if not batch:
+                break
+            rows.extend(batch)
+            if len(batch) < 1000:
+                break
+            last_ts = max(int(r["time"]) for r in batch)
+            if last_ts <= cursor:
+                break
+            cursor = last_ts + 1
+
+        by_type: dict[str, float] = {}
+        by_symbol: dict[str, dict[str, float]] = {}
+        for r in rows:
+            amt = float(r.get("income", 0))
+            itype = r.get("incomeType", "?")
+            sym = r.get("symbol", "")
+            by_type[itype] = by_type.get(itype, 0) + amt
+            if sym:
+                bucket = by_symbol.setdefault(sym, {})
+                bucket[itype] = bucket.get(itype, 0) + amt
+
+        acc = _signed_request("GET", "/fapi/v2/account")
+        wallet = {
+            "totalWalletBalance": float(acc.get("totalWalletBalance", 0)),
+            "totalUnrealizedProfit": float(acc.get("totalUnrealizedProfit", 0)),
+            "availableBalance": float(acc.get("availableBalance", 0)),
+            "assets": [
+                {
+                    "asset": x["asset"],
+                    "walletBalance": float(x.get("walletBalance", 0)),
+                    "unrealizedProfit": float(x.get("unrealizedProfit", 0)),
+                    "marginBalance": float(x.get("marginBalance", 0)),
+                }
+                for x in acc.get("assets", [])
+                if float(x.get("walletBalance", 0)) != 0
+                or float(x.get("unrealizedProfit", 0)) != 0
+            ],
+        }
+
+        return jsonify({
+            "ok": True,
+            "env": BINANCE_ENV,
+            "since": since_dt.isoformat(),
+            "wallet": wallet,
+            "summary": {
+                "rows_count": len(rows),
+                "by_type": by_type,
+                "by_symbol": by_symbol,
+                "total_net": sum(by_type.values()),
+            },
+        })
+    except Exception as e:
+        logger.exception("pnl_summary failed")
+        return jsonify({"ok": False, "error": str(e)[:300]}), 500
+
+
 if __name__ == "__main__":
     port = int(os.getenv("BINANCE_BRIDGE_PORT", "8789"))
     logger.info(

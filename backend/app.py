@@ -2702,6 +2702,157 @@ async def api_admin_notify_infra_telegram(
     return {"sent": True, "chars": len(text)}
 
 
+async def _build_sales_recap_text(date_iso: str | None = None) -> str:
+    """Texte du daily recap 3 brokers (Pepperstone Demo + IC Markets Live +
+    Binance Testnet) pour la date `date_iso` (YYYY-MM-DD, default = aujourd'hui UTC).
+
+    Best-effort : si une source échoue (HTTP, SQL), substitue un placeholder
+    et continue les autres. Format pensé pour Telegram (pas de `**bold**`).
+    """
+    import sqlite3
+    import httpx
+    from backend.services.trade_log_service import _DB_PATH
+    from config.settings import BINANCE_BRIDGE_URL, BINANCE_BRIDGE_API_KEY
+
+    day = date_iso or datetime.now(timezone.utc).date().isoformat()
+    lines = [f"📊 Daily recap {day}", ""]
+
+    # MT5 — Pepperstone Demo (admin_legacy) + IC Markets Live (admin_live)
+    try:
+        con = sqlite3.connect(str(_DB_PATH))
+        con.row_factory = sqlite3.Row
+        mt5_blocks: dict[str, dict] = {}
+        for dest, label in (
+            ("admin_legacy", "🟦 Pepperstone Demo"),
+            ("admin_live", "🟩 IC Markets Live (argent réel)"),
+        ):
+            rows = con.execute(
+                """
+                SELECT pt.pair, pt.pnl
+                FROM personal_trades pt
+                WHERE pt.status = 'CLOSED'
+                  AND pt.closed_at LIKE ?
+                  AND pt.is_auto = 1
+                  AND pt.mt5_ticket IN (
+                      SELECT CAST(json_extract(bridge_response, '$.ticket') AS INTEGER)
+                      FROM mt5_pushes WHERE destination_id = ?
+                  )
+                """,
+                (f"{day}%", dest),
+            ).fetchall()
+            by_pair: dict[str, list[float]] = {}
+            for r in rows:
+                by_pair.setdefault(r["pair"], []).append(float(r["pnl"] or 0))
+            total = sum(sum(v) for v in by_pair.values())
+            mt5_blocks[dest] = {"label": label, "n": len(rows), "total": total, "by_pair": by_pair}
+        con.close()
+
+        for dest, b in mt5_blocks.items():
+            lines.append(b["label"])
+            lines.append(f"  {b['n']} trades fermés")
+            lines.append(f"  PnL : {b['total']:+.2f} USD")
+            if b["by_pair"]:
+                pairs_str = " | ".join(
+                    f"{p} {sum(v):+.2f}" for p, v in sorted(b["by_pair"].items(), key=lambda kv: -sum(kv[1]))
+                )
+                lines.append(f"  {pairs_str}")
+            lines.append("")
+    except Exception as e:
+        logger.exception("sales_recap MT5 SQL failed")
+        lines.append(f"⚠️ MT5 indisponible ({str(e)[:80]})")
+        lines.append("")
+
+    # Binance Testnet (admin_binance) via /pnl_summary du bridge
+    if not BINANCE_BRIDGE_URL:
+        lines.append("🟪 Binance Testnet : bridge non configuré")
+    else:
+        try:
+            url = BINANCE_BRIDGE_URL.rstrip("/") + "/pnl_summary"
+            headers = {"X-Bridge-Key": BINANCE_BRIDGE_API_KEY} if BINANCE_BRIDGE_API_KEY else {}
+            params = {"since": f"{day}T00:00:00Z"}
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                r = await client.get(url, params=params, headers=headers)
+            if r.status_code == 200:
+                d = r.json()
+                w = d.get("wallet") or {}
+                s = d.get("summary") or {}
+                lines.append("🟪 Binance Testnet")
+                lines.append(
+                    f"  Wallet : {w.get('totalWalletBalance', 0):.2f} USDT "
+                    f"+ {w.get('totalUnrealizedProfit', 0):+.2f} unrealized"
+                )
+                lines.append(f"  PnL jour : {s.get('total_net', 0):+.2f} USDT")
+                bt = s.get("by_type") or {}
+                if bt:
+                    parts = " | ".join(f"{k} {v:+.2f}" for k, v in sorted(bt.items(), key=lambda kv: -abs(kv[1])))
+                    lines.append(f"  {parts}")
+                bsym = s.get("by_symbol") or {}
+                if bsym:
+                    ranked = sorted(
+                        bsym.items(), key=lambda kv: -abs(sum(kv[1].values()))
+                    )[:5]
+                    top = " | ".join(f"{sym.replace('USDT', '')} {sum(parts.values()):+.2f}" for sym, parts in ranked)
+                    lines.append(f"  Top : {top}")
+            else:
+                lines.append(f"🟪 Binance Testnet : bridge HTTP {r.status_code}")
+        except Exception as e:
+            logger.exception("sales_recap Binance fetch failed")
+            lines.append(f"🟪 Binance Testnet : erreur ({str(e)[:80]})")
+
+    lines.append("")
+    lines.append(f"Généré : {datetime.now(timezone.utc).isoformat(timespec='seconds')}")
+    return "\n".join(lines)
+
+
+@app.post("/api/telegram/sales-webhook")
+async def api_telegram_sales_webhook(request: Request):
+    """Webhook Telegram pour le bot sales (@xav_scalping_radar_sales_bot).
+
+    Telegram POST chaque message reçu par le bot ici, avec le header
+    `X-Telegram-Bot-Api-Secret-Token` qui doit matcher
+    TELEGRAM_SALES_WEBHOOK_SECRET (si configuré). Filtre par
+    `chat.id == SALES_TELEGRAM_CHAT_ID` pour ignorer toute autre source.
+
+    Commandes reconnues : `recap`, `/recap`, `Recap` → renvoie le daily recap
+    via `send_sales_text`. Tout autre message est ignoré (no-op).
+    """
+    import hmac as _hmac
+    from fastapi import HTTPException
+    from backend.services.telegram_service import send_sales_text
+    from config.settings import (
+        SALES_TELEGRAM_CHAT_ID,
+        TELEGRAM_SALES_WEBHOOK_SECRET,
+    )
+
+    # Auth header secret
+    expected = TELEGRAM_SALES_WEBHOOK_SECRET
+    if expected:
+        provided = request.headers.get("x-telegram-bot-api-secret-token", "")
+        if not _hmac.compare_digest(provided, expected):
+            raise HTTPException(status_code=403, detail="invalid secret token")
+
+    try:
+        update = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid json")
+
+    message = (update or {}).get("message") or {}
+    chat = message.get("chat") or {}
+    chat_id = str(chat.get("id") or "")
+    text = (message.get("text") or "").strip()
+
+    # Filtre chat_id — n'accepte que la conversation Xavier
+    if SALES_TELEGRAM_CHAT_ID and chat_id != str(SALES_TELEGRAM_CHAT_ID):
+        return {"ok": True, "skipped": "chat_id_mismatch"}
+
+    if text.lower() in ("recap", "/recap"):
+        recap_text = await _build_sales_recap_text()
+        sent = await send_sales_text(recap_text)
+        return {"ok": True, "command": "recap", "sent": bool(sent), "chars": len(recap_text)}
+
+    return {"ok": True, "command": None}
+
+
 @app.get("/api/admin/mt5-bridges-health")
 async def api_admin_mt5_bridges_health(token: str = ""):
     """Santé des bridges MT5 (legacy = Demo Pepperstone, live = IC Markets).
