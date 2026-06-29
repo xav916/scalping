@@ -18,10 +18,22 @@ Sécurité
 
 import asyncio
 import logging
+import os
 import time
 from datetime import date, datetime, timezone
 
 import httpx
+
+# Toggle (2026-06-29) — calque sur BINANCE_RESPECT_VERDICT.
+# Quand `MT5_BRIDGE_LIVE_RESPECT_VERDICT=false`, le bridge admin_live ignore
+# les verdict_blockers / geopolitical_veto / macro_veto et laisse passer
+# le setup vers les autres checks (min_confidence, market hours, sl_too_close…).
+# Découvert post-audit : la stack soft veto met massivement XAU/WTI en SKIP,
+# ce qui privait admin_live (IC Markets Live) de ses paires gagnantes.
+# Les autres destinations (admin_legacy, user:N) continuent à respecter le verdict.
+RESPECT_VERDICT_LIVE = os.getenv(
+    "MT5_BRIDGE_LIVE_RESPECT_VERDICT", "true"
+).strip().lower() in ("true", "1", "yes")
 
 from backend.services.market_hours import is_market_open_for
 from backend.services.shadow_v2_core_long import SHADOW_PAIRS as _STAR_PAIRS
@@ -232,10 +244,24 @@ def _check_rejection(setup, dest=None) -> str | None:
         # toujours le même libellé : "Macro veto:" / "Geopolitical veto:".
         first = blockers[0] if blockers else ""
         if first.startswith("Geopolitical veto:"):
-            return "geopolitical_veto"
-        if first.startswith("Macro veto:"):
-            return "macro_veto"
-        return "verdict_blocker"
+            rejection_code = "geopolitical_veto"
+        elif first.startswith("Macro veto:"):
+            rejection_code = "macro_veto"
+        else:
+            rejection_code = "verdict_blocker"
+        # Bypass admin_live si MT5_BRIDGE_LIVE_RESPECT_VERDICT=false.
+        # Les autres destinations gardent le comportement strict.
+        if (
+            dest is not None
+            and getattr(dest, "destination_id", None) == "admin_live"
+            and not RESPECT_VERDICT_LIVE
+        ):
+            logger.info(
+                f"mt5_bridge[admin_live]: bypass {rejection_code} pour {setup.pair} "
+                f"(MT5_BRIDGE_LIVE_RESPECT_VERDICT=false, blockers={blockers[:2]})"
+            )
+        else:
+            return rejection_code
     if not is_market_open_for(setup.pair):
         return "market_closed"
     entry = getattr(setup, "entry_price", 0) or 0
