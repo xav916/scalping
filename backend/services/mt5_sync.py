@@ -247,6 +247,15 @@ def _derive_close_reason_from_exit(
         tol = 0.02
     elif base in {"BTC", "ETH"}:
         tol = 15.0
+    elif base in {"BCH", "LTC"}:
+        # 2026-06-29 — fix observabilite altcoins range 100-500 USD.
+        # Sans cette branche, fallback tol=0.0002 (forex) -> 100% MANUAL
+        # sur l'analyse historique. Cf. audit BCH 209/217 = MANUAL alors
+        # qu'il s'agissait majoritairement de SL touches au sizing minimum.
+        tol = 5.0
+    elif base in {"DOT", "ADA", "XRP", "SOL"}:
+        # Idem pour altcoins petite cap (range 0.5-5 USD).
+        tol = 0.05
     elif base in {"SPX", "NDX"}:
         tol = 2.0
     elif base == "WTI":
