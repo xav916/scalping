@@ -35,6 +35,18 @@ RESPECT_VERDICT_LIVE = os.getenv(
     "MT5_BRIDGE_LIVE_RESPECT_VERDICT", "true"
 ).strip().lower() in ("true", "1", "yes")
 
+# Whitelist par destination (2026-06-30) — opt-in restrictif.
+# Quand l'env var `MT5_BRIDGE_LIVE_WHITELIST_PAIRS` est non-vide, seules les
+# pairs listées peuvent être pushees vers admin_live. Toute autre pair est
+# rejetee avec reason_code "pair_not_whitelisted".
+# Inversion de paradigme : opt-in plutot qu'opt-out. Empeche toute activation
+# manuelle imprudente de nouvelles pairs en Live.
+LIVE_WHITELIST_PAIRS = frozenset(
+    p.strip().upper()
+    for p in os.getenv("MT5_BRIDGE_LIVE_WHITELIST_PAIRS", "").split(",")
+    if p.strip()
+)
+
 from backend.services.market_hours import is_market_open_for
 from backend.services.shadow_v2_core_long import SHADOW_PAIRS as _STAR_PAIRS
 from config.settings import (
@@ -206,6 +218,17 @@ def _check_rejection(setup, dest=None) -> str | None:
     # Cf. MT5_BRIDGE_BLOCKED_PAIRS dans config/settings.py.
     if setup.pair.upper() in MT5_BRIDGE_BLOCKED_PAIRS:
         return "pair_blocked"
+    # Whitelist par destination (2026-06-30) — admin_live opt-in strict.
+    # Si LIVE_WHITELIST_PAIRS non-vide, seules ces pairs passent vers admin_live.
+    # Reasoning : empeche toute activation involontaire de nouvelles pairs en
+    # argent reel. Doit etre explicitement listee pour atteindre IC Markets Live.
+    if (
+        LIVE_WHITELIST_PAIRS
+        and dest is not None
+        and getattr(dest, "destination_id", None) == "admin_live"
+        and setup.pair.upper() not in LIVE_WHITELIST_PAIRS
+    ):
+        return "pair_not_whitelisted"
     # Auto-régulateur PnL : pause auto par pair quand sum_pnl < seuil sur
     # fenêtre glissante. Couvre le saignement chronique (cas XAG diffus).
     try:
