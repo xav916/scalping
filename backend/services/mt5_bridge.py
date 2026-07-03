@@ -35,6 +35,16 @@ RESPECT_VERDICT_LIVE = os.getenv(
     "MT5_BRIDGE_LIVE_RESPECT_VERDICT", "true"
 ).strip().lower() in ("true", "1", "yes")
 
+# Toggle (2026-07-03) — même pattern que LIVE, appliqué à toutes les destinations
+# user:N (Premium multi-tenant). Quand `MT5_BRIDGE_USER_RESPECT_VERDICT=false`,
+# les user destinations ignorent verdict_blockers / geopolitical_veto / macro_veto.
+# Motivé par le constat 2026-07-03 : Cédric (user:2) recevait 100+ pushes/jour
+# avant 30/06, puis 0 push depuis à cause des verdict SKIP massifs sur XAU/WTI/EUR.
+# admin_legacy garde le comportement strict (mais il est off en prod).
+RESPECT_VERDICT_USER = os.getenv(
+    "MT5_BRIDGE_USER_RESPECT_VERDICT", "true"
+).strip().lower() in ("true", "1", "yes")
+
 # Whitelist par destination (2026-06-30) — opt-in restrictif.
 # Quand l'env var `MT5_BRIDGE_LIVE_WHITELIST_PAIRS` est non-vide, seules les
 # pairs listées peuvent être pushees vers admin_live. Toute autre pair est
@@ -272,16 +282,24 @@ def _check_rejection(setup, dest=None) -> str | None:
             rejection_code = "macro_veto"
         else:
             rejection_code = "verdict_blocker"
-        # Bypass admin_live si MT5_BRIDGE_LIVE_RESPECT_VERDICT=false.
-        # Les autres destinations gardent le comportement strict.
-        if (
-            dest is not None
-            and getattr(dest, "destination_id", None) == "admin_live"
-            and not RESPECT_VERDICT_LIVE
-        ):
+        # Bypass conditionnel selon la destination :
+        #   admin_live → MT5_BRIDGE_LIVE_RESPECT_VERDICT
+        #   user:N     → MT5_BRIDGE_USER_RESPECT_VERDICT
+        # admin_legacy garde toujours le comportement strict.
+        dest_id = getattr(dest, "destination_id", "") if dest is not None else ""
+        bypass = (
+            (dest_id == "admin_live" and not RESPECT_VERDICT_LIVE)
+            or (dest_id.startswith("user:") and not RESPECT_VERDICT_USER)
+        )
+        if dest is not None and bypass:
+            toggle_name = (
+                "MT5_BRIDGE_LIVE_RESPECT_VERDICT"
+                if dest_id == "admin_live"
+                else "MT5_BRIDGE_USER_RESPECT_VERDICT"
+            )
             logger.info(
-                f"mt5_bridge[admin_live]: bypass {rejection_code} pour {setup.pair} "
-                f"(MT5_BRIDGE_LIVE_RESPECT_VERDICT=false, blockers={blockers[:2]})"
+                f"mt5_bridge[{dest_id}]: bypass {rejection_code} pour {setup.pair} "
+                f"({toggle_name}=false, blockers={blockers[:2]})"
             )
         else:
             return rejection_code
