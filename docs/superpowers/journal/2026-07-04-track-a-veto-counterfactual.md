@@ -1,14 +1,8 @@
-# 2026-07-04 — Track A × veto contrefactuel (auto)
-
-**Sample :** 148 réconciliés (CRÉDIBLE — analyse statistique fiable)
-**Verdict :** veto_would_help
-
-> ⚠️ **Signal détecté** : le veto géopolitique aiderait.
-> À intégrer dans la décision gate S6.
+> 🚨 **ALERT VERDICT CHANGED** — direction_verdict = `veto_would_help`, n_total = `148`. Le veto a quitté le statut 'insufficient'.
 
 # Track A × Veto géopolitique — analyse contrefactuelle
 
-**Généré :** 2026-07-04T06:01:37+00:00
+**Généré :** 2026-07-04T07:01:43+00:00
 **Source :** `shadow_setups` filtre `outcome IS NOT NULL AND geopolitical_features_json IS NOT NULL`
 **Échantillon :** 148 setups réconciliés
 **Confiance échantillon :** CRÉDIBLE — analyse statistique fiable
