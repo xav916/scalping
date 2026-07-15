@@ -129,6 +129,7 @@ def _admin_live_destination() -> BridgeConfig | None:
         and getattr(st, "MT5_BRIDGE_LIVE_API_KEY", "")
     ):
         return None
+    live_symbol_map = getattr(st, "MT5_BRIDGE_LIVE_SYMBOL_MAP", None) or None
     return BridgeConfig(
         destination_id="admin_live",
         user_id=None,
@@ -137,6 +138,7 @@ def _admin_live_destination() -> BridgeConfig | None:
         min_confidence=float(st.MT5_BRIDGE_LIVE_MIN_CONFIDENCE),
         allowed_asset_classes=frozenset(st.MT5_BRIDGE_LIVE_ALLOWED_ASSET_CLASSES),
         auto_exec_enabled=True,
+        symbol_map=live_symbol_map,
         extra_pairs_allowed=getattr(st, "MT5_BRIDGE_LIVE_EXTRA_PAIRS", frozenset()),
     )
 

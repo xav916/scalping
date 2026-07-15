@@ -171,6 +171,19 @@ MT5_BRIDGE_LIVE_ALLOWED_ASSET_CLASSES = [
 MT5_BRIDGE_LIVE_EXTRA_PAIRS = frozenset(
     p.strip().upper() for p in os.getenv("MT5_BRIDGE_LIVE_EXTRA_PAIRS", "").split(",") if p.strip()
 )
+# Symbol map propre au bridge Live IC Markets (indépendant de MT5_SYMBOL_MAP
+# global utilisé par le flux MT5 direct legacy). Chez IC Markets Cyprus le CFD
+# WTI s'appelle XTIUSD (pas SpotCrude comme Pepperstone). Format identique à
+# MT5_SYMBOL_MAP : "WTI/USD:XTIUSD,SPX:US500,...". Vide = pas de mapping,
+# admin_live envoie la pair Scalping Radar brute au bridge.
+_MT5_BRIDGE_LIVE_SYMBOL_MAP_RAW = os.getenv("MT5_BRIDGE_LIVE_SYMBOL_MAP", "")
+MT5_BRIDGE_LIVE_SYMBOL_MAP: dict[str, str] = {}
+if _MT5_BRIDGE_LIVE_SYMBOL_MAP_RAW:
+    for entry in _MT5_BRIDGE_LIVE_SYMBOL_MAP_RAW.split(","):
+        entry = entry.strip()
+        if ":" in entry:
+            k, v = entry.split(":", 1)
+            MT5_BRIDGE_LIVE_SYMBOL_MAP[k.strip()] = v.strip()
 
 # ─── Binance Futures bridge (Phase 2 R&D Palier 2 — 2026-06-17) ───────
 # Routing destination parallèle aux bridges MT5 pour cryptos. En testnet :
