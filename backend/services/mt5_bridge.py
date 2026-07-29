@@ -222,10 +222,15 @@ def _check_rejection(setup, dest=None) -> str | None:
     # destination (cas Live IC Markets €100 : EUR/USD permis en plus des stars).
     extras = getattr(dest, "extra_pairs_allowed", None) or frozenset() if dest else frozenset()
     allowed_pairs_for_dest = _STAR_PAIRS_SET | extras
+    # Destination-aware admission (2026-07-29) : chaque destination peut
+    # avoir son propre état par (pair, direction). Ex : XAU/USD sell peut
+    # être AUTO_EXEC sur admin_legacy et TELEGRAM sur admin_live pendant
+    # une phase de validation Demo avant promotion Live.
+    dest_id_for_pac = getattr(dest, "destination_id", None) if dest else None
     try:
         from backend.services import pair_admission_controller
-        if pair_admission_controller.has_explicit_state(setup.pair, setup_direction):
-            if not pair_admission_controller.is_auto_exec_eligible(setup.pair, setup_direction):
+        if pair_admission_controller.has_explicit_state(setup.pair, setup_direction, dest_id_for_pac):
+            if not pair_admission_controller.is_auto_exec_eligible(setup.pair, setup_direction, dest_id_for_pac):
                 return "_not_admitted"
         else:
             if setup.pair not in allowed_pairs_for_dest:

@@ -256,3 +256,96 @@ def test_backfill_initial_states_idempotent(_isolated_db):
     # Second run : déjà des rows, donc 0 nouvelle transition
     result2 = pac.backfill_initial_states()
     assert result2["applied"] == 0
+
+
+# ─── Destination-aware (2026-07-29 Sprint 1) ──────────────────────────
+# Une même (pair, direction) peut avoir des états distincts par destination.
+# Ex : XAU/USD sell = AUTO_EXEC sur admin_legacy (Demo tradable) et
+# TELEGRAM sur admin_live (Live observation). Permet le workflow test-then-promote.
+
+
+def test_destination_specific_state_overrides_legacy_row(_isolated_db):
+    """Row (pair, dir, dest) doit primer sur row (pair, dir, dest IS NULL)."""
+    from backend.services import pair_admission_controller as pac
+
+    # Legacy : XAU/USD sell = AUTO_EXEC sur toutes destinations
+    pac.set_state("XAU/USD", pac.STATE_AUTO_EXEC, "legacy", direction="sell")
+    # Override : sur admin_live seulement, on veut TELEGRAM (observation)
+    pac.set_state("XAU/USD", pac.STATE_TELEGRAM, "live obs", direction="sell", destination="admin_live")
+
+    # Résolution destination-specific
+    assert pac.get_current_state("XAU/USD", direction="sell", destination="admin_live") == pac.STATE_TELEGRAM
+    # Legacy row s'applique quand pas d'override (admin_legacy sans row propre)
+    assert pac.get_current_state("XAU/USD", direction="sell", destination="admin_legacy") == pac.STATE_AUTO_EXEC
+
+
+def test_two_destinations_independent_states(_isolated_db):
+    """WTI/USD buy = AUTO_EXEC sur admin_legacy + TELEGRAM sur admin_live."""
+    from backend.services import pair_admission_controller as pac
+
+    pac.set_state("WTI/USD", pac.STATE_AUTO_EXEC, "demo trad",
+                  direction="buy", destination="admin_legacy")
+    pac.set_state("WTI/USD", pac.STATE_TELEGRAM, "live obs",
+                  direction="buy", destination="admin_live")
+
+    assert pac.get_current_state("WTI/USD", direction="buy", destination="admin_legacy") == pac.STATE_AUTO_EXEC
+    assert pac.get_current_state("WTI/USD", direction="buy", destination="admin_live") == pac.STATE_TELEGRAM
+
+
+def test_destination_none_uses_legacy_cascade(_isolated_db):
+    """destination=None ne matche PAS les rows destination-specific."""
+    from backend.services import pair_admission_controller as pac
+
+    # Row destination-specific uniquement
+    pac.set_state("EUR/USD", pac.STATE_AUTO_EXEC, "live only",
+                  direction="buy", destination="admin_live")
+
+    # Query sans destination → tombe sur DEFAULT_STATE (rien en cascade legacy)
+    assert pac.get_current_state("EUR/USD", direction="buy") == pac.DEFAULT_STATE
+
+
+def test_is_auto_exec_eligible_respects_destination(_isolated_db):
+    """XAU/USD = AUTO_EXEC sur admin_legacy uniquement → seul admin_legacy éligible."""
+    from backend.services import pair_admission_controller as pac
+
+    pac.set_state("XAU/USD", pac.STATE_AUTO_EXEC, "demo",
+                  direction="sell", destination="admin_legacy")
+    pac.set_state("XAU/USD", pac.STATE_TELEGRAM, "live obs",
+                  direction="sell", destination="admin_live")
+
+    assert pac.is_auto_exec_eligible("XAU/USD", direction="sell", destination="admin_legacy") is True
+    assert pac.is_auto_exec_eligible("XAU/USD", direction="sell", destination="admin_live") is False
+
+
+def test_has_explicit_state_matches_via_cascade(_isolated_db):
+    """Row destination-agnostic (dest IS NULL) satisfait check destination-specific."""
+    from backend.services import pair_admission_controller as pac
+
+    pac.set_state("BTC/USD", pac.STATE_AUTO_EXEC, "legacy", direction="buy")
+
+    # Row (dir, dest=NULL) → check (dir, dest="admin_legacy") True via cascade
+    assert pac.has_explicit_state("BTC/USD", direction="buy", destination="admin_legacy") is True
+    assert pac.has_explicit_state("BTC/USD", direction="buy", destination="admin_live") is True
+
+
+def test_destination_normalization_invalid_returns_none(_isolated_db):
+    """Destination invalide → fallback rétro-compat (comportement legacy)."""
+    from backend.services import pair_admission_controller as pac
+
+    pac.set_state("ETH/USD", pac.STATE_AUTO_EXEC, "legacy", direction="sell")
+
+    # Destination invalide traitée comme None → matche row legacy
+    assert pac.get_current_state("ETH/USD", direction="sell", destination="ADMIN_BINANCE_FUTURES") == pac.STATE_AUTO_EXEC
+
+
+def test_get_full_state_includes_destination(_isolated_db):
+    """get_full_state doit exposer le champ destination dans le dict retourné."""
+    from backend.services import pair_admission_controller as pac
+
+    pac.set_state("XAU/USD", pac.STATE_AUTO_EXEC, "demo trad",
+                  direction="sell", destination="admin_legacy")
+
+    full = pac.get_full_state("XAU/USD", direction="sell", destination="admin_legacy")
+    assert full["state"] == pac.STATE_AUTO_EXEC
+    assert full["destination"] == "admin_legacy"
+    assert full["direction"] == "sell"

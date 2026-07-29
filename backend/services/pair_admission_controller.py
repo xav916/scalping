@@ -210,8 +210,14 @@ def _ensure_schema() -> None:
     Évolution 2026-05-13 : ajout colonne ``direction`` (NULL pour les rows
     pair-level legacy, 'buy' ou 'sell' pour les rows direction-specific).
     Migration douce : les rows existantes restent direction IS NULL et
-    s'appliquent à toutes les directions. Les nouvelles rows
-    (pair × direction) overrident les rows pair-level pour le sens donné.
+    s'appliquent à toutes les directions.
+
+    Évolution 2026-07-29 : ajout colonne ``destination`` (NULL = s'applique
+    à toutes les destinations, 'admin_legacy' / 'admin_live' = specific).
+    Permet le workflow test-then-promote Demo → Live : une pair peut être
+    AUTO_EXEC sur admin_legacy tout en restant TELEGRAM sur admin_live.
+    Résolution en cascade : destination-specific first, fallback destination
+    IS NULL, fallback direction IS NULL.
     """
     global _SCHEMA_ENSURED
     if _SCHEMA_ENSURED:
@@ -236,13 +242,39 @@ def _ensure_schema() -> None:
             c.execute("ALTER TABLE pair_admission_state ADD COLUMN direction TEXT")
         except sqlite3.OperationalError:
             pass  # colonne déjà présente
+        # Migration 2026-07-29 : ajoute la colonne destination (idempotent)
+        try:
+            c.execute("ALTER TABLE pair_admission_state ADD COLUMN destination TEXT")
+        except sqlite3.OperationalError:
+            pass  # colonne déjà présente
         c.execute(
             "CREATE INDEX IF NOT EXISTS idx_pas_pair_since ON pair_admission_state(pair, state_since DESC)"
         )
         c.execute(
             "CREATE INDEX IF NOT EXISTS idx_pas_pair_dir_since ON pair_admission_state(pair, direction, state_since DESC)"
         )
+        c.execute(
+            "CREATE INDEX IF NOT EXISTS idx_pas_pair_dir_dest_since ON pair_admission_state(pair, direction, destination, state_since DESC)"
+        )
     _SCHEMA_ENSURED = True
+
+
+# Destinations valides (miroir de bridge_destinations.BridgeConfig.destination_id)
+VALID_DESTINATIONS = frozenset({"admin_legacy", "admin_live"})
+
+
+def _normalize_destination(destination: Optional[str]) -> Optional[str]:
+    """Normalise destination en 'admin_legacy'/'admin_live' ou None.
+
+    None = row s'applique à toutes les destinations (comportement legacy).
+    Toute valeur invalide → None (fallback rétro-compat safe).
+    """
+    if destination is None:
+        return None
+    d = str(destination).strip().lower()
+    if d in VALID_DESTINATIONS:
+        return d
+    return None
 
 
 # ─── Read API ───────────────────────────────────────────────────────────
@@ -260,40 +292,55 @@ def _normalize_direction(direction: Optional[str]) -> Optional[str]:
     return None  # entrée invalide → fallback pair-level
 
 
-def get_current_state(pair: str, direction: Optional[str] = None) -> str:
-    """Retourne l'état courant pour (pair, direction).
+def get_current_state(
+    pair: str,
+    direction: Optional[str] = None,
+    destination: Optional[str] = None,
+) -> str:
+    """Retourne l'état courant pour (pair, direction, destination).
 
-    Résolution :
-    1. Si direction fournie : cherche row direction-specific (= row où la
-       colonne direction = direction) la plus récente.
-    2. Sinon ou si pas de row spécifique : cherche row pair-level (= row
-       où direction IS NULL) la plus récente.
-    3. Sinon : retourne DEFAULT_STATE.
+    Résolution en cascade (spécifique → legacy) :
+    1. (pair, direction, destination) — most specific
+    2. (pair, direction, destination IS NULL) — direction-specific, all destinations
+    3. (pair, direction IS NULL, destination IS NULL) — pair-level legacy
+    4. DEFAULT_STATE
 
-    Cette résolution permet la migration douce : les rows existantes
-    (direction IS NULL = pair-level legacy) restent honorées tant qu'on
-    n'a pas posé de row direction-specific qui override.
+    Migration douce : les rows existantes (direction IS NULL, destination IS NULL)
+    restent honorées tant qu'aucune row plus spécifique n'override.
     """
     _ensure_schema()
     direction = _normalize_direction(direction)
+    destination = _normalize_destination(destination)
     with sqlite3.connect(_db_path()) as c:
-        if direction is not None:
-            # 1. Row direction-specific
+        # 1. Row (pair, direction, destination) — most specific
+        if direction is not None and destination is not None:
             row = c.execute(
                 """
                 SELECT state FROM pair_admission_state
-                 WHERE pair = ? AND direction = ?
+                 WHERE pair = ? AND direction = ? AND destination = ?
+                 ORDER BY state_since DESC LIMIT 1
+                """,
+                (pair, direction, destination),
+            ).fetchone()
+            if row:
+                return row[0]
+        # 2. Row (pair, direction, destination IS NULL) — direction-specific legacy
+        if direction is not None:
+            row = c.execute(
+                """
+                SELECT state FROM pair_admission_state
+                 WHERE pair = ? AND direction = ? AND destination IS NULL
                  ORDER BY state_since DESC LIMIT 1
                 """,
                 (pair, direction),
             ).fetchone()
             if row:
                 return row[0]
-        # 2. Row pair-level legacy (direction IS NULL)
+        # 3. Row (pair, direction IS NULL, destination IS NULL) — pair-level legacy
         row = c.execute(
             """
             SELECT state FROM pair_admission_state
-             WHERE pair = ? AND direction IS NULL
+             WHERE pair = ? AND direction IS NULL AND destination IS NULL
              ORDER BY state_since DESC LIMIT 1
             """,
             (pair,),
@@ -301,39 +348,56 @@ def get_current_state(pair: str, direction: Optional[str] = None) -> str:
     return row[0] if row else DEFAULT_STATE
 
 
-def get_full_state(pair: str, direction: Optional[str] = None) -> dict[str, Any]:
-    """Retourne l'état + métadonnées (state_since, reason, score).
+def get_full_state(
+    pair: str,
+    direction: Optional[str] = None,
+    destination: Optional[str] = None,
+) -> dict[str, Any]:
+    """Retourne l'état + métadonnées (state_since, reason, score, destination).
 
-    Même résolution que get_current_state : direction-specific d'abord,
-    fallback pair-level.
+    Même cascade que get_current_state : (pair, dir, dest) → (pair, dir, dest NULL)
+    → (pair, dir NULL, dest NULL) → default.
     """
     _ensure_schema()
     direction = _normalize_direction(direction)
+    destination = _normalize_destination(destination)
     with sqlite3.connect(_db_path()) as c:
         c.row_factory = sqlite3.Row
         row = None
-        if direction is not None:
+        # 1. (pair, direction, destination)
+        if direction is not None and destination is not None:
             row = c.execute(
                 """
                 SELECT * FROM pair_admission_state
-                 WHERE pair = ? AND direction = ?
+                 WHERE pair = ? AND direction = ? AND destination = ?
+                 ORDER BY state_since DESC LIMIT 1
+                """,
+                (pair, direction, destination),
+            ).fetchone()
+        # 2. (pair, direction, destination IS NULL)
+        if not row and direction is not None:
+            row = c.execute(
+                """
+                SELECT * FROM pair_admission_state
+                 WHERE pair = ? AND direction = ? AND destination IS NULL
                  ORDER BY state_since DESC LIMIT 1
                 """,
                 (pair, direction),
             ).fetchone()
+        # 3. (pair, direction IS NULL, destination IS NULL)
         if not row:
             row = c.execute(
                 """
                 SELECT * FROM pair_admission_state
-                 WHERE pair = ? AND direction IS NULL
+                 WHERE pair = ? AND direction IS NULL AND destination IS NULL
                  ORDER BY state_since DESC LIMIT 1
                 """,
                 (pair,),
             ).fetchone()
     if not row:
-        return {"pair": pair, "direction": direction, "state": DEFAULT_STATE,
-                "state_since": None, "reason": None, "score_snapshot": None,
-                "transitioned_by": None}
+        return {"pair": pair, "direction": direction, "destination": destination,
+                "state": DEFAULT_STATE, "state_since": None, "reason": None,
+                "score_snapshot": None, "transitioned_by": None}
     d = dict(row)
     if d.get("score_snapshot"):
         try:
@@ -384,20 +448,46 @@ def list_all_states() -> list[dict[str, Any]]:
 # ─── Eligibility helpers (utilisés par mt5_bridge + telegram_service) ───
 
 
-def _has_explicit_state(pair: str, direction: Optional[str] = None) -> bool:
-    """True si (pair, direction) a au moins une row dans pair_admission_state.
+def _has_explicit_state(
+    pair: str,
+    direction: Optional[str] = None,
+    destination: Optional[str] = None,
+) -> bool:
+    """True si une row matche (pair, direction, destination) avec cascade.
 
-    Si direction fournie : True si row direction-specific OU row pair-level.
-    Si direction None : True si au moins une row existe pour pair.
+    Match si au moins l'un des 3 niveaux existe : (dir, dest) spec, (dir, dest NULL),
+    (dir NULL, dest NULL). Retour True = get_current_state renverra une valeur
+    de la DB (pas DEFAULT_STATE), donc le callsite doit honorer l'état.
     """
     _ensure_schema()
     direction = _normalize_direction(direction)
+    destination = _normalize_destination(destination)
     with sqlite3.connect(_db_path()) as c:
+        # Le OR ci-dessous couvre les 3 niveaux de cascade en une seule query.
+        # destination IS NULL matche toujours (destination-agnostic legacy row).
         if direction is not None:
-            row = c.execute(
-                "SELECT 1 FROM pair_admission_state WHERE pair = ? AND (direction = ? OR direction IS NULL) LIMIT 1",
-                (pair, direction),
-            ).fetchone()
+            if destination is not None:
+                row = c.execute(
+                    """
+                    SELECT 1 FROM pair_admission_state
+                     WHERE pair = ?
+                       AND (direction = ? OR direction IS NULL)
+                       AND (destination = ? OR destination IS NULL)
+                     LIMIT 1
+                    """,
+                    (pair, direction, destination),
+                ).fetchone()
+            else:
+                row = c.execute(
+                    """
+                    SELECT 1 FROM pair_admission_state
+                     WHERE pair = ?
+                       AND (direction = ? OR direction IS NULL)
+                       AND destination IS NULL
+                     LIMIT 1
+                    """,
+                    (pair, direction),
+                ).fetchone()
         else:
             row = c.execute(
                 "SELECT 1 FROM pair_admission_state WHERE pair = ? LIMIT 1",
@@ -406,32 +496,46 @@ def _has_explicit_state(pair: str, direction: Optional[str] = None) -> bool:
     return bool(row)
 
 
-def is_auto_exec_eligible(pair: str, direction: Optional[str] = None) -> bool:
-    """True si (pair, direction) peut être pushée vers le bridge MT5.
+def is_auto_exec_eligible(
+    pair: str,
+    direction: Optional[str] = None,
+    destination: Optional[str] = None,
+) -> bool:
+    """True si (pair, direction, destination) peut être pushée vers son bridge.
 
-    Migration douce : si pas de row pour (pair, direction) ni pair-level,
-    retourne False et le callsite fait son fallback _STAR_PAIRS_SET legacy.
+    Migration douce : si pas de row matchant la cascade, retourne False et
+    le callsite fait son fallback _STAR_PAIRS_SET legacy.
     """
-    if not _has_explicit_state(pair, direction):
+    if not _has_explicit_state(pair, direction, destination):
         return False  # callsite doit faire son fallback
-    return get_current_state(pair, direction) == STATE_AUTO_EXEC
+    return get_current_state(pair, direction, destination) == STATE_AUTO_EXEC
 
 
-def is_telegram_eligible(pair: str, direction: Optional[str] = None) -> bool:
-    """True si (pair, direction) peut générer un push Telegram user-facing.
+def is_telegram_eligible(
+    pair: str,
+    direction: Optional[str] = None,
+    destination: Optional[str] = None,
+) -> bool:
+    """True si (pair, direction, destination) peut générer un push Telegram.
 
     PAUSED inclus : on continue à informer le user mais avec verdict SKIP
     forcé côté setup (= signal info, pas trade reco).
     """
-    if not _has_explicit_state(pair, direction):
+    if not _has_explicit_state(pair, direction, destination):
         return False  # callsite doit faire son fallback
-    return get_current_state(pair, direction) in (STATE_TELEGRAM, STATE_AUTO_EXEC, STATE_PAUSED)
+    return get_current_state(pair, direction, destination) in (
+        STATE_TELEGRAM, STATE_AUTO_EXEC, STATE_PAUSED
+    )
 
 
-def has_explicit_state(pair: str, direction: Optional[str] = None) -> bool:
+def has_explicit_state(
+    pair: str,
+    direction: Optional[str] = None,
+    destination: Optional[str] = None,
+) -> bool:
     """API publique de _has_explicit_state pour les callers qui veulent
     décider eux-mêmes du fallback legacy."""
-    return _has_explicit_state(pair, direction)
+    return _has_explicit_state(pair, direction, destination)
 
 
 # ─── Write API ──────────────────────────────────────────────────────────
@@ -444,22 +548,27 @@ def set_state(
     direction: Optional[str] = None,
     score_snapshot: Optional[dict] = None,
     transitioned_by: str = "auto",
+    destination: Optional[str] = None,
 ) -> int:
-    """Transitionne (pair, direction) vers un nouvel état. Idempotent.
+    """Transitionne (pair, direction, destination) vers un nouvel état. Idempotent.
 
-    Si direction=None : insère une row pair-level (= s'applique à tous
-    les sens en l'absence de row direction-specific).
-    Si direction='buy'/'sell' : insère une row direction-specific qui
-    override le pair-level pour ce sens.
+    Si destination=None : row destination-agnostic (s'applique aux 2 bridges).
+    Si destination='admin_legacy'/'admin_live' : override pour cette destination.
+
+    Si direction=None : row pair-level (tous les sens).
+    Si direction='buy'/'sell' : row direction-specific.
     """
     if new_state not in VALID_STATES:
         raise ValueError(f"État invalide : {new_state}. Doit être dans {VALID_STATES}")
     _ensure_schema()
     direction = _normalize_direction(direction)
+    destination = _normalize_destination(destination)
 
-    current = get_current_state(pair, direction)
+    current = get_current_state(pair, direction, destination)
     if current == new_state:
-        logger.debug(f"pair_admission: {pair}/{direction} déjà {new_state}, no-op")
+        logger.debug(
+            f"pair_admission: {pair}/{direction}/{destination} déjà {new_state}, no-op"
+        )
         return -1
 
     now = datetime.now(timezone.utc).isoformat()
@@ -468,15 +577,17 @@ def set_state(
         cur = c.execute(
             """
             INSERT INTO pair_admission_state
-                (pair, direction, state, state_since, reason, score_snapshot, transitioned_by)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+                (pair, direction, destination, state, state_since, reason, score_snapshot, transitioned_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (pair, direction, new_state, now, reason, score_json, transitioned_by),
+            (pair, direction, destination, new_state, now, reason, score_json, transitioned_by),
         )
         new_id = cur.lastrowid
     dir_label = f"/{direction}" if direction else ""
+    dest_label = f"@{destination}" if destination else ""
     logger.warning(
-        f"pair_admission: {pair}{dir_label} {current} → {new_state} by={transitioned_by} reason={reason}"
+        f"pair_admission: {pair}{dir_label}{dest_label} {current} → {new_state} "
+        f"by={transitioned_by} reason={reason}"
     )
 
     # Notification Telegram infra des transitions, sauf le backfill initial
