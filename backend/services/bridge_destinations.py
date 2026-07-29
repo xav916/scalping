@@ -22,6 +22,7 @@ dans la fonction).
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Any
 
@@ -91,19 +92,49 @@ def _admin_legacy_destination() -> BridgeConfig | None:
 
     Lit via ``mt5_bridge`` (lazy import) pour respecter les patches des
     tests existants qui font ``patch.object(mt5_bridge, "MT5_BRIDGE_URL", ...)``.
+
+    Overrides opt-in via env vars ``MT5_BRIDGE_LEGACY_*`` (2026-07-29) —
+    permet d'aligner Demo sur Live sans toucher aux globals partagés avec
+    les user:N destinations. Fallback global si non défini.
     """
     from backend.services import mt5_bridge as mb
 
     if not (mb.MT5_BRIDGE_ENABLED and mb.MT5_BRIDGE_URL and mb.MT5_BRIDGE_API_KEY):
         return None
+
+    legacy_min_conf_raw = os.getenv("MT5_BRIDGE_LEGACY_MIN_CONFIDENCE", "").strip()
+    min_conf = (
+        float(legacy_min_conf_raw)
+        if legacy_min_conf_raw
+        else float(mb.MT5_BRIDGE_MIN_CONFIDENCE)
+    )
+
+    legacy_classes_raw = os.getenv("MT5_BRIDGE_LEGACY_ALLOWED_ASSET_CLASSES", "").strip()
+    if legacy_classes_raw:
+        allowed_classes = frozenset(
+            c.strip().lower() for c in legacy_classes_raw.split(",") if c.strip()
+        )
+    else:
+        allowed_classes = frozenset(mb.MT5_BRIDGE_ALLOWED_ASSET_CLASSES)
+
+    legacy_extras_raw = os.getenv("MT5_BRIDGE_LEGACY_EXTRA_PAIRS", "").strip()
+    extra_pairs = (
+        frozenset(
+            p.strip().upper() for p in legacy_extras_raw.split(",") if p.strip()
+        )
+        if legacy_extras_raw
+        else frozenset()
+    )
+
     return BridgeConfig(
         destination_id="admin_legacy",
         user_id=None,
         bridge_url=mb.MT5_BRIDGE_URL.rstrip("/"),
         bridge_api_key=mb.MT5_BRIDGE_API_KEY,
-        min_confidence=float(mb.MT5_BRIDGE_MIN_CONFIDENCE),
-        allowed_asset_classes=frozenset(mb.MT5_BRIDGE_ALLOWED_ASSET_CLASSES),
+        min_confidence=min_conf,
+        allowed_asset_classes=allowed_classes,
         auto_exec_enabled=True,
+        extra_pairs_allowed=extra_pairs,
     )
 
 

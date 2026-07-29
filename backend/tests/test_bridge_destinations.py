@@ -476,3 +476,74 @@ def test_admin_live_uses_legacy_defaults_when_overrides_absent(monkeypatch):
     assert dests[0].destination_id == "admin_live"
     assert dests[0].min_confidence == 90.0
     assert dests[0].allowed_asset_classes == frozenset({"forex", "metal"})
+
+
+# ─── admin_legacy : overrides MT5_BRIDGE_LEGACY_* (2026-07-29) ────────
+# Permet d'aligner Demo sur Live comme miroir pour tester avant promotion,
+# sans toucher aux globals partagés avec les user:N destinations.
+
+
+def test_admin_legacy_min_confidence_override_from_env(monkeypatch):
+    """MT5_BRIDGE_LEGACY_MIN_CONFIDENCE=60 override le global (55.0 dans _set_admin_env)."""
+    _set_admin_env(monkeypatch)  # global = 55.0
+    monkeypatch.setenv("MT5_BRIDGE_LEGACY_MIN_CONFIDENCE", "60")
+
+    dests = bridge_destinations.resolve_destinations(_mk_setup())
+
+    assert len(dests) == 1
+    assert dests[0].destination_id == "admin_legacy"
+    assert dests[0].min_confidence == 60.0  # override respecté, pas 55.0
+
+
+def test_admin_legacy_min_confidence_fallback_to_global_when_env_missing(monkeypatch):
+    """Sans MT5_BRIDGE_LEGACY_MIN_CONFIDENCE → fallback global mt5_bridge.MT5_BRIDGE_MIN_CONFIDENCE."""
+    _set_admin_env(monkeypatch, MT5_BRIDGE_MIN_CONFIDENCE=72.0)
+    monkeypatch.delenv("MT5_BRIDGE_LEGACY_MIN_CONFIDENCE", raising=False)
+
+    dests = bridge_destinations.resolve_destinations(_mk_setup())
+
+    assert dests[0].min_confidence == 72.0  # rétro-compat globale
+
+
+def test_admin_legacy_allowed_asset_classes_override_from_env(monkeypatch):
+    """MT5_BRIDGE_LEGACY_ALLOWED_ASSET_CLASSES restreint la classe autorisée Demo."""
+    _set_admin_env(monkeypatch)  # global = [forex, metal]
+    monkeypatch.setenv("MT5_BRIDGE_LEGACY_ALLOWED_ASSET_CLASSES", "metal")
+
+    dests = bridge_destinations.resolve_destinations(_mk_setup())
+
+    assert dests[0].allowed_asset_classes == frozenset({"metal"})
+
+
+def test_admin_legacy_allowed_asset_classes_fallback_when_env_missing(monkeypatch):
+    """Sans override, fallback sur le global."""
+    _set_admin_env(monkeypatch, MT5_BRIDGE_ALLOWED_ASSET_CLASSES=["forex", "crypto"])
+    monkeypatch.delenv("MT5_BRIDGE_LEGACY_ALLOWED_ASSET_CLASSES", raising=False)
+
+    dests = bridge_destinations.resolve_destinations(_mk_setup())
+
+    assert dests[0].allowed_asset_classes == frozenset({"forex", "crypto"})
+
+
+def test_admin_legacy_extra_pairs_from_env(monkeypatch):
+    """MT5_BRIDGE_LEGACY_EXTRA_PAIRS ajoute des pairs autorisées en plus des stars.
+
+    Miroir strict du pattern MT5_BRIDGE_LIVE_EXTRA_PAIRS — permet à Demo
+    d'accepter EUR/USD (non-star) sans que le filtre stars-only l'écarte.
+    """
+    _set_admin_env(monkeypatch)
+    monkeypatch.setenv("MT5_BRIDGE_LEGACY_EXTRA_PAIRS", "EUR/USD, GBP/JPY")
+
+    dests = bridge_destinations.resolve_destinations(_mk_setup())
+
+    assert dests[0].extra_pairs_allowed == frozenset({"EUR/USD", "GBP/JPY"})
+
+
+def test_admin_legacy_extra_pairs_empty_by_default(monkeypatch):
+    """Sans env var → frozenset() vide (comportement legacy inchangé)."""
+    _set_admin_env(monkeypatch)
+    monkeypatch.delenv("MT5_BRIDGE_LEGACY_EXTRA_PAIRS", raising=False)
+
+    dests = bridge_destinations.resolve_destinations(_mk_setup())
+
+    assert dests[0].extra_pairs_allowed == frozenset()

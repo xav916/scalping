@@ -57,6 +57,16 @@ LIVE_WHITELIST_PAIRS = frozenset(
     if p.strip()
 )
 
+# Whitelist par destination (2026-07-29) — même pattern que LIVE_WHITELIST_PAIRS,
+# étendu à admin_legacy (Demo). Permet d'aligner Demo sur Live comme miroir
+# pour tester des variantes avant promotion vers l'argent réel. Vide = pas de
+# whitelist (comportement stars-only historique de admin_legacy).
+LEGACY_WHITELIST_PAIRS = frozenset(
+    p.strip().upper()
+    for p in os.getenv("MT5_BRIDGE_LEGACY_WHITELIST_PAIRS", "").split(",")
+    if p.strip()
+)
+
 from backend.services.market_hours import is_market_open_for
 from backend.services.shadow_v2_core_long import SHADOW_PAIRS as _STAR_PAIRS
 from config.settings import (
@@ -228,17 +238,24 @@ def _check_rejection(setup, dest=None) -> str | None:
     # Cf. MT5_BRIDGE_BLOCKED_PAIRS dans config/settings.py.
     if setup.pair.upper() in MT5_BRIDGE_BLOCKED_PAIRS:
         return "pair_blocked"
-    # Whitelist par destination (2026-06-30) — admin_live opt-in strict.
-    # Si LIVE_WHITELIST_PAIRS non-vide, seules ces pairs passent vers admin_live.
-    # Reasoning : empeche toute activation involontaire de nouvelles pairs en
-    # argent reel. Doit etre explicitement listee pour atteindre IC Markets Live.
-    if (
-        LIVE_WHITELIST_PAIRS
-        and dest is not None
-        and getattr(dest, "destination_id", None) == "admin_live"
-        and setup.pair.upper() not in LIVE_WHITELIST_PAIRS
-    ):
-        return "pair_not_whitelisted"
+    # Whitelist par destination (2026-06-30 admin_live, 2026-07-29 admin_legacy).
+    # Opt-in strict : si WHITELIST_PAIRS non-vide pour la destination, seules ces
+    # pairs passent. Reasoning : empêche activation involontaire de nouvelles
+    # pairs en argent réel (Live) ou en shadow test (Legacy aligné Live).
+    if dest is not None:
+        dest_id_wl = getattr(dest, "destination_id", None)
+        if (
+            LIVE_WHITELIST_PAIRS
+            and dest_id_wl == "admin_live"
+            and setup.pair.upper() not in LIVE_WHITELIST_PAIRS
+        ):
+            return "pair_not_whitelisted"
+        if (
+            LEGACY_WHITELIST_PAIRS
+            and dest_id_wl == "admin_legacy"
+            and setup.pair.upper() not in LEGACY_WHITELIST_PAIRS
+        ):
+            return "pair_not_whitelisted"
     # Auto-régulateur PnL : pause auto par pair quand sum_pnl < seuil sur
     # fenêtre glissante. Couvre le saignement chronique (cas XAG diffus).
     try:
