@@ -1240,12 +1240,27 @@ def place_order():
         return jsonify({"error": "MT5 not connected"}), 503
 
     pair = data["pair"]
-    mt5_symbol = resolve_symbol(pair)
-    if not mt5_symbol:
-        return jsonify({
-            "error": f"No MT5 symbol found for {pair}. "
-                     f"Try /symbols to see what's available on {MT5_SERVER}."
-        }), 404
+    # broker_symbol prioritaire si fourni par le radar (multi-tenant symbol
+    # mapping cote serveur via MT5_BRIDGE_LIVE_SYMBOL_MAP). Fallback
+    # resolve_symbol si absent -> comportement legacy inchange pour les
+    # payloads sans broker_symbol (Cedric EA MQL5 payload legacy). Fix
+    # 2026-07-29 : dispatch admin_live cassé pendant 14j car bridge ignorait
+    # broker_symbol et cherchait pair="WTI/USD" au lieu de "XTIUSD".
+    broker_symbol = data.get("broker_symbol")
+    if broker_symbol:
+        if not mt5.symbol_info(broker_symbol):
+            return jsonify({
+                "error": f"broker_symbol '{broker_symbol}' not found on {MT5_SERVER}. "
+                         f"Try /symbols to see available symbols."
+            }), 404
+        mt5_symbol = broker_symbol
+    else:
+        mt5_symbol = resolve_symbol(pair)
+        if not mt5_symbol:
+            return jsonify({
+                "error": f"No MT5 symbol found for {pair}. "
+                         f"Try /symbols to see what's available on {MT5_SERVER}."
+            }), 404
 
     # ─── Sizing : lots explicites OU calcul depuis risk_money ────
     if "risk_money" in data:
