@@ -635,6 +635,21 @@ def start_scheduler() -> AsyncIOScheduler:
         name="Récap Telegram 23h59 Paris",
         replace_existing=True,
     )
+    # Promotion engine nightly (Sprint 2 du chantier promotion criteria 2026-07-29).
+    # Évalue les gates 1→4 par (pair, direction), applique démotions auto, propose
+    # promotions via Telegram infra (info-only Sprint 2 ; bouton 1-clic en Sprint 3).
+    # 03:00 UTC = hors sessions FX et US (session Asie calme).
+    async def _promotion_engine_cycle():
+        from backend.services.promotion_engine import run_promotion_cycle
+        # run_promotion_cycle est sync (SQLite), on l'exécute directement dans le loop
+        run_promotion_cycle()
+    _scheduler.add_job(
+        _promotion_engine_cycle,
+        CronTrigger(hour=3, minute=0, timezone="UTC"),
+        id="promotion_engine_nightly",
+        name="Promotion engine — gates + démotions",
+        replace_existing=True,
+    )
     # Sync bridge MT5 → personal_trades : pull incrémental depuis /audit
     # pour que les ordres auto apparaissent dans le dashboard.
     from backend.services.mt5_sync import sync_from_bridge
