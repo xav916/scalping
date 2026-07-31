@@ -259,18 +259,37 @@ _start_of_day_date: date | None = None
 
 
 def _refresh_start_of_day() -> None:
-    """Relit la balance au début de chaque jour trading."""
+    """Relit la balance au début de chaque jour trading.
+
+    Ajout 2026-07-31 : filet de sécurité anti-drift. Si le cache diverge de la
+    balance actuelle d'un facteur > 1.5x (dans un sens ou l'autre), resync
+    immédiat. Couvre les retraits/dépôts entre les redémarrages du bridge, ou
+    les états stale d'anciennes sessions où la balance était très différente.
+    """
     global _start_of_day_balance, _start_of_day_date
     today = date.today()
+    info = mt5.account_info()
+    if info is None:
+        return
+    # Refresh normal au changement de jour UTC
     if _start_of_day_date != today:
-        info = mt5.account_info()
-        if info is not None:
-            _start_of_day_balance = info.balance
-            _start_of_day_date = today
-            logger.info(
-                f"Start-of-day balance = {_start_of_day_balance:.2f} "
-                f"(date={today.isoformat()})"
+        _start_of_day_balance = info.balance
+        _start_of_day_date = today
+        logger.info(
+            f"Start-of-day balance = {_start_of_day_balance:.2f} "
+            f"(date={today.isoformat()})"
+        )
+        return
+    # Anti-drift : cache irréaliste vs balance actuelle → resync
+    if _start_of_day_balance is not None and info.balance > 0:
+        ratio = _start_of_day_balance / info.balance
+        if ratio > 1.5 or ratio < 0.667:
+            logger.warning(
+                f"Start-of-day balance drift detected: cached="
+                f"{_start_of_day_balance:.2f} actual={info.balance:.2f} "
+                f"ratio={ratio:.2f} - resync"
             )
+            _start_of_day_balance = info.balance
 
 
 def _parse_trading_hours(window: str) -> list[tuple[int, int]]:
