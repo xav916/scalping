@@ -72,6 +72,88 @@ USE_MAKER_ORDERS = os.getenv("BINANCE_USE_MAKER_ORDERS", "false").strip().lower(
 MAKER_TIMEOUT_SEC = float(os.getenv("BINANCE_MAKER_TIMEOUT_SEC", "30"))
 MAKER_POLL_SEC = float(os.getenv("BINANCE_MAKER_POLL_SEC", "2"))
 
+# ─── Safety gates (2026-08-01, ajouté avant switch mainnet) ────────────
+# Kill-switch daily drawdown : miroir du bridge MT5 Live. Bloque tout nouveau
+# /order si equity_actuelle - balance_debut_journee <= -MAX_DAILY_LOSS_PCT%.
+# Anti-drift : resync auto si cache diverge >1.5x de balance actuelle.
+MAX_DAILY_LOSS_PCT = float(os.getenv("BINANCE_MAX_DAILY_LOSS_PCT", "3.0"))
+
+# Whitelist symbols opt-in strict. Non-vide => seuls ces symboles Binance
+# peuvent être tradés en LIVE. Vide (default) = tous les symboles supportés
+# par _PAIR_TO_SYMBOL passent (comportement testnet). Ajouté pour éviter
+# activation involontaire de nouvelles cryptos en argent réel.
+LIVE_WHITELIST_SYMBOLS = frozenset(
+    s.strip().upper()
+    for s in os.getenv("BINANCE_LIVE_WHITELIST_SYMBOLS", "").split(",")
+    if s.strip()
+)
+
+# Balance de début de journée (calculée sur la balance wallet Futures USDT).
+_start_of_day_balance: float | None = None
+_start_of_day_date = None
+
+
+def _get_current_balance_usdt() -> float | None:
+    """Retourne la balance USDT du wallet Futures, ou None si indispo."""
+    try:
+        data = _signed_request("GET", "/fapi/v2/balance")
+        for asset in data:
+            if asset.get("asset") == "USDT":
+                return float(asset.get("balance", 0.0))
+    except Exception as e:
+        logger.debug(f"_get_current_balance_usdt error: {e}")
+    return None
+
+
+def _refresh_start_of_day_binance() -> None:
+    """Refresh la balance début de jour Binance. Miroir du pattern MT5 Live.
+
+    - Refresh normal au changement de jour UTC
+    - Anti-drift : si cache diverge > 1.5x de balance actuelle, resync
+    """
+    global _start_of_day_balance, _start_of_day_date
+    from datetime import date
+    today = date.today()
+    current = _get_current_balance_usdt()
+    if current is None:
+        return
+    # Refresh normal midnight UTC
+    if _start_of_day_date != today:
+        _start_of_day_balance = current
+        _start_of_day_date = today
+        logger.info(
+            f"Binance start-of-day balance = {_start_of_day_balance:.2f} USDT "
+            f"(date={today.isoformat()})"
+        )
+        return
+    # Anti-drift
+    if _start_of_day_balance is not None and current > 0:
+        ratio = _start_of_day_balance / current
+        if ratio > 1.5 or ratio < 0.667:
+            logger.warning(
+                f"Binance start-of-day drift: cached={_start_of_day_balance:.2f} "
+                f"actual={current:.2f} ratio={ratio:.2f} - resync"
+            )
+            _start_of_day_balance = current
+
+
+def _check_daily_drawdown() -> tuple[bool, str]:
+    """Retourne (ok, reason). ok=False → refuser /order (429)."""
+    _refresh_start_of_day_binance()
+    if _start_of_day_balance is None or _start_of_day_balance <= 0:
+        return True, ""  # safe fallback : pas de balance connue, on laisse passer
+    current = _get_current_balance_usdt()
+    if current is None:
+        return True, ""
+    loss = _start_of_day_balance - current
+    loss_limit = _start_of_day_balance * MAX_DAILY_LOSS_PCT / 100.0
+    if loss >= loss_limit:
+        return False, (
+            f"Daily drawdown reached: loss={loss:.2f} >= limit={loss_limit:.2f} "
+            f"({MAX_DAILY_LOSS_PCT}% of {_start_of_day_balance:.2f})"
+        )
+    return True, ""
+
 # Mapping pair scalping-radar → symbole Binance USDⓈ-M futures.
 # Convention : BASE/USD → BASEUSDT (Binance perp collatéralisé USDT).
 _PAIR_TO_SYMBOL: dict[str, str] = {
@@ -406,6 +488,9 @@ def health():
             "use_real_stops": USE_REAL_STOPS,
             "use_maker_orders": USE_MAKER_ORDERS,
             "maker_timeout_sec": MAKER_TIMEOUT_SEC,
+            "max_daily_loss_pct": MAX_DAILY_LOSS_PCT,
+            "live_whitelist_symbols": sorted(LIVE_WHITELIST_SYMBOLS) if LIVE_WHITELIST_SYMBOLS else [],
+            "start_of_day_balance": _start_of_day_balance,
         })
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 503
@@ -554,6 +639,21 @@ def place_order():
     sym = _resolve_symbol(pair or "")
     if not sym:
         return jsonify({"ok": False, "error": f"unsupported pair {pair}"}), 400
+
+    # Safety gate #1 (2026-08-01) : whitelist symbols opt-in strict.
+    # LIVE_WHITELIST_SYMBOLS non-vide => bloque tout symbole non listé.
+    # Miroir de LIVE_WHITELIST_PAIRS côté bridge MT5 Live.
+    if LIVE_WHITELIST_SYMBOLS and sym not in LIVE_WHITELIST_SYMBOLS:
+        return jsonify({
+            "ok": False, "blocked": True,
+            "reason": f"symbol {sym} not in BINANCE_LIVE_WHITELIST_SYMBOLS",
+        }), 429
+
+    # Safety gate #2 (2026-08-01) : daily drawdown en LIVE (skip testnet).
+    if BINANCE_ENV == "live":
+        ok, reason = _check_daily_drawdown()
+        if not ok:
+            return jsonify({"ok": False, "blocked": True, "reason": reason}), 429
 
     try:
         specs = _get_specs(sym)
