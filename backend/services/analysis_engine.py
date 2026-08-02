@@ -854,6 +854,50 @@ def enrich_trade_setup(
         except Exception as e:
             logger.debug(f"vix scoring error: {e}")
 
+    # ── Economic calendar veto (P1 — 2026-08-03) ────────────────────────
+    # Soft veto ×0.70 si un event HIGH impact (NFP, CPI, FOMC, ECB, BoE,
+    # GDP...) est dans ±30 min. Filtre par currency impactée par la paire.
+    # No-op sur crypto/equity (pas d'event macro binaire direct). Best-effort :
+    # si le cache SQLite est vide ou indisponible, score inchangé.
+    # Feature-flagged via ECONOMIC_CALENDAR_VETO_ENABLED (défaut: true).
+    try:
+        from config.settings import ECONOMIC_CALENDAR_VETO_ENABLED
+    except Exception:
+        ECONOMIC_CALENDAR_VETO_ENABLED = False
+    if ECONOMIC_CALENDAR_VETO_ENABLED:
+        try:
+            from backend.services import economic_calendar_veto
+            eco_new_score, eco_meta = economic_calendar_veto.apply_economic_veto(
+                setup.pair, setup.direction.value, setup.confidence_score
+            )
+            eco_mult = eco_meta.get("eco_multiplier", 1.0)
+            if eco_meta.get("eco_veto_applied"):
+                prev_score = setup.confidence_score
+                setup.confidence_score = eco_new_score
+                event_name = eco_meta.get("eco_event_name", "?")
+                delta_min = eco_meta.get("eco_minutes_delta", 0)
+                factors.append(
+                    ConfidenceFactor(
+                        name="Calendrier économique",
+                        score=round((eco_mult - 1.0) * 100, 1),
+                        detail=(
+                            f"×{eco_mult:.2f} — {event_name} "
+                            f"({delta_min:+.0f}min)"
+                        ),
+                        positive=False,
+                        source="macro",
+                        metadata=eco_meta,
+                    )
+                )
+                setup.confidence_factors = factors
+                logger.info(
+                    f"eco_calendar_applied pair={setup.pair} dir={setup.direction.value} "
+                    f"event='{event_name}' delta={delta_min:+.0f}min "
+                    f"prev={prev_score} final={eco_new_score}"
+                )
+        except Exception as e:
+            logger.debug(f"economic calendar veto error: {e}")
+
     # ── Kraken Futures funding rate scoring (Gap 2 — 2026-08-02) ─────────
     # Miroir du filtre Binance funding mais source native Kraken Futures.
     # Appliqué pour TOUS les setups crypto (pas seulement admin_kraken) car

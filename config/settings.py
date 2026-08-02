@@ -218,6 +218,12 @@ BINANCE_ORDERFLOW_SCORING_ENABLED = os.getenv("BINANCE_ORDERFLOW_SCORING_ENABLED
 BINANCE_OI_SCORING_ENABLED = os.getenv("BINANCE_OI_SCORING_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 # Tier 2 chantier #14 (2026-06-18) : multi-timeframe alignment (HTF 15m+1h vs setup 5m).
 BINANCE_MTF_SCORING_ENABLED = os.getenv("BINANCE_MTF_SCORING_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+# P1 (2026-08-03) : Veto calendrier économique pre/post news HIGH impact
+# (NFP, CPI, FOMC, ECB, BoE, GDP...). Soft veto ×0.70 si un event HIGH
+# est dans ±30 min de now. Filtre par currency impactée par la paire.
+# No-op crypto/equity. Cache SQLite economic_events peuplé par refresh hebdo.
+ECONOMIC_CALENDAR_VETO_ENABLED = os.getenv("ECONOMIC_CALENDAR_VETO_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+
 # Gap 1 MVP (2026-08-02) : VIX regime veto pour signaux equity/equity_index.
 # Multiplicateurs : calme(×1.0) modéré(×0.95) stress(×0.85) panique(×0.70).
 # Utilise vix_service.get_current() (cache SQLite 5 min). Best-effort : si VIX

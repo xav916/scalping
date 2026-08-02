@@ -789,6 +789,32 @@ def start_scheduler() -> AsyncIOScheduler:
         )
         logger.info(f"macro: refresh job scheduled every {MACRO_REFRESH_INTERVAL_SEC}s")
 
+    # Sync calendrier économique ForexFactory (P1 — 2026-08-03).
+    # Fetch hebdo : dimanche 20h UTC (avant ouverture semaine forex)
+    # + fallback jeudi 20h UTC (mid-week au cas où le dimanche a échoué).
+    # Cache SQLite economic_events — veto branché dans analysis_engine.
+    try:
+        from backend.services import economic_calendar_service as _eco_svc
+        _scheduler.add_job(
+            _eco_svc.refresh_calendar,
+            CronTrigger(day_of_week="sun", hour=20, minute=0, timezone="UTC"),
+            id="eco_calendar_refresh_sun",
+            name="Sync economic calendar (dimanche 20h UTC)",
+            replace_existing=True,
+        )
+        _scheduler.add_job(
+            _eco_svc.refresh_calendar,
+            CronTrigger(day_of_week="thu", hour=20, minute=0, timezone="UTC"),
+            id="eco_calendar_refresh_thu",
+            name="Sync economic calendar (jeudi 20h UTC — fallback)",
+            replace_existing=True,
+        )
+        # Warmup immédiat au démarrage pour peupler le cache
+        _eco_svc.refresh_calendar()
+        logger.info("eco_calendar: scheduler registered (sun+thu 20h UTC), warmup done")
+    except Exception as _e:
+        logger.warning(f"scheduler: eco_calendar non installé : {_e}")
+
     # Alertes rafales de rejections : toutes les 5 min, surveille les
     # rejections de la derniere heure. Envoie Telegram si > 10 d'affilee
     # sur un meme reason_code (cooldown 60 min par code).
