@@ -128,19 +128,22 @@ class TestGetSpreadBps:
         return mock_resp
 
     def test_spread_computed_correctly(self):
-        """bid=50000, ask=50010 → spread = 10/50005 * 10000 ≈ 2.0 bps."""
+        """Vérifie que bids[-1] (best bid ascendant Kraken) et asks[0] sont utilisés.
+
+        Kraken orderbook : bids triés ascendant → best bid = bids[-1].
+        Ex: bids=[[1, x], [49990, x], [50000, x]], asks=[[50010, x]]
+        → best bid=50000, best ask=50010, spread≈2 bps.
+        """
         import backend.services.kraken_orderbook_scoring as mod
         sym = "PF_XBTUSD"
+        # Force cache miss
         mod._CACHE.pop(sym, None)
-        mod._CACHE[sym + "_force_miss"] = (0.0, 0.0)  # ensure cache miss for sym
 
         mock_resp = self._make_mock_response(
-            bids=[[50000.0, 1.5]], asks=[[50010.0, 0.8]]
+            # Bids ascendant : pire (1) → meilleur (50000) en dernier
+            bids=[[1.0, 100.0], [49990.0, 0.5], [50000.0, 1.5]],
+            asks=[[50010.0, 0.8], [50020.0, 1.2]],
         )
-        # Force cache miss
-        if sym in mod._CACHE:
-            del mod._CACHE[sym]
-
         with patch("urllib.request.urlopen", return_value=mock_resp):
             spread = mod._get_spread_bps(sym)
 

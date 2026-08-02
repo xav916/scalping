@@ -90,8 +90,10 @@ def _get_spread_bps(symbol: str) -> float | None:
         asks = book.get("asks", [])
         if not bids or not asks:
             return None
-        # Format Kraken : [[price, size], ...]
-        bid = float(bids[0][0])
+        # Format Kraken : [[price, size], ...].
+        # Bids sont triés ascendant (pire → meilleur) → meilleur bid = bids[-1].
+        # Asks sont triés ascendant (meilleur → pire) → meilleur ask = asks[0].
+        bid = float(bids[-1][0])
         ask = float(asks[0][0])
         if bid <= 0 or ask <= 0:
             return None
