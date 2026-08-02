@@ -402,7 +402,13 @@ def resolve_destinations(setup: Any) -> list[BridgeConfig]:
         destinations.append(admin_kraken)
     admin_kraken_spot = _admin_kraken_spot_destination()
     if admin_kraken_spot is not None:
-        destinations.append(admin_kraken_spot)
+        # Kraken Spot est long-only : le bridge rejette les shorts avec
+        # `kraken_spot_short_rejected`. Filtrer ici évite de router ~30-40%
+        # des signaux crypto (les SELL) pour rien, allège les logs et
+        # rejections DB. Le bridge garde son check défensif au cas où.
+        direction = getattr(getattr(setup, "direction", None), "value", "")
+        if str(direction).lower() == "buy":
+            destinations.append(admin_kraken_spot)
     admin_kraken_stocks = _admin_kraken_stocks_destination()
     if admin_kraken_stocks is not None:
         destinations.append(admin_kraken_stocks)

@@ -547,3 +547,43 @@ def test_admin_legacy_extra_pairs_empty_by_default(monkeypatch):
     dests = bridge_destinations.resolve_destinations(_mk_setup())
 
     assert dests[0].extra_pairs_allowed == frozenset()
+
+
+# ─── admin_kraken_spot long-only filter (Gap 4 2026-08-02) ────────────
+
+
+def _set_kraken_spot_env(monkeypatch):
+    """Active la destination admin_kraken_spot via config.settings."""
+    from config import settings as st
+    monkeypatch.setattr(st, "KRAKEN_SPOT_BRIDGE_ENABLED", True, raising=False)
+    monkeypatch.setattr(st, "KRAKEN_SPOT_BRIDGE_URL", "http://127.0.0.1:8791", raising=False)
+    monkeypatch.setattr(st, "KRAKEN_SPOT_BRIDGE_API_KEY", "y" * 32, raising=False)
+    monkeypatch.setattr(st, "KRAKEN_SPOT_BRIDGE_MIN_CONFIDENCE", 75.0, raising=False)
+
+
+def test_admin_kraken_spot_included_when_buy(monkeypatch):
+    """Signal BUY sur crypto → admin_kraken_spot doit être présent."""
+    _set_admin_env(monkeypatch)
+    _set_kraken_spot_env(monkeypatch)
+
+    setup = _mk_setup(pair="BTC/USD")
+    setup.direction = MagicMock(value="buy")
+
+    dests = bridge_destinations.resolve_destinations(setup)
+    ids = [d.destination_id for d in dests]
+
+    assert "admin_kraken_spot" in ids
+
+
+def test_admin_kraken_spot_excluded_when_sell(monkeypatch):
+    """Signal SELL sur crypto → admin_kraken_spot doit être filtré (long-only)."""
+    _set_admin_env(monkeypatch)
+    _set_kraken_spot_env(monkeypatch)
+
+    setup = _mk_setup(pair="BTC/USD")
+    setup.direction = MagicMock(value="sell")
+
+    dests = bridge_destinations.resolve_destinations(setup)
+    ids = [d.destination_id for d in dests]
+
+    assert "admin_kraken_spot" not in ids
