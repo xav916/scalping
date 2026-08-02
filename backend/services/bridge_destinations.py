@@ -239,6 +239,46 @@ def _admin_kraken_spot_destination() -> BridgeConfig | None:
     )
 
 
+def _admin_kraken_stocks_destination() -> BridgeConfig | None:
+    """Retourne la config Kraken xStocks LIVE (actions US tokenisées), ou ``None`` si désactivé.
+
+    Créé 2026-08-02 (Voie A) après découverte que l'API Kraken Futures accepte
+    les xStocks Backed Finance (PF_AAPLXUSD, PF_TSLAXUSD...) sur compte FR
+    même si l'UI de recherche les cache. Route vers le MÊME bridge Kraken
+    Futures (port 8790) que la destination admin_kraken crypto, mais avec
+    filtre allowed_asset_classes={"equity"} pour séparer le tracking PnL.
+
+    Risques connus :
+    - Kraken pourrait bloquer l'accès API à tout moment (usage "non-intentionnel"
+      pour compte FR)
+    - Prix xStocks décorrélés des vrais marchés NYSE (pricing propre à Kraken)
+    - Trading 24/7 avec levier ~10x auto = risque plus élevé
+
+    Conditions activation :
+    - KRAKEN_STOCKS_BRIDGE_ENABLED=true
+    - KRAKEN_STOCKS_BRIDGE_URL set (typique http://127.0.0.1:8790 = même bridge)
+    - bridge_type="kraken" déclenche le dispatch vers kraken_bridge_client
+    """
+    from config import settings as st
+
+    if not (
+        getattr(st, "KRAKEN_STOCKS_BRIDGE_ENABLED", False)
+        and getattr(st, "KRAKEN_STOCKS_BRIDGE_URL", "")
+    ):
+        return None
+    return BridgeConfig(
+        destination_id="admin_kraken_stocks",
+        user_id=None,
+        bridge_url=st.KRAKEN_STOCKS_BRIDGE_URL.rstrip("/"),
+        bridge_api_key=getattr(st, "KRAKEN_STOCKS_BRIDGE_API_KEY", "") or "",
+        min_confidence=float(getattr(st, "KRAKEN_STOCKS_BRIDGE_MIN_CONFIDENCE", 75)),
+        allowed_asset_classes=frozenset({"equity"}),
+        auto_exec_enabled=True,
+        bridge_type="kraken",
+        leverage=int(getattr(st, "KRAKEN_STOCKS_BRIDGE_LEVERAGE", 5)),
+    )
+
+
 def _admin_kraken_destination() -> BridgeConfig | None:
     """Retourne la config Kraken Futures LIVE, ou ``None`` si désactivé.
 
@@ -363,5 +403,8 @@ def resolve_destinations(setup: Any) -> list[BridgeConfig]:
     admin_kraken_spot = _admin_kraken_spot_destination()
     if admin_kraken_spot is not None:
         destinations.append(admin_kraken_spot)
+    admin_kraken_stocks = _admin_kraken_stocks_destination()
+    if admin_kraken_stocks is not None:
+        destinations.append(admin_kraken_stocks)
     destinations.extend(_user_destinations(setup))
     return destinations

@@ -88,6 +88,21 @@ _PAIR_TO_SYMBOL: dict[str, str] = {
     "AVAX/USD": "PF_AVAXUSD",
     "MATIC/USD": "PF_MATICUSD",
     "LINK/USD": "PF_LINKUSD",
+    # xStocks Backed Finance (tokens perpetuels backés par vraies actions/ETFs)
+    # UI Kraken FR cache la recherche, MAIS API accepte les ordres (validé 2026-08-02).
+    # Trading 24/7 avec levier ~10x auto, prix decouplé des vrais marchés NYSE.
+    "AAPL": "PF_AAPLXUSD",
+    "TSLA": "PF_TSLAXUSD",
+    "NVDA": "PF_NVDAXUSD",
+    "MSFT": "PF_MSFTXUSD",
+    "GOOGL": "PF_GOOGLXUSD",
+    "AMZN": "PF_AMZNXUSD",
+    "MSTR": "PF_MSTRXUSD",
+    "COIN": "PF_COINXUSD",
+    "HOOD": "PF_HOODXUSD",
+    "SPY": "PF_SPYXUSD",
+    "QQQ": "PF_QQQXUSD",
+    "GLD": "PF_GLDXUSD",
 }
 
 

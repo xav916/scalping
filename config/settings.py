@@ -235,6 +235,16 @@ KRAKEN_SPOT_BRIDGE_URL = os.getenv("KRAKEN_SPOT_BRIDGE_URL", "")
 KRAKEN_SPOT_BRIDGE_API_KEY = os.getenv("KRAKEN_SPOT_BRIDGE_API_KEY", "")
 KRAKEN_SPOT_BRIDGE_MIN_CONFIDENCE = float(os.getenv("KRAKEN_SPOT_BRIDGE_MIN_CONFIDENCE", "75"))
 KRAKEN_SPOT_BRIDGE_LEVERAGE = int(os.getenv("KRAKEN_SPOT_BRIDGE_LEVERAGE", "1"))  # spot = pas de levier
+# Kraken xStocks bridge (2026-08-02) — Voie A. Actions US tokenisées (PF_AAPLXUSD,
+# PF_TSLAXUSD...) via même bridge Kraken Futures port 8790, mais destination
+# séparée admin_kraken_stocks pour tracking PnL indépendant du crypto. UI Kraken FR
+# cache la recherche xStocks mais l'API accepte les ordres (découvert 2026-08-02).
+# Risques : Kraken peut couper l'accès, prix decouplés des vrais marchés NYSE.
+KRAKEN_STOCKS_BRIDGE_ENABLED = os.getenv("KRAKEN_STOCKS_BRIDGE_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+KRAKEN_STOCKS_BRIDGE_URL = os.getenv("KRAKEN_STOCKS_BRIDGE_URL", "")
+KRAKEN_STOCKS_BRIDGE_API_KEY = os.getenv("KRAKEN_STOCKS_BRIDGE_API_KEY", "")
+KRAKEN_STOCKS_BRIDGE_MIN_CONFIDENCE = float(os.getenv("KRAKEN_STOCKS_BRIDGE_MIN_CONFIDENCE", "75"))
+KRAKEN_STOCKS_BRIDGE_LEVERAGE = int(os.getenv("KRAKEN_STOCKS_BRIDGE_LEVERAGE", "5"))
 # Paires supplémentaires autorisées globalement (Demo + Live + autres
 # destinations multi-tenant) en plus des stars XAU/XAG/WTI/ETH. Sert à
 # élargir l'auto-exec aux paires promues manuellement en AUTO_EXEC via
