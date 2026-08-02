@@ -529,12 +529,18 @@ def place_order():
     if total_filled_qty > 0:
         avg_price = total_notional / total_filled_qty
 
+    # Round SL/TP to instrument tickSize (Kraken rejects off-tick prices with invalidPrice)
+    tick = float(specs.get("tickSize", 0.01))
+
+    def _round_to_tick(p: float) -> float:
+        return round(round(p / tick) * tick, 8)
+
     # ── Place SL order (optional, reduceOnly) ──
     sl_order_id = None
     sl_error = None
     if sl_raw is not None:
         try:
-            sl_price = float(sl_raw)
+            sl_price = _round_to_tick(float(sl_raw))
             sl_side = "sell" if direction == "buy" else "buy"
             sl_params = {
                 "orderType": "stp",           # stop order
@@ -559,7 +565,7 @@ def place_order():
     tp_error = None
     if tp_raw is not None:
         try:
-            tp_price = float(tp_raw)
+            tp_price = _round_to_tick(float(tp_raw))
             tp_side = "sell" if direction == "buy" else "buy"
             tp_params = {
                 "orderType": "take_profit",
