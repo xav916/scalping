@@ -218,6 +218,14 @@ BINANCE_ORDERFLOW_SCORING_ENABLED = os.getenv("BINANCE_ORDERFLOW_SCORING_ENABLED
 BINANCE_OI_SCORING_ENABLED = os.getenv("BINANCE_OI_SCORING_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 # Tier 2 chantier #14 (2026-06-18) : multi-timeframe alignment (HTF 15m+1h vs setup 5m).
 BINANCE_MTF_SCORING_ENABLED = os.getenv("BINANCE_MTF_SCORING_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+# Kraken Futures scoring (2026-08-02) : miroir des 3 features Binance (funding, OI,
+# orderbook) pour les signaux routés vers admin_kraken. Données natives Kraken
+# complémentaires aux 6 features Binance (les 2 sources sont cumulées, le pire
+# veto l'emporte). LSR skip (non exposé par Kraken API publique). Orderflow et
+# klines reportés en sprint dédié.
+KRAKEN_FUNDING_SCORING_ENABLED = os.getenv("KRAKEN_FUNDING_SCORING_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+KRAKEN_OI_SCORING_ENABLED = os.getenv("KRAKEN_OI_SCORING_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+KRAKEN_ORDERBOOK_SCORING_ENABLED = os.getenv("KRAKEN_ORDERBOOK_SCORING_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 # Kraken Futures bridge (2026-08-02) — perpetuals USD-margined PF_* après
 # blocker AMF Binance Futures FR + Bybit UE Spot only + OKX EU MTF format
 # non-standard. Kraken Futures régulé Ireland/EU, accessible résidents FR.
