@@ -2607,13 +2607,18 @@ _INFRA_ALERT_LAST_SENT: dict[str, datetime] = {}
 async def api_admin_notify_infra_telegram(
     payload: dict,
     token: str = "",
+    channel: str = "infra",
 ):
-    """Relais Telegram vers le bot infra (auth-by-token).
+    """Relais Telegram vers un canal (auth-by-token).
 
-    Permet aux routines remote (RemoteTrigger) d'envoyer une notif sur le
-    canal infra (`@xav_scalping_infra_bot`) sans embarquer le token bot
-    dans leur prompt. Le token de cet endpoint est partagé avec
-    `public-summary` et `counterfactual` (même hash SHA256).
+    Permet aux routines remote (RemoteTrigger) et scripts cron d'envoyer une
+    notif sans embarquer les tokens bot. Le token de cet endpoint est partagé
+    avec `public-summary` et `counterfactual` (même hash SHA256).
+
+    Query param `channel` (2026-08-02) : sépare infra (health/monitoring)
+    des trading admin (pushes réels + digests). Valeurs :
+    - `infra` (défaut) → @xav_scalping_infra_bot via INFRA_TELEGRAM_*
+    - `sales` → @xav_scalping_sales_bot via SALES_TELEGRAM_*
 
     Body : `{"title": str, "body": str, "dedup_key"?: str,
     "cooldown_seconds"?: int}`. title est mis en gras HTML, body suit en
@@ -2621,17 +2626,15 @@ async def api_admin_notify_infra_telegram(
 
     Cooldown optionnel (2026-05-16) : si `dedup_key` ET `cooldown_seconds`
     > 0 fournis, suppress l'alerte si même dedup_key envoyée il y a moins
-    de cooldown_seconds. Évite que les routines récurrentes (EA health
-    monitoring 4×/jour) spamment sur anomalies persistantes. État
-    in-memory côté process (reset au restart container).
-
-    Côté env (EC2) : INFRA_TELEGRAM_BOT_TOKEN + INFRA_TELEGRAM_CHAT_ID.
-    Si non configuré, retourne 503 (pas de fail silencieux).
+    de cooldown_seconds. État in-memory côté process (reset au restart).
     """
     import hashlib
     from fastapi import HTTPException
     import httpx
-    from config.settings import INFRA_TELEGRAM_BOT_TOKEN, INFRA_TELEGRAM_CHAT_ID
+    from config.settings import (
+        INFRA_TELEGRAM_BOT_TOKEN, INFRA_TELEGRAM_CHAT_ID,
+        SALES_TELEGRAM_BOT_TOKEN, SALES_TELEGRAM_CHAT_ID,
+    )
 
     SHADOW_PUBLIC_TOKEN_HASH = "e980b1ed0b45ca6873caa3f2d6ddcf27f4d8a1d0aa87cf9072f6e3e0909b31ec"
 
@@ -2642,8 +2645,18 @@ async def api_admin_notify_infra_telegram(
     if not _s.compare_digest(provided_hash, SHADOW_PUBLIC_TOKEN_HASH):
         raise HTTPException(status_code=403, detail="invalid token")
 
-    if not INFRA_TELEGRAM_BOT_TOKEN or not INFRA_TELEGRAM_CHAT_ID:
-        raise HTTPException(status_code=503, detail="infra telegram not configured on backend")
+    channel_norm = (channel or "infra").strip().lower()
+    if channel_norm == "sales":
+        bot_token = SALES_TELEGRAM_BOT_TOKEN
+        chat_id = SALES_TELEGRAM_CHAT_ID
+    elif channel_norm == "infra":
+        bot_token = INFRA_TELEGRAM_BOT_TOKEN
+        chat_id = INFRA_TELEGRAM_CHAT_ID
+    else:
+        raise HTTPException(status_code=400, detail=f"unknown channel: {channel}")
+
+    if not bot_token or not chat_id:
+        raise HTTPException(status_code=503, detail=f"{channel_norm} telegram not configured on backend")
 
     title = (payload.get("title") or "").strip()
     body = (payload.get("body") or "").strip()
@@ -2682,11 +2695,11 @@ async def api_admin_notify_infra_telegram(
     text = f"<b>{safe_title}</b>\n\n{safe_body}" if title else safe_body
     text = text[:4000]
 
-    url = f"https://api.telegram.org/bot{INFRA_TELEGRAM_BOT_TOKEN}/sendMessage"
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(url, json={
-                "chat_id": INFRA_TELEGRAM_CHAT_ID,
+                "chat_id": chat_id,
                 "text": text,
                 "parse_mode": "HTML",
                 "disable_web_page_preview": True,

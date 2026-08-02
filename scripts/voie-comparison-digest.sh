@@ -1,15 +1,17 @@
 #!/bin/bash
 # Digest horaire : lit voie-comparison.jsonl sur la dernière heure et pousse
-# un résumé Telegram infra via api.telegram.org (indépendant du domaine SaaS)
+# un résumé Telegram sales bot via api.telegram.org (indépendant du domaine SaaS)
+# Migré infra → sales 2026-08-02 : le bot infra reste dédié aux alertes infra/monitoring,
+# les analyses trading admin (Voie A vs B, pushes réels) vont sur @xav_scalping_sales_bot.
 
 set -uo pipefail
 
 LOG=/var/log/scalping/voie-comparison.jsonl
-BOT_TOKEN=$(sudo grep -E '^INFRA_TELEGRAM_BOT_TOKEN=' /opt/scalping/.env | cut -d= -f2-)
-CHAT_ID=$(sudo grep -E '^INFRA_TELEGRAM_CHAT_ID=' /opt/scalping/.env | cut -d= -f2-)
+BOT_TOKEN=$(sudo grep -E '^SALES_TELEGRAM_BOT_TOKEN=' /opt/scalping/.env | cut -d= -f2-)
+CHAT_ID=$(sudo grep -E '^SALES_TELEGRAM_CHAT_ID=' /opt/scalping/.env | cut -d= -f2-)
 
 if [ -z "$BOT_TOKEN" ] || [ -z "$CHAT_ID" ]; then
-  echo "INFRA_TELEGRAM_BOT_TOKEN or INFRA_TELEGRAM_CHAT_ID missing" >&2
+  echo "SALES_TELEGRAM_BOT_TOKEN or SALES_TELEGRAM_CHAT_ID missing" >&2
   exit 1
 fi
 
