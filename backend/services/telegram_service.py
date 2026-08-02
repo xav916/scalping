@@ -1178,11 +1178,15 @@ async def send_veto_alert(pair: str, direction: str, rules_matched: list[str], r
             "TARIFF": "Annonce de hausse de tarifs douaniers",
             "ECB_HAWKISH": "BCE (banque centrale Europe) en mode restrictif",
         }
+        import html as _html
         pair_label = _PAIR_FR_LABEL.get(pair, pair)
         rules_friendly = [_RULE_FR.get(r, r) for r in new_rules]
-        causes_str = "\n".join(f"• {r}" for r in rules_friendly[:3])
+        causes_str = "\n".join(f"• {_html.escape(r)}" for r in rules_friendly[:3])
+        # HTML depuis 2026-08-02 : Markdown legacy cassait sur les parenthèses /
+        # apostrophes / underscores des règles vulgarisées (HTTP 400 "can't parse
+        # entities at byte offset 131/132"). html.escape neutralise <>& variables.
         text = (
-            f"🌍 *Trades suspendus* · {pair_label} ({pair})\n"
+            f"🌍 <b>Trades suspendus</b> · {_html.escape(pair_label)} ({_html.escape(pair)})\n"
             f"\n"
             f"⚠️ Le contexte macro est trop tendu pour trader sereinement.\n"
             f"Cause(s) :\n{causes_str}\n"
@@ -1199,7 +1203,7 @@ async def send_veto_alert(pair: str, direction: str, rules_matched: list[str], r
                 async with httpx.AsyncClient(timeout=10.0) as client:
                     r = await client.post(url, json={
                         "chat_id": chat_id, "text": text,
-                        "parse_mode": "Markdown", "disable_web_page_preview": True,
+                        "parse_mode": "HTML", "disable_web_page_preview": True,
                     })
                     if r.status_code != 200:
                         logger.warning(f"Telegram veto_alert {r.status_code}: {r.text[:200]}")
