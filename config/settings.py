@@ -215,6 +215,16 @@ BINANCE_ORDERFLOW_SCORING_ENABLED = os.getenv("BINANCE_ORDERFLOW_SCORING_ENABLED
 BINANCE_OI_SCORING_ENABLED = os.getenv("BINANCE_OI_SCORING_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 # Tier 2 chantier #14 (2026-06-18) : multi-timeframe alignment (HTF 15m+1h vs setup 5m).
 BINANCE_MTF_SCORING_ENABLED = os.getenv("BINANCE_MTF_SCORING_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+# Kraken Futures bridge (2026-08-02) — perpetuals USD-margined PF_* après
+# blocker AMF Binance Futures FR + Bybit UE Spot only + OKX EU MTF format
+# non-standard. Kraken Futures régulé Ireland/EU, accessible résidents FR.
+# Bridge dédié sur EC2 port 8790 (kraken-bridge.service), auth HMAC-SHA512
+# nonce-based. Manqué dans commit 9d685f8, fix 2026-08-02 après deploy.
+KRAKEN_BRIDGE_ENABLED = os.getenv("KRAKEN_BRIDGE_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+KRAKEN_BRIDGE_URL = os.getenv("KRAKEN_BRIDGE_URL", "")
+KRAKEN_BRIDGE_API_KEY = os.getenv("KRAKEN_BRIDGE_API_KEY", "")
+KRAKEN_BRIDGE_MIN_CONFIDENCE = float(os.getenv("KRAKEN_BRIDGE_MIN_CONFIDENCE", "60"))
+KRAKEN_BRIDGE_LEVERAGE = int(os.getenv("KRAKEN_BRIDGE_LEVERAGE", "5"))
 # Paires supplémentaires autorisées globalement (Demo + Live + autres
 # destinations multi-tenant) en plus des stars XAU/XAG/WTI/ETH. Sert à
 # élargir l'auto-exec aux paires promues manuellement en AUTO_EXEC via
