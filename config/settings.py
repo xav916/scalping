@@ -92,6 +92,9 @@ def asset_class_for(pair: str) -> str:
         return "energy"
     if p in {"SPX", "NDX", "DJI", "RUT", "DAX", "N225", "NIKKEI", "FTSE", "CAC40", "UK100", "US30", "US500", "NAS100", "DE40", "EU50", "JP225"}:
         return "equity_index"
+    # US individual equities (NYSE/NASDAQ CFDs via IC Markets, format broker AAPL.NAS)
+    if p in {"AAPL", "TSLA", "NVDA", "MSFT", "GOOGL", "GOOG", "AMZN", "META", "AMD", "NFLX", "COIN", "PLTR", "SHOP", "JPM", "V", "MA", "DIS", "WMT"}:
+        return "equity"
     # default = forex
     return "forex"
 
@@ -296,6 +299,7 @@ MT5_BRIDGE_MAX_POSITIONS_PER_PAIR_DEFAULT = {
     "forex": 2,
     "metal": 2,
     "equity_index": 1,
+    "equity": 1,
     "crypto": 1,
     "energy": 1,
 }
@@ -328,6 +332,7 @@ _DEFAULT_MIN_SL_DISTANCE_PCT_PER_CLASS = {
     "forex_jpy": 0.02,      # USD/JPY, EUR/JPY, GBP/JPY (3-dp, pip 10x)
     "metal": 0.05,          # XAU/USD, XAG/USD
     "equity_index": 0.03,   # SPX, NDX
+    "equity": 0.05,         # AAPL, TSLA, NVDA (US stocks intraday volatile)
     "crypto": 0.15,         # BTC/USD, ETH/USD (volatilité plus large)
     "energy": 0.05,         # WTI, BRENT
 }

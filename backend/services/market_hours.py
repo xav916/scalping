@@ -26,6 +26,7 @@ def is_market_open_for(pair: str, now: datetime | None = None) -> bool:
     - forex         : dim 22:00 → ven 22:00, sans interruption
     - metal (XAU..) : dim 22:00 → ven 21:00, daily break 21:00-22:00 UTC
     - equity_index  : dim 22:00 → ven 21:00, daily break 21:00-22:00 UTC
+    - equity (US)   : lun-ven 13:30-20:00 UTC seulement (NYSE/NASDAQ core session)
     - energy (WTI)  : dim 23:00 → ven 22:00, daily break 22:00-23:00 UTC
     """
     now = now or datetime.now(timezone.utc)
@@ -53,6 +54,14 @@ def is_market_open_for(pair: str, now: datetime | None = None) -> bool:
         if wd == 4 and t >= 21:
             return False
         if 21 <= t < 22:
+            return False
+        return True
+
+    if ac == "equity":
+        # US individual stocks NYSE/NASDAQ : core session lun-ven 13:30 → 20:00 UTC
+        if wd >= 5:
+            return False
+        if not (13.5 <= t < 20.0):
             return False
         return True
 
