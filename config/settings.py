@@ -620,3 +620,12 @@ GEOPOLITICAL_VETO_TARIFF_DAYS = int(os.getenv("GEOPOLITICAL_VETO_TARIFF_DAYS", "
 # script counterfactual posthoc. Le baseline reste loggé toujours (lecture
 # seule pure). Le twin n'apparaît que si le veto laisse passer.
 SHADOW_FILTERED_TWIN_ENABLED = os.getenv("SHADOW_FILTERED_TWIN_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+
+# ─── Reddit sentiment scoring (P3 MVP — 2026-08-03) ─────────────────
+# Filtre contrarien soft ×0.90 sur BTC/USD et ETH/USD quand le sentiment
+# Reddit (r/CryptoCurrency + r/Bitcoin + r/ethtrader) est extrême et
+# crowd-following (setup dans le même sens que la foule retail surcrowdée).
+# Source : JSON public Reddit hot.json, no auth, refresh horaire scheduler.
+# Désactivé par défaut — activer après validation qualité signal sur 2-4 semaines.
+# Pour activer : REDDIT_SENTIMENT_ENABLED=true dans .env
+REDDIT_SENTIMENT_ENABLED = os.getenv("REDDIT_SENTIMENT_ENABLED", "false").lower() in ("1", "true", "yes", "on")

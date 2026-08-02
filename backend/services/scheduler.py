@@ -778,6 +778,23 @@ def start_scheduler() -> AsyncIOScheduler:
         )
     except Exception as _e:
         logger.warning(f"scheduler: fred_tips_refresh non installé : {_e}")
+    # Refresh Reddit sentiment toutes les heures (P3 MVP — 2026-08-03).
+    # Source : JSON public Reddit hot.json, no auth.
+    # 3 subreddits : r/CryptoCurrency, r/Bitcoin, r/ethtrader → 3 requêtes/h.
+    # Rate limit Reddit gratuit : 60 req/min → très en dessous.
+    try:
+        from backend.services import reddit_sentiment_service as _rs_svc
+        _scheduler.add_job(
+            _rs_svc.refresh_all,
+            "interval",
+            hours=1,
+            id="reddit_sentiment_refresh",
+            name="Refresh Reddit sentiment (BTC/ETH)",
+            replace_existing=True,
+            next_run_time=datetime.now(timezone.utc),
+        )
+    except Exception as _e:
+        logger.warning(f"scheduler: reddit_sentiment_refresh non installé : {_e}")
     if MACRO_SCORING_ENABLED:
         _scheduler.add_job(
             refresh_macro_context,

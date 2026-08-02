@@ -964,6 +964,44 @@ def enrich_trade_setup(
         except Exception as e:
             logger.debug(f"kraken orderbook scoring error: {e}")
 
+    # ── Reddit sentiment scoring (P3 MVP — 2026-08-03) ──────────────────
+    # Filtre contrarien soft ×0.90 sur BTC/USD et ETH/USD quand le sentiment
+    # Reddit est extrême ET crowd-following (setup dans le même sens que le
+    # retail surcrowdé). Source : hot.json public Reddit, refresh horaire.
+    # Feature-flagged via REDDIT_SENTIMENT_ENABLED env var (défaut: false).
+    try:
+        from config.settings import REDDIT_SENTIMENT_ENABLED
+    except Exception:
+        REDDIT_SENTIMENT_ENABLED = False
+    if REDDIT_SENTIMENT_ENABLED:
+        try:
+            from backend.services import reddit_sentiment_scoring
+            prev_score = setup.confidence_score
+            new_score, rs_meta = reddit_sentiment_scoring.apply_reddit_sentiment(
+                setup.pair, setup.direction.value, prev_score
+            )
+            rs_mult = rs_meta.get("reddit_multiplier", 1.0)
+            rs_reason = rs_meta.get("reddit_reason")
+            if rs_mult != 1.0:
+                setup.confidence_score = new_score
+                factors.append(
+                    ConfidenceFactor(
+                        name="Reddit sentiment",
+                        score=round((rs_mult - 1.0) * 100, 1),
+                        detail=f"×{rs_mult:.2f} — {rs_reason}",
+                        positive=False,
+                        source="sentiment",
+                        metadata=rs_meta,
+                    )
+                )
+                setup.confidence_factors = factors
+                logger.info(
+                    f"reddit_sentiment_applied pair={setup.pair} dir={setup.direction.value} "
+                    f"prev={prev_score} mult={rs_mult} final={new_score}"
+                )
+        except Exception as e:
+            logger.debug(f"reddit sentiment scoring error: {e}")
+
     # ── Geopolitical veto (Polymarket + GDELT hard rules) ──────────────
     # Lazy import : évite les cycles + permet aux tests de patcher poly/gdelt
     # snapshots sans setup top-level.
