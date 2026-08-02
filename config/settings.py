@@ -223,6 +223,11 @@ BINANCE_MTF_SCORING_ENABLED = os.getenv("BINANCE_MTF_SCORING_ENABLED", "false").
 # Utilise vix_service.get_current() (cache SQLite 5 min). Best-effort : si VIX
 # indisponible, le scoring continue sans modification.
 VIX_SCORING_ENABLED = os.getenv("VIX_SCORING_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+# P2 (2026-08-03) : Earnings calendar veto — soft veto ×0.60 si earnings dans
+# les 24h à venir, ×0.70 si earnings dans les 24h passées. Equity individuel
+# uniquement (AAPL/TSLA/NVDA/MSFT/etc.). No-op sur indices/crypto/forex/metal.
+# Source : yfinance (pip install yfinance). Cache SQLite 24h dans macro.db.
+EARNINGS_VETO_ENABLED = os.getenv("EARNINGS_VETO_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 # Gap 2 (2026-08-02) : Kraken Futures scoring = miroir des 3 features Binance
 # (funding, OI, orderbook) pour signaux routés vers admin_kraken. Données natives
 # Kraken complémentaires aux 6 features Binance (les 2 sources cumulées, le pire

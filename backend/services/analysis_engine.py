@@ -22,6 +22,7 @@ from backend.models.schemas import (
 )
 from backend.services import macro_context_service, macro_scoring
 from config.settings import (
+    EARNINGS_VETO_ENABLED,
     GEOPOLITICAL_VETO_ENABLED,
     MACRO_SCORING_ENABLED,
     MACRO_VETO_ENABLED,
@@ -853,6 +854,50 @@ def enrich_trade_setup(
                 )
         except Exception as e:
             logger.debug(f"vix scoring error: {e}")
+
+    # ── Earnings calendar veto (P2 — 2026-08-03) ──────────────────────────
+    # Soft veto ×0.60 si earnings dans les 24h à venir (incertitude forte),
+    # ×0.70 si earnings dans les 24h passées (volatilité résiduelle post-annonce).
+    # Applicable uniquement aux asset_class == "equity" (actions individuelles :
+    # AAPL/TSLA/NVDA/MSFT/etc.). No-op sur indices/crypto/forex/metal/energy.
+    # Feature-flagged via EARNINGS_VETO_ENABLED env var (défaut: true).
+    if EARNINGS_VETO_ENABLED:
+        try:
+            from backend.services import earnings_veto
+            prev_score = setup.confidence_score
+            ev_new_score, ev_meta = earnings_veto.apply_earnings_veto(
+                setup.pair, setup.direction.value, prev_score
+            )
+            ev_mult = ev_meta.get("multiplier", 1.0)
+            if ev_mult != 1.0:
+                setup.confidence_score = ev_new_score
+                veto_dir = ev_meta.get("veto_direction", "?")
+                hours = ev_meta.get("hours_delta", 0)
+                symbol = ev_meta.get("symbol", setup.pair)
+                earnings_at = ev_meta.get("earnings_at", "?")
+                label = f"dans {hours:.0f}h" if veto_dir == "before" else f"il y a {hours:.0f}h"
+                factors.append(
+                    ConfidenceFactor(
+                        name="Earnings veto",
+                        score=round((ev_mult - 1.0) * 100, 1),
+                        detail=(
+                            f"×{ev_mult:.2f} — {symbol} earnings {label} "
+                            f"({veto_dir})"
+                        ),
+                        positive=False,
+                        source="macro",
+                        metadata=ev_meta,
+                    )
+                )
+                setup.confidence_factors = factors
+                logger.info(
+                    f"earnings_veto_applied pair={setup.pair} dir={setup.direction.value} "
+                    f"symbol={symbol} veto={veto_dir} hours={hours} "
+                    f"earnings_at={earnings_at} mult={ev_mult} "
+                    f"prev={prev_score} final={ev_new_score}"
+                )
+        except Exception as e:
+            logger.debug(f"earnings veto error: {e}")
 
     # ── Kraken Futures funding rate scoring (Gap 2 — 2026-08-02) ─────────
     # Miroir du filtre Binance funding mais source native Kraken Futures.

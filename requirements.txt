@@ -35,3 +35,9 @@ stripe==12.0.1
 # email verif, stripe checkout, account deletion). Désactivable via
 # RATE_LIMIT_ENABLED=false. Storage in-memory, suffisant pour 1 instance.
 slowapi==0.1.9
+
+# Earnings calendar per-stock (P2 veto 2026-08-03) : fetch prochain earnings
+# date par ticker. Lazy import dans earnings_calendar_service pour ne pas
+# crasher si absent (best-effort). Dépendances transitives : pandas, numpy,
+# requests (déjà présents via scikit-learn/httpx).
+yfinance>=0.2.40

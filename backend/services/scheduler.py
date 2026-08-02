@@ -891,6 +891,19 @@ def start_scheduler() -> AsyncIOScheduler:
         replace_existing=True,
     )
 
+    # Earnings calendar : refresh daily 06h UTC. Fetch yfinance pour tous les
+    # stocks equity individuels (AAPL/TSLA/NVDA/MSFT/etc.). Best-effort : si
+    # yfinance fail, le cache SQLite (24h TTL) est utilisé lors du prochain cycle.
+    from backend.services import earnings_calendar_service as _ecs
+    _scheduler.add_job(
+        _ecs.refresh_all_symbols,
+        CronTrigger(hour=6, minute=0, timezone="UTC"),
+        id="earnings_calendar_sync",
+        name="Sync earnings calendar (daily 06h UTC)",
+        replace_existing=True,
+    )
+    logger.info("earnings_calendar: refresh job scheduled daily at 06:00 UTC")
+
     # GDELT geopolitical news : refresh horaire en shadow (no scoring impact).
     # Gated par GEOPOLITICAL_NEWS_ENABLED. Fetch les 4 thèmes (monetary,
     # geopolitical, energy, trade) en parallèle, persiste un snapshot.
