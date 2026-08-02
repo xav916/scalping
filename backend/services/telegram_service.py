@@ -893,16 +893,7 @@ async def send_close(trade: dict) -> None:
     Dedup en mémoire par mt5_ticket — reset au reboot (peu grave, pire cas
     re-notif au redémarrage si un trade vient de fermer).
     """
-    if not is_configured():
-        return
     pair = trade.get("pair")
-    try:
-        from config.settings import MT5_BRIDGE_LIVE_EXTRA_PAIRS as _live_extras
-    except Exception:
-        _live_extras = frozenset()
-    allowed_pairs = _STAR_PAIRS_SET | _live_extras
-    if pair not in allowed_pairs:
-        return
     ticket = trade.get("mt5_ticket")
     if ticket and int(ticket) in _notified_closes:
         return
@@ -910,6 +901,37 @@ async def send_close(trade: dict) -> None:
         _notified_closes.add(int(ticket))
 
     text = _format_close(trade)
+
+    # Miroir @xav_scalping_sales_bot (2026-08-02) : Xavier admin reçoit
+    # TOUTES les clôtures (y compris pairs non-stars — SPX/NDX/altcoins/
+    # xStocks) pour tracking business, indépendamment du filtre stars-only
+    # qui protège les customers user-facing. Best-effort silent fail.
+    try:
+        from config.settings import SALES_TELEGRAM_BOT_TOKEN, SALES_TELEGRAM_CHAT_ID
+        if SALES_TELEGRAM_BOT_TOKEN and SALES_TELEGRAM_CHAT_ID:
+            sales_url = TELEGRAM_API.format(token=SALES_TELEGRAM_BOT_TOKEN)
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                r = await client.post(sales_url, json={
+                    "chat_id": SALES_TELEGRAM_CHAT_ID,
+                    "text": text,
+                    "parse_mode": "Markdown",
+                    "disable_web_page_preview": True,
+                })
+                if r.status_code != 200:
+                    logger.warning(f"Telegram close sales miroir {r.status_code}: {r.text[:200]}")
+    except Exception as e:
+        logger.warning(f"send_close sales mirror error: {e}")
+
+    # User-facing bot : filtre stars-only + LIVE_EXTRA_PAIRS pour customers
+    if not is_configured():
+        return
+    try:
+        from config.settings import MT5_BRIDGE_LIVE_EXTRA_PAIRS as _live_extras
+    except Exception:
+        _live_extras = frozenset()
+    allowed_pairs = _STAR_PAIRS_SET | _live_extras
+    if pair not in allowed_pairs:
+        return
     destinataires = _destinataires()
     if not destinataires:
         return
