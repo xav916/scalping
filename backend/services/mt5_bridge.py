@@ -540,6 +540,17 @@ async def _push_to_destination(setup, dest) -> None:
         sz = sizing.compute_risk_money(setup)
         await binance_bridge_client.push_to_binance(setup, sz, dest)
         return
+
+    # ─── Dispatch Kraken Futures bridge (2026-08-02) ──────────────────
+    # Miroir du pattern binance. Cible = crypto perpetuals régulés EU
+    # après blocker AMF Binance Futures FR.
+    if getattr(dest, "bridge_type", "mt5") == "kraken":
+        _sent_setups_today.add(key)
+        from backend.services import sizing
+        from backend.services import kraken_bridge_client
+        sz = sizing.compute_risk_money(setup)
+        await kraken_bridge_client.push_to_kraken(setup, sz, dest)
+        return
     # Dedup atomique en DB (UNIQUE constraint INSERT OR IGNORE) — source de
     # vérité partagée multi-process. Le set in-memory reste en parallèle pour
     # rétro-compat des tests existants. Best-effort : si la DB est

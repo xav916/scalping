@@ -207,6 +207,38 @@ def _admin_binance_destination() -> BridgeConfig | None:
     )
 
 
+def _admin_kraken_destination() -> BridgeConfig | None:
+    """Retourne la config Kraken Futures LIVE, ou ``None`` si désactivé.
+
+    Créé 2026-08-02 après blocker AMF Binance Futures FR + Bybit UE Spot only
+    + OKX EU MTF format non-standard. Kraken Futures régulé Ireland/EU,
+    perpetuals USD-margined `PF_*` accessibles résidents FR.
+
+    Conditions activation :
+    - KRAKEN_BRIDGE_ENABLED=true
+    - KRAKEN_BRIDGE_URL set (typique http://127.0.0.1:8790)
+    - bridge_type="kraken" déclenche le dispatch vers kraken_bridge_client
+    """
+    from config import settings as st
+
+    if not (
+        getattr(st, "KRAKEN_BRIDGE_ENABLED", False)
+        and getattr(st, "KRAKEN_BRIDGE_URL", "")
+    ):
+        return None
+    return BridgeConfig(
+        destination_id="admin_kraken",
+        user_id=None,
+        bridge_url=st.KRAKEN_BRIDGE_URL.rstrip("/"),
+        bridge_api_key=getattr(st, "KRAKEN_BRIDGE_API_KEY", "") or "",
+        min_confidence=float(getattr(st, "KRAKEN_BRIDGE_MIN_CONFIDENCE", 60)),
+        allowed_asset_classes=frozenset({"crypto"}),
+        auto_exec_enabled=True,
+        bridge_type="kraken",
+        leverage=int(getattr(st, "KRAKEN_BRIDGE_LEVERAGE", 5)),
+    )
+
+
 def _user_destinations(setup: Any) -> list[BridgeConfig]:
     """Retourne les destinations users (Premium tier) pour ce setup.
 
@@ -293,5 +325,8 @@ def resolve_destinations(setup: Any) -> list[BridgeConfig]:
     admin_binance = _admin_binance_destination()
     if admin_binance is not None:
         destinations.append(admin_binance)
+    admin_kraken = _admin_kraken_destination()
+    if admin_kraken is not None:
+        destinations.append(admin_kraken)
     destinations.extend(_user_destinations(setup))
     return destinations
