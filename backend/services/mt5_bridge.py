@@ -67,7 +67,7 @@ LEGACY_WHITELIST_PAIRS = frozenset(
     if p.strip()
 )
 
-from backend.services.market_hours import is_market_open_for
+from backend.services.market_hours import is_market_open_for, is_market_open_for_destination
 from backend.services.shadow_v2_core_long import SHADOW_PAIRS as _STAR_PAIRS
 from config.settings import (
     MT5_BRIDGE_ENABLED,
@@ -325,7 +325,8 @@ def _check_rejection(setup, dest=None) -> str | None:
             )
         else:
             return rejection_code
-    if not is_market_open_for(setup.pair):
+    dest_id_for_hours = getattr(dest, "destination_id", "") if dest is not None else ""
+    if not is_market_open_for_destination(setup.pair, dest_id_for_hours):
         return "market_closed"
     entry = getattr(setup, "entry_price", 0) or 0
     sl = getattr(setup, "stop_loss", 0) or 0

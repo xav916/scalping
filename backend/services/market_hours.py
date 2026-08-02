@@ -77,3 +77,24 @@ def is_market_open_for(pair: str, now: datetime | None = None) -> bool:
         return True
 
     return True
+
+
+def is_market_open_for_destination(
+    pair: str,
+    destination_id: str = "",
+    now: datetime | None = None,
+) -> bool:
+    """Variante destination-aware de :func:`is_market_open_for`.
+
+    Cas spécial `admin_kraken_stocks` : les xStocks Kraken (PF_*XUSD) trade
+    24/7 sur Kraken Futures, contrairement aux CFD IC Markets qui suivent
+    strictement les heures NYSE. Par défaut on garde le comportement
+    conservateur (NYSE strict pour cohérence avec Voie B CFD). Opt-in via
+    ``KRAKEN_STOCKS_ALLOW_24_7=true`` pour exploiter les 16h/j Kraken hors
+    NYSE, au prix d'un spread/liquidité dégradés hors heures principales.
+    """
+    if destination_id == "admin_kraken_stocks" and asset_class_for(pair) == "equity":
+        import os
+        if os.getenv("KRAKEN_STOCKS_ALLOW_24_7", "false").lower() == "true":
+            return True
+    return is_market_open_for(pair, now)
