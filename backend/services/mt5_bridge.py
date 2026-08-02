@@ -328,6 +328,14 @@ def _check_rejection(setup, dest=None) -> str | None:
     dest_id_for_hours = getattr(dest, "destination_id", "") if dest is not None else ""
     if not is_market_open_for_destination(setup.pair, dest_id_for_hours):
         return "market_closed"
+    # Validation tick pre-push : fraîcheur + spread + cohérence prix.
+    # Best-effort : si le bridge n'a pas /tick ou est injoignable, None → on continue.
+    # Uniquement pour les destinations admin avec bridge_url (pas les EA queue users).
+    if dest is not None and getattr(dest, "bridge_url", "") and getattr(dest, "user_id", -1) is None:
+        from backend.services.bridge_tick_validator import validate_tick_pre_push
+        tick_rejection = validate_tick_pre_push(dest, setup)
+        if tick_rejection:
+            return tick_rejection
     entry = getattr(setup, "entry_price", 0) or 0
     sl = getattr(setup, "stop_loss", 0) or 0
     if entry > 0 and sl > 0:
