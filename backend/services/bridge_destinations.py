@@ -207,6 +207,38 @@ def _admin_binance_destination() -> BridgeConfig | None:
     )
 
 
+def _admin_kraken_spot_destination() -> BridgeConfig | None:
+    """Retourne la config Kraken Spot LIVE (BTC/ETH achat réel), ou ``None`` si désactivé.
+
+    Créé 2026-08-02 — fork du bridge Kraken Futures pour trading Spot sans levier.
+    Long-only, pas d'OCO natif (watcher SL/TP émulé dans le bridge).
+    Port 8791 par défaut (vs 8790 Futures).
+
+    Conditions activation :
+    - KRAKEN_SPOT_BRIDGE_ENABLED=true
+    - KRAKEN_SPOT_BRIDGE_URL set (typique http://127.0.0.1:8791)
+    - bridge_type="kraken_spot" déclenche le dispatch vers kraken_spot_bridge_client
+    """
+    from config import settings as st
+
+    if not (
+        getattr(st, "KRAKEN_SPOT_BRIDGE_ENABLED", False)
+        and getattr(st, "KRAKEN_SPOT_BRIDGE_URL", "")
+    ):
+        return None
+    return BridgeConfig(
+        destination_id="admin_kraken_spot",
+        user_id=None,
+        bridge_url=st.KRAKEN_SPOT_BRIDGE_URL.rstrip("/"),
+        bridge_api_key=getattr(st, "KRAKEN_SPOT_BRIDGE_API_KEY", "") or "",
+        min_confidence=float(getattr(st, "KRAKEN_SPOT_BRIDGE_MIN_CONFIDENCE", 75)),
+        allowed_asset_classes=frozenset({"crypto"}),
+        auto_exec_enabled=True,
+        bridge_type="kraken_spot",
+        leverage=int(getattr(st, "KRAKEN_SPOT_BRIDGE_LEVERAGE", 1)),
+    )
+
+
 def _admin_kraken_destination() -> BridgeConfig | None:
     """Retourne la config Kraken Futures LIVE, ou ``None`` si désactivé.
 
@@ -328,5 +360,8 @@ def resolve_destinations(setup: Any) -> list[BridgeConfig]:
     admin_kraken = _admin_kraken_destination()
     if admin_kraken is not None:
         destinations.append(admin_kraken)
+    admin_kraken_spot = _admin_kraken_spot_destination()
+    if admin_kraken_spot is not None:
+        destinations.append(admin_kraken_spot)
     destinations.extend(_user_destinations(setup))
     return destinations

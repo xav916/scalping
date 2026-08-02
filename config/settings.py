@@ -225,6 +225,13 @@ KRAKEN_BRIDGE_URL = os.getenv("KRAKEN_BRIDGE_URL", "")
 KRAKEN_BRIDGE_API_KEY = os.getenv("KRAKEN_BRIDGE_API_KEY", "")
 KRAKEN_BRIDGE_MIN_CONFIDENCE = float(os.getenv("KRAKEN_BRIDGE_MIN_CONFIDENCE", "60"))
 KRAKEN_BRIDGE_LEVERAGE = int(os.getenv("KRAKEN_BRIDGE_LEVERAGE", "5"))
+# Kraken Spot bridge (2026-08-02) — trading Spot BTC/ETH sur marché réel
+# Long-only, sans levier, watcher SL/TP émulé. Port 8791 par défaut.
+KRAKEN_SPOT_BRIDGE_ENABLED = os.getenv("KRAKEN_SPOT_BRIDGE_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+KRAKEN_SPOT_BRIDGE_URL = os.getenv("KRAKEN_SPOT_BRIDGE_URL", "")
+KRAKEN_SPOT_BRIDGE_API_KEY = os.getenv("KRAKEN_SPOT_BRIDGE_API_KEY", "")
+KRAKEN_SPOT_BRIDGE_MIN_CONFIDENCE = float(os.getenv("KRAKEN_SPOT_BRIDGE_MIN_CONFIDENCE", "75"))
+KRAKEN_SPOT_BRIDGE_LEVERAGE = int(os.getenv("KRAKEN_SPOT_BRIDGE_LEVERAGE", "1"))  # spot = pas de levier
 # Paires supplémentaires autorisées globalement (Demo + Live + autres
 # destinations multi-tenant) en plus des stars XAU/XAG/WTI/ETH. Sert à
 # élargir l'auto-exec aux paires promues manuellement en AUTO_EXEC via

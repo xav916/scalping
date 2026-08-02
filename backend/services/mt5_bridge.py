@@ -551,6 +551,17 @@ async def _push_to_destination(setup, dest) -> None:
         sz = sizing.compute_risk_money(setup)
         await kraken_bridge_client.push_to_kraken(setup, sz, dest)
         return
+
+    # ─── Dispatch Kraken Spot bridge (2026-08-02) ─────────────────────
+    # Long-only, pas de levier, achat réel BTC/ETH. Watcher SL/TP émulé
+    # côté bridge (pas d'OCO natif Kraken Spot). Paires: BTC/USD, ETH/USD.
+    if getattr(dest, "bridge_type", "mt5") == "kraken_spot":
+        _sent_setups_today.add(key)
+        from backend.services import sizing
+        from backend.services import kraken_spot_bridge_client
+        sz = sizing.compute_risk_money(setup)
+        await kraken_spot_bridge_client.push_to_kraken_spot(setup, sz, dest)
+        return
     # Dedup atomique en DB (UNIQUE constraint INSERT OR IGNORE) — source de
     # vérité partagée multi-process. Le set in-memory reste en parallèle pour
     # rétro-compat des tests existants. Best-effort : si la DB est
