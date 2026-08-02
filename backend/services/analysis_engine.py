@@ -811,6 +811,49 @@ def enrich_trade_setup(
         except Exception as e:
             logger.debug(f"mtf scoring error: {e}")
 
+    # ── VIX regime veto (Gap 1 MVP — 2026-08-02) ───────────────────────
+    # Soft veto multiplicateur sur signaux equity/equity_index selon régime
+    # de volatilité implicite S&P500. Calme(×1.0) modéré(×0.95)
+    # stress(×0.85) panique(×0.70). No-op sur crypto/forex/metal/energy.
+    # Feature-flagged via VIX_SCORING_ENABLED env var (défaut: true).
+    try:
+        from config.settings import VIX_SCORING_ENABLED
+    except Exception:
+        VIX_SCORING_ENABLED = False
+    if VIX_SCORING_ENABLED:
+        try:
+            from backend.services import vix_scoring
+            vix_new_score, vix_meta = vix_scoring.apply_vix_veto(
+                setup.pair, setup.direction.value, setup.confidence_score
+            )
+            if vix_meta and vix_meta.get("vix_multiplier", 1.0) != 1.0:
+                prev_score = setup.confidence_score
+                setup.confidence_score = vix_new_score
+                mult = vix_meta["vix_multiplier"]
+                regime = vix_meta.get("vix_regime", "?")
+                vix_val = vix_meta.get("vix_value", 0)
+                factors.append(
+                    ConfidenceFactor(
+                        name="VIX regime",
+                        score=round((mult - 1.0) * 100, 1),
+                        detail=(
+                            f"×{mult:.2f} — VIX {vix_val:.1f} "
+                            f"régime {regime}"
+                        ),
+                        positive=False,
+                        source="macro",
+                        metadata=vix_meta,
+                    )
+                )
+                setup.confidence_factors = factors
+                logger.info(
+                    f"vix_applied pair={setup.pair} dir={setup.direction.value} "
+                    f"vix={vix_val:.1f} regime={regime} mult={mult} "
+                    f"prev={prev_score} final={vix_new_score}"
+                )
+        except Exception as e:
+            logger.debug(f"vix scoring error: {e}")
+
     # ── Geopolitical veto (Polymarket + GDELT hard rules) ──────────────
     # Lazy import : évite les cycles + permet aux tests de patcher poly/gdelt
     # snapshots sans setup top-level.
