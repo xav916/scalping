@@ -223,6 +223,14 @@ BINANCE_MTF_SCORING_ENABLED = os.getenv("BINANCE_MTF_SCORING_ENABLED", "false").
 # Utilise vix_service.get_current() (cache SQLite 5 min). Best-effort : si VIX
 # indisponible, le scoring continue sans modification.
 VIX_SCORING_ENABLED = os.getenv("VIX_SCORING_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+# Gap 2 (2026-08-02) : Kraken Futures scoring = miroir des 3 features Binance
+# (funding, OI, orderbook) pour signaux routés vers admin_kraken. Données natives
+# Kraken complémentaires aux 6 features Binance (les 2 sources cumulées, le pire
+# veto l'emporte). LSR skip (non exposé par Kraken API publique). Orderflow et
+# klines reportés en sprint dédié.
+KRAKEN_FUNDING_SCORING_ENABLED = os.getenv("KRAKEN_FUNDING_SCORING_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+KRAKEN_OI_SCORING_ENABLED = os.getenv("KRAKEN_OI_SCORING_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+KRAKEN_ORDERBOOK_SCORING_ENABLED = os.getenv("KRAKEN_ORDERBOOK_SCORING_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 # Kraken Futures bridge (2026-08-02) — perpetuals USD-margined PF_* après
 # blocker AMF Binance Futures FR + Bybit UE Spot only + OKX EU MTF format
 # non-standard. Kraken Futures régulé Ireland/EU, accessible résidents FR.

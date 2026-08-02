@@ -854,6 +854,116 @@ def enrich_trade_setup(
         except Exception as e:
             logger.debug(f"vix scoring error: {e}")
 
+    # ── Kraken Futures funding rate scoring (Gap 2 — 2026-08-02) ─────────
+    # Miroir du filtre Binance funding mais source native Kraken Futures.
+    # Appliqué pour TOUS les setups crypto (pas seulement admin_kraken) car
+    # enrich_trade_setup est appelé une fois avant le routage multi-destination.
+    # Le veto Kraken s'empile sur les vetos Binance (le plus sévère l'emporte).
+    try:
+        from config.settings import KRAKEN_FUNDING_SCORING_ENABLED
+    except Exception:
+        KRAKEN_FUNDING_SCORING_ENABLED = False
+    if KRAKEN_FUNDING_SCORING_ENABLED:
+        try:
+            from backend.services import kraken_funding_scoring
+            prev_score = setup.confidence_score
+            new_score, kf_meta = kraken_funding_scoring.apply_kraken_funding(
+                setup.pair, setup.direction.value, prev_score
+            )
+            kf_mult = kf_meta.get("multiplier", 1.0)
+            kf_reason = kf_meta.get("reason")
+            if kf_mult != 1.0:
+                setup.confidence_score = new_score
+                factors.append(
+                    ConfidenceFactor(
+                        name="Funding rate Kraken",
+                        score=round((kf_mult - 1.0) * 100, 1),
+                        detail=f"×{kf_mult:.2f} — {kf_reason}",
+                        positive=False,
+                        source="microstructure",
+                        metadata=kf_meta,
+                    )
+                )
+                setup.confidence_factors = factors
+                logger.info(
+                    f"kraken_funding_applied pair={setup.pair} dir={setup.direction.value} "
+                    f"prev={prev_score} mult={kf_mult} final={new_score} reason={kf_reason}"
+                )
+        except Exception as e:
+            logger.debug(f"kraken funding scoring error: {e}")
+
+    # ── Kraken Futures OI divergence scoring (Gap 2 — 2026-08-02) ────────
+    # OI natif Kraken (snapshot 1h) : détecte short squeeze / liquidation longs
+    # sur les setups crypto routés vers admin_kraken.
+    try:
+        from config.settings import KRAKEN_OI_SCORING_ENABLED
+    except Exception:
+        KRAKEN_OI_SCORING_ENABLED = False
+    if KRAKEN_OI_SCORING_ENABLED:
+        try:
+            from backend.services import kraken_oi_scoring
+            prev_score = setup.confidence_score
+            new_score, koi_meta = kraken_oi_scoring.apply_kraken_oi(
+                setup.pair, setup.direction.value, prev_score
+            )
+            koi_mult = koi_meta.get("multiplier", 1.0)
+            koi_reason = koi_meta.get("reason")
+            if koi_mult != 1.0:
+                setup.confidence_score = new_score
+                factors.append(
+                    ConfidenceFactor(
+                        name="Open Interest Kraken",
+                        score=round((koi_mult - 1.0) * 100, 1),
+                        detail=f"×{koi_mult:.2f} — {koi_reason}",
+                        positive=False,
+                        source="microstructure",
+                        metadata=koi_meta,
+                    )
+                )
+                setup.confidence_factors = factors
+                logger.info(
+                    f"kraken_oi_applied pair={setup.pair} dir={setup.direction.value} "
+                    f"prev={prev_score} mult={koi_mult} final={new_score} reason={koi_reason}"
+                )
+        except Exception as e:
+            logger.debug(f"kraken oi scoring error: {e}")
+
+    # ── Kraken Futures order book depth scoring (Gap 2 — 2026-08-02) ─────
+    # Spread top-of-book natif Kraken (seuil 8 bps vs 5 bps Binance car
+    # carnet moins profond). Filtre marché thin avant push admin_kraken.
+    try:
+        from config.settings import KRAKEN_ORDERBOOK_SCORING_ENABLED
+    except Exception:
+        KRAKEN_ORDERBOOK_SCORING_ENABLED = False
+    if KRAKEN_ORDERBOOK_SCORING_ENABLED:
+        try:
+            from backend.services import kraken_orderbook_scoring
+            prev_score = setup.confidence_score
+            new_score, kob_meta = kraken_orderbook_scoring.apply_kraken_orderbook(
+                setup.pair, setup.direction.value, prev_score
+            )
+            kob_mult = kob_meta.get("multiplier", 1.0)
+            kob_reason = kob_meta.get("reason")
+            if kob_mult != 1.0:
+                setup.confidence_score = new_score
+                factors.append(
+                    ConfidenceFactor(
+                        name="Order book Kraken",
+                        score=round((kob_mult - 1.0) * 100, 1),
+                        detail=f"×{kob_mult:.2f} — {kob_reason}",
+                        positive=False,
+                        source="microstructure",
+                        metadata=kob_meta,
+                    )
+                )
+                setup.confidence_factors = factors
+                logger.info(
+                    f"kraken_orderbook_applied pair={setup.pair} dir={setup.direction.value} "
+                    f"prev={prev_score} mult={kob_mult} final={new_score} reason={kob_reason}"
+                )
+        except Exception as e:
+            logger.debug(f"kraken orderbook scoring error: {e}")
+
     # ── Geopolitical veto (Polymarket + GDELT hard rules) ──────────────
     # Lazy import : évite les cycles + permet aux tests de patcher poly/gdelt
     # snapshots sans setup top-level.
