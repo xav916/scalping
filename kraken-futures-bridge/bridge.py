@@ -154,8 +154,9 @@ def _signed_request(
         if method.upper() == "GET":
             r = c.get(url, params=params, headers=headers)
         elif method.upper() == "POST":
+            # Send the exact signed string as body (dict reordering by httpx breaks HMAC)
             headers["Content-Type"] = "application/x-www-form-urlencoded"
-            r = c.post(url, data=params, headers=headers)
+            r = c.post(url, content=post_data, headers=headers)
         else:
             raise ValueError(f"Unsupported method: {method}")
         r.raise_for_status()
