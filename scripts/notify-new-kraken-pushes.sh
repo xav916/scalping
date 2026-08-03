@@ -58,12 +58,31 @@ while IFS='|' read -r id pair dir okval resp ts dest_id; do
     fi
   fi
 
+  # Deep-link Kraken Futures vers la vue trade du symbol
+  pair_up=$(echo "$pair" | tr '[:lower:]' '[:upper:]')
+  case "$pair_up" in
+    BTC/USD) KRAKEN_SYMBOL="PF_XBTUSD" ;;
+    ETH/USD) KRAKEN_SYMBOL="PF_ETHUSD" ;;
+    AAPL) KRAKEN_SYMBOL="PF_AAPLXUSD" ;;
+    TSLA) KRAKEN_SYMBOL="PF_TSLAXUSD" ;;
+    NVDA) KRAKEN_SYMBOL="PF_NVDAXUSD" ;;
+    MSTR) KRAKEN_SYMBOL="PF_MSTRXUSD" ;;
+    HOOD) KRAKEN_SYMBOL="PF_HOODXUSD" ;;
+    SPY) KRAKEN_SYMBOL="PF_SPYXUSD" ;;
+    QQQ) KRAKEN_SYMBOL="PF_QQQXUSD" ;;
+    *) KRAKEN_SYMBOL="" ;;
+  esac
+  # Lien primaire : page positions ouvertes (suivi direct de la trade)
+  POSITIONS_URL="https://futures.kraken.com/trade/positions"
+  # Lien secondaire : vue graphique du symbole
+  KRAKEN_URL="https://futures.kraken.com/trade/futures/${KRAKEN_SYMBOL:-PF_XBTUSD}"
+
   if [ "$okval" = "1" ]; then
     prot="✅ SL + TP protégés"
     [ -n "$sl_err" ] && prot="⚠️ SL NON placé ($sl_err)"
     [ -n "$tp_err" ] && prot="$prot | ⚠️ TP NON placé"
     TITLE="🟢 $plat · $pair $dir_word"
-    BODY="Plateforme : ${plat}\nCompte : Kraken Futures LIVE (argent réel USD)\n\n📋 Détail\nOrder ID : ${order_id:-n/a}\nPrix moyen : ${avg_price:-?}\nVolume : ${volume:-?} contracts${RR_LINE}\n\nEnvoyé : ${ts}\n$prot"
+    BODY="Plateforme : ${plat}\nCompte : Kraken Futures LIVE (argent réel USD)\n\n📋 Détail\nOrder ID : ${order_id:-n/a}\nPrix moyen : ${avg_price:-?}\nVolume : ${volume:-?} contracts${RR_LINE}\n\nEnvoyé : ${ts}\n$prot\n\n📱 Suivi position (app Kraken Futures si installée) : ${POSITIONS_URL}\n🔗 Graphique symbole : ${KRAKEN_URL}"
   else
     TITLE="❌ $plat REFUSÉ · $pair $dir_word"
     BODY="Plateforme : ${plat}\n\n📋 Détail\nVolume tenté : ${volume:-?}\nTenté : ${ts}\n\nℹ️ Logs : sudo journalctl -u kraken-bridge -f"

@@ -58,9 +58,14 @@ while IFS='|' read -r id pair dir okval resp ts; do
     fi
   fi
 
+  # MT5 mobile n'a pas de deep-link universel vers un ticket. Fallback : page
+  # positions du dashboard SaaS Scalping Radar (V2) qui liste toutes les
+  # positions ouvertes toutes destinations (Live inclus).
+  DASHBOARD_URL="https://app.scalping-radar.online/v2/positions"
+
   if [ "$okval" = "1" ]; then
     TITLE="🟢 $plat · $pair $dir_word"
-    BODY="Plateforme : ${plat}\nCompte : IC Markets Live (argent réel EUR)\n\n📋 Détail\nTicket : #${ticket:-n/a}\nPrix entrée : ${price:-?}\nVolume : ${volume:-?}${RR_LINE}\n\nEnvoyé : ${ts}\nℹ️ Suivi dans MT5 mobile."
+    BODY="Plateforme : ${plat}\nCompte : IC Markets Live (argent réel EUR)\n\n📋 Détail\nTicket : #${ticket:-n/a}\nPrix entrée : ${price:-?}\nVolume : ${volume:-?}${RR_LINE}\n\nEnvoyé : ${ts}\n\n📱 Ouvrir MT5 mobile : metatrader5://\n🔗 Dashboard positions : ${DASHBOARD_URL}\n(MT5 ouvre à la vue Trade par défaut — pas de deep-link ticket officiel)"
   else
     TITLE="❌ $plat REFUSÉ · $pair $dir_word"
     BODY="Plateforme : ${plat}\n\n📋 Détail\nVolume tenté : ${volume:-?}\nTenté : ${ts}\n\nℹ️ Voir logs bridge Live."

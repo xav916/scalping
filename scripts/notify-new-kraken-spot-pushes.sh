@@ -48,11 +48,18 @@ while IFS='|' read -r id pair dir okval resp ts; do
     fi
   fi
 
+  # Lien primaire : ordres ouverts (SL/TP watchers émulés visibles)
+  ORDERS_URL="https://pro.kraken.com/app/orders?type=open"
+  # Lien secondaire : vue trade du symbol (format BTC-USD dash)
+  KRAKEN_PAIR=$(echo "$pair" | tr '/' '-' | tr '[:lower:]' '[:upper:]')
+  KRAKEN_URL="https://pro.kraken.com/app/trade/${KRAKEN_PAIR}"
+  PORTFOLIO_URL="https://pro.kraken.com/app/portfolio"
+
   if [ "$okval" = "1" ]; then
     watch_line="✅ Watcher SL/TP émulé actif"
     [ "$watcher" = "false" ] && watch_line="⚠️ Watcher NON démarré — position sans protection"
     TITLE="🟢 $plat · $pair"
-    BODY="Plateforme : ${plat}\nCompte : Kraken Spot LIVE (crypto vraiment détenue)\n\n📋 Détail\nTxID : ${txid:-n/a}\nPrix : ${avg_price:-?}\nVolume : ${volume:-?} unités${RR_LINE}\n\nEnvoyé : ${ts}\n$watch_line\n\nℹ️ Wallet Principal Kraken."
+    BODY="Plateforme : ${plat}\nCompte : Kraken Spot LIVE (crypto vraiment détenue)\n\n📋 Détail\nTxID : ${txid:-n/a}\nPrix : ${avg_price:-?}\nVolume : ${volume:-?} unités${RR_LINE}\n\nEnvoyé : ${ts}\n$watch_line\n\n📱 Suivi ordres ouverts (app Kraken Pro si installée) : ${ORDERS_URL}\n🔗 Portefeuille (holdings) : ${PORTFOLIO_URL}\n🔗 Graphique symbole : ${KRAKEN_URL}"
   else
     TITLE="❌ $plat REFUSÉ · $pair"
     BODY="Plateforme : ${plat}\n\n📋 Détail\nVolume tenté : ${volume:-?}\nTenté : ${ts}\n\nℹ️ Logs : sudo journalctl -u kraken-spot-bridge -f"
