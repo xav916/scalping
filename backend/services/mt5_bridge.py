@@ -328,6 +328,25 @@ def _check_rejection(setup, dest=None) -> str | None:
     dest_id_for_hours = getattr(dest, "destination_id", "") if dest is not None else ""
     if not is_market_open_for_destination(setup.pair, dest_id_for_hours):
         return "market_closed"
+    # No-weekend-hold energy : bloque les nouveaux pushes energy (WTI/Brent/NatGas)
+    # vendredi après NO_FRIDAY_LATE_OPEN_ENERGY_HOUR_UTC (défaut 18h UTC = 20h Paris).
+    # Motif : incident 2026-08-03 → 2 positions WTI Live tenues 3 nuits weekend, SL
+    # défini à 83.15/83.67 mais gap réouverture dimanche a exécuté à 79.57/79.59
+    # (slippage -4 USD/ticket, perte totale €20.75 au lieu de €4-5 attendus).
+    try:
+        from config.settings import (
+            NO_FRIDAY_LATE_OPEN_ENERGY_ENABLED,
+            NO_FRIDAY_LATE_OPEN_ENERGY_HOUR_UTC,
+            asset_class_for as _acf,
+        )
+    except Exception:
+        NO_FRIDAY_LATE_OPEN_ENERGY_ENABLED = False
+        NO_FRIDAY_LATE_OPEN_ENERGY_HOUR_UTC = 18
+    if NO_FRIDAY_LATE_OPEN_ENERGY_ENABLED and _acf(setup.pair) == "energy":
+        from datetime import datetime as _dt, timezone as _tz
+        _now = _dt.now(_tz.utc)
+        if _now.weekday() == 4 and _now.hour >= NO_FRIDAY_LATE_OPEN_ENERGY_HOUR_UTC:
+            return "energy_pre_weekend_freeze"
     # Validation tick pre-push : fraîcheur + spread + cohérence prix.
     # Best-effort : si le bridge n'a pas /tick ou est injoignable, None → on continue.
     # Uniquement pour les destinations admin avec bridge_url (pas les EA queue users).

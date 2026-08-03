@@ -234,6 +234,13 @@ VIX_SCORING_ENABLED = os.getenv("VIX_SCORING_ENABLED", "true").lower() in ("1", 
 # uniquement (AAPL/TSLA/NVDA/MSFT/etc.). No-op sur indices/crypto/forex/metal.
 # Source : yfinance (pip install yfinance). Cache SQLite 24h dans macro.db.
 EARNINGS_VETO_ENABLED = os.getenv("EARNINGS_VETO_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+# No-weekend-hold energy (2026-08-03) : bloque nouveaux pushes energy (WTI,
+# Brent, NatGas) vendredi après HOUR_UTC. Motif : incident 2026-08-03 →
+# 2 WTI Live gardées 3 nuits weekend, gap réouverture dimanche a slippé les
+# SL de -4 USD chacun, coût final €20.75 au lieu de €4-5 attendus (gap risk).
+# Défaut : vendredi 18h UTC = 20h Paris (marge sécurité vs close forex 22h UTC).
+NO_FRIDAY_LATE_OPEN_ENERGY_ENABLED = os.getenv("NO_FRIDAY_LATE_OPEN_ENERGY_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+NO_FRIDAY_LATE_OPEN_ENERGY_HOUR_UTC = int(os.getenv("NO_FRIDAY_LATE_OPEN_ENERGY_HOUR_UTC", "18"))
 # Gap 2 (2026-08-02) : Kraken Futures scoring = miroir des 3 features Binance
 # (funding, OI, orderbook) pour signaux routés vers admin_kraken. Données natives
 # Kraken complémentaires aux 6 features Binance (les 2 sources cumulées, le pire
