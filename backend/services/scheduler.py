@@ -3,7 +3,7 @@
 import asyncio
 import logging
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -385,67 +385,12 @@ async def backtest_check_cycle() -> None:
         logger.warning(f"Backtest check_open_trades a echoue: {e}")
 
 
-# Suivi des sessions deja annoncees aujourd'hui pour eviter les doublons
-_session_alerts_sent: set[str] = set()
-
-
-async def session_alert_cycle() -> None:
-    """Tourne chaque minute : annonce les ouvertures de session importantes
-    via Telegram, 5 min avant l'evenement.
-
-    Sessions couvertes :
-    - Sydney : ouverture hebdo dim 22h UTC (début de semaine forex)
-    - Tokyo / London / New York : chaque jour de semaine
-    - SPX/NDX (cash) : 13:30 UTC = 15:30 Paris en été, chaque jour de semaine
-    """
-    from backend.services.telegram_service import send_text
-
-    now = datetime.now(timezone.utc)
-    today = now.date().isoformat()
-    # Reset au changement de jour
-    global _session_alerts_sent
-    if not any(k.startswith(today) for k in _session_alerts_sent):
-        _session_alerts_sent.clear()
-
-    # (heure_UTC, minute_UTC, nom, message, règle_weekend)
-    # règle_weekend :
-    #   "weekdays"     → envoie si l'ouverture tombe lun-ven
-    #   "sunday_only"  → envoie uniquement si l'ouverture tombe un dimanche
-    #                    (cas de Sydney qui ouvre la semaine forex)
-    upcoming = [
-        (22, 0, "Sydney", "🇦🇺 Ouverture Sydney dans 5 min — début de semaine forex", "sunday_only"),
-        (0, 0, "Tokyo", "🇯🇵 Ouverture Tokyo dans 5 min — paires JPY actives", "weekdays"),
-        (8, 0, "London", "🇬🇧 Ouverture London dans 5 min — paires EUR/GBP à surveiller", "weekdays"),
-        (13, 0, "New York", "🇺🇸 Ouverture New York dans 5 min — début de l'overlap London/NY (heure d'or scalping)", "weekdays"),
-        (13, 30, "SPX/NDX", "📈 Ouverture cash SPX/NDX dans 5 min — US stocks open", "weekdays"),
-    ]
-    for open_hour, open_minute, session_name, msg, weekend_rule in upcoming:
-        alert_total = (open_hour * 60 + open_minute - 5) % (24 * 60)
-        if now.hour * 60 + now.minute != alert_total:
-            continue
-
-        # L'alerte peut fire la veille (Tokyo à 23:55 la veille du lundi,
-        # Sydney à 21:55 le dimanche), donc on regarde le weekday de
-        # l'ouverture réelle, pas de now.
-        open_dt = now + timedelta(minutes=5)
-        wd = open_dt.weekday()  # 0=lundi ... 5=samedi, 6=dimanche
-
-        if weekend_rule == "sunday_only":
-            if wd != 6:
-                continue
-        elif weekend_rule == "weekdays":
-            if wd >= 5:
-                continue
-
-        key = f"{today}-{session_name}"
-        if key in _session_alerts_sent:
-            continue
-        _session_alerts_sent.add(key)
-        try:
-            await send_text(msg)
-            logger.info(f"Pre-session alert envoyee: {session_name}")
-        except Exception as e:
-            logger.warning(f"Erreur alert session {session_name}: {e}")
+# Les annonces d'ouverture de session (Tokyo / London / NY / SPX-NDX / Sydney)
+# ont ete retirees le 2026-08-04 : elles s'adressaient a un trader qui se met
+# devant son ecran, alors que le systeme trade seul. ~21 messages par semaine
+# sans action possible. L'heure reste une feature ML (hour_sin, hour_cos, dow,
+# _session_utc) et session_service continue de qualifier la session courante.
+# cf. backend/tests/test_alertes_ouverture_session_retirees.py
 
 
 async def daily_email_summary_cycle() -> None:
@@ -583,15 +528,6 @@ def start_scheduler() -> AsyncIOScheduler:
         seconds=60,
         id="backtest_check",
         name="Check trades backtest",
-        replace_existing=True,
-    )
-    # Alertes pre-session (toutes les minutes, ne fait quelque chose qu'a l'heure d'alerte)
-    _scheduler.add_job(
-        session_alert_cycle,
-        "interval",
-        seconds=60,
-        id="session_alert",
-        name="Alertes pre-session",
         replace_existing=True,
     )
     # Health check toutes les 2 min
@@ -1037,7 +973,7 @@ def start_scheduler() -> AsyncIOScheduler:
     _scheduler.start()
     logger.info(
         f"Scheduler démarré. Analyse {MATAF_POLL_INTERVAL}s, backtest 60s, "
-        f"session_alert 60s, health 120s, mt5_sync {MT5_SYNC_INTERVAL_SEC}s"
+        f"health 120s, mt5_sync {MT5_SYNC_INTERVAL_SEC}s"
     )
     return _scheduler
 
