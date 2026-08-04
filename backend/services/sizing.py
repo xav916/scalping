@@ -25,6 +25,7 @@ et le contexte favorable, et freiner quand on encaisse des pertes.
 from __future__ import annotations
 
 import logging
+import os
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
@@ -77,6 +78,64 @@ def recent_pnl_multiplier(days: int = 7) -> float:
     return 1.0 if pnl >= 0 else 0.5
 
 
+MAX_NOTIONAL_LEVERAGE = float(os.getenv("MAX_NOTIONAL_LEVERAGE", "5.0"))
+
+
+def plafonner_notionnel(risk_money, setup, dest, capital):
+    """Borne le notionnel d'une position. Retourne ``(risque, notionnel, plafond)``.
+
+    Le dimensionnement vise un **risque** constant, pas une taille. Or le
+    notionnel vaut ``risque × entrée / distance du stop`` — identité valable
+    sur toutes les plateformes, la taille de contrat s'annulant entre le
+    calcul du volume et celui du notionnel. Un stop serré produit donc
+    mécaniquement une position énorme, sans que le risque affiché bouge.
+
+    Le 2026-08-04, un ordre de 0,215 ETH est parti pour cette seule raison :
+    403 USD de notionnel sur un compte de 103, soit 3,9×, alors que le risque
+    visé n'était que de 0,66 USD.
+
+    Le plafond est déclaré **par destination** (``max_notional_leverage``) :
+    le forex MT5 à 0,1 lot atteint naturellement 3,8× sans que ce soit
+    anormal, tandis que le même multiple sur un perpétuel crypto engage un
+    actif d'une tout autre volatilité.
+
+    Quand le plafond mord, c'est le **risque** qui est réduit — jamais la
+    distance du stop, qui appartient au setup. Le trade est donc pris plus
+    petit que visé, ce que le dict retourné rend visible.
+    """
+    entry = float(getattr(setup, "entry_price", 0) or 0)
+    sl = float(getattr(setup, "stop_loss", 0) or 0)
+    distance = abs(entry - sl)
+    # `sl > 0` explicitement : un stop absent vaut 0, et `abs(entry - 0)`
+    # donne une distance énorme mais non nulle. Le plafond se serait alors
+    # calculé sur un stop qui n'existe pas.
+    if risk_money <= 0 or entry <= 0 or sl <= 0 or distance <= 0 or not capital:
+        return risk_money, None, None
+
+    levier = MAX_NOTIONAL_LEVERAGE
+    if dest is not None:
+        from backend.services import destinations_registry as _reg
+        d = _reg.get(getattr(dest, "destination_id", None))
+        if d is not None and d.max_notional_leverage:
+            levier = float(d.max_notional_leverage)
+
+    plafond = float(capital) * levier
+    notionnel = risk_money * entry / distance
+    if notionnel <= plafond:
+        return risk_money, round(notionnel, 2), round(plafond, 2)
+
+    # Réduire le risque à proportion ramène le notionnel exactement au
+    # plafond, la relation étant linéaire.
+    reduit = round(risk_money * plafond / notionnel, 2)
+    logger.warning(
+        "sizing: notionnel plafonne %s -> %s (levier %sx sur capital %s) ; "
+        "risque %s -> %s",
+        round(notionnel, 2), round(plafond, 2), levier, round(float(capital), 2),
+        risk_money, reduit,
+    )
+    return reduit, round(notionnel, 2), round(plafond, 2)
+
+
 def compute_risk_money(setup, dest=None) -> dict:
     """Retourne un dict complet des multiplicateurs + risk_money final
     pour l'envoi au bridge et le logging.
@@ -98,6 +157,8 @@ def compute_risk_money(setup, dest=None) -> dict:
     if capital is None:
         return {
             "risk_money": 0.0, "base": 0.0,
+            "notionnel": None, "plafond_notionnel": None,
+            "notionnel_plafonne": False,
             "conf_mult": 0.0, "pnl_mult": 0.0, "session_mult": 0.0,
             "session": session_service.label(), "macro_mult": 0.0,
             "macro_reasons": [], "final_mult": 0.0,
@@ -119,8 +180,20 @@ def compute_risk_money(setup, dest=None) -> dict:
 
     final_mult = conf_mult * pnl_mult * session_mult * macro_mult
     risk_money = round(base * final_mult, 2)
+
+    # Plafond de notionnel : le dimensionnement vise un RISQUE constant, pas
+    # une taille. Un stop serré produit donc mécaniquement une position
+    # énorme. Voir `plafonner_notionnel`.
+    risk_money, notionnel, plafond = plafonner_notionnel(
+        risk_money, setup, dest, capital)
+
     return {
         "risk_money": risk_money,
+        "notionnel": notionnel,
+        "plafond_notionnel": plafond,
+        "notionnel_plafonne": bool(
+            plafond is not None and notionnel is not None
+            and notionnel > plafond + 0.01),
         "base": round(base, 2),
         "conf_mult": round(conf_mult, 2),
         "pnl_mult": round(pnl_mult, 2),

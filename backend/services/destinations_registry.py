@@ -75,6 +75,20 @@ class Destination:
         Classes d'actifs que ce broker accepte.
     plateforme
         Préfixe lisible pour les notifications de push (script shell).
+    max_notional_leverage
+        Notionnel maximal d'une position, en multiple du capital du compte.
+        ``None`` ⇒ garde-fou global ``MAX_NOTIONAL_LEVERAGE``.
+
+        Le dimensionnement vise un **risque** constant, pas une taille : le
+        notionnel vaut ``risque × entrée / distance du stop``. Un stop serré
+        produit donc mécaniquement une position énorme. Le 2026-08-04, un
+        ordre de 0,215 ETH — 403 USD de notionnel sur un compte de 103 —
+        est parti pour cette seule raison.
+
+        Le plafond se déclare par destination parce que les familles ne se
+        comparent pas : le forex MT5 à 0,1 lot atteint naturellement 3,8× et
+        ce n'est pas anormal, tandis que 3,9× sur un perpétuel crypto engage
+        un actif dont la volatilité est d'un tout autre ordre.
     """
 
     id: str
@@ -88,6 +102,7 @@ class Destination:
     sizing: str = "global"
     asset_classes: frozenset[str] = field(default_factory=frozenset)
     plateforme: str = ""
+    max_notional_leverage: float | None = None
 
 
 DESTINATIONS: dict[str, Destination] = {
@@ -127,6 +142,7 @@ DESTINATIONS: dict[str, Destination] = {
             key_header="X-Bridge-Key",
             sizing="live_balance",
             asset_classes=frozenset({"crypto"}),
+            max_notional_leverage=2.0,
             plateforme="Kraken Futures",
         ),
         Destination(
@@ -140,6 +156,7 @@ DESTINATIONS: dict[str, Destination] = {
             key_header="X-Bridge-Key",
             sizing="live_balance",
             asset_classes=frozenset({"crypto"}),
+            max_notional_leverage=2.0,
             plateforme="Kraken Spot",
         ),
         Destination(
@@ -153,6 +170,7 @@ DESTINATIONS: dict[str, Destination] = {
             key_header="X-Bridge-Key",
             sizing="live_balance",
             asset_classes=frozenset({"equity"}),
+            max_notional_leverage=2.0,
             plateforme="Kraken xStocks",
         ),
         Destination(
@@ -231,6 +249,7 @@ def as_json() -> str:
             "bridge_type": d.bridge_type, "url_env": d.url_env,
             "key_env": d.key_env, "key_header": d.key_header,
             "sizing": d.sizing, "plateforme": d.plateforme,
+            "max_notional_leverage": d.max_notional_leverage,
             "asset_classes": sorted(d.asset_classes),
         }
     return json.dumps(out, ensure_ascii=False, indent=2)

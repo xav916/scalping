@@ -109,9 +109,16 @@ def test_l_incident_ne_peut_plus_se_reproduire():
 
 
 def test_le_chemin_global_reste_intact():
-    """Régression : le sizing MT5 ne doit pas bouger d'un centime."""
+    """Régression : le sizing MT5 ne doit pas bouger d'un centime.
+
+    La destination doit être cohérente : `admin_kraken` avec
+    `bridge_type="mt5"` n'existe pas, et depuis l'ajout du plafond de
+    notionnel — déclaré par destination — cet identifiant apportait le
+    plafond crypto de 2× sur un chemin censé être MT5.
+    """
     avant = sizing.compute_risk_money(_setup())
-    apres = sizing.compute_risk_money(_setup(), _dest(bridge_type="mt5"))
+    apres = sizing.compute_risk_money(
+        _setup(), _dest(bridge_type="mt5", dest_id="admin_live"))
     assert avant["risk_money"] == apres["risk_money"]
     assert avant["capital"] == apres["capital"]
 
