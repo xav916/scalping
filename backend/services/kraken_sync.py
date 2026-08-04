@@ -84,9 +84,14 @@ async def fetch_fills(dest) -> list[dict[str, Any]]:
         return []
 
 
-async def fetch_positions(dest) -> dict[str, float]:
+async def fetch_positions(dest) -> dict[str, float] | None:
     """Exposition **signée** par symbole : positive acheteuse, négative
-    vendeuse. ``{}`` si indisponible.
+    vendeuse.
+
+    ``None`` si le bridge est injoignable, ``{}`` si le compte est réellement
+    à plat. Les deux renvoyaient ``{}`` auparavant, ce qui les rendait
+    indistinguables : un compte soldé ne fermait donc jamais nos lignes, par
+    prudence contre une panne qui n'avait pas eu lieu.
 
     Le sens était jeté auparavant. Il est indispensable dès qu'on veut
     aligner le volume de nos lignes sur le net de l'exchange : sans lui, une
@@ -98,7 +103,7 @@ async def fetch_positions(dest) -> dict[str, float]:
             r = await c.get(url, headers={"X-Bridge-Key": dest.bridge_api_key}
                             if dest.bridge_api_key else {})
         if r.status_code != 200:
-            return {}
+            return None
         out: dict[str, float] = {}
         for p in (r.json().get("positions") or []):
             sym = p.get("symbol")
@@ -110,7 +115,7 @@ async def fetch_positions(dest) -> dict[str, float]:
         return out
     except Exception as e:
         logger.warning(f"kraken_sync: /positions injoignable : {e}")
-        return {}
+        return None
 
 
 # ─── Les ordres poussés par le radar ───────────────────────────────────
@@ -157,7 +162,19 @@ def pushes_kraken() -> list[dict[str, Any]]:
 
 # ─── Attribution des clôtures ──────────────────────────────────────────
 
-def attribuer_clotures(pushes, fills) -> list[dict[str, Any]]:
+def volumes_ouverts() -> dict[str, float]:
+    """Volume encore ouvert par ordre, tel qu'enregistré. ``{}`` si illisible."""
+    try:
+        with sqlite3.connect(_db_path()) as c:
+            return {str(t): float(v or 0) for t, v in c.execute(
+                "SELECT mt5_ticket, size_lot FROM personal_trades "
+                " WHERE status = 'OPEN' AND is_auto = 1 AND mt5_ticket IS NOT NULL")}
+    except Exception as e:
+        logger.debug(f"kraken_sync: volumes ouverts illisibles : {e}")
+        return {}
+
+
+def attribuer_clotures(pushes, fills, ouverts=None) -> list[dict[str, Any]]:
     """Associe à chaque ordre sa clôture, quand elle est identifiable.
 
     L'attribution par ``order_id`` est exacte : un fill dont l'``order_id``
@@ -212,10 +229,16 @@ def attribuer_clotures(pushes, fills) -> list[dict[str, Any]]:
             "closed_at": f.get("fill_time"),
         }
 
+    ouverts = ouverts or {}
     for c in clotures.values():
         c["exit_price"] = (c["notionnel"] / c["taille"]) if c["taille"] else 0.0
-        # Clôture partielle : on ne déclare fermé que ce qui l'est vraiment.
-        c["complete"] = c["taille"] >= c["push"]["volume"] * 0.999
+        # La référence est le volume ENCORE OUVERT, pas celui d'origine. Après
+        # une réduction partielle, le stop ne ferme que le résiduel : comparer
+        # à l'origine jugeait la clôture incomplète et ne l'appliquait jamais.
+        # Le 2026-08-04, un short de 0,215 réduit à 0,107 puis stoppé est resté
+        # ouvert dans nos lignes alors que Kraken l'avait fermé.
+        attendu = ouverts.get(str(c["push"]["order_id"])) or c["push"]["volume"]
+        c["complete"] = c["taille"] >= attendu * 0.999
     return list(clotures.values())
 
 
@@ -227,6 +250,8 @@ def clotures_par_nettage(pushes, fills, positions, deja_closes) -> list[dict[str
     une attribution qui ne peut pas être exacte. On enregistre la clôture,
     et le montant reste ``None`` plutôt que d'être deviné.
     """
+    if positions is None:
+        return []  # exposition inconnue : ne rien affirmer
     sortie = []
     for p in pushes:
         if p["push_id"] in deja_closes:
@@ -234,8 +259,6 @@ def clotures_par_nettage(pushes, fills, positions, deja_closes) -> list[dict[str
         sym = p.get("symbol")
         if sym and abs(positions.get(sym, 0.0)) > 0:
             continue  # encore de l'exposition sur ce symbole : rien à conclure
-        if not positions:
-            continue  # positions indisponibles : ne rien affirmer
         sortie.append({
             "push": p, "cause": CAUSE_NET, "taille": p["volume"],
             "pnl_usd": None, "exit_price": None, "complete": True,
@@ -335,7 +358,7 @@ def ajuster_volumes_ouverts(pushes, positions) -> int:
     Retourne le nombre de lignes corrigées. Sans ``positions``, on ne touche
     à rien : l'absence d'information n'autorise aucune conclusion.
     """
-    if not positions:
+    if positions is None:
         return 0
 
     par_ligne = {}
@@ -470,7 +493,8 @@ async def reconcile() -> int:
         # paire et au garde-fou de corrélation.
         materialiser_ouvertures(pushes)
 
-        clotures = [c for c in attribuer_clotures(pushes, fills) if c["complete"]]
+        clotures = [c for c in attribuer_clotures(pushes, fills, volumes_ouverts())
+                    if c["complete"]]
         vus = {c["push"]["push_id"] for c in clotures}
         clotures += clotures_par_nettage(pushes, fills, positions, vus)
 

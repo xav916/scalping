@@ -160,8 +160,13 @@ def test_une_position_encore_ouverte_n_est_pas_fermee():
 
 
 def test_positions_indisponibles_ne_ferme_rien():
-    """Ne jamais conclure d'une absence d'information."""
-    assert ks.clotures_par_nettage(PUSHES, FILLS, {}, deja_closes=set()) == []
+    """Ne jamais conclure d'une absence d'information.
+
+    `None` = bridge injoignable ; `{}` = compte reellement a plat. Les deux
+    valaient `{}` avant, ce qui empechait un compte solde de fermer nos
+    lignes par prudence contre une panne qui n'avait pas eu lieu.
+    """
+    assert ks.clotures_par_nettage(PUSHES, FILLS, None, deja_closes=set()) == []
 
 
 def test_un_trade_deja_ferme_par_son_stop_n_est_pas_refermé():
@@ -544,7 +549,7 @@ def test_sans_positions_connues_aucun_volume_n_est_touche(base):
                   "is_auto) VALUES ('auto','ETH/USD','sell',1874.6,1884.0,1857.0,"
                   "0.215,'OPEN','2026-08-04T18:17:37','D',1)")
     pushes = [_push(1, "ETH/USD", "sell", "D", "sl-D", 0.215, 1874.6)]
-    assert ks.ajuster_volumes_ouverts(pushes, {}) == 0
+    assert ks.ajuster_volumes_ouverts(pushes, None) == 0
     assert _lignes(base)[0]["size_lot"] == pytest.approx(0.215)
 
 
@@ -595,4 +600,65 @@ async def test_un_bridge_injoignable_ne_renvoie_aucune_position(monkeypatch):
 
     monkeypatch.setattr(httpx.AsyncClient, "get", _get)
     assert await ks.fetch_positions(NS(bridge_url="http://b.test",
-                                       bridge_api_key="k")) == {}
+                                       bridge_api_key="k")) is None
+
+
+def test_un_stop_sur_position_reduite_est_une_cloture_complete(base):
+    """Le cas du 2026-08-04 19:38 : un short de 0,215 réduit à 0,107 puis
+    stoppé. Comparer la taille fermée au volume D'ORIGINE jugeait la clôture
+    incomplète — la position restait ouverte chez nous alors que Kraken
+    l'avait fermée."""
+    pushes = [_push(1, "ETH/USD", "sell", "D", "sl-D", 0.215, 1874.6)]
+    fills = [{"order_id": "sl-D", "symbol": "PF_ETHUSD", "side": "buy",
+              "size": 0.107, "price": 1879.6,
+              "fill_time": "2026-08-04T19:38:52Z", "realized_pnl": -0.799}]
+
+    sans = ks.attribuer_clotures(pushes, fills)[0]
+    assert sans["complete"] is False, "sans volume courant, jugee partielle"
+
+    avec = ks.attribuer_clotures(pushes, fills, {"D": 0.107})[0]
+    assert avec["complete"] is True
+    assert avec["pnl_usd"] == pytest.approx(-0.799)
+
+
+@pytest.mark.asyncio
+async def test_un_bridge_injoignable_se_distingue_d_un_compte_a_plat(monkeypatch):
+    """Les deux renvoyaient `{}` : un compte soldé ne fermait donc jamais nos
+    lignes, par prudence contre une panne qui n'avait pas eu lieu."""
+    import httpx
+
+    async def _plat(self, url, headers=None):
+        return httpx.Response(200, json={"ok": True, "count": 0, "positions": []},
+                              request=httpx.Request("GET", url))
+
+    async def _panne(self, url, headers=None):
+        raise httpx.ConnectError("refused")
+
+    d = NS(bridge_url="http://b.test", bridge_api_key="k")
+    monkeypatch.setattr(httpx.AsyncClient, "get", _plat)
+    assert await ks.fetch_positions(d) == {}
+    monkeypatch.setattr(httpx.AsyncClient, "get", _panne)
+    assert await ks.fetch_positions(d) is None
+
+
+def test_un_compte_a_plat_ferme_nos_lignes(base):
+    """`{}` signifie zero exposition : nos lignes doivent suivre."""
+    with sqlite3.connect(base) as c:
+        c.execute("INSERT INTO personal_trades (user,pair,direction,entry_price,"
+                  "stop_loss,take_profit,size_lot,status,created_at,mt5_ticket,"
+                  "is_auto) VALUES ('auto','ETH/USD','sell',1874.6,1884.0,1857.0,"
+                  "0.215,'OPEN','2026-08-04T18:17:37','D',1)")
+    pushes = [_push(1, "ETH/USD", "sell", "D", "sl-D", 0.215, 1874.6)]
+    assert ks.ajuster_volumes_ouverts(pushes, {}) == 1
+    assert _lignes(base)[0]["status"] == "CLOSED"
+
+
+def test_une_exposition_inconnue_ne_ferme_rien(base):
+    with sqlite3.connect(base) as c:
+        c.execute("INSERT INTO personal_trades (user,pair,direction,entry_price,"
+                  "stop_loss,take_profit,size_lot,status,created_at,mt5_ticket,"
+                  "is_auto) VALUES ('auto','ETH/USD','sell',1874.6,1884.0,1857.0,"
+                  "0.215,'OPEN','2026-08-04T18:17:37','D',1)")
+    pushes = [_push(1, "ETH/USD", "sell", "D", "sl-D", 0.215, 1874.6)]
+    assert ks.ajuster_volumes_ouverts(pushes, None) == 0
+    assert _lignes(base)[0]["status"] == "OPEN"
