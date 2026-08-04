@@ -27,6 +27,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from backend.services.market_hours import is_market_open_for
+
 logger = logging.getLogger(__name__)
 
 # Même fichier que shadow_v2_core_long
@@ -46,6 +48,26 @@ def system_id_for(pair: str, direction: str) -> str:
     """
     pair_clean = pair.replace("/", "")
     return f"{V1_SYSTEM_PREFIX}_{pair_clean}_{direction}"
+
+
+def _bar_timestamp(cycle_at: datetime) -> str:
+    """Début du bar H1 contenant ``cycle_at``, en ISO.
+
+    ⚠️ C'est la clé de déduplication. Jusqu'au 2026-08-04, ``bar_timestamp``
+    recevait ``cycle_at`` tel quel — donc une valeur différente à chaque
+    cycle radar (~6 min), rendant la contrainte ``UNIQUE (system_id,
+    bar_timestamp)`` **inopérante**. Une même idée de trade était persistée
+    des centaines de fois : mesuré en prod à ×960 sur SPX, ×229 sur AAPL,
+    ×2,5 en moyenne sur 19 928 rows.
+
+    Toute statistique tirée du shadow était donc faussée — non pas
+    légèrement, mais d'un facteur qui variait selon la paire, ce qui
+    empêchait même de corriger a posteriori.
+
+    Aligner sur le début du bar rétablit la sémantique annoncée par le
+    docstring d'origine : **un setup par bar**.
+    """
+    return cycle_at.replace(minute=0, second=0, microsecond=0).isoformat()
 
 
 def _persist_v1_shadow(
@@ -85,8 +107,21 @@ def _persist_v1_shadow(
     except Exception:
         pass
 
+    # Marché fermé : le dernier cours ne bouge plus, donc le radar
+    # régénérerait un setup identique à chaque cycle sur un prix figé. Une
+    # action scannée 24h/24 alors que le NYSE n'ouvre que 6h30 produisait
+    # ainsi ~230 rows/jour pour 1 idée de trade.
+    # On interroge les horaires **au moment du cycle**, pas à l'instant présent :
+    # un rejeu ou un backfill doit juger le passé avec le calendrier du passé.
+    try:
+        if not is_market_open_for(pair, cycle_at):
+            return False
+    except Exception as e:  # jamais bloquer le log sur une erreur d'horaires
+        logger.debug(f"shadow_v1: market_hours indisponible pour {pair}: {e}")
+
     system_id = system_id_for(pair, direction)
     cycle_iso = cycle_at.isoformat()
+    bar_iso = _bar_timestamp(cycle_at)
 
     with sqlite3.connect(DB_PATH) as c:
         try:
@@ -101,7 +136,7 @@ def _persist_v1_shadow(
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    cycle_iso, cycle_iso, system_id, pair, V1_TIMEFRAME,
+                    cycle_iso, bar_iso, system_id, pair, V1_TIMEFRAME,
                     direction, pattern_name,
                     entry, sl, tp1, tp2, risk_pct, rr,
                     DEFAULT_CAPITAL_EUR, DEFAULT_RISK_PCT,
@@ -110,7 +145,8 @@ def _persist_v1_shadow(
             )
             return True
         except sqlite3.IntegrityError:
-            # Collision UNIQUE — déjà logué pour ce cycle/pair/direction
+            # Collision UNIQUE — ce bar est déjà logué pour cette
+            # (pair, direction). Comportement voulu : un setup par bar.
             return False
 
 
