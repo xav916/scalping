@@ -156,7 +156,14 @@ _BALANCE_TTL_SEC = 300.0
 
 # Types de bridge dont le solde est interrogeable via /account. Les bridges
 # MT5 gardent le capital global : leur sizing est reclampé côté bridge.
-LIVE_BALANCE_BRIDGE_TYPES = frozenset({"kraken", "kraken_spot", "binance"})
+def _live_balance_types() -> frozenset[str]:
+    """Dérivé du registre : `sizing="live_balance"` suffit à déclarer qu'un
+    bridge doit être dimensionné sur son solde réel."""
+    from backend.services.destinations_registry import bridge_types_with_live_balance
+    return bridge_types_with_live_balance()
+
+
+LIVE_BALANCE_BRIDGE_TYPES = _live_balance_types()
 
 CAPITAL_UNAVAILABLE = "unavailable"
 

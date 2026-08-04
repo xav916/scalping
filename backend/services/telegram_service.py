@@ -346,6 +346,10 @@ _PATTERN_EXPLAIN_FR: dict[str, str] = {
 # Labels lisibles pour chaque destination admin connue. Utilisé pour annoter
 # le badge "Auto-exécuté" du push Telegram avec les brokers réels touchés.
 # Cf. project_live_icmarkets_active_2026_06_12.
+# Libellés dérivés du registre des destinations : une seule déclaration
+# par plateforme, ici comme ailleurs.
+from backend.services import destinations_registry as _registry
+
 # Libellés des destinations, source UNIQUE pour tous les messages Telegram.
 #
 # ⚠️ Cette table ne listait que `admin_legacy` et `admin_live` — 2 destinations
@@ -363,42 +367,14 @@ _PATTERN_EXPLAIN_FR: dict[str, str] = {
 # `mode`  : ligne broker du message d'ouverture de trade
 # `reel`  : True si de l'argent réel est engagé — jamais deviner, déclarer.
 DESTINATION_LABELS: dict[str, dict[str, object]] = {
-    "admin_legacy": {
-        "badge": "🧪 Demo Pepperstone",
-        "mode": "Pepperstone · Démo",
-        "reel": False,
-    },
-    "admin_live": {
-        "badge": "💰 Live IC Markets",
-        "mode": "IC Markets · LIVE (argent réel)",
-        "reel": True,
-    },
-    "admin_kraken": {
-        "badge": "🐙 Kraken Futures",
-        "mode": "Kraken Futures · LIVE (argent réel)",
-        "reel": True,
-    },
-    "admin_kraken_spot": {
-        "badge": "🐙 Kraken Spot",
-        "mode": "Kraken Spot · LIVE (argent réel)",
-        "reel": True,
-    },
-    "admin_kraken_stocks": {
-        "badge": "🐙 Kraken xStocks",
-        "mode": "Kraken xStocks · LIVE (argent réel)",
-        "reel": True,
-    },
-    "admin_binance": {
-        "badge": "🅑 Binance Testnet",
-        "mode": "Binance · Testnet (R&D)",
-        "reel": False,
-    },
+    d.id: {"badge": d.badge, "mode": d.mode, "reel": d.reel}
+    for d in _registry.DESTINATIONS.values()
 }
 
 _USER_DEST_LABEL = {
-    "badge": "👤 Compte Premium",
-    "mode": "Premium · Démo",
-    "reel": False,
+    "badge": _registry.USER_DESTINATION.badge,
+    "mode": _registry.USER_DESTINATION.mode,
+    "reel": _registry.USER_DESTINATION.reel,
 }
 
 

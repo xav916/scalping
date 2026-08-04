@@ -261,20 +261,15 @@ def _ensure_schema() -> None:
 
 
 # Destinations valides (miroir de bridge_destinations.BridgeConfig.destination_id)
-# Destinations admin connues. ⚠️ Doit rester alignée sur
-# `bridge_destinations` : une destination absente d'ici est traitée comme
-# inconnue, avec les conséquences décrites dans `_normalize_destination`.
-VALID_DESTINATIONS = frozenset({
-    "admin_legacy",
-    "admin_live",
-    "admin_kraken",
-    "admin_kraken_spot",
-    "admin_kraken_stocks",
-    "admin_binance",
-})
+# Dérivé du registre : ajouter une plateforme là-bas suffit. Cette liste
+# était maintenue à la main et ne connaissait que 2 destinations sur 7 —
+# cf. destinations_registry pour l'incident du 2026-08-04.
+from backend.services.destinations_registry import (  # noqa: E402
+    USER_DESTINATION_RE as _USER_DESTINATION_RE,
+    ids as _registry_ids,
+)
 
-# Destinations multi-tenant : `user:<id>`, cf. bridge_destinations._user_destinations
-_USER_DESTINATION_RE = re.compile(r"^user:\d+$")
+VALID_DESTINATIONS = _registry_ids()
 
 
 def is_valid_destination(destination: str) -> bool:
