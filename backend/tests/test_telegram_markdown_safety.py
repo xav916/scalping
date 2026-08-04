@@ -97,31 +97,25 @@ def _capture_envoi(monkeypatch):
     return ts, envoyes
 
 
-def test_la_raison_de_transition_est_neutralisee(monkeypatch):
-    """Le cas exact du 2026-08-04, via la vraie fonction d'envoi."""
+def test_la_transition_nenvoie_plus_rien(monkeypatch):
+    """`send_pac_transition_user` est un no-op depuis le 2026-08-04.
+
+    Les transitions vont au récap quotidien — ~26/jour envoyés en double sur
+    user et infra, sans décision associée. Ce test existe pour qu'une
+    réactivation soit un choix explicite et non un accident : si quelqu'un
+    remet un envoi ici, il devra le justifier en supprimant ce test.
+
+    ⚠️ Si la fonction est réactivée, `md_safe` redevient indispensable sur
+    la raison : elle contient presque toujours un underscore (`pnl_pct`,
+    `_not_admitted`), qui casse l'entité italique et fait perdre TOUT le
+    message en silence.
+    """
     import asyncio
     ts, envoyes = _capture_envoi(monkeypatch)
     asyncio.run(ts.send_pac_transition_user(
         "MSFT", "sell", "TELEGRAM", "OBSERVED",
-        "auto-demote: pnl_pct -103.71 < 2.0; wr 0.0 < 45.0"))
-
-    assert envoyes, "aucun message construit"
-    text = envoyes[0]["text"]
-    assert envoyes[0]["parse_mode"] == "Markdown"
-    # Les underscores restants ne doivent être QUE ceux des entités italiques,
-    # donc en nombre pair — un impair casse le parse et perd le message.
-    assert text.count("_") % 2 == 0, f"underscores impairs : {text!r}"
-    assert "pnl-pct" in text, "la raison doit rester lisible"
-
-
-def test_le_message_de_transition_survit_a_une_raison_hostile(monkeypatch):
-    import asyncio
-    ts, envoyes = _capture_envoi(monkeypatch)
-    asyncio.run(ts.send_pac_transition_user(
-        "BTC/USD", "buy", "AUTO_EXEC", "DEMOTED",
-        "veto _not_admitted + *macro* + [ref] + `code` + VALID_DESTINATIONS"))
-    text = envoyes[0]["text"]
-    assert text.count("_") % 2 == 0 and text.count("*") % 2 == 0
+        "auto-demote: pnl_pct -103.71 < 2.0"))
+    assert envoyes == [], "la transition ne doit plus rien envoyer"
 
 
 # --- le message de setup ---------------------------------------------------

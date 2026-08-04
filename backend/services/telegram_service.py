@@ -490,6 +490,48 @@ _MARGIN_AT_001_LOT_EUR: dict[str, float] = {
 }
 
 
+
+def destination_is_real_money(destination_id: str | None) -> bool:
+    """True si cette destination engage de l'argent réel.
+
+    Déclaré dans ``DESTINATION_LABELS``, jamais déduit : une destination
+    inconnue est traitée comme fictive, donc silencieuse. Mieux vaut rater
+    une notification que crier au loup sur du Demo.
+    """
+    if not destination_id:
+        return False
+    if destination_id.startswith("user:"):
+        return bool(_USER_DEST_LABEL.get("reel"))
+    entree = DESTINATION_LABELS.get(destination_id)
+    return bool(entree and entree.get("reel"))
+
+
+def destination_for_ticket(ticket) -> str | None:
+    """Retrouve la destination d'un trade à partir de son ticket.
+
+    ``personal_trades`` ne porte pas de ``destination_id`` : le chemin de
+    clôture ignore donc chez quel broker le trade a eu lieu. On le résout
+    depuis ``mt5_pushes``, dont la réponse du bridge contient le ticket.
+
+    Exact plutôt qu'heuristique — deviner d'après le format du numéro de
+    ticket serait fragile, et c'est de l'argent réel.
+    """
+    if not ticket:
+        return None
+    try:
+        import sqlite3
+        from backend.services.trade_log_service import _DB_PATH
+        with sqlite3.connect(f"file:{_DB_PATH}?mode=ro", uri=True, timeout=5) as c:
+            row = c.execute(
+                "SELECT destination_id FROM mt5_pushes "
+                " WHERE bridge_response LIKE ? ORDER BY id DESC LIMIT 1",
+                (f"%{ticket}%",),
+            ).fetchone()
+        return row[0] if row else None
+    except Exception as e:
+        logger.debug(f"destination_for_ticket({ticket}): {e}")
+        return None
+
 def _executing_destinations(setup) -> list:
     """Destinations admin qui exécuteront effectivement ce setup.
 
@@ -977,6 +1019,13 @@ async def send_close(trade: dict) -> None:
     if ticket:
         _notified_closes.add(int(ticket))
 
+    # Argent réel uniquement, comme à l'ouverture. `personal_trades` ne porte
+    # pas la destination : on la résout depuis `mt5_pushes` via le ticket.
+    dest_close = destination_for_ticket(ticket)
+    if not destination_is_real_money(dest_close):
+        logger.debug(f"send_close: ticket {ticket} ({dest_close}) hors argent réel — skip")
+        return
+
     text = _format_close(trade)
 
     # Miroir @xav_scalping_sales_bot (2026-08-02) : Xavier admin reçoit
@@ -1222,6 +1271,11 @@ async def send_trade_opened(
     """
     if not is_configured():
         return
+    # Argent réel uniquement (2026-08-04). Le Demo doublait le volume du
+    # canal sans rien engager ; il reste visible dans le récap quotidien.
+    if not destination_is_real_money(destination_id):
+        logger.debug(f"send_trade_opened: {destination_id} sans argent réel — skip")
+        return
     try:
         text = _format_trade_opened(
             setup, ticket, fill_price, volume, mode,
@@ -1334,76 +1388,20 @@ def md_safe(text: str | None) -> str:
     return "".join(_MD_LEGACY_ACTIFS.get(c, c) for c in str(text))
 
 async def send_pac_transition_user(pair: str, direction: str | None, from_state: str | None, to_state: str, reason: str) -> None:
-    """Push une notif user d'une transition PAC (en plus de la notif infra existante).
+    """DÉSACTIVÉE (2026-08-04) — les transitions vont au récap quotidien.
 
-    Filtré : on n'envoie PAS les backfills (transitioned_by='auto:backfill').
-    Les states PAUSED/AUTO_EXEC/DEMOTED/OBSERVED/TELEGRAM intéressent le user
-    pour comprendre quelles paires deviennent éligibles ou pas.
+    Le moteur d'admission produit ~26 changements d'état par jour, envoyés
+    en double sur les canaux user et infra : 52 messages quotidiens sur
+    lesquels aucune décision n'est prise dans l'instant.
+
+    L'information n'est pas perdue — `pair_admission_state` garde
+    l'historique complet et le récap en donne la synthèse.
+
+    Conservée en no-op documenté plutôt que supprimée : le point d'appel
+    resservira si l'on veut un jour notifier les seules transitions vers
+    AUTO_EXEC, qui elles engagent de l'argent.
     """
-    if not is_configured():
-        return
-    try:
-        # Vulgarisation 2026-06-13 : explication impact + glossaire états en bas
-        _STATE_FR = {
-            "OBSERVED": "👁 simplement surveillée (pas d'ordres)",
-            "TELEGRAM": "📱 signal envoyé en notif (à toi de jouer)",
-            "AUTO_EXEC": "🤖 trades automatiques (le radar exécute seul)",
-            "PAUSED": "⏸ en pause (résultats récents insuffisants)",
-            "DEMOTED": "📉 rétrogradée (performance dégradée)",
-        }
-        arrow = "📈" if to_state in ("TELEGRAM", "AUTO_EXEC") else "📉" if to_state == "DEMOTED" else "⏸" if to_state == "PAUSED" else "🔄"
-        action_word = {
-            "AUTO_EXEC": "activée en mode auto",
-            "TELEGRAM": "activée en mode notif",
-            "PAUSED": "mise en pause",
-            "DEMOTED": "rétrogradée",
-            "OBSERVED": "remise en simple surveillance",
-        }.get(to_state, "modifiée")
-        pair_label = _PAIR_FR_LABEL.get(pair, pair)
-        dir_str = ""
-        if direction == "buy":
-            dir_str = " (sens achat)"
-        elif direction == "sell":
-            dir_str = " (sens vente)"
-        new_state_fr = _STATE_FR.get(to_state, to_state)
-        reason_short = md_safe(reason)[:140]
-
-        if to_state == "AUTO_EXEC":
-            effect_line = "Effet : le radar prendra les ordres seul sur cette paire quand un signal apparaît."
-        elif to_state == "TELEGRAM":
-            effect_line = "Effet : tu vas recevoir les signaux par notif, à toi de placer l'ordre manuellement si tu veux."
-        elif to_state in ("PAUSED", "DEMOTED"):
-            effect_line = "Effet : plus de trades auto sur cette paire jusqu'à amélioration des résultats."
-        else:
-            effect_line = "Effet : la paire est juste observée pour le moment."
-
-        text = (
-            f"{arrow} *{pair_label}* {action_word} · {pair}{dir_str}\n"
-            f"\n"
-            f"Nouveau mode : *{new_state_fr}*\n"
-            f"{effect_line}\n"
-            f"\n"
-            f"ℹ️ Une paire peut basculer entre 4 modes selon ses performances. "
-            f"Tu reçois ce message à chaque changement.\n"
-            f"\n"
-            f"_Raison : {reason_short}_"
-        )
-        destinataires = _destinataires()
-        url = TELEGRAM_API.format(token=TELEGRAM_BOT_TOKEN)
-        for user, chat_id in destinataires:
-            try:
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    r = await client.post(url, json={
-                        "chat_id": chat_id, "text": text,
-                        "parse_mode": "Markdown", "disable_web_page_preview": True,
-                    })
-                    if r.status_code != 200:
-                        logger.warning(f"Telegram pac_transition_user {r.status_code}: {r.text[:200]}")
-            except Exception as e:
-                logger.warning(f"Erreur envoi pac_transition_user {user}: {e}")
-    except Exception as e:
-        logger.warning(f"send_pac_transition_user error: {e}")
-
+    return
 
 async def send_daily_recap() -> None:
     """Récap 23h59 Paris : PnL du jour + scope auto-exec + transitions du jour + vetos.
