@@ -261,9 +261,11 @@ def _admin_kraken_spot_destination() -> BridgeConfig | None:
         auto_exec_enabled=True,
         bridge_type="kraken_spot",
         leverage=int(getattr(st, "KRAKEN_SPOT_BRIDGE_LEVERAGE", 1)),
-        # 0,05 % par jambe (taker). Donne 0,288 R au SL médian mesuré.
         cost_model=CostModel(proportional_rate_per_leg=0.0005),
-        expected_edge_r=0.110,  # mesuré sur 876 trades réels le 2026-08-04
+        # Le taux 0,0005 est celui des PERPÉTUELS. Le barème spot Kraken est
+        # nettement plus élevé et n'a pas été mesuré. Edge à None : jamais
+        # mesuré sur cette route, donc la porte bloque en exécution réelle.
+        expected_edge_r=None,
     )
 
 
@@ -305,7 +307,10 @@ def _admin_kraken_stocks_destination() -> BridgeConfig | None:
         bridge_type="kraken",
         leverage=int(getattr(st, "KRAKEN_STOCKS_BRIDGE_LEVERAGE", 5)),
         cost_model=CostModel(proportional_rate_per_leg=0.0005),
-        expected_edge_r=0.129,  # 0,199 R de frais mesurés > 30 % de cet edge
+        # Edge jamais mesuré sur xStocks — la route n'a jamais tradé et ses prix
+        # sont décorrélés du NYSE. Emprunter l'edge MT5 serait extrapoler hors
+        # du domaine de mesure. À None, la porte bloque en exécution réelle.
+        expected_edge_r=None,
     )
 
 

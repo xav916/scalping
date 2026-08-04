@@ -516,6 +516,7 @@ def _executing_destinations(setup) -> list:
     """
     try:
         from backend.services import bridge_destinations
+        from backend.services.mt5_bridge import _cost_rejection
         from config.settings import asset_class_for, MT5_BRIDGE_ALLOWED_PATTERNS
 
         score = float(getattr(setup, "confidence_score", 0) or 0)
@@ -538,6 +539,8 @@ def _executing_destinations(setup) -> list:
             if motifs is None:
                 motifs = MT5_BRIDGE_ALLOWED_PATTERNS
             if motifs and _pattern_of(setup) not in motifs:
+                continue
+            if _cost_rejection(setup, dest):
                 continue
             out.append(dest)
         return out

@@ -218,10 +218,18 @@ def _cost_rejection(setup, dest) -> str | None:
     les portes d'admission et de whitelist qui la précèdent lisent la base,
     et un test unitaire ne les atteindrait jamais.
 
-    Une destination qui ne déclare pas de `cost_model` garde exactement son
-    comportement d'avant le 2026-08-04.
+    Une destination qui ne déclare ni `cost_model` ni `expected_edge_r`
+    garde exactement son comportement d'avant le 2026-08-04. En revanche,
+    `exceeds_edge` garantit qu'un edge mesuré à zéro ou négatif bloque
+    TOUJOURS : une destination qui déclare `expected_edge_r=0.0` sans
+    `cost_model` ne doit donc pas s'échapper ici — c'est exactement le cas
+    que cette porte existe pour attraper.
     """
-    if dest is None or getattr(dest, "cost_model", None) is None:
+    if dest is None:
+        return None
+    modele = getattr(dest, "cost_model", None)
+    edge = getattr(dest, "expected_edge_r", None)
+    if modele is None and edge is None:
         return None
 
     from backend.services.cost_model import cost_in_r, exceeds_edge
@@ -231,21 +239,26 @@ def _cost_rejection(setup, dest) -> str | None:
         from backend.services.sizing import compute_risk_money
 
         risk_money = compute_risk_money(setup, dest).get("risk_money")
-    except Exception:
+    except Exception as e:
         # Sizing indisponible : `risk_money` reste None. `cost_in_r` renverra
         # None si une composante fixe est déclarée, et `exceeds_edge` bloquera
         # l'argent réel — jamais l'inverse.
+        logger.debug(
+            f"_cost_rejection: sizing indisponible pour {getattr(setup, 'pair', '?')} — {e}"
+        )
         risk_money = None
 
-    cout_r = cost_in_r(
-        entry=getattr(setup, "entry_price", 0) or 0,
-        stop_loss=getattr(setup, "stop_loss", 0) or 0,
-        model=dest.cost_model,
-        risk_money=risk_money,
-    )
+    cout_r = None
+    if modele is not None:
+        cout_r = cost_in_r(
+            entry=getattr(setup, "entry_price", 0) or 0,
+            stop_loss=getattr(setup, "stop_loss", 0) or 0,
+            model=modele,
+            risk_money=risk_money,
+        )
     if exceeds_edge(
         cout_r,
-        getattr(dest, "expected_edge_r", None),
+        edge,
         auto_exec=bool(getattr(dest, "auto_exec_enabled", False)),
     ):
         return "fees_exceed_edge"

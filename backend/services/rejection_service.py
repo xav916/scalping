@@ -45,6 +45,7 @@ REASON_LABELS_FR = {
     "bridge_invalid_stops": "Bridge : stops invalides",
     "bridge_error": "Bridge : erreur autre",
     "bridge_timeout": "Bridge injoignable",
+    "fees_exceed_edge": "frais supérieurs à 30 % de l'edge",
 }
 
 
