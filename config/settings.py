@@ -406,13 +406,20 @@ for _e in _blocked_raw.split(","):
 # fois ; hors échantillon il classait à l'envers (corrélation de rang −0,71
 # sur juillet-août contre +0,90 pour v2).
 #
-# ⚠️ v2 déplace la distribution du score — médiane 57 → 70. Basculer ce
+# ⚠️ v2 déplace la distribution du score — médiane 57 → 65. Basculer ce
 # drapeau SANS remonter les seuils au même moment rendrait le dispatch bien
 # plus permissif, en argent réel. Correspondance à sélectivité égale :
 #
-#     v1 >= 40  ->  v2 >= 49        v1 >= 60  ->  v2 >= 71
-#     v1 >= 50  ->  v2 >= 64        v1 >= 70  ->  v2 >= 82
-#     v1 >= 55  ->  v2 >= 66        v1 >= 75  ->  v2 >= 86
+#     v1 >= 40  ->  v2 >= 42        v1 >= 60  ->  v2 >= 71
+#     v1 >= 50  ->  v2 >= 54        v1 >= 70  ->  v2 >= 85
+#     v1 >= 55  ->  v2 >= 61        v1 >= 75  ->  v2 >= 87
+#
+# ⚠️ Ces valeurs incluent les 14 couches multiplicatives appliquées APRÈS le
+# barème de base (macro, funding, orderbook, orderflow, VIX, vetos…). Une
+# première dérivation les avait omises et donnait 49/64/66/82/86 — trop
+# restrictif de 5 à 10 points sur les seuils bas. Le produit des
+# multiplicateurs se reconstitue depuis l'historique par
+# `confidence_score / somme(5 facteurs de base)`.
 CONFIDENCE_SCORE_V2 = os.getenv("CONFIDENCE_SCORE_V2", "false").strip().lower() in ("1", "true", "yes")
 
 # Whitelist de patterns autorisés à l'auto-exec (2026-08-04).

@@ -545,9 +545,13 @@ def _factors_v2(setup, volatility, trend, events) -> list[ConfidenceFactor]:
 
     Les deux composantes restantes sont remises à l'échelle ×2 pour conserver
     un score sur 100 lisible. ⚠️ **La distribution se déplace quand même** —
-    médiane 57 → 70 — donc tous les seuils doivent être remontés, cf.
-    ``CONFIDENCE_SCORE_V2`` et la table de correspondance dans la mémoire
-    projet.
+    médiane 57 → 65 — donc tous les seuils doivent être remontés, cf. la
+    table de correspondance sous ``CONFIDENCE_SCORE_V2`` dans settings.
+
+    ⚠️ Ce barème n'est que la **base** : quatorze couches multiplicatives
+    s'appliquent ensuite (macro, funding, orderbook, orderflow, VIX, vetos…)
+    et réassignent ``setup.confidence_score``. Toute dérivation de seuils
+    doit les inclure, sous peine d'être trop restrictive de 5 à 10 points.
 
     Résultat mesuré, corrélation de rang tranche/performance :
 
