@@ -134,6 +134,22 @@ async def push_to_kraken(setup, sz: dict, dest) -> None:
                 f"kraken bridge[{dest.destination_id}] → {setup.pair} {direction} "
                 f"OK order_id={body.get('market_order_id')} avg_price={body.get('avg_price')}"
             )
+            # Notification « Trade OUVERT » — même formateur que MT5 et
+            # Binance. Ce hook manquait : les trades Kraken n'apparaissaient
+            # que via le poller shell, dans un format degrade et sur le mauvais
+            # canal. Best-effort, ne casse jamais le flux d'ordre.
+            try:
+                from backend.services import telegram_service as _tg
+                await _tg.send_trade_opened(
+                    setup,
+                    ticket=body.get("market_order_id") or "n/a",
+                    fill_price=float(body.get("avg_price") or setup.entry_price),
+                    volume=float(body.get("volume") or payload.get("qty") or 0),
+                    mode=str(body.get("mode") or "live"),
+                    destination_id=dest.destination_id,
+                )
+            except Exception as _e:
+                logger.warning(f"send_trade_opened kraken hook error: {_e}")
         elif r.status_code == 429 and body.get("blocked"):
             # Kill-switch bridge (daily drawdown, whitelist, max positions).
             # Rien n'est parti au marché : la contrainte peut se lever seule,

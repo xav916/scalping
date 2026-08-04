@@ -1,194 +1,117 @@
 #!/bin/bash
-# Notifie le canal sales à chaque nouveau push d'ordre, toutes destinations.
+# Alerte infra sur les pushes d'ordre qui n'ont PAS abouti.
 #
-# ⚠️ Remplace quatre scripts quasi identiques (2026-08-04) :
-#   notify-new-live-pushes.sh          79 lignes
-#   notify-new-legacy-pushes.sh        78
-#   notify-new-kraken-pushes.sh        96
-#   notify-new-kraken-spot-pushes.sh   73
+# ⚠️ Ce script n'envoie plus le message « trade ouvert » (2026-08-04).
 #
-# Même logique en quatre copies, chacune avec son fichier d'état et son
-# extraction de clés. Chaque nouvelle destination imposait un cinquième
-# fichier — le coût se voyait à chaque ajout de broker.
+# Il en existait deux versions en parallèle, et personne ne l'avait vu :
+#
+#   send_trade_opened (Python)   canal Scalping Radar · format complet
+#                                (SL, TP, montants en euros, justification)
+#                                branché sur MT5 et Binance seulement
+#
+#   ce script (shell)            canal sales · format dégradé, sans SL ni TP,
+#                                prix brut `63924.00000000001`, broker répété
+#                                deux fois — mais branché sur TOUTES les
+#                                destinations
+#
+# D'où le symptôme : les trades Kraken n'arrivaient que par le second, dans
+# le mauvais format et sur le mauvais canal. Le hook Python couvre désormais
+# Kraken Futures et Spot ; ce script cesse de le doubler.
+#
+# Ce qu'il reste à faire ici, et que le hook ne peut pas faire : signaler un
+# push qui n'a jamais été confirmé. C'est un évènement d'infrastructure —
+# il part donc sur le canal infra, conformément à la répartition convenue
+# (infra → Xav Scalping Infra, trades → Scalping Radar, récap → Sales).
 #
 # Usage :
-#   notify-new-pushes.sh              → toutes les destinations
-#   notify-new-pushes.sh live kraken  → seulement celles-ci
-#   DRY_RUN=1 notify-new-pushes.sh    → affiche sans envoyer
+#   notify-new-pushes.sh           → alerte sur les pushes non confirmés
+#   DRY_RUN=1 notify-new-pushes.sh → affiche sans envoyer
 set -uo pipefail
 
 DB=/opt/scalping/data/trades.db
-ENV_FILE=/opt/scalping/.env
-HELPER=/opt/scalping/scripts/lib_calc_risk_eur.py
+ETAT=/var/lib/scalping/last-failed-push-id.txt
 TOKEN="shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg"
-URL="https://app.scalping-radar.online/api/admin/notify-infra-telegram?token=${TOKEN}&channel=sales"
-DASHBOARD_URL="https://app.scalping-radar.online/v2/positions"
+URL="https://app.scalping-radar.online/api/admin/notify-infra-telegram?token=${TOKEN}&channel=infra"
 
-DESTINATIONS_CONNUES="live legacy kraken kraken_spot"
-CIBLES="${*:-$DESTINATIONS_CONNUES}"
+# Un push est inséré à `ok=0` AVANT l'envoi, puis passé à `ok=1` s'il aboutit.
+# Un `ok=0` récent est donc peut-être simplement en vol : on laisse une marge
+# avant de crier. Sans cela, chaque ordre normal déclencherait une alerte.
+DELAI_MIN=5
 
-# Taux EUR/USD via le bridge Live — la seule source de tick fiable dont on
-# dispose côté serveur. Repli sur une valeur figée si injoignable.
-LU=$(grep -m1 '^MT5_BRIDGE_LIVE_URL=' "$ENV_FILE" | cut -d= -f2-)
-LK=$(grep -m1 '^MT5_BRIDGE_LIVE_API_KEY=' "$ENV_FILE" | cut -d= -f2-)
-EUR_USD=$(curl -sS -m 3 -H "X-API-Key: $LK" "$LU/tick/EUR/USD" 2>/dev/null | python3 -c "
-import json,sys
+# Libellés lus dans le registre des destinations — plus de table recopiée ici.
+# C'est la duplication qui avait fait afficher « Démo » sur des trades Kraken
+# engageant de l'argent réel.
+REGISTRE=$(docker exec scalping-radar python -m backend.services.destinations_registry 2>/dev/null)
+[ -z "$REGISTRE" ] && REGISTRE='{}'
+
+libelle() {  # $1 = destination_id → libellé lisible, ou l'id brut si inconnu
+  echo "$REGISTRE" | REG_ID="$1" python3 -c "
+import json, os, sys
 try:
-    d=json.load(sys.stdin); v=(d.get('bid',0)+d.get('ask',0))/2
-    print(round(v,4) if v>0 else '')
-except Exception: print('')" 2>/dev/null)
-[ -z "$EUR_USD" ] && EUR_USD=1.155
-
-extraire() {  # $1 = clé JSON, $2 = charset de la valeur
-  echo "$RESP" | grep -oE "\"$1\":[ ]*\"?[$2]+\"?" | head -1 \
-    | grep -oE "[$2]+\"?\$" | tr -d '"'
+    d = json.load(sys.stdin).get(os.environ['REG_ID'])
+    print(d['mode'] if d else os.environ['REG_ID'])
+except Exception:
+    print(os.environ['REG_ID'])
+" 2>/dev/null || echo "$1"
 }
 
-configurer() {
-  case "$1" in
-    live)
-      IDS="'admin_live'";            ETAT=/var/lib/scalping/last-live-push-id.txt
-      COMPTE="IC Markets Live (argent réel EUR)"
-      PREFIXE="MT5 IC Markets";      SUFFIXE="";          BRIDGE_TYPE="mt5"
-      LIEN_1="📱 Ouvrir MT5 mobile : metatrader5://"
-      LIEN_2="🔗 Dashboard positions : ${DASHBOARD_URL}"
-      OU_CHERCHER="Voir logs bridge Live." ;;
-    legacy)
-      IDS="'admin_legacy'";          ETAT=/var/lib/scalping/last-legacy-push-id.txt
-      COMPTE="Pepperstone Demo (argent fictif)"
-      PREFIXE="MT5 Demo Pepperstone"; SUFFIXE=" (fictif)"; BRIDGE_TYPE="mt5"
-      LIEN_1="📱 Ouvrir MT5 mobile : metatrader5://"
-      LIEN_2="🔗 Dashboard positions : ${DASHBOARD_URL}"
-      OU_CHERCHER="Voir logs bridge Demo." ;;
-    kraken)
-      IDS="'admin_kraken','admin_kraken_stocks'"
-      ETAT=/var/lib/scalping/last-kraken-push-id.txt
-      COMPTE="Kraken Futures LIVE (argent réel USD)"
-      PREFIXE="Kraken Futures";      SUFFIXE="";          BRIDGE_TYPE="kraken"
-      LIEN_1="📱 Suivi position : https://futures.kraken.com/trade/positions"
-      LIEN_2=""
-      OU_CHERCHER="Logs : sudo journalctl -u kraken-bridge -f" ;;
-    kraken_spot)
-      IDS="'admin_kraken_spot'";     ETAT=/var/lib/scalping/last-kraken-spot-push-id.txt
-      COMPTE="Kraken Spot LIVE (argent réel USD)"
-      PREFIXE="Kraken Spot";         SUFFIXE="";          BRIDGE_TYPE="kraken_spot"
-      LIEN_1="📱 Suivi : https://pro.kraken.com/app/trade"
-      LIEN_2=""
-      OU_CHERCHER="Logs : sudo journalctl -u kraken-spot-bridge -f" ;;
-    *) return 1 ;;
-  esac
-}
+mkdir -p "$(dirname "$ETAT")"
+[ -f "$ETAT" ] || echo 0 > "$ETAT"
+dernier=$(cat "$ETAT"); dernier=${dernier:-0}
 
-plateforme() {  # $1 = paire, $2 = destination_id de la ligne
-  local p; p=$(echo "$1" | tr '[:lower:]' '[:upper:]')
-  if [ "$2" = "admin_kraken_stocks" ]; then
-    echo "Kraken Futures · xStock (equity tokenisée USD)"; return
-  fi
-  case "$BRIDGE_TYPE" in
-    kraken|kraken_spot) echo "${PREFIXE} · Perpetuel Crypto USD"; return ;;
-  esac
-  case "$p" in
-    XAU*|XAG*)                    echo "${PREFIXE} · CFD Métal${SUFFIXE}" ;;
-    WTI*|BRENT*|XTI*|XBR*|NGAS*)  echo "${PREFIXE} · CFD Énergie${SUFFIXE}" ;;
-    AAPL|TSLA|NVDA|MSFT|GOOGL|AMZN|META|AMD|NFLX|COIN|HOOD|MSTR|SPY|QQQ|PLTR|SHOP)
-                                  echo "${PREFIXE} · CFD Action US${SUFFIXE}" ;;
-    SPX|NDX|DAX|CAC40|FTSE|US30|US500|NAS100)
-                                  echo "${PREFIXE} · CFD Indice${SUFFIXE}" ;;
-    BTC*|ETH*|LTC*|XRP*|SOL*|ADA*|DOGE*|BCH*|DOT*)
-                                  echo "${PREFIXE} · CFD Crypto${SUFFIXE}" ;;
-    *)                            echo "${PREFIXE} · CFD Forex${SUFFIXE}" ;;
-  esac
-}
+lignes=$(sqlite3 "$DB" "
+  SELECT id||'|'||coalesce(destination_id,'?')||'|'||pair||'|'||direction||'|'||
+         pushed_at||'|'||replace(substr(coalesce(bridge_response,''),1,300),'|','/')
+    FROM mt5_pushes
+   WHERE id > $dernier
+     AND ok = 0
+     AND pushed_at < datetime('now','-${DELAI_MIN} minutes')
+   ORDER BY id ASC LIMIT 10;")
 
-traiter() {
-  local cible="$1"
-  configurer "$cible" || { echo "  destination inconnue : $cible"; return 1; }
-  [ -f "$ETAT" ] || echo 0 > "$ETAT"
-  local dernier; dernier=$(cat "$ETAT"); dernier=${dernier:-0}
+echo "$(date -Iseconds) notify-new-pushes (pushes non confirmes, curseur=$dernier)"
 
-  local lignes
-  lignes=$(sqlite3 "$DB" "
-    SELECT id||'|'||pair||'|'||direction||'|'||ok||'|'||
-           substr(coalesce(bridge_response,''),1,500)||'|'||pushed_at||'|'||
-           coalesce(destination_id,'')
-      FROM mt5_pushes
-     WHERE id > $dernier AND destination_id IN ($IDS)
-     ORDER BY id ASC LIMIT 10;")
-  if [ -z "$lignes" ]; then
-    echo "  ${cible}: rien de nouveau (dernier id=$dernier)"
-    return 0
+if [ -z "$lignes" ]; then
+  # Le curseur doit quand même avancer au-delà des pushes réussis, sinon la
+  # requête les réexamine indéfiniment.
+  max_ok=$(sqlite3 "$DB" "SELECT coalesce(max(id),$dernier) FROM mt5_pushes
+                           WHERE ok = 1 AND id > $dernier;")
+  [ "${DRY_RUN:-0}" = "1" ] || echo "${max_ok:-$dernier}" > "$ETAT"
+  echo "  aucun push en echec"
+  exit 0
+fi
+
+max=$dernier
+while IFS='|' read -r id dest pair dir ts reponse; do
+  [ -z "$id" ] && continue
+  plateforme=$(libelle "$dest")
+  dir_mot="ACHAT"; [ "$dir" = "sell" ] && dir_mot="VENTE"
+
+  # La réponse dit si l'issue est connue (rejet explicite) ou indéterminée
+  # (timeout, exception). Le second cas est le plus important : un ordre a
+  # pu être rempli sans que le système le sache.
+  if echo "$reponse" | grep -qiE "timeout|error.*:.*\"[^\"]"; then
+    titre="⚠️ Push non confirmé · ${pair} ${dir_mot}"
+    entete="Un ordre a pu partir chez le broker sans confirmation."
+    action="Vérifier les positions ouvertes chez le broker AVANT de relancer."
+  else
+    titre="❌ Push refusé · ${pair} ${dir_mot}"
+    entete="L'ordre n'a pas été accepté."
+    action="Aucune position ouverte de ce fait."
   fi
 
-  local max=$dernier
-  while IFS='|' read -r id pair dir okval RESP ts dest_id; do
-    [ -z "$id" ] && continue
+  corps="${entete}\n\nPlateforme : ${plateforme}\nTenté : ${ts}\n\n📋 Réponse du bridge\n${reponse:-(vide)}\n\n👉 ${action}"
 
-    # MT5 renvoie ticket/price, Kraken market_order_id/avg_price : on tente
-    # les deux plutôt que de dupliquer le script par famille de bridge.
-    local ref prix volume sl tp
-    ref=$(extraire "ticket" "0-9"); [ -z "$ref" ] && ref=$(extraire "market_order_id" "a-f0-9-")
-    prix=$(extraire "price" "0-9."); [ -z "$prix" ] && prix=$(extraire "avg_price" "0-9.")
-    volume=$(extraire "volume" "0-9.")
-    sl=$(extraire "sl" "0-9."); tp=$(extraire "tp" "0-9.")
+  if [ "${DRY_RUN:-0}" = "1" ]; then
+    echo "  ----- id=${id} -----"
+    echo "  $titre"
+    echo -e "$corps" | sed 's/^/    /'
+  else
+    curl -sS -m 5 -X POST "$URL" -H "Content-Type: application/json" \
+      --data "{\"title\":\"$titre\",\"body\":\"$corps\",\"dedup_key\":\"push_echec_${id}\",\"cooldown_seconds\":86400}" \
+      > /dev/null || true
+  fi
+  max=$id
+done <<< "$lignes"
 
-    local dir_mot="ACHAT"; [ "$dir" = "sell" ] && dir_mot="VENTE"
-    local plat; plat=$(plateforme "$pair" "$dest_id")
-
-    local ligne_rr=""
-    if [ -n "$prix" ] && [ -n "$sl" ] && [ -n "$tp" ] && [ -n "$volume" ]; then
-      local j risk reward rr
-      j=$(python3 "$HELPER" --pair "$pair" --entry "$prix" --sl "$sl" --tp "$tp" \
-            --volume "$volume" --bridge-type "$BRIDGE_TYPE" --eur-usd "$EUR_USD" 2>/dev/null || echo '{}')
-      risk=$(echo "$j"   | python3 -c "import json,sys;print(json.load(sys.stdin).get('risk_eur',''))" 2>/dev/null)
-      reward=$(echo "$j" | python3 -c "import json,sys;print(json.load(sys.stdin).get('reward_eur',''))" 2>/dev/null)
-      rr=$(echo "$j"     | python3 -c "import json,sys;print(json.load(sys.stdin).get('rr',''))" 2>/dev/null)
-      [ -n "$risk" ] && [ "$risk" != "0" ] && \
-        ligne_rr="\n🛡️ Stop Loss : ${sl}  →  -€${risk}\n🎯 Take Profit : ${tp}  →  +€${reward}\n📊 Ratio R:R : 1:${rr}"
-    fi
-
-    # Protection SL/TP. Trois états, et surtout PAS d'alarme quand on ne sait
-    # pas : les bridges MT5 posent bien les stops mais ne les renvoient pas
-    # dans leur réponse. Afficher « SL/TP absents » sur chaque push MT5 serait
-    # une fausse alerte — on préfère ne rien dire que crier à tort.
-    local prot=""
-    local sl_err tp_err
-    sl_err=$(echo "$RESP" | grep -oE '"sl_error":[ ]*"[^"]+"' | head -1)
-    tp_err=$(echo "$RESP" | grep -oE '"tp_error":[ ]*"[^"]+"' | head -1)
-    if [ -n "$sl_err" ] || [ -n "$tp_err" ]; then
-      prot="⚠️ SL NON placé"
-      [ -n "$sl_err" ] && prot="⚠️ SL NON placé ($sl_err)"
-      [ -n "$tp_err" ] && prot="$prot | ⚠️ TP NON placé"
-    elif [ -n "$sl" ] && [ -n "$tp" ]; then
-      prot="✅ SL + TP protégés"
-    fi
-
-    local titre corps
-    if [ "$okval" = "1" ]; then
-      titre="🟢 $plat · $pair $dir_mot"
-      corps="Plateforme : ${plat}\nCompte : ${COMPTE}\n\n📋 Détail\nRéférence : ${ref:-n/a}\nPrix : ${prix:-?}\nVolume : ${volume:-?}${ligne_rr}\n\nEnvoyé : ${ts}"
-      [ -n "$prot" ] && corps="${corps}\n${prot}"
-      corps="${corps}\n\n${LIEN_1}"
-      [ -n "$LIEN_2" ] && corps="${corps}\n${LIEN_2}"
-    else
-      titre="❌ $plat REFUSÉ · $pair $dir_mot"
-      corps="Plateforme : ${plat}\n\n📋 Détail\nVolume tenté : ${volume:-?}\nTenté : ${ts}\n\nℹ️ ${OU_CHERCHER}"
-    fi
-
-    if [ "${DRY_RUN:-0}" = "1" ]; then
-      echo "  ----- ${cible} id=${id} -----"
-      echo "  $titre"
-      echo -e "$corps" | sed 's/^/    /'
-    else
-      curl -sS -m 5 -X POST "$URL" -H "Content-Type: application/json" \
-        --data "{\"title\":\"$titre\",\"body\":\"$corps\",\"dedup_key\":\"${cible}_push_${id}\",\"cooldown_seconds\":86400}" \
-        > /dev/null || true
-    fi
-    max=$id
-  done <<< "$lignes"
-
-  [ "${DRY_RUN:-0}" = "1" ] || echo "$max" > "$ETAT"
-  echo "  ${cible}: traité jusqu'à id=$max"
-}
-
-echo "$(date -Iseconds) notify-new-pushes (eur_usd=$EUR_USD)"
-for c in $CIBLES; do traiter "$c"; done
+[ "${DRY_RUN:-0}" = "1" ] || echo "$max" > "$ETAT"
+echo "  traité jusqu'à id=$max"

@@ -241,14 +241,14 @@ async def push_to_binance(setup, sz: dict, dest) -> None:
                 # registered en watcher sans orderId — fallback hash entry_5dp.
                 try:
                     from backend.services import telegram_service as _tg
-                    ticket_val = data.get("market_order_id") or data.get("client_order_id") or 0
-                    try:
-                        ticket_int = int(ticket_val)
-                    except (TypeError, ValueError):
-                        ticket_int = abs(hash(str(ticket_val))) % (10**9)
+                    # La référence est affichée telle quelle depuis 2026-08-04 :
+                    # elle était hachée en entier, ce qui la rendait inutile
+                    # pour retrouver l'ordre chez le broker.
+                    ticket_val = (data.get("market_order_id")
+                                  or data.get("client_order_id") or "n/a")
                     await _tg.send_trade_opened(
                         setup,
-                        ticket=ticket_int,
+                        ticket=ticket_val,
                         fill_price=float(data.get("avg_price") or setup.entry_price),
                         volume=float(data.get("qty") or payload.get("qty") or 0),
                         mode="testnet",

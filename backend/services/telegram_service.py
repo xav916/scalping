@@ -1175,8 +1175,48 @@ def _build_trade_justification(pattern_value, confidence_score, pair: str | None
     return lines
 
 
+def _montants_du_trade(setup, volume: float, destination_id: str | None):
+    """Risque et gain en euros pour le volume réellement envoyé au broker.
+
+    Retourne ``None`` si le calcul est indéterminable — auquel cas le bloc
+    monétaire est omis. Un montant faux serait pire qu'un montant absent :
+    il serait lu comme vrai.
+    """
+    from backend.services import destinations_registry as _reg, risk_eur
+
+    d = _reg.get(destination_id)
+    try:
+        return risk_eur.calculer(
+            pair=getattr(setup, "pair", ""),
+            entry=float(getattr(setup, "entry_price", 0) or 0),
+            sl=float(getattr(setup, "stop_loss", 0) or 0),
+            tp=float(getattr(setup, "take_profit_1", 0) or 0),
+            volume=float(volume or 0),
+            bridge_type=(d.bridge_type if d else "mt5"),
+            eur_usd=risk_eur.taux_eur_usd(),
+        )
+    except Exception as e:  # pragma: no cover - garde-fou
+        logger.debug(f"_montants_du_trade indisponible : {e}")
+        return None
+
+
+def _unite_de_volume(setup, destination_id: str | None) -> str:
+    """Unité dans laquelle le volume est exprimé, selon le broker.
+
+    MT5 raisonne en lots ; les exchanges crypto envoient une quantité dans
+    l'actif de base. Écrire « 0,0023 lot » pour 0,0023 BTC était faux, et
+    faux d'un facteur qui dépend du contrat.
+    """
+    from backend.services import destinations_registry as _reg
+    d = _reg.get(destination_id)
+    if d is None or d.bridge_type == "mt5":
+        return "lot"
+    base = str(getattr(setup, "pair", "") or "").split("/")[0].strip().upper()
+    return base or "unité"
+
+
 def _format_trade_opened(
-    setup, ticket: int, fill_price: float, volume: float,
+    setup, ticket: int | str, fill_price: float, volume: float,
     mode: str, destination_id: str | None = None,
 ) -> str:
     """Format vulgarisé : 'qu'est-ce qui se passe, combien je gagne/perds, pourquoi'.
@@ -1215,19 +1255,23 @@ def _format_trade_opened(
     # fois auparavant, et le montant n'arrivait qu'en quatrième position.
     lines = [f"🟢 *{dir_word} {pair_label}* · {mode_label}"]
 
-    eur = _estimate_eur_amounts(setup)
-    if eur is not None:
-        gain_visee = eur.get("reward_1") or 0
-        perte_max = eur.get("risk") or 0
-        perte_fr = f"{perte_max:.2f}".replace(".", ",")
-        gain_fr = f"{gain_visee:.2f}".replace(".", ",")
+    # Montants calculés sur le volume RÉELLEMENT exécuté (2026-08-04).
+    # Ils venaient d'une table statique « pour 0,01 lot », sans lien avec
+    # l'ordre envoyé : deux fois trop petits sur MT5 à 0,02 lot, et sans
+    # signification sur Kraken — le premier trade réel annonçait « Risque
+    # −0,01 € » pour environ 0,57 € engagés.
+    montants = _montants_du_trade(setup, volume, destination_id)
+    if montants is not None:
+        perte_fr = f"{montants['risque_eur']:.2f}".replace(".", ",")
+        gain_fr = f"{montants['gain_eur']:.2f}".replace(".", ",")
         lines.append(f"Risque *−{perte_fr} €*  →  Objectif *+{gain_fr} €*")
     lines.append("")
 
     # Le plan complet : ces trois valeurs manquaient au message.
     detail = [f"Entrée {fill_str}"]
     if volume:
-        detail.append(f"{volume} lot".replace(".", ","))
+        unite = _unite_de_volume(setup, destination_id)
+        detail.append(f"{volume:g} {unite}".replace(".", ","))
     try:
         sl = float(getattr(setup, "stop_loss", 0) or 0)
         tp = float(getattr(setup, "take_profit_1", 0) or 0)
@@ -1262,7 +1306,7 @@ def _format_trade_opened(
 
 
 async def send_trade_opened(
-    setup, ticket: int, fill_price: float, volume: float,
+    setup, ticket: int | str, fill_price: float, volume: float,
     mode: str, destination_id: str | None = None,
 ) -> None:
     """Push une notif user-facing à la confirmation d'un fill broker.

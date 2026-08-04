@@ -160,6 +160,22 @@ async def push_to_kraken_spot(setup, sz: dict, dest) -> None:
                 f"kraken_spot bridge[{dest.destination_id}] → {setup.pair} {direction} "
                 f"OK txid={body.get('txid')} descr={body.get('descr')!r}"
             )
+            # Même formateur que MT5, Binance et Kraken Futures.
+            try:
+                from backend.services import telegram_service as _tg
+                txid = body.get("txid")
+                if isinstance(txid, list):
+                    txid = txid[0] if txid else None
+                await _tg.send_trade_opened(
+                    setup,
+                    ticket=txid or "n/a",
+                    fill_price=float(body.get("avg_price") or setup.entry_price),
+                    volume=float(body.get("volume") or payload.get("qty") or 0),
+                    mode=str(body.get("mode") or "live"),
+                    destination_id=dest.destination_id,
+                )
+            except Exception as _e:
+                logger.warning(f"send_trade_opened kraken_spot hook error: {_e}")
         elif r.status_code == 429 and body.get("blocked"):
             # Contrainte temporaire du bridge : rien n'a atteint le marché.
             reason = body.get("reason", "unknown")

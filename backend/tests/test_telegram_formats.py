@@ -118,9 +118,33 @@ def test_le_broker_napparait_quune_fois_a_la_cloture():
 
 @pytest.mark.parametrize("fragment", ["−6,93 €", "+12,47 €", "0,02 lot", "3312,40"])
 def test_virgule_decimale_partout(fragment):
-    """Prix et montants dans le même format : la virgule, pas le point."""
-    txt = _ouverture() + _cloture(reason="SL", pnl=-6.93)
+    """Prix et montants dans le même format : la virgule, pas le point.
+
+    Les deux clôtures sont nécessaires : ce test vérifiait auparavant
+    « +12,47 € » sur le message d'OUVERTURE, ce qui le rendait dépendant
+    d'un montant calculé pour un lot fixe — et donc faux. Il fige désormais
+    la convention d'écriture, pas un montant.
+    """
+    txt = (_ouverture() + _cloture(reason="SL", pnl=-6.93)
+           + _cloture(reason="TP1", pnl=12.47))
     assert fragment in txt
+
+
+def test_le_montant_annonce_correspond_au_volume_reel():
+    """Il venait d'une table « pour 0,01 lot », sans lien avec l'ordre envoyé.
+
+    Vérifié contre le P&L réellement encaissé en production : la formule
+    notionnelle colle aux trades clôturés à un facteur EUR/USD près.
+    Sur 0,02 lot d'or, 7,70 $ de stop = 2 onces × 7,70 = 15,40 $ ≈ 13,4 €,
+    et non les 0,90 € qu'annonçait l'ancienne table.
+    """
+    from backend.services import risk_eur
+    attendu = risk_eur.calculer("XAU/USD", 3312.40, 3320.10, 3298.54,
+                                volume=0.02, bridge_type="mt5",
+                                eur_usd=risk_eur.taux_eur_usd())
+    montant = f"{attendu['risque_eur']:.2f}".replace(".", ",")
+    assert f"−{montant} €" in _ouverture()
+    assert attendu["risque_eur"] > 5, "montant implausible pour 2 onces d'or"
 
 
 def test_pas_de_point_decimal_dans_les_montants():
