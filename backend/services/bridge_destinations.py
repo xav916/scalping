@@ -87,6 +87,10 @@ class BridgeConfig:
     excluded_pairs: frozenset[str] = frozenset()
     # None = hérite du global. frozenset() = pas de filtre pattern.
     allowed_patterns: frozenset[str] | None = None
+    # Capital de CETTE destination pour le sizing. None = résolu par
+    # sizing.destination_capital (solde live pour les bridges crypto,
+    # TRADING_CAPITAL global pour les bridges MT5).
+    trading_capital: float | None = None
     # bridge_type: "mt5" pour les bridges MT5 (admin_legacy, admin_live, user
     # premium), "binance" pour le bridge Binance Futures (USDⓈ-M perp).
     # Le dispatcher dans mt5_bridge._push_to_destination utilise ce flag pour

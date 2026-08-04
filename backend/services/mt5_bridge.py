@@ -613,7 +613,11 @@ async def _push_to_destination(setup, dest) -> None:
         _sent_setups_today.add(key)
         from backend.services import sizing
         from backend.services import binance_bridge_client
-        sz = sizing.compute_risk_money(setup)
+        # Capital réel de CETTE destination, pas le global : cf.
+        # sizing.destination_capital. Le refresh est async pour ne pas
+        # bloquer la boucle au milieu du calcul.
+        await sizing.refresh_destination_capital(dest)
+        sz = sizing.compute_risk_money(setup, dest)
         await binance_bridge_client.push_to_binance(setup, sz, dest)
         return
 
@@ -624,7 +628,11 @@ async def _push_to_destination(setup, dest) -> None:
         _sent_setups_today.add(key)
         from backend.services import sizing
         from backend.services import kraken_bridge_client
-        sz = sizing.compute_risk_money(setup)
+        # Capital réel de CETTE destination, pas le global : cf.
+        # sizing.destination_capital. Le refresh est async pour ne pas
+        # bloquer la boucle au milieu du calcul.
+        await sizing.refresh_destination_capital(dest)
+        sz = sizing.compute_risk_money(setup, dest)
         await kraken_bridge_client.push_to_kraken(setup, sz, dest)
         return
 
@@ -635,7 +643,11 @@ async def _push_to_destination(setup, dest) -> None:
         _sent_setups_today.add(key)
         from backend.services import sizing
         from backend.services import kraken_spot_bridge_client
-        sz = sizing.compute_risk_money(setup)
+        # Capital réel de CETTE destination, pas le global : cf.
+        # sizing.destination_capital. Le refresh est async pour ne pas
+        # bloquer la boucle au milieu du calcul.
+        await sizing.refresh_destination_capital(dest)
+        sz = sizing.compute_risk_money(setup, dest)
         await kraken_spot_bridge_client.push_to_kraken_spot(setup, sz, dest)
         return
     # Dedup atomique en DB (UNIQUE constraint INSERT OR IGNORE) — source de
@@ -657,7 +669,7 @@ async def _push_to_destination(setup, dest) -> None:
     # en drawdown sur 7j, sinon 1.0x). Voir sizing.compute_risk_money.
     # Note V1 : sizing reste global (pas per-user). À adresser en V2.
     from backend.services import sizing
-    sz = sizing.compute_risk_money(setup)
+    sz = sizing.compute_risk_money(setup, dest)
     risk_money = sz["risk_money"]
     payload = _build_order_payload(setup, sz, dest=dest)
 

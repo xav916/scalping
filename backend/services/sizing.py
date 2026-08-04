@@ -77,13 +77,34 @@ def recent_pnl_multiplier(days: int = 7) -> float:
     return 1.0 if pnl >= 0 else 0.5
 
 
-def compute_risk_money(setup) -> dict:
+def compute_risk_money(setup, dest=None) -> dict:
     """Retourne un dict complet des multiplicateurs + risk_money final
-    pour l'envoi au bridge et le logging."""
-    from backend.services import macro_alignment, session_service
-    from config.settings import RISK_PER_TRADE_PCT, TRADING_CAPITAL
+    pour l'envoi au bridge et le logging.
 
-    base = TRADING_CAPITAL * (RISK_PER_TRADE_PCT / 100.0)
+    ``dest`` (2026-08-04) : le capital est résolu **par destination**, cf.
+    ``destination_capital``. Sans ``dest``, comportement legacy inchangé
+    (capital global).
+
+    ⚠️ Si le capital d'une destination à solde interrogeable n'est pas
+    disponible, ``risk_money`` vaut 0 : les clients de bridge rejettent alors
+    l'ordre (``qty <= 0``). C'est délibéré — retomber sur le capital global
+    reproduirait le défaut qui envoyait des ordres de 10 000 USD sur un
+    compte de 103 USD.
+    """
+    from backend.services import macro_alignment, session_service
+    from config.settings import RISK_PER_TRADE_PCT
+
+    capital, capital_source = destination_capital(dest)
+    if capital is None:
+        return {
+            "risk_money": 0.0, "base": 0.0,
+            "conf_mult": 0.0, "pnl_mult": 0.0, "session_mult": 0.0,
+            "session": session_service.label(), "macro_mult": 0.0,
+            "macro_reasons": [], "final_mult": 0.0,
+            "capital": None, "capital_source": capital_source,
+            "risk_pct": RISK_PER_TRADE_PCT,
+        }
+    base = capital * (RISK_PER_TRADE_PCT / 100.0)
     conf_mult = confidence_multiplier(getattr(setup, "confidence_score", None))
     pnl_mult = recent_pnl_multiplier()
     session_mult = session_service.activity_multiplier(pair=getattr(setup, "pair", None))
@@ -108,6 +129,114 @@ def compute_risk_money(setup) -> dict:
         "macro_mult": round(macro_mult, 2),
         "macro_reasons": macro["reasons"],
         "final_mult": round(final_mult, 2),
-        "capital": TRADING_CAPITAL,
+        "capital": capital,
+        "capital_source": capital_source,
         "risk_pct": RISK_PER_TRADE_PCT,
     }
+
+
+# ─── Capital par destination (2026-08-04) ──────────────────────────────
+#
+# ⚠️ Jusqu'ici `compute_risk_money` sizait TOUJOURS sur le `TRADING_CAPITAL`
+# global (3 000 €). Sur une destination dont le compte vaut 103 USD, cela
+# produisait des ordres de ~10 000 USD de notionnel — vingt fois la capacité
+# du compte. Kraken les rejetait en `invalidSize`, ce qui explique qu'aucun
+# ordre n'y soit jamais passé.
+#
+# Les bridges MT5 s'en tiraient parce qu'ils ramènent le volume au minimum
+# du broker côté bridge ; les bridges crypto, eux, envoient la quantité telle
+# quelle.
+#
+# Principe retenu : **en cas de doute, refuser de trader**. Retomber sur le
+# global reproduirait exactement le défaut — c'est la leçon de la journée,
+# un repli qui élargit n'est pas un repli sûr.
+
+_BALANCE_CACHE: dict[str, tuple[float, float]] = {}  # dest_id -> (capital, expire_at)
+_BALANCE_TTL_SEC = 300.0
+
+# Types de bridge dont le solde est interrogeable via /account. Les bridges
+# MT5 gardent le capital global : leur sizing est reclampé côté bridge.
+LIVE_BALANCE_BRIDGE_TYPES = frozenset({"kraken", "kraken_spot", "binance"})
+
+CAPITAL_UNAVAILABLE = "unavailable"
+
+
+def _cache_get(dest_id: str) -> float | None:
+    import time
+    hit = _BALANCE_CACHE.get(dest_id)
+    if hit and hit[1] > time.monotonic():
+        return hit[0]
+    return None
+
+
+def _cache_put(dest_id: str, capital: float) -> None:
+    import time
+    _BALANCE_CACHE[dest_id] = (capital, time.monotonic() + _BALANCE_TTL_SEC)
+
+
+async def refresh_destination_capital(dest) -> float | None:
+    """Interroge ``/account`` du bridge et met le capital en cache.
+
+    À appeler depuis le chemin async AVANT ``compute_risk_money``, qui lira
+    ensuite le cache de façon synchrone. Évite un appel HTTP bloquant au
+    milieu du calcul de sizing.
+
+    Retourne le capital, ou ``None`` si indisponible (le sizing refusera
+    alors de produire un ordre).
+    """
+    import httpx
+    dest_id = getattr(dest, "destination_id", "")
+    cached = _cache_get(dest_id)
+    if cached is not None:
+        return cached
+    url = (getattr(dest, "bridge_url", "") or "").rstrip("/")
+    if not url:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as c:
+            r = await c.get(
+                f"{url}/account",
+                headers={"X-Bridge-Key": getattr(dest, "bridge_api_key", "") or ""},
+            )
+        if r.status_code != 200:
+            logger.warning(
+                f"sizing[{dest_id}]: /account HTTP {r.status_code} — sizing refusé"
+            )
+            return None
+        # `portfolio_value_usd` est la clé commune aux bridges Kraken Futures,
+        # Kraken Spot et Binance. On ne devine pas au-delà.
+        value = (r.json() or {}).get("portfolio_value_usd")
+        capital = float(value) if value is not None else 0.0
+        if capital <= 0:
+            logger.warning(f"sizing[{dest_id}]: solde nul ou absent — sizing refusé")
+            return None
+        _cache_put(dest_id, capital)
+        return capital
+    except Exception as e:
+        logger.warning(f"sizing[{dest_id}]: /account injoignable ({type(e).__name__}) — sizing refusé")
+        return None
+
+
+def destination_capital(dest) -> tuple[float | None, str]:
+    """Capital à utiliser pour cette destination, et sa provenance.
+
+    Cascade :
+      1. ``dest is None``            -> global (chemin legacy mono-tenant)
+      2. ``dest.trading_capital``    -> surcharge explicite
+      3. bridge à solde interrogeable -> cache alimenté par
+         ``refresh_destination_capital``. Absent du cache -> ``None``,
+         donc refus de trader.
+      4. sinon                       -> global (bridges MT5)
+    """
+    from config.settings import TRADING_CAPITAL
+    if dest is None:
+        return TRADING_CAPITAL, "global"
+    explicite = getattr(dest, "trading_capital", None)
+    if explicite:
+        return float(explicite), "destination"
+    if getattr(dest, "bridge_type", "mt5") in LIVE_BALANCE_BRIDGE_TYPES:
+        cached = _cache_get(getattr(dest, "destination_id", ""))
+        if cached is None:
+            return None, CAPITAL_UNAVAILABLE
+        return cached, "live"
+    return TRADING_CAPITAL, "global"
