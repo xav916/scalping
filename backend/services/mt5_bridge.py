@@ -441,6 +441,19 @@ def _check_rejection(setup, dest=None) -> str | None:
             f"encore {restant}s avant un nouvel ordre"
         )
         return "cooldown_symbole"
+    # Corrélation : le cap par paire compte les positions sur LA MÊME paire.
+    # Un short BTC et un short ETH y échappent, alors qu'ils corrèlent à 0,81
+    # — un seul pari, pris deux fois. Réglé par destination, cf.
+    # `correlation_guard` : le compte principal en compte 281 sur 568 trades,
+    # l'activer partout changerait massivement un comportement en place.
+    from backend.services.correlation_guard import pari_deja_pris
+    pris, en_cause = pari_deja_pris(dest, setup.pair, direction)
+    if pris:
+        logger.info(
+            f"correlation[{getattr(dest, 'destination_id', '?')}] {setup.pair} "
+            f"{direction} : meme pari que {', '.join(en_cause)}"
+        )
+        return "correlated_exposure"
     return None
 
 

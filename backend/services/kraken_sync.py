@@ -227,6 +227,41 @@ def _ligne_existante(order_id: str) -> tuple[bool, bool]:
     return (r is not None, bool(r and r[0] == "CLOSED"))
 
 
+def materialiser_ouvertures(pushes) -> int:
+    """Inscrit en ``personal_trades`` les ordres Kraken encore sans ligne.
+
+    Les positions Kraken n'existaient nulle part tant qu'elles n'étaient pas
+    fermées : ``personal_trades`` est pourtant la source unique de
+    « qu'est-ce qui est ouvert » pour tout le système — cap par paire,
+    garde-fou de corrélation, cockpit. Une position Kraken ouverte était donc
+    invisible à ces trois mécanismes.
+
+    Idempotent : une ligne existante n'est jamais réécrite.
+    """
+    ecrits = 0
+    with sqlite3.connect(_db_path()) as c:
+        for p in pushes:
+            order_id = str(p["order_id"])
+            deja = c.execute(
+                "SELECT 1 FROM personal_trades WHERE mt5_ticket = ?",
+                (order_id,),
+            ).fetchone()
+            if deja:
+                continue
+            c.execute("""
+                INSERT INTO personal_trades
+                    (user, pair, direction, entry_price, stop_loss, take_profit,
+                     size_lot, status, created_at, mt5_ticket, is_auto)
+                VALUES (?,?,?,?,?,?,?, 'OPEN', ?,?, 1)
+            """, ("auto", p["pair"], p["direction"], p["entry_price"],
+                  p.get("sl") or 0.0, p.get("tp") or 0.0, p["volume"],
+                  p["pushed_at"], order_id))
+            ecrits += 1
+    if ecrits:
+        logger.info(f"kraken_sync: {ecrits} position(s) ouverte(s) materialisee(s)")
+    return ecrits
+
+
 def enregistrer_cloture(cloture: dict[str, Any], eur_usd: float) -> dict | None:
     """Écrit la clôture dans ``personal_trades``. ``None`` si déjà connue.
 
@@ -306,6 +341,10 @@ async def reconcile() -> int:
                   if p["destination_id"] == dest.destination_id]
         if not pushes:
             continue
+
+        # Les ouvertures d'abord : une position invisible échappe au cap par
+        # paire et au garde-fou de corrélation.
+        materialiser_ouvertures(pushes)
 
         clotures = [c for c in attribuer_clotures(pushes, fills) if c["complete"]]
         vus = {c["push"]["push_id"] for c in clotures}

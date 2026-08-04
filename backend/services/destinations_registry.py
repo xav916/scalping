@@ -75,6 +75,16 @@ class Destination:
         Classes d'actifs que ce broker accepte.
     plateforme
         Préfixe lisible pour les notifications de push (script shell).
+    max_correlated_positions
+        Nombre maximum de positions constituant un **même pari**. ``0`` ⇒
+        illimité.
+
+        Le 2026-08-04, un short BTC et un short ETH étaient ouverts en même
+        temps : leurs rendements horaires corrèlent à 0,81, c'était donc un
+        seul pari pris deux fois. Réglé par destination car le compte
+        principal présente 281 chevauchements de paris identiques sur 568
+        trades — l'activer partout changerait massivement un comportement
+        en place. Cf. ``correlation_guard``.
     order_cooldown_sec
         Délai minimum entre deux ordres sur un **même symbole**, en secondes.
         ``0`` ⇒ désactivé.
@@ -113,6 +123,7 @@ class Destination:
     plateforme: str = ""
     max_notional_leverage: float | None = None
     order_cooldown_sec: int = 0
+    max_correlated_positions: int = 0
 
 
 DESTINATIONS: dict[str, Destination] = {
@@ -154,6 +165,7 @@ DESTINATIONS: dict[str, Destination] = {
             asset_classes=frozenset({"crypto"}),
             max_notional_leverage=2.0,
             order_cooldown_sec=900,
+            max_correlated_positions=1,
             plateforme="Kraken Futures",
         ),
         Destination(
@@ -169,6 +181,7 @@ DESTINATIONS: dict[str, Destination] = {
             asset_classes=frozenset({"crypto"}),
             max_notional_leverage=2.0,
             order_cooldown_sec=900,
+            max_correlated_positions=1,
             plateforme="Kraken Spot",
         ),
         Destination(
@@ -184,6 +197,7 @@ DESTINATIONS: dict[str, Destination] = {
             asset_classes=frozenset({"equity"}),
             max_notional_leverage=2.0,
             order_cooldown_sec=900,
+            max_correlated_positions=1,
             plateforme="Kraken xStocks",
         ),
         Destination(
@@ -264,6 +278,7 @@ def as_json() -> str:
             "sizing": d.sizing, "plateforme": d.plateforme,
             "max_notional_leverage": d.max_notional_leverage,
             "order_cooldown_sec": d.order_cooldown_sec,
+            "max_correlated_positions": d.max_correlated_positions,
             "asset_classes": sorted(d.asset_classes),
         }
     return json.dumps(out, ensure_ascii=False, indent=2)
