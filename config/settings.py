@@ -400,6 +400,21 @@ for _e in _blocked_raw.split(","):
         _pair, _dir = _e.rsplit(":", 1)
         MT5_BRIDGE_BLOCKED_DIRECTIONS.add((_pair.strip().upper(), _dir.strip().lower()))
 
+# Barème de confiance v2 (2026-08-04). Voir analysis_engine._factors_v2.
+#
+# v1 comportait 50 points constants sur 100 et comptait la volatilité deux
+# fois ; hors échantillon il classait à l'envers (corrélation de rang −0,71
+# sur juillet-août contre +0,90 pour v2).
+#
+# ⚠️ v2 déplace la distribution du score — médiane 57 → 70. Basculer ce
+# drapeau SANS remonter les seuils au même moment rendrait le dispatch bien
+# plus permissif, en argent réel. Correspondance à sélectivité égale :
+#
+#     v1 >= 40  ->  v2 >= 49        v1 >= 60  ->  v2 >= 71
+#     v1 >= 50  ->  v2 >= 64        v1 >= 70  ->  v2 >= 82
+#     v1 >= 55  ->  v2 >= 66        v1 >= 75  ->  v2 >= 86
+CONFIDENCE_SCORE_V2 = os.getenv("CONFIDENCE_SCORE_V2", "false").strip().lower() in ("1", "true", "yes")
+
 # Whitelist de patterns autorisés à l'auto-exec (2026-08-04).
 #
 # Motif : l'analyse de 100 657 trades suivis en direct montre que le filtre

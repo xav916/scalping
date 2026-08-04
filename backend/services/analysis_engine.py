@@ -41,6 +41,22 @@ def analyze_trend(pair: str, volatility: VolatilityData, events: list[EconomicEv
 
     Uses volatility direction and economic event context to estimate
     the likely trend direction and strength.
+
+    ⚠️ **Ce n'est pas un détecteur de tendance — elle ne lit aucun prix.**
+    Constaté le 2026-08-04 :
+
+    - ``strength`` vaut 0,5 / 0,6 / 0,8 selon ``volatility.level`` seul. Les
+      effectifs mesurés en prod le confirment : {0,5: 18 204 ; 0,6: 55 003 ;
+      0,8+0,85: 23 197} reproduisent exactement {low ; medium ; high}.
+      **C'est la volatilité relabellisée.**
+    - ``BEARISH`` exige un événement HIGH impact déjà publié sous les
+      attentes, alors que ``BULLISH`` peut se déclencher sur du pur momentum.
+      Sur **278 252 signaux : 3 496 bullish, 274 756 neutral, ZÉRO bearish.**
+      Le détecteur est haussier par construction.
+
+    Elle a été retirée du barème de confiance (cf. ``_factors_v2``) mais
+    reste appelée par ``scheduler`` pour alimenter l'affichage. **Ne pas la
+    rebrancher dans une décision** avant de l'avoir réécrite sur les prix.
     """
     now = datetime.now(timezone.utc)
     pair_currencies = _extract_currencies(pair)
@@ -393,17 +409,14 @@ def _pattern_short_name(pattern) -> str:
     return names.get(p_val, p_val)
 
 
-def enrich_trade_setup(
-    setup: TradeSetup,
-    volatility: VolatilityData | None,
-    trend: MarketTrend | None,
-    events: list[EconomicEvent],
-) -> TradeSetup:
-    """Enrichit un trade setup avec score de confiance, explications et money management."""
-    # Stamp asset class if missing (default "forex")
-    if not getattr(setup, "asset_class", None) or setup.asset_class == "forex":
-        setup.asset_class = asset_class_for(setup.pair)
+def _factors_v1(setup, volatility, trend, events) -> list[ConfidenceFactor]:
+    """Barème historique 0-100 sur 5 composantes. Conservé pour rollback.
 
+    ⚠️ Autopsié le 2026-08-04 sur 96 404 trades résolus : **50 points sur 100
+    sont constants ou quasi constants, et 35 comptent la volatilité deux
+    fois**. Hors échantillon, ce barème classe **à l'envers** (corrélation de
+    rang −0,71 sur juillet-août). Cf. ``_factors_v2``.
+    """
     factors: list[ConfidenceFactor] = []
 
     # ── 1. Score pattern (0-30 pts) ──
@@ -504,6 +517,108 @@ def enrich_trade_setup(
         detail=eco_detail,
         positive=eco_score >= 5,
     ))
+    return factors
+
+
+def _factors_v2(setup, volatility, trend, events) -> list[ConfidenceFactor]:
+    """Barème nettoyé (2026-08-04) : deux composantes, aucune constante.
+
+    Chaque composante retirée l'a été sur mesure, pas par goût de la
+    simplicité — sur 96 404 trades résolus hors WTI :
+
+    - **Risk/Reward (25 pts) supprimée** : 96 401 signaux sur 96 404
+      recevaient 18 points. Le R:R est fixé à 1,8 par construction (TP et SL
+      dérivés du même ATR), la composante ne *pouvait pas* varier.
+    - **Tendance (15 pts) supprimée** : ``analyze_trend`` ne lit aucun prix,
+      elle dérive la « tendance » du niveau de volatilité. Les effectifs de
+      ``trend_strength`` reproduisaient exactement ceux de
+      ``volatility_level``. La composante comptait donc une seconde fois ce
+      que la Volatilité comptait déjà — et n'a jamais produit BEARISH sur
+      278 252 signaux.
+    - **Contexte éco (10 pts) supprimée** : 87,7 % des signaux à 0 point, et
+      *inversée* (0 pt → +0,034 R/trade, 10 pts → +0,017). Le risque
+      événementiel est déjà traité en amont par ``economic_calendar_veto``,
+      donc c'était aussi un double comptage.
+    - **Volatilité (20 pts) inversée** : le barème donnait 20 points à HIGH
+      et 3 à LOW, alors que hors range_bounce c'est HIGH −0,052 et LOW
+      +0,013. Il récompensait au maximum ce qui perd le plus.
+
+    Les deux composantes restantes sont remises à l'échelle ×2 pour conserver
+    un score sur 100 lisible. ⚠️ **La distribution se déplace quand même** —
+    médiane 57 → 70 — donc tous les seuils doivent être remontés, cf.
+    ``CONFIDENCE_SCORE_V2`` et la table de correspondance dans la mémoire
+    projet.
+
+    Résultat mesuré, corrélation de rang tranche/performance :
+
+    =================  ==========  ==========
+    période            barème v1   barème v2
+    =================  ==========  ==========
+    mai-juin (IN)         +0,46       +0,80
+    juil-août (OUT)     **-0,71**   **+0,90**
+    =================  ==========  ==========
+
+    À sélectivité égale (v1 ≥ 60 ↔ v2 ≥ 71) : +0,047 R/trade contre +0,030.
+    """
+    pattern_conf = setup.pattern.confidence
+    factors = [ConfidenceFactor(
+        name="Pattern",
+        score=round(pattern_conf * 60, 1),
+        detail=f"{setup.pattern.description} (confiance pattern: {pattern_conf:.0%})",
+        positive=pattern_conf >= 0.6,
+    )]
+
+    if volatility:
+        if volatility.level == VolatilityLevel.HIGH:
+            vol_score, vol_detail = 6.0, (
+                f"Volatilite haute ({volatility.volatility_ratio:.1f}x moyenne) — "
+                "mouvement rapide, les faux signaux y sont les plus frequents"
+            )
+        elif volatility.level == VolatilityLevel.MEDIUM:
+            vol_score, vol_detail = 24.0, (
+                f"Volatilite moyenne ({volatility.volatility_ratio:.1f}x) — conditions correctes"
+            )
+        else:
+            vol_score, vol_detail = 40.0, (
+                f"Volatilite basse ({volatility.volatility_ratio:.1f}x) — "
+                "marche calme, contexte le plus favorable au rebond en range"
+            )
+    else:
+        vol_score, vol_detail = 0.0, "Donnees de volatilite indisponibles"
+    factors.append(ConfidenceFactor(
+        name="Volatilite",
+        score=round(vol_score, 1),
+        detail=vol_detail,
+        positive=vol_score >= 24,
+    ))
+    return factors
+
+
+def _build_confidence_factors(setup, volatility, trend, events) -> list[ConfidenceFactor]:
+    """Aiguille vers le barème v1 ou v2 selon ``CONFIDENCE_SCORE_V2``.
+
+    Le drapeau existe parce que v2 **déplace la distribution du score**
+    (médiane 57 → 70) : déployer le code sans remonter les seuils au même
+    moment rendrait tout le dispatch bien plus permissif, en argent réel.
+    Le drapeau et les seuils se basculent ensemble.
+    """
+    from config.settings import CONFIDENCE_SCORE_V2
+    build = _factors_v2 if CONFIDENCE_SCORE_V2 else _factors_v1
+    return build(setup, volatility, trend, events)
+
+
+def enrich_trade_setup(
+    setup: TradeSetup,
+    volatility: VolatilityData | None,
+    trend: MarketTrend | None,
+    events: list[EconomicEvent],
+) -> TradeSetup:
+    """Enrichit un trade setup avec score de confiance, explications et money management."""
+    # Stamp asset class if missing (default "forex")
+    if not getattr(setup, "asset_class", None) or setup.asset_class == "forex":
+        setup.asset_class = asset_class_for(setup.pair)
+
+    factors = _build_confidence_factors(setup, volatility, trend, events)
 
     # ── Score global ──
     total_score = sum(f.score for f in factors)
