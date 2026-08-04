@@ -82,6 +82,7 @@ from config.settings import (
     MT5_BRIDGE_BLOCKED_DIRECTIONS,
     MT5_BRIDGE_BLOCKED_PAIRS,
     MT5_BRIDGE_AVOID_HOURS_UTC,
+    MT5_BRIDGE_ALLOWED_PATTERNS,
     TRADING_CAPITAL,
     RISK_PER_TRADE_PCT,
     asset_class_for,
@@ -107,6 +108,24 @@ def is_configured() -> bool:
 def _direction_value(setup) -> str:
     d = setup.direction
     return d.value if hasattr(d, "value") else str(d)
+
+
+def _pattern_value(setup) -> str | None:
+    """Nom du pattern détecté, en lowercase, ou None si indéterminable.
+
+    Le setup porte un ``PatternDetection`` dont le champ ``pattern`` est un
+    ``PatternType``. Les deux niveaux sont optionnels selon la provenance du
+    setup (tests, replays), d'où les gardes.
+    """
+    try:
+        detection = getattr(setup, "pattern", None)
+        if detection is None:
+            return None
+        p = getattr(detection, "pattern", detection)
+        value = p.value if hasattr(p, "value") else str(p)
+        return value.lower() if value else None
+    except Exception:
+        return None
 
 
 def _dedup_key(setup, dest_id: str = "admin_legacy") -> tuple[str, str, str, str, str]:
@@ -366,6 +385,18 @@ def _check_rejection(setup, dest=None) -> str | None:
     min_conf = dest.min_confidence if dest is not None else MT5_BRIDGE_MIN_CONFIDENCE
     if score < min_conf:
         return "below_confidence"
+    # Whitelist de patterns (2026-08-04). S'ajoute au seuil de confidence,
+    # ne le remplace pas — cf. MT5_BRIDGE_ALLOWED_PATTERNS dans settings.
+    # Sur 100 657 trades suivis, `range_bounce_up/down` fait +0,129 R/trade
+    # là où le seuil de confidence seul fait +0,030 pour 64 % du flux écarté.
+    #
+    # Pattern indéterminable alors que la whitelist est active ⇒ on bloque.
+    # Fail-closed volontaire : la whitelist est un opt-in explicite, et
+    # `signal_pattern` est porté dans les details de la rejection, donc une
+    # vague de blocages à `None` reste diagnosticable au dashboard.
+    if MT5_BRIDGE_ALLOWED_PATTERNS:
+        if _pattern_value(setup) not in MT5_BRIDGE_ALLOWED_PATTERNS:
+            return "pattern_not_allowed"
     # Filtre direction par pair (diagnostic 2026-04-24 : les BUY ont 18%
     # winrate vs 42% pour les SELL sur notre dataset post-fix pipeline).
     # Env `MT5_BRIDGE_BLOCKED_DIRECTIONS=PAIR:dir,*:dir,...`.
@@ -513,13 +544,7 @@ async def _push_to_destination(setup, dest) -> None:
             # sert pour détecter si V1 essaie encore le pattern défaillant
             # (smart resume). Inutile pour les autres reason_codes mais
             # peu cher à porter, donc on log universellement.
-            try:
-                _p = getattr(setup, "pattern", None)
-                _pp = getattr(_p, "pattern", None) if _p else None
-                _pattern_str = _pp.value if hasattr(_pp, "value") else (str(_pp) if _pp else None)
-            except Exception:
-                _pattern_str = None
-            details = {"signal_pattern": _pattern_str}
+            details = {"signal_pattern": _pattern_value(setup)}
             # Persister les blockers en clair pour les dashboards
             # (geopolitical_veto en particulier — sinon on perd la règle
             # qui a déclenché et le détail prob/jours).

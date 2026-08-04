@@ -543,10 +543,20 @@ def _describe_admin_destinations(setup) -> list[str]:
         from backend.services import bridge_destinations
         from config.settings import asset_class_for
 
+        from config.settings import MT5_BRIDGE_ALLOWED_PATTERNS
+        from backend.services.mt5_bridge import _pattern_value
+
         score = float(getattr(setup, "confidence_score", 0) or 0)
         pair = getattr(setup, "pair", None)
         if not pair:
             return []
+        # Whitelist de patterns (2026-08-04) : elle s'applique à toutes les
+        # destinations, donc un setup hors whitelist n'en exécutera aucune.
+        # Sans ce test, le message annoncerait « 💰 Live IC Markets » pour un
+        # setup que le bridge rejettera — une promesse fausse au lecteur.
+        if MT5_BRIDGE_ALLOWED_PATTERNS:
+            if _pattern_value(setup) not in MT5_BRIDGE_ALLOWED_PATTERNS:
+                return []
         try:
             aclass = asset_class_for(pair)
         except Exception:

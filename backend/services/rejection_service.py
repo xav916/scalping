@@ -38,6 +38,7 @@ REASON_LABELS_FR = {
     "market_closed": "Marché fermé",
     "sl_too_close": "SL trop serré",
     "below_confidence": "Confiance < seuil",
+    "pattern_not_allowed": "Pattern hors whitelist",
     "asset_class_blocked": "Classe d'actif bloquée",
     "max_positions_per_pair": "Cap positions par pair",
     "bridge_max_positions": "Cap positions bridge",

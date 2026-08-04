@@ -400,6 +400,27 @@ for _e in _blocked_raw.split(","):
         _pair, _dir = _e.rsplit(":", 1)
         MT5_BRIDGE_BLOCKED_DIRECTIONS.add((_pair.strip().upper(), _dir.strip().lower()))
 
+# Whitelist de patterns autorisés à l'auto-exec (2026-08-04).
+#
+# Motif : l'analyse de 100 657 trades suivis en direct montre que le filtre
+# de production (`confidence >= 60`) n'apporte rien — +0,030 R/trade contre
+# +0,032 sans aucun filtre — alors qu'il écarte 64 % du flux. Le pattern,
+# lui, discrimine : `range_bounce_up/down` donne +0,129 R/trade, validé
+# hors échantillon (règle figée sur mai-juin, testée sur juillet-août :
+# +0,115 R/trade, z = +9,08, positif sur 19 paires / 19 et 4 mois / 4).
+#
+# À l'inverse `momentum_up` (−0,037), `pin_bar_up` (−0,082) et
+# `breakout_up` (−0,088) détruisent de la valeur : tous les patterns hors
+# range_bounce totalisent −1 241 R sur la période.
+#
+# Ce filtre s'ajoute au seuil de confidence, il ne le remplace pas — les
+# deux doivent passer. Vide = désactivé (comportement historique).
+# Valeurs = `PatternType` en lowercase, séparées par des virgules.
+_allowed_patterns_raw = os.getenv("MT5_BRIDGE_ALLOWED_PATTERNS", "")
+MT5_BRIDGE_ALLOWED_PATTERNS: frozenset[str] = frozenset(
+    p.strip().lower() for p in _allowed_patterns_raw.split(",") if p.strip()
+)
+
 # Heures UTC à éviter (format "17-21" inclusif ou liste "17,18,19,20,21").
 # Le filtre compare l'heure d'entrée au moment du push, pas au moment où le
 # signal a été généré (cohérent avec le timing réel du fill).
