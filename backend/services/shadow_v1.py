@@ -183,8 +183,16 @@ def log_v1_shadows_for_observed_pairs(setups: list, cycle_at: datetime) -> dict[
 def fetch_v1_shadow_pnls(pair: str, direction: str | None, window: int = 30) -> list[float]:
     """Récupère les pnl_eur des N derniers shadow_setups V1_SHADOW résolus.
 
-    Utilisé par compute_promotion_score (pair_admission_controller) comme
-    fallback quand une pair est en OBSERVED et a 0 trades réels.
+    ⚠️ **Plus aucun appelant depuis le 2026-08-04.** `compute_promotion_score`
+    s'alimentait ici ; il lit désormais `backtest.db.trades`. Motif : les rows
+    antérieures au correctif de déduplication sont irrécupérablement
+    dupliquées (×2,5 à ×960 selon la paire), et elles ont piloté de vraies
+    rétrogradations automatiques.
+
+    La fonction est conservée — pas supprimée — parce que le log shadow tourne
+    à nouveau proprement : dans quelques semaines de séances réelles, cette
+    table redeviendra exploitable. **Ne pas la rebrancher avant** d'avoir
+    vérifié que les rows lues sont toutes postérieures au correctif.
 
     Si direction est None : agrège buy + sell (= scoring pair-level legacy).
     Sinon : restreint à ce sens.

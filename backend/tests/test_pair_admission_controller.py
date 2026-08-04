@@ -15,6 +15,11 @@ def _isolated_db(tmp_path, monkeypatch):
     from backend.services import trade_log_service
     monkeypatch.setattr(trade_log_service, "_DB_PATH", db_path)
 
+    # backtest.db alimente le scoring depuis le 2026-08-04 — l'isoler aussi,
+    # sinon les tests liraient (et créeraient) le fichier du dépôt.
+    from backend.services import backtest_service
+    monkeypatch.setattr(backtest_service, "_DB_PATH", tmp_path / "backtest.db")
+
     # Reset schema-ensured caches
     from backend.services import (
         pair_admission_controller,
@@ -156,7 +161,16 @@ def test_compute_promotion_score_meets_threshold(_isolated_db, monkeypatch):
     assert score["eligible_for"] == pac.AUTO_PROMOTE_TARGET
 
 
-# ─── Shadow fallback filtre system_id (fix 2026-05-18) ─────────────────
+# ─── shadow_setups n'alimente plus le scoring (2026-08-04) ─────────────
+#
+# Ces deux tests vérifiaient auparavant que le fallback shadow filtrait bien
+# `system_id LIKE 'V1_SHADOW_%'`, pour éviter que les shadows V2_CORE_LONG
+# (TF H4, SL/TP différents) ne contaminent le scoring V1. La préoccupation
+# reste valide mais est désormais structurelle : la source est
+# `backtest.db.trades`, qui ne contient que des signaux du radar V1.
+#
+# Le fallback shadow a été retiré parce que la table était corrompue — sa
+# déduplication ne mordait pas, cf. test_admission_backtest_source.py.
 
 
 def _insert_shadow(db_path, pair: str, direction: str, pnl: float, system_id: str, idx: int = 0):
@@ -169,35 +183,17 @@ def _insert_shadow(db_path, pair: str, direction: str, pnl: float, system_id: st
         )
 
 
-def test_shadow_fallback_filters_to_v1_only(_isolated_db):
-    """V2_CORE_LONG shadows ne doivent PAS contaminer le score d'admission V1."""
+def test_shadow_setups_nalimente_plus_le_scoring(_isolated_db):
+    """Même gorgé de shadows résolus, le scoring doit rester vide."""
     from backend.services import pair_admission_controller as pac
 
-    # 0 live + 20 V1_SHADOW gagnants + 20 V2_CORE_LONG perdants
     for i in range(20):
         _insert_shadow(_isolated_db, "XAU/USD", "buy", 50.0, "V1_SHADOW_XAUUSD_buy", idx=i)
     for i in range(20):
         _insert_shadow(_isolated_db, "XAU/USD", "buy", -50.0, "V2_CORE_LONG_XAUUSD_4H", idx=100 + i)
 
-    pnls = pac._fetch_trades_for_pair("XAU/USD", window=30, direction="buy")
-    # Sans le filtre, on prendrait les 30 plus récents (= les 20 V2 + 10 V1) =
-    # mix perdants/gagnants. Avec le filtre, on ne prend que les 20 V1 gagnants.
-    assert len(pnls) == 20, f"attendu 20 V1_SHADOW seulement, reçu {len(pnls)}"
-    assert all(p > 0 for p in pnls), "tous les pnl doivent être les V1 gagnants"
-
-
-def test_shadow_fallback_pair_level_also_filtered(_isolated_db):
-    """Filtre V1_SHADOW% s'applique aussi en mode pair-level (direction=None)."""
-    from backend.services import pair_admission_controller as pac
-
-    for i in range(10):
-        _insert_shadow(_isolated_db, "EUR/JPY", "buy", 30.0, "V1_SHADOW_EURJPY_buy", idx=i)
-    for i in range(20):
-        _insert_shadow(_isolated_db, "EUR/JPY", "buy", -20.0, "V2_CORE_LONG_EURJPY_4H", idx=100 + i)
-
-    pnls = pac._fetch_trades_for_pair("EUR/JPY", window=30, direction=None)
-    assert len(pnls) == 10
-    assert all(p > 0 for p in pnls)
+    assert pac._fetch_trades_for_pair("XAU/USD", window=30, direction="buy") == []
+    assert pac._fetch_trades_for_pair("XAU/USD", window=30, direction=None) == []
 
 
 # ─── Auto transitions ──────────────────────────────────────────────────

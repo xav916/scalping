@@ -720,13 +720,63 @@ def _compute_max_dd(trades_pnl: list[float], capital: float) -> float:
     return round(100.0 * max_dd_eur / capital, 2)
 
 
+def _r_unit_eur() -> float:
+    """Valeur en euros d'une unité de risque (1 R), selon la politique de sizing.
+
+    Un signal résolu vaut `rr_realized` R ; on le convertit ici en euros pour
+    l'homogénéiser avec les PnL réels de `personal_trades` / `ea_closed_trades`.
+
+    Utiliser `TRADING_CAPITAL × RISK_PER_TRADE_PCT` — et non une constante —
+    rend `pnl_pct` égal à `somme(R) × RISK_PER_TRADE_PCT`, donc **indépendant
+    du capital configuré**. L'ancien chemin shadow figeait 1 R = 100 € contre
+    un capital réel de 3 000 €, ce qui gonflait mécaniquement `pnl_pct` d'un
+    facteur 3,3 et produisait les « −103 % » relevés dans l'historique des
+    rétrogradations.
+    """
+    from config.settings import TRADING_CAPITAL, RISK_PER_TRADE_PCT
+    return TRADING_CAPITAL * (RISK_PER_TRADE_PCT / 100.0)
+
+
+def _fetch_signal_pnls(pair: str, direction: Optional[str], need: int) -> list[float]:
+    """PnL en euros des N derniers signaux résolus, depuis `backtest.db.trades`.
+
+    ⚠️ Cette fonction lisait `shadow_setups` jusqu'au 2026-08-04. Cette table
+    répliquait une même idée de trade jusqu'à 960 fois (déduplication
+    inopérante, cf. `shadow_v1._bar_timestamp`), et les décisions automatiques
+    d'admission en dépendaient : trois paires equity ont été rétrogradées le
+    2026-08-04 sur un `wr 0.0` qui n'était qu'un unique trade perdant compté
+    457 fois. `backtest.db.trades` est saine (duplication ×1,00 vérifiée).
+    """
+    if need <= 0:
+        return []
+    try:
+        from backend.services.backtest_service import fetch_recent_rr
+        rr = fetch_recent_rr(pair, direction, need)
+    except Exception as e:  # backtest.db indispo (tests isolés) : pas de fallback
+        logger.debug(f"admission: backtest.db indisponible pour {pair}: {e}")
+        return []
+    unit = _r_unit_eur()
+    return [r * unit for r in rr]
+
+
 def _fetch_trades_for_pair(pair: str, window: int, direction: Optional[str] = None) -> list[float]:
-    """Union admin (personal_trades) + Premium (ea_closed_trades) + shadow.
+    """Trades réels, complétés par des signaux si la fenêtre n'est pas pleine.
+
+    Voir `_fetch_real_trades_for_pair` et `_fetch_signal_pnls`. Le scoring
+    passe par ces deux-là directement, afin de savoir d'où vient chaque PnL.
+    """
+    pnls = _fetch_real_trades_for_pair(pair, window, direction)
+    if len(pnls) < window:
+        pnls.extend(_fetch_signal_pnls(pair, _normalize_direction(direction),
+                                       window - len(pnls)))
+    return pnls
+
+
+def _fetch_real_trades_for_pair(pair: str, window: int, direction: Optional[str] = None) -> list[float]:
+    """Union admin (personal_trades) + Premium (ea_closed_trades). Argent réel.
 
     Filtre optionnel par direction ('buy' ou 'sell'). Si direction None,
     agrège toutes directions confondues (= comportement pair-level).
-    Pour scoring d'une pair OBSERVED sans live trades, fallback sur
-    shadow_setups (Track A V2 backtest live).
     """
     _ensure_schema()
     from backend.services import ea_closed_trades_service as _eact
@@ -764,40 +814,6 @@ def _fetch_trades_for_pair(pair: str, window: int, direction: Optional[str] = No
             ).fetchall()
         for r in rows:
             pnls.append(float(r[0]))
-
-        # Fallback shadow_setups si pas assez de live.
-        # Filtre system_id LIKE 'V1_SHADOW_%' : la décision d'admission
-        # pilote l'auto-exec V1 sur le bridge, donc on score sur les signaux
-        # V1 uniquement. Sans ce filtre on mélangeait V2_CORE_LONG (TF H4,
-        # SL/TP différents) et V1_SHADOW (TF 1h) — biais quand V2 a une
-        # série de pertes/gains atypiques sur la même pair.
-        if len(pnls) < window:
-            need = window - len(pnls)
-            if direction is not None:
-                shadow_rows = c.execute(
-                    """
-                    SELECT pnl_eur FROM shadow_setups
-                     WHERE pair = ? AND outcome IS NOT NULL
-                       AND outcome != 'OPEN' AND pnl_eur IS NOT NULL
-                       AND LOWER(direction) = ?
-                       AND system_id LIKE 'V1_SHADOW_%'
-                     ORDER BY exit_at DESC LIMIT ?
-                    """,
-                    (pair, direction, need),
-                ).fetchall()
-            else:
-                shadow_rows = c.execute(
-                    """
-                    SELECT pnl_eur FROM shadow_setups
-                     WHERE pair = ? AND outcome IS NOT NULL
-                       AND outcome != 'OPEN' AND pnl_eur IS NOT NULL
-                       AND system_id LIKE 'V1_SHADOW_%'
-                     ORDER BY exit_at DESC LIMIT ?
-                    """,
-                    (pair, need),
-                ).fetchall()
-            for r in shadow_rows:
-                pnls.append(float(r[0]))
     return pnls
 
 
@@ -817,25 +833,25 @@ def compute_promotion_score(pair: str, window: int = 30, direction: Optional[str
     - eligible_for : 'AUTO_EXEC' | 'TELEGRAM' | 'OBSERVED' (la cible naturelle)
     """
     from config.settings import TRADING_CAPITAL
-    pnls = _fetch_trades_for_pair(pair, window, direction=direction)
+    pnls = _fetch_real_trades_for_pair(pair, window, direction=direction)
+    n_real = len(pnls)
+    # Complément signaux : les trades réels sont rares (une pair en OBSERVED
+    # n'en a aucun), donc on remplit la fenêtre avec les signaux résolus du
+    # radar. C'est ce qui permet la promotion auto from scratch — sans quoi
+    # une pair non tradée ne pourrait jamais accumuler d'historique.
+    if n_real < window:
+        pnls.extend(_fetch_signal_pnls(pair, _normalize_direction(direction),
+                                       window - n_real))
     sample = len(pnls)
-    pnl_source = "personal_trades"
-    # Fallback OBSERVED : si aucun trade réel sur cette pair, on score sur les
-    # shadow_setups V1_SHADOW (cf shadow_v1.py). Permet la promotion auto
-    # from scratch des pairs en observation (résout le chicken-and-egg).
-    if sample == 0:
-        try:
-            current_state = get_current_state(pair, direction)
-        except Exception:
-            current_state = DEFAULT_STATE
-        if current_state == STATE_OBSERVED:
-            try:
-                from backend.services.shadow_v1 import fetch_v1_shadow_pnls
-                pnls = fetch_v1_shadow_pnls(pair, direction, window)
-                sample = len(pnls)
-                pnl_source = "shadow_v1"
-            except Exception:
-                pass  # shadow_v1 indispo (tests isolés p.ex.) : reste à 0
+
+    # Étiquette honnête : jusqu'au 2026-08-04 `pnl_source` annonçait
+    # 'personal_trades' même quand 100 % de l'échantillon venait du shadow.
+    if sample == 0 or n_real == sample:
+        pnl_source = "personal_trades"
+    elif n_real == 0:
+        pnl_source = "backtest_trades"
+    else:
+        pnl_source = f"mixed({n_real}/{sample} réels)"
     if sample == 0:
         return {
             "sample": 0, "sum_pnl": 0.0, "pnl_pct": 0.0,

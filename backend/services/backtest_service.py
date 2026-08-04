@@ -370,3 +370,49 @@ def get_recent_trades(limit: int = 50) -> list[dict]:
             (limit,),
         )
         return [dict(row) for row in cur.fetchall()]
+
+
+# Outcomes considérés comme résolus. 'OPEN' et NULL sont exclus : un trade
+# encore en cours n'a pas de rr_realized exploitable.
+RESOLVED_OUTCOMES = ("WIN_TP1", "WIN_TP2", "LOSS")
+
+
+def fetch_recent_rr(pair: str, direction: str | None = None, limit: int = 30) -> list[float]:
+    """Les N derniers R réalisés sur une (pair, direction), plus récent d'abord.
+
+    Source de vérité pour le scoring d'admission depuis le 2026-08-04.
+    Remplace `shadow_setups`, dont la déduplication était inopérante et qui
+    répliquait une même idée de trade jusqu'à 960 fois
+    (cf. shadow_v1._bar_timestamp). Cette table-ci est saine : facteur de
+    duplication ×1,00 vérifié sur 100 657 lignes.
+
+    Args:
+        direction: 'buy' / 'sell', ou None pour agréger les deux sens.
+
+    Returns:
+        Liste de `rr_realized` (unités R), au plus `limit` éléments.
+    """
+    _init_schema()
+    placeholders = ",".join("?" * len(RESOLVED_OUTCOMES))
+    sql = (
+        f"SELECT rr_realized FROM trades "
+        f" WHERE pair = ? AND rr_realized IS NOT NULL "
+        f"   AND outcome IN ({placeholders})"
+    )
+    params: list = [pair, *RESOLVED_OUTCOMES]
+    if direction:
+        sql += " AND LOWER(direction) = ?"
+        params.append(direction.lower())
+    sql += " ORDER BY COALESCE(checked_at, emitted_at) DESC LIMIT ?"
+    params.append(limit)
+
+    with _conn() as c:
+        rows = c.execute(sql, params).fetchall()
+
+    out: list[float] = []
+    for r in rows:
+        try:
+            out.append(float(r[0]))
+        except (TypeError, ValueError):
+            continue
+    return out
