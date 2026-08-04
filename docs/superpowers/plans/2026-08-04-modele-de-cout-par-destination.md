@@ -32,6 +32,11 @@ Kraken se recalcule : SL médian 0,347 % du prix, 0,05 % de frais par jambe.
 `(1 / 0,00347) × 0,0005 × 2 = 0,288 R`. Le risque se simplifie — **le coût
 proportionnel en R ne dépend pas de la taille de position.**
 
+⚠️ Ces trois lignes servent de tests unitaires du modèle (tâche 3). Elles ne
+sont PAS toutes déclarées comme configuration de destination : seule Kraken
+l'est. MT5 reste non déclarée, cf. tâche 4 — sa distance de stop varie d'un
+facteur 27 selon la paire, aucun taux unique ne la décrit.
+
 ## File Structure
 
 - `backend/services/cost_model.py` — **créé**. Structure de coût et conversion en R. Aucune dépendance à la base ni au réseau : pure fonction, donc testable sans fixture.
@@ -499,13 +504,28 @@ Expected: PASS — 2 tests.
 
 - [ ] **Step 5: Renseigner les destinations réelles**
 
-Dans `_admin_live_destination()` et `_admin_legacy_destination()`, ajouter aux arguments de construction de `BridgeConfig` :
+**`_admin_live_destination()` et `_admin_legacy_destination()` : ne rien
+déclarer.** Laisser `cost_model` et `expected_edge_r` à leur défaut `None`.
 
-```python
-        # Spread absorbé dans le prix : 0,022 R mesuré sur IC Markets.
-        cost_model=CostModel(proportional_rate_per_leg=0.00011),
-        expected_edge_r=0.129,  # range_bounce, mesuré sur `trades` le 2026-08-04
-```
+La raison est une mesure, pas une prudence de principe. La distance de stop
+varie d'un facteur 27 selon la paire — mesuré le 2026-08-04 sur 1 352 trades
+auto : EUR/USD 0,073 %, XAU/USD 0,151 %, ETH/USD 0,457 %, DOT/USD 1,99 %.
+Or le coût proportionnel en R vaut `(entry / distance) × taux × 2` : à taux
+égal, il varie donc dans le même rapport. Un taux unique pour `admin_live`,
+qui mélange forex, métaux et actions CFD, décrirait correctement au plus une
+de ces classes.
+
+De plus, les 0,022 R d'IC Markets ont été mesurés sur les **actions CFD**
+seulement. Les transposer aux paires forex serait extrapoler une mesure hors
+de son domaine — exactement l'erreur que ce plan existe pour empêcher.
+
+MT5 est par ailleurs la route dont la viabilité est déjà établie et qui trade
+aujourd'hui. La porte existe pour arrêter les routes chères, pas pour rejuger
+celle qui fonctionne. La laisser non déclarée garantit qu'elle conserve
+exactement son comportement actuel.
+
+⚠️ Ne pas « compléter » ce point en inventant un taux. Un coût par classe
+d'actif est un chantier de mesure distinct.
 
 Dans `_admin_kraken_destination()` et `_admin_kraken_spot_destination()` :
 
@@ -542,14 +562,23 @@ def test_kraken_est_refuse_par_ses_propres_chiffres():
     assert exceeds_edge(cout, 0.110, auto_exec=True) is True
 
 
-def test_mt5_est_accepte_par_ses_propres_chiffres():
-    from backend.services.cost_model import CostModel, cost_in_r, exceeds_edge
+def test_mt5_reste_non_declare_donc_inchange():
+    """La route qui trade aujourd'hui ne doit pas changer de comportement.
 
-    modele = CostModel(proportional_rate_per_leg=0.00011)
-    entry = 1000.0
-    cout = cost_in_r(entry=entry, stop_loss=entry * (1 - 0.00347), model=modele)
+    Aucun taux unique ne décrit `admin_live`, qui mélange forex, métaux et
+    actions CFD : la distance de stop y varie d'un facteur 27 (EUR/USD
+    0,073 %, DOT/USD 1,99 %, mesuré le 2026-08-04 sur 1 352 trades auto).
+    Déclarer un taux reviendrait à inventer un chiffre.
+    """
+    from backend.services.bridge_destinations import _admin_live_destination
 
-    assert exceeds_edge(cout, 0.129, auto_exec=True) is False
+    dest = _admin_live_destination()
+    if dest is None:  # destination non configurée dans cet environnement
+        import pytest
+
+        pytest.skip("admin_live non configurée ici")
+    assert dest.cost_model is None
+    assert dest.expected_edge_r is None
 ```
 
 - [ ] **Step 7: Lancer la suite complète**
