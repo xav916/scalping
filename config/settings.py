@@ -414,6 +414,22 @@ SILENT_DROPS_LOG_ENABLED = os.getenv(
     "SILENT_DROPS_LOG_ENABLED", "true"
 ).strip().lower() in ("1", "true", "yes")
 
+# Whitelist de patterns propre à Kraken Futures (2026-08-04).
+#
+# Non défini  -> hérite de MT5_BRIDGE_ALLOWED_PATTERNS (comportement global)
+# Défini vide -> AUCUN filtre pattern sur Kraken
+# Défini      -> cette liste, pour Kraken seulement
+#
+# Motif : Kraken est une destination d'observation à espérance négative
+# assumée, où l'on cherche du volume pour valider la chaîne d'exécution.
+# L'argent réel MT5 doit lui garder `range_bounce`. Mesure : sans filtre,
+# ~113 signaux/jour au lieu de 24, mais espérance brute de +0,190 à +0,100.
+_kraken_patterns_raw = os.getenv("KRAKEN_BRIDGE_ALLOWED_PATTERNS")
+KRAKEN_BRIDGE_ALLOWED_PATTERNS: frozenset[str] | None = (
+    None if _kraken_patterns_raw is None
+    else frozenset(p.strip().lower() for p in _kraken_patterns_raw.split(",") if p.strip())
+)
+
 # Barème de confiance v2 (2026-08-04). Voir analysis_engine._factors_v2.
 #
 # v1 comportait 50 points constants sur 100 et comptait la volatilité deux

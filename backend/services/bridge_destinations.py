@@ -60,6 +60,13 @@ class BridgeConfig:
         cette destination. Permet d'élargir Live aux forex majors quand le
         capital est trop petit pour les stars métaux. Empty = stars-only.
         Cf. driver 2026-06-12 IC Markets €100.
+    allowed_patterns : frozenset[str] | None
+        Patterns autorisés à l'auto-exec pour cette destination.
+        ``None`` = hérite du global ``MT5_BRIDGE_ALLOWED_PATTERNS``.
+        ``frozenset()`` = aucun filtre pattern pour cette destination.
+        Ajouté le 2026-08-04 : la whitelist était globale, donc impossible de
+        garder `range_bounce` sur l'argent réel MT5 tout en l'ouvrant sur une
+        destination d'observation. Cf. project_pattern_whitelist_dispatch.
     excluded_pairs : frozenset[str]
         Pairs explicitement BLOQUÉES pour cette destination, indépendamment du
         pair_admission_state global. Permet de mettre un client Premium en
@@ -78,6 +85,8 @@ class BridgeConfig:
     symbol_map: dict[str, str] | None = None
     extra_pairs_allowed: frozenset[str] = frozenset()
     excluded_pairs: frozenset[str] = frozenset()
+    # None = hérite du global. frozenset() = pas de filtre pattern.
+    allowed_patterns: frozenset[str] | None = None
     # bridge_type: "mt5" pour les bridges MT5 (admin_legacy, admin_live, user
     # premium), "binance" pour le bridge Binance Futures (USDⓈ-M perp).
     # Le dispatcher dans mt5_bridge._push_to_destination utilise ce flag pour
@@ -308,6 +317,7 @@ def _admin_kraken_destination() -> BridgeConfig | None:
         auto_exec_enabled=True,
         bridge_type="kraken",
         leverage=int(getattr(st, "KRAKEN_BRIDGE_LEVERAGE", 5)),
+        allowed_patterns=getattr(st, "KRAKEN_BRIDGE_ALLOWED_PATTERNS", None),
     )
 
 

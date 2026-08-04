@@ -395,8 +395,15 @@ def _check_rejection(setup, dest=None) -> str | None:
     # Fail-closed volontaire : la whitelist est un opt-in explicite, et
     # `signal_pattern` est porté dans les details de la rejection, donc une
     # vague de blocages à `None` reste diagnosticable au dashboard.
-    if MT5_BRIDGE_ALLOWED_PATTERNS:
-        if _pattern_value(setup) not in MT5_BRIDGE_ALLOWED_PATTERNS:
+    # Per-destination depuis le 2026-08-04 : `dest.allowed_patterns` à None
+    # hérite du global, à frozenset() désactive le filtre pour cette seule
+    # destination. Permet de garder `range_bounce` sur l'argent réel MT5 tout
+    # en ouvrant une destination d'observation.
+    allowed_patterns = MT5_BRIDGE_ALLOWED_PATTERNS
+    if dest is not None and getattr(dest, "allowed_patterns", None) is not None:
+        allowed_patterns = dest.allowed_patterns
+    if allowed_patterns:
+        if _pattern_value(setup) not in allowed_patterns:
             return "pattern_not_allowed"
     # Filtre direction par pair (diagnostic 2026-04-24 : les BUY ont 18%
     # winrate vs 42% pour les SELL sur notre dataset post-fix pipeline).
