@@ -397,14 +397,20 @@ def _num(x):
 
 
 def _build_bracket(direction: str, qty: float, sl: float, tp: float,
-                   parent_id: int) -> list[Order]:
-    """Entrée au marché + SL stop + TP limite, liés par ``parentId``.
+                   parent_id: int, entry_limit: float | None = None) -> list[Order]:
+    """Entrée + SL stop + TP limite, liés par ``parentId``.
 
-    ``ib.bracketOrder()`` impose une entrée LIMIT ; on veut du marché, donc
-    on assemble à la main. Seul le dernier ordre porte ``transmit=True`` :
-    IBKR ne libère la grappe qu'à ce moment, ce qui évite qu'un parent parte
-    seul si la construction échoue en cours de route (le piège des positions
-    nues déjà vécu côté MT5).
+    L'entrée est au marché par défaut. ``entry_limit`` la passe en ordre
+    limite — utile pour **valider la mécanique sans payer** : une limite
+    placée loin du marché ne se remplit pas, donc ne génère aucune
+    commission, tout en permettant de vérifier que la grappe est acceptée et
+    correctement liée.
+
+    ``ib.bracketOrder()`` impose une entrée LIMIT ; on veut les deux modes,
+    donc on assemble à la main. Seul le dernier ordre porte ``transmit=True``
+    : IBKR ne libère la grappe qu'à ce moment, ce qui évite qu'un parent
+    parte seul si la construction échoue en cours de route (le piège des
+    positions nues déjà vécu côté MT5).
 
     ``tif`` est fixé explicitement sur les trois ordres. Sans ça, IBKR
     applique un preset et émet l'avertissement 10349 — qui **avale la
@@ -413,7 +419,10 @@ def _build_bracket(direction: str, qty: float, sl: float, tp: float,
     entry_action = "BUY" if direction.lower() == "buy" else "SELL"
     exit_action = "SELL" if entry_action == "BUY" else "BUY"
 
-    parent = MarketOrder(entry_action, qty)
+    if entry_limit is not None:
+        parent = LimitOrder(entry_action, qty, float(entry_limit))
+    else:
+        parent = MarketOrder(entry_action, qty)
     parent.orderId = parent_id
     parent.tif = "DAY"
     parent.transmit = False
@@ -552,7 +561,10 @@ def order():
             }), 400
 
         base_id = worker.call_sync(lambda: worker.ib.client.getReqId())
-        orders = _build_bracket(direction, qty, float(sl), float(tp), base_id)
+        orders = _build_bracket(
+            direction, qty, float(sl), float(tp), base_id,
+            entry_limit=payload.get("entry_limit"),
+        )
         trades = worker.call_sync(
             lambda: [worker.ib.placeOrder(c, o) for o in orders]
         )
