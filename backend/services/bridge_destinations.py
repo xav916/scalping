@@ -26,6 +26,8 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
+from backend.services.cost_model import CostModel
+
 
 @dataclass(frozen=True)
 class BridgeConfig:
@@ -98,6 +100,16 @@ class BridgeConfig:
     bridge_type: str = "mt5"
     # leverage pour les destinations Binance (ignoré côté MT5, broker fixe).
     leverage: int | None = None
+    # ── Coût et edge (2026-08-04) ────────────────────────────────────
+    # `cost_model` décrit ce que coûte un aller-retour sur cette route.
+    # `expected_edge_r` est l'edge brut MESURÉ de la population admise, en
+    # unités de risque. Les deux à None = route non mesurée : elle ne peut
+    # pas prendre d'argent réel, mais reste observable en TELEGRAM.
+    #
+    # ⚠️ Ne jamais mettre 0.0 pour « on ne sait pas ». Un coût nul rendrait
+    # n'importe quelle route éligible, un edge nul la condamnerait à tort.
+    cost_model: CostModel | None = None
+    expected_edge_r: float | None = None
 
 
 def _admin_legacy_destination() -> BridgeConfig | None:
@@ -249,6 +261,9 @@ def _admin_kraken_spot_destination() -> BridgeConfig | None:
         auto_exec_enabled=True,
         bridge_type="kraken_spot",
         leverage=int(getattr(st, "KRAKEN_SPOT_BRIDGE_LEVERAGE", 1)),
+        # 0,05 % par jambe (taker). Donne 0,288 R au SL médian mesuré.
+        cost_model=CostModel(proportional_rate_per_leg=0.0005),
+        expected_edge_r=0.110,  # mesuré sur 876 trades réels le 2026-08-04
     )
 
 
@@ -289,6 +304,8 @@ def _admin_kraken_stocks_destination() -> BridgeConfig | None:
         auto_exec_enabled=True,
         bridge_type="kraken",
         leverage=int(getattr(st, "KRAKEN_STOCKS_BRIDGE_LEVERAGE", 5)),
+        cost_model=CostModel(proportional_rate_per_leg=0.0005),
+        expected_edge_r=0.129,  # 0,199 R de frais mesurés > 30 % de cet edge
     )
 
 
@@ -322,6 +339,9 @@ def _admin_kraken_destination() -> BridgeConfig | None:
         bridge_type="kraken",
         leverage=int(getattr(st, "KRAKEN_BRIDGE_LEVERAGE", 5)),
         allowed_patterns=getattr(st, "KRAKEN_BRIDGE_ALLOWED_PATTERNS", None),
+        # 0,05 % par jambe (taker). Donne 0,288 R au SL médian mesuré.
+        cost_model=CostModel(proportional_rate_per_leg=0.0005),
+        expected_edge_r=0.110,  # mesuré sur 876 trades réels le 2026-08-04
     )
 
 
