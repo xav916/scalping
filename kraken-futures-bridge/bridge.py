@@ -473,6 +473,47 @@ def positions():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+@app.route("/fills", methods=["GET"])
+@require_bridge_key
+def fills():
+    """Exécutions récentes, avec le P&L réalisé que Kraken calcule lui-même.
+
+    Sert la réconciliation des clôtures (``kraken_sync``). Deux champs font
+    tout le travail :
+
+    ``order_id``      celui de l'ordre à l'origine de l'exécution. Pour une
+                      clôture, c'est le SL ou le TP posés à l'ouverture —
+                      donc la cause de sortie est connue **exactement**,
+                      sans deviner par proximité de prix comme côté MT5.
+    ``realized_pnl``  en USD, calculé par Kraken. Non nul ⇒ l'exécution a
+                      réduit ou fermé une position.
+
+    Lecture seule : aucun ordre n'est passé ni annulé ici.
+    """
+    try:
+        data = _signed_request("GET", "/api/v3/fills")
+        if data.get("result") != "success":
+            return jsonify({"ok": False, "error": "kraken response not success"}), 503
+        nettoyes = []
+        for f in data.get("fills", []) or []:
+            nettoyes.append({
+                "fill_id": f.get("fill_id"),
+                "order_id": f.get("order_id"),
+                "symbol": f.get("symbol"),
+                "side": f.get("side"),
+                "size": float(f.get("size") or 0),
+                "price": float(f.get("price") or 0),
+                "fill_time": f.get("fillTime"),
+                "fill_type": f.get("fillType"),
+                "realized_pnl": float(f.get("realized_pnl") or 0),
+                "realized_funding": float(f.get("realized_funding") or 0),
+            })
+        return jsonify({"ok": True, "count": len(nettoyes), "fills": nettoyes})
+    except Exception as e:
+        logger.exception("fills failed")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @app.route("/tick/<path:pair>", methods=["GET"])
 @require_bridge_key
 def tick(pair):
@@ -724,6 +765,12 @@ def place_order():
         "sl_error": sl_error,
         "tp_order_id": tp_order_id,
         "tp_error": tp_error,
+        # Niveaux réellement posés, après arrondi au tickSize. La réponse ne
+        # portait que les identifiants d'ordre : le radar ne savait donc pas à
+        # quels prix ses stops avaient été placés, et `personal_trades` ne
+        # pouvait pas être renseignée à la réconciliation.
+        "sl": _round_to_tick(float(sl_raw)) if sl_raw is not None else None,
+        "tp": _round_to_tick(float(tp_raw)) if tp_raw is not None else None,
     })
 
 

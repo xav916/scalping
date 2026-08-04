@@ -394,6 +394,24 @@ def _user_destinations(setup: Any) -> list[BridgeConfig]:
     return destinations
 
 
+def admin_destinations() -> list[BridgeConfig]:
+    """Destinations admin configurées, indépendamment de tout setup.
+
+    ``resolve_destinations`` répond à « où pousser CE signal ? » et filtre
+    donc selon la paire, le sens et les admissions. Les tâches de fond —
+    réconciliation des clôtures, sondes de santé — ont besoin de l'autre
+    question : « quels comptes existent ? ». Faute de cette fonction,
+    ``kraken_sync`` aurait recopié la liste des constructeurs, soit
+    exactement la duplication que le registre des destinations supprime.
+    """
+    constructeurs = (
+        _admin_legacy_destination, _admin_live_destination,
+        _admin_binance_destination, _admin_kraken_destination,
+        _admin_kraken_spot_destination, _admin_kraken_stocks_destination,
+    )
+    return [d for d in (c() for c in constructeurs) if d is not None]
+
+
 def resolve_destinations(setup: Any) -> list[BridgeConfig]:
     """Liste toutes les destinations vers lesquelles ce setup doit être poussé.
 

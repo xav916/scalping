@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -657,6 +658,24 @@ def start_scheduler() -> AsyncIOScheduler:
         seconds=MT5_SYNC_INTERVAL_SEC,
         id="mt5_sync",
         name="Sync bridge MT5 → personal_trades",
+        replace_existing=True,
+    )
+    # Réconciliation des clôtures Kraken. Sans elle, une position qui touche
+    # son stop se ferme en silence : les ordres conditionnels reposent chez
+    # Kraken et ne repassent jamais par le radar. Constaté le 2026-08-04,
+    # quatre pertes réelles encaissées sans notification ni trace.
+    async def _kraken_reconcile_cycle():
+        from backend.services.kraken_sync import reconcile
+        n = await reconcile()
+        if n:
+            logger.info(f"kraken_sync: {n} cloture(s) reconciliee(s)")
+
+    _scheduler.add_job(
+        _kraken_reconcile_cycle,
+        "interval",
+        seconds=int(os.getenv("KRAKEN_SYNC_INTERVAL_SEC", "120")),
+        id="kraken_sync",
+        name="Réconciliation clôtures Kraken",
         replace_existing=True,
     )
     # Push cockpit toutes les 5s : rafraichit les PnL unrealized des trades

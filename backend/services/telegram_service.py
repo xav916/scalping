@@ -881,7 +881,11 @@ async def send_setups(setups: list) -> None:
 # send_close pousse à la FERMETURE d'un trade auto-exec (mt5_ticket connu).
 # Dédup ticket-based : un trade ne notifie qu'une fois sa clôture.
 
-_notified_closes: set[int] = set()
+# Clés de dédup sous forme de CHAÎNE : un ticket MT5 est un entier, mais une
+# référence d'ordre Kraken est un UUID. `int(ticket)` levait donc une
+# ValueError sur toute clôture Kraken — avalée plus haut, elle aurait fait
+# disparaître la notification exactement là où on venait de la brancher.
+_notified_closes: set[str] = set()
 
 
 def _format_close(trade: dict, destination_id: str | None = None) -> str:
@@ -1001,10 +1005,11 @@ async def send_close(trade: dict) -> None:
     """
     pair = trade.get("pair")
     ticket = trade.get("mt5_ticket")
-    if ticket and int(ticket) in _notified_closes:
+    cle = str(ticket) if ticket else None
+    if cle and cle in _notified_closes:
         return
-    if ticket:
-        _notified_closes.add(int(ticket))
+    if cle:
+        _notified_closes.add(cle)
 
     # Argent réel uniquement, comme à l'ouverture. `personal_trades` ne porte
     # pas la destination : on la résout depuis `mt5_pushes` via le ticket.
