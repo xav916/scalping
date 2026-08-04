@@ -85,9 +85,12 @@ async def fetch_fills(dest) -> list[dict[str, Any]]:
 
 
 async def fetch_positions(dest) -> dict[str, float]:
-    """Taille ouverte par symbole. ``{}`` si indisponible.
+    """Exposition **signée** par symbole : positive acheteuse, négative
+    vendeuse. ``{}`` si indisponible.
 
-    Sert à distinguer « toujours ouvert » de « fermé par nettage ».
+    Le sens était jeté auparavant. Il est indispensable dès qu'on veut
+    aligner le volume de nos lignes sur le net de l'exchange : sans lui, une
+    position vendeuse de 0,107 ne se distingue pas d'une acheteuse.
     """
     url = f"{dest.bridge_url.rstrip('/')}/positions"
     try:
@@ -96,8 +99,15 @@ async def fetch_positions(dest) -> dict[str, float]:
                             if dest.bridge_api_key else {})
         if r.status_code != 200:
             return {}
-        return {p["symbol"]: float(p.get("size") or 0)
-                for p in (r.json().get("positions") or []) if p.get("symbol")}
+        out: dict[str, float] = {}
+        for p in (r.json().get("positions") or []):
+            sym = p.get("symbol")
+            if not sym:
+                continue
+            taille = abs(float(p.get("size") or 0))
+            signe = -1.0 if str(p.get("side", "")).lower() == "short" else 1.0
+            out[sym] = signe * taille
+        return out
     except Exception as e:
         logger.warning(f"kraken_sync: /positions injoignable : {e}")
         return {}
@@ -222,7 +232,7 @@ def clotures_par_nettage(pushes, fills, positions, deja_closes) -> list[dict[str
         if p["push_id"] in deja_closes:
             continue
         sym = p.get("symbol")
-        if sym and positions.get(sym, 0.0) > 0:
+        if sym and abs(positions.get(sym, 0.0)) > 0:
             continue  # encore de l'exposition sur ce symbole : rien à conclure
         if not positions:
             continue  # positions indisponibles : ne rien affirmer
@@ -284,6 +294,96 @@ def materialiser_ouvertures(pushes) -> int:
     if ecrits:
         logger.info(f"kraken_sync: {ecrits} position(s) ouverte(s) materialisee(s)")
     return ecrits
+
+
+def repartir_volume_net(ouvertes, net: float) -> dict[str, float]:
+    """Répartit l'exposition nette d'un symbole sur nos lignes encore ouvertes.
+
+    Kraken nette par symbole : nos lignes ne sont qu'une vue par ordre d'une
+    exposition unique. Après une réduction partielle, la somme de nos volumes
+    ne vaut plus celle de l'exchange — le 2026-08-04, 0,215 affiché pour
+    0,107 réellement ouverts.
+
+    La convention est **FIFO** : ce qui a été racheté a fermé les positions
+    les plus anciennes d'abord. L'exposition résiduelle appartient donc aux
+    plus récentes, et c'est par elles qu'on remplit.
+
+    Le **sens** du net sélectionne les lignes éligibles : si l'exchange est
+    vendeur, une ligne acheteuse ne peut porter aucun résiduel — elle est
+    contredite par la réalité du compte, donc absorbée.
+
+    ``ouvertes`` doit être ordonné de la plus ancienne à la plus récente.
+    Retourne ``{order_id: volume résiduel}`` ; un volume nul signifie que la
+    position a été entièrement absorbée.
+    """
+    restant = abs(float(net))
+    sens_net = "buy" if float(net) > 0 else "sell"
+    resultat: dict[str, float] = {}
+    for p in reversed(list(ouvertes)):
+        if str(p.get("direction", sens_net)).lower() != sens_net:
+            resultat[str(p["order_id"])] = 0.0
+            continue
+        attribue = min(restant, float(p["volume"]))
+        resultat[str(p["order_id"])] = round(attribue, 8)
+        restant -= attribue
+    return resultat
+
+
+def ajuster_volumes_ouverts(pushes, positions) -> int:
+    """Aligne le volume de nos positions ouvertes sur le net de l'exchange.
+
+    Retourne le nombre de lignes corrigées. Sans ``positions``, on ne touche
+    à rien : l'absence d'information n'autorise aucune conclusion.
+    """
+    if not positions:
+        return 0
+
+    par_ligne = {}
+    with sqlite3.connect(_db_path()) as c:
+        c.row_factory = sqlite3.Row
+        for r in c.execute("SELECT mt5_ticket, size_lot FROM personal_trades "
+                           " WHERE status = 'OPEN' AND is_auto = 1"):
+            par_ligne[str(r["mt5_ticket"])] = float(r["size_lot"] or 0)
+
+    par_symbole: dict[str, list] = {}
+    for p in pushes:
+        if str(p["order_id"]) in par_ligne and p.get("symbol"):
+            par_symbole.setdefault(p["symbol"], []).append(p)
+
+    corriges = 0
+    with sqlite3.connect(_db_path()) as c:
+        for sym, ouvertes in par_symbole.items():
+            ouvertes.sort(key=lambda p: str(p["pushed_at"]))
+            cible = repartir_volume_net(ouvertes, positions.get(sym, 0.0))
+            for order_id, volume in cible.items():
+                if abs(par_ligne.get(order_id, 0.0) - volume) < 1e-9:
+                    continue
+                if volume <= 0:
+                    # Entièrement absorbée par un ordre opposé. La laisser
+                    # ouverte à volume nul serait une position fantôme, que le
+                    # cap par paire et le garde-fou de corrélation compteraient
+                    # encore. Le P&L reste absent : il a déjà été attribué à
+                    # l'ordre réducteur, le compter ici le doublerait.
+                    c.execute(
+                        "UPDATE personal_trades SET size_lot = 0, status = 'CLOSED',"
+                        " closed_at = COALESCE(closed_at, ?),"
+                        " close_reason = COALESCE(close_reason, ?)"
+                        " WHERE mt5_ticket = ?",
+                        (datetime.now(timezone.utc).isoformat(), CAUSE_NET, order_id))
+                    logger.info(
+                        f"kraken_sync: position absorbee par nettage {sym} "
+                        f"({order_id[:13]})"
+                    )
+                else:
+                    c.execute(
+                        "UPDATE personal_trades SET size_lot = ? WHERE mt5_ticket = ?",
+                        (volume, order_id))
+                    logger.info(
+                        f"kraken_sync: volume ajuste {sym} "
+                        f"{par_ligne.get(order_id)} -> {volume} ({order_id[:13]})"
+                    )
+                corriges += 1
+    return corriges
 
 
 def enregistrer_cloture(cloture: dict[str, Any], eur_usd: float) -> dict | None:
@@ -389,4 +489,10 @@ async def reconcile() -> int:
                 await send_close(trade)
             except Exception as e:
                 logger.warning(f"kraken_sync: notification de cloture echouee : {e}")
+
+        # En dernier, une fois les clôtures appliquées : ce qui reste ouvert
+        # doit totaliser exactement l'exposition de l'exchange, réduction
+        # partielle comprise. Avant cette étape, une position vendue 0,215 et
+        # rachetée pour moitié restait affichée à 0,215.
+        ajuster_volumes_ouverts(pushes, positions)
     return total

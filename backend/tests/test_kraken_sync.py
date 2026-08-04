@@ -444,3 +444,155 @@ def test_chaque_pnl_realise_n_est_compte_qu_une_fois():
               "realized_pnl": -0.33}]
     total = sum(c["pnl_usd"] for c in ks.attribuer_clotures(pushes, fills))
     assert total == pytest.approx(-1.41)
+
+
+# --- volume des positions partiellement reduites --------------------------
+
+def test_le_volume_suit_le_net_de_l_exchange():
+    """Le cas du 2026-08-04 : vendu 0,215, racheté 0,108, net 0,107.
+
+    La ligne restait affichée à 0,215 — soit le double de l'exposition
+    réelle. Toute lecture d'exposition en était faussée.
+    """
+    ouvertes = [{"order_id": "D", "volume": 0.215,
+                 "pushed_at": "2026-08-04T18:17:37"}]
+    assert ks.repartir_volume_net(ouvertes, -0.107) == {"D": 0.107}
+
+
+def test_le_sens_du_net_selectionne_les_lignes_eligibles():
+    """Si l'exchange est vendeur, une ligne acheteuse est contredite par la
+    realite du compte : elle ne peut porter aucun residuel."""
+    vendeuse = {"order_id": "S", "volume": 0.215, "direction": "sell",
+                "pushed_at": "1"}
+    acheteuse = {"order_id": "B", "volume": 0.100, "direction": "buy",
+                 "pushed_at": "2"}
+    r = ks.repartir_volume_net([vendeuse, acheteuse], -0.107)
+    assert r["S"] == pytest.approx(0.107), "la vendeuse doit porter le net"
+    assert r["B"] == 0.0, "une acheteuse ne peut porter un net vendeur"
+
+    r = ks.repartir_volume_net([vendeuse, acheteuse], +0.080)
+    assert r["B"] == pytest.approx(0.080)
+    assert r["S"] == 0.0
+
+
+def test_la_repartition_suit_la_convention_fifo():
+    """Ce qui a été racheté a fermé les positions les plus anciennes : le
+    résiduel appartient donc aux plus récentes."""
+    ouvertes = [{"order_id": "A", "volume": 0.098, "pushed_at": "17:50"},
+                {"order_id": "B", "volume": 0.089, "pushed_at": "17:56"},
+                {"order_id": "C", "volume": 0.054, "pushed_at": "17:59"}]
+    r = ks.repartir_volume_net(ouvertes, -0.10)
+    assert r["C"] == pytest.approx(0.054)
+    assert r["B"] == pytest.approx(0.046)
+    assert r["A"] == 0.0
+
+
+def test_la_somme_repartie_egale_toujours_le_net():
+    """C'est la propriété qui définit la fonction."""
+    ouvertes = [{"order_id": c, "volume": v, "pushed_at": str(i)}
+                for i, (c, v) in enumerate([("A", 0.1), ("B", 0.2), ("C", 0.05)])]
+    for net in (-0.35, -0.2, -0.05, 0.0, -0.34999):
+        assert sum(ks.repartir_volume_net(ouvertes, net).values()) == pytest.approx(
+            min(abs(net), 0.35), abs=1e-9)
+
+
+def test_un_net_superieur_a_nos_lignes_ne_les_gonfle_pas():
+    """Une position ouverte à la main chez Kraken ne doit pas être absorbée
+    dans nos lignes."""
+    ouvertes = [{"order_id": "A", "volume": 0.1, "pushed_at": "t"}]
+    assert ks.repartir_volume_net(ouvertes, -5.0) == {"A": 0.1}
+
+
+def test_un_net_nul_vide_toutes_les_lignes():
+    ouvertes = [{"order_id": "A", "volume": 0.1, "pushed_at": "1"},
+                {"order_id": "B", "volume": 0.2, "pushed_at": "2"}]
+    assert ks.repartir_volume_net(ouvertes, 0.0) == {"A": 0.0, "B": 0.0}
+
+
+def test_le_volume_est_corrige_en_base(base):
+    with sqlite3.connect(base) as c:
+        c.execute("INSERT INTO personal_trades (user,pair,direction,entry_price,"
+                  "stop_loss,take_profit,size_lot,status,created_at,mt5_ticket,"
+                  "is_auto) VALUES ('auto','ETH/USD','sell',1874.6,1884.0,1857.0,"
+                  "0.215,'OPEN','2026-08-04T18:17:37','D',1)")
+    pushes = [_push(1, "ETH/USD", "sell", "D", "sl-D", 0.215, 1874.6)]
+    assert ks.ajuster_volumes_ouverts(pushes, {"PF_ETHUSD": -0.107}) == 1
+    assert _lignes(base)[0]["size_lot"] == pytest.approx(0.107)
+
+
+def test_une_position_absorbee_est_fermee(base):
+    """La laisser ouverte à volume nul en ferait une position fantôme, encore
+    comptée par le cap par paire et le garde-fou de corrélation."""
+    with sqlite3.connect(base) as c:
+        c.execute("INSERT INTO personal_trades (user,pair,direction,entry_price,"
+                  "stop_loss,take_profit,size_lot,status,created_at,mt5_ticket,"
+                  "is_auto) VALUES ('auto','ETH/USD','sell',1874.6,1884.0,1857.0,"
+                  "0.215,'OPEN','2026-08-04T18:17:37','D',1)")
+    pushes = [_push(1, "ETH/USD", "sell", "D", "sl-D", 0.215, 1874.6)]
+    ks.ajuster_volumes_ouverts(pushes, {"PF_ETHUSD": 0.0})
+    ligne = _lignes(base)[0]
+    assert ligne["status"] == "CLOSED"
+    assert ligne["size_lot"] == 0
+    assert ligne["close_reason"] == ks.CAUSE_NET
+    assert ligne["pnl"] is None or ligne["pnl"] == 0
+
+
+def test_sans_positions_connues_aucun_volume_n_est_touche(base):
+    with sqlite3.connect(base) as c:
+        c.execute("INSERT INTO personal_trades (user,pair,direction,entry_price,"
+                  "stop_loss,take_profit,size_lot,status,created_at,mt5_ticket,"
+                  "is_auto) VALUES ('auto','ETH/USD','sell',1874.6,1884.0,1857.0,"
+                  "0.215,'OPEN','2026-08-04T18:17:37','D',1)")
+    pushes = [_push(1, "ETH/USD", "sell", "D", "sl-D", 0.215, 1874.6)]
+    assert ks.ajuster_volumes_ouverts(pushes, {}) == 0
+    assert _lignes(base)[0]["size_lot"] == pytest.approx(0.215)
+
+
+def test_un_volume_deja_juste_n_est_pas_reecrit(base):
+    with sqlite3.connect(base) as c:
+        c.execute("INSERT INTO personal_trades (user,pair,direction,entry_price,"
+                  "stop_loss,take_profit,size_lot,status,created_at,mt5_ticket,"
+                  "is_auto) VALUES ('auto','ETH/USD','sell',1874.6,1884.0,1857.0,"
+                  "0.107,'OPEN','2026-08-04T18:17:37','D',1)")
+    pushes = [_push(1, "ETH/USD", "sell", "D", "sl-D", 0.215, 1874.6)]
+    assert ks.ajuster_volumes_ouverts(pushes, {"PF_ETHUSD": -0.107}) == 0
+
+
+def test_l_ajustement_intervient_apres_les_clotures():
+    """Ajuster avant toucherait des lignes qui vont fermer."""
+    import inspect
+    src = inspect.getsource(ks.reconcile)
+    assert src.index("enregistrer_cloture") < src.index("ajuster_volumes_ouverts")
+
+
+@pytest.mark.asyncio
+async def test_une_position_vendeuse_est_lue_comme_negative(monkeypatch):
+    """Le sens était jeté à la lecture. Sans lui, une vente de 0,107 ne se
+    distingue pas d'un achat, et le résiduel serait attribué à la mauvaise
+    ligne."""
+    import httpx
+
+    async def _get(self, url, headers=None):
+        return httpx.Response(200, json={"ok": True, "count": 2, "positions": [
+            {"symbol": "PF_ETHUSD", "side": "short", "size": 0.107},
+            {"symbol": "PF_XBTUSD", "side": "long", "size": 0.0023},
+        ]}, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", _get)
+    pos = await ks.fetch_positions(NS(bridge_url="http://b.test",
+                                      bridge_api_key="k"))
+    assert pos["PF_ETHUSD"] == pytest.approx(-0.107), "vente lue comme achat"
+    assert pos["PF_XBTUSD"] == pytest.approx(0.0023)
+
+
+@pytest.mark.asyncio
+async def test_un_bridge_injoignable_ne_renvoie_aucune_position(monkeypatch):
+    """`{}` fait que rien n'est conclu — ni clôture, ni ajustement."""
+    import httpx
+
+    async def _get(self, url, headers=None):
+        raise httpx.ConnectError("refused")
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", _get)
+    assert await ks.fetch_positions(NS(bridge_url="http://b.test",
+                                       bridge_api_key="k")) == {}
