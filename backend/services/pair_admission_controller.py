@@ -45,6 +45,7 @@ chaque pair dans la plateforme.
 from __future__ import annotations
 
 import json
+import re
 import logging
 import sqlite3
 from datetime import datetime, timezone
@@ -260,20 +261,66 @@ def _ensure_schema() -> None:
 
 
 # Destinations valides (miroir de bridge_destinations.BridgeConfig.destination_id)
-VALID_DESTINATIONS = frozenset({"admin_legacy", "admin_live"})
+# Destinations admin connues. ⚠️ Doit rester alignée sur
+# `bridge_destinations` : une destination absente d'ici est traitée comme
+# inconnue, avec les conséquences décrites dans `_normalize_destination`.
+VALID_DESTINATIONS = frozenset({
+    "admin_legacy",
+    "admin_live",
+    "admin_kraken",
+    "admin_kraken_spot",
+    "admin_kraken_stocks",
+    "admin_binance",
+})
+
+# Destinations multi-tenant : `user:<id>`, cf. bridge_destinations._user_destinations
+_USER_DESTINATION_RE = re.compile(r"^user:\d+$")
 
 
-def _normalize_destination(destination: Optional[str]) -> Optional[str]:
-    """Normalise destination en 'admin_legacy'/'admin_live' ou None.
+def is_valid_destination(destination: str) -> bool:
+    """True si la chaîne désigne une destination connue (admin ou user:N)."""
+    d = str(destination).strip().lower()
+    return d in VALID_DESTINATIONS or bool(_USER_DESTINATION_RE.match(d))
 
-    None = row s'applique à toutes les destinations (comportement legacy).
-    Toute valeur invalide → None (fallback rétro-compat safe).
+
+def _normalize_destination(
+    destination: Optional[str], *, strict: bool = False
+) -> Optional[str]:
+    """Normalise une destination, ou None pour « toutes les destinations ».
+
+    ⚠️ **Corrigé le 2026-08-04.** ``VALID_DESTINATIONS`` ne listait que
+    ``admin_legacy`` et ``admin_live`` — soit 2 destinations sur 7 — et toute
+    valeur non listée était repliée en ``None``. Or ``None`` signifie *« toutes
+    les destinations »* : le repli **élargissait** donc les permissions au lieu
+    de les restreindre, silencieusement et sans erreur.
+
+    Constaté : ``set_state(..., destination='admin_kraken')`` rendait le couple
+    éligible à l'auto-exec sur **toutes** les destinations, y compris ``user:2``
+    dont les classes autorisées incluent la crypto.
+
+    Effet miroir en lecture : une row stockée avec une destination non listée
+    devenait inatteignable, la cascade retombant sur la row globale. La
+    promotion ``BTC/USD buy @admin_kraken_spot`` du 2026-08-03 n'a ainsi jamais
+    rien fait.
+
+    ``strict=True`` (chemins d'écriture) : lève sur destination inconnue plutôt
+    que d'élargir la portée. En cas de doute, restreindre.
     """
     if destination is None:
         return None
     d = str(destination).strip().lower()
-    if d in VALID_DESTINATIONS:
+    if is_valid_destination(d):
         return d
+    if strict:
+        raise ValueError(
+            f"Destination inconnue : {destination!r}. "
+            f"Attendu : {sorted(VALID_DESTINATIONS)} ou 'user:<id>'. "
+            "Refusé plutôt que replié en portée globale."
+        )
+    logger.warning(
+        f"pair_admission: destination inconnue en lecture {destination!r} — "
+        "repli sur la cascade globale. Vérifier VALID_DESTINATIONS."
+    )
     return None
 
 
@@ -562,7 +609,8 @@ def set_state(
         raise ValueError(f"État invalide : {new_state}. Doit être dans {VALID_STATES}")
     _ensure_schema()
     direction = _normalize_direction(direction)
-    destination = _normalize_destination(destination)
+    # strict : une destination inconnue doit échouer, jamais devenir globale.
+    destination = _normalize_destination(destination, strict=True)
 
     current = get_current_state(pair, direction, destination)
     if current == new_state:
