@@ -610,6 +610,63 @@ def order():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+@app.route("/kill", methods=["POST"])
+@require_bridge_key
+def kill():
+    """Arrêt d'urgence : annule tous les ordres et solde toutes les positions.
+
+    Contrepartie indispensable de ``/order``. Ouvrir une position sans moyen
+    programmatique de la refermer, c'est le scénario des positions nues déjà
+    vécu côté MT5 ([[project_incident_bridge_no_sltp_2026_06_14]]).
+
+    Ordre des opérations : annuler d'abord, solder ensuite. L'inverse ferait
+    déclencher les brackets encore actifs sur la position en cours de
+    fermeture, ce qui ouvrirait une position inverse.
+    """
+    if not ALLOW_ORDERS:
+        return jsonify({
+            "ok": False,
+            "error": "orders disabled",
+            "detail": "Bridge en lecture seule — rien à annuler ni à solder.",
+        }), 403
+    try:
+        worker.ensure_connected()
+
+        cancelled = worker.call_sync(lambda: [
+            (worker.ib.cancelOrder(t.order), t.order.orderId)[1]
+            for t in worker.ib.openTrades()
+        ])
+
+        positions = worker.call(lambda: worker.ib.reqPositionsAsync())
+        closed = []
+        for p in positions:
+            size = float(p.position)
+            if size == 0:
+                continue
+            action = "SELL" if size > 0 else "BUY"
+            closing = MarketOrder(action, abs(size))
+            closing.tif = "DAY"  # sinon avertissement 10349, cf. /order
+            trade = worker.call_sync(
+                lambda c=p.contract, o=closing: worker.ib.placeOrder(c, o)
+            )
+            closed.append({
+                "symbol": p.contract.symbol,
+                "was": size,
+                "action": action,
+                "order_id": trade.order.orderId,
+            })
+
+        logger.warning(f"KILL — {len(cancelled)} ordres annulés, {len(closed)} positions soldées")
+        return jsonify({
+            "ok": True,
+            "cancelled_orders": cancelled,
+            "closed_positions": closed,
+        })
+    except Exception as e:
+        logger.warning(f"kill error: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 if __name__ == "__main__":
     logger.info(
         f"IBKR bridge démarrage port={BRIDGE_PORT} "
