@@ -117,8 +117,6 @@ TWELVEDATA_WS_MAX_SYMBOLS = int(os.getenv("TWELVEDATA_WS_MAX_SYMBOLS", "2"))
 #      https://api.telegram.org/bot<TOKEN>/getUpdates pour recuperer chat_id
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
-# Force minimum pour qu'un signal soit envoye : weak / moderate / strong
-TELEGRAM_MIN_STRENGTH = os.getenv("TELEGRAM_MIN_STRENGTH", "strong")
 
 # Bot Telegram dédié infra (canal séparé du bot user-facing scalping radar).
 # Utilisé par /api/admin/notify-infra-telegram pour relayer les alertes

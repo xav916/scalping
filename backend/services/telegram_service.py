@@ -14,7 +14,6 @@ import logging
 
 import httpx
 
-from backend.models.schemas import ScalpingSignal
 from backend.services import trade_log_service
 from backend.services.shadow_v2_core_long import SHADOW_PAIRS as _STAR_PAIRS
 from datetime import date
@@ -23,7 +22,6 @@ from config.settings import (
     TELEGRAM_BOT_TOKEN,
     TELEGRAM_CHAT_ID,
     TELEGRAM_CHATS,
-    TELEGRAM_MIN_STRENGTH,
     TELEGRAM_SETUP_MIN_CONFIDENCE,
     TELEGRAM_SETUP_VERDICTS,
 )
@@ -32,20 +30,11 @@ logger = logging.getLogger(__name__)
 
 TELEGRAM_API = "https://api.telegram.org/bot{token}/sendMessage"
 
-_strength_order = {"weak": 0, "moderate": 1, "strong": 2}
 
 # Filtre paires : on ne pousse Telegram QUE pour les "stars" du portefeuille
 # Phase 4 (XAU/XAG/WTI/ETH/XLI/XLK). Évite la pollution par les setups des
 # 12 autres paires WATCHED_PAIRS (forex/SPX/NDX/BTC) sans edge confirmé.
 _STAR_PAIRS_SET: frozenset[str] = frozenset(_STAR_PAIRS)
-
-
-def _should_send(signal: ScalpingSignal) -> bool:
-    if signal.pair not in _STAR_PAIRS_SET:
-        return False
-    min_rank = _strength_order.get(TELEGRAM_MIN_STRENGTH.lower(), 2)
-    sig_rank = _strength_order.get(signal.signal_strength.value.lower(), 0)
-    return sig_rank >= min_rank
 
 
 def is_configured() -> bool:
@@ -127,64 +116,6 @@ async def send_test_to_chat_id(chat_id: str, display_name: str) -> tuple[bool, s
             return False, f"Telegram a refusé : {err_desc}"
     except Exception as e:
         return False, f"Erreur réseau : {e}"
-
-
-def _format_signal(signal: ScalpingSignal) -> str:
-    emoji = {"strong": "🔥", "moderate": "⚡", "weak": "💡"}.get(signal.signal_strength.value, "📊")
-    lines = [
-        f"{emoji} *Signal {signal.signal_strength.value.upper()}* — `{signal.pair}`",
-    ]
-
-    # Verdict en premier (pour que le user voie immediatement la reco)
-    if signal.trade_setup and signal.trade_setup.verdict_action:
-        s = signal.trade_setup
-        verdict_icon = {"TAKE": "✅", "WAIT": "⏳", "SKIP": "⛔"}.get(s.verdict_action, "")
-        lines.append(f"\n{verdict_icon} *{s.verdict_action}* — {s.verdict_summary}")
-
-    lines.extend([
-        f"\nTendance : {signal.trend.direction.value} ({int(signal.trend.strength * 100)}%)",
-        f"Volatilite : {signal.volatility.level.value} ({signal.volatility.volatility_ratio:.1f}x)",
-    ])
-
-    if signal.trade_setup:
-        s = signal.trade_setup
-        dir_label = "ACHAT 🟢" if s.direction.value == "buy" else "VENTE 🔴"
-        lines.extend([
-            "",
-            f"*{dir_label}*",
-            f"Entry : `{s.entry_price:.4f}`",
-            f"SL : `{s.stop_loss:.4f}` ({s.risk_pips:.1f} pips risque)",
-            f"TP1 : `{s.take_profit_1:.4f}` (R:R {s.risk_reward_1:.1f})",
-            f"TP2 : `{s.take_profit_2:.4f}` (R:R {s.risk_reward_2:.1f})",
-        ])
-        # Raisons & warnings si presents
-        if s.verdict_reasons:
-            lines.append("\n👍 " + " | ".join(s.verdict_reasons[:3]))
-        if s.verdict_warnings:
-            lines.append("⚠️ " + " | ".join(s.verdict_warnings[:3]))
-    if signal.confidence_score:
-        lines.append(f"\nConfiance : *{signal.confidence_score:.0f}/100*")
-    return "\n".join(lines)
-
-
-async def _send_to(chat_id: str, signal: ScalpingSignal, who: str) -> None:
-    """Envoi effectif vers un chat_id precis."""
-    url = TELEGRAM_API.format(token=TELEGRAM_BOT_TOKEN)
-    payload = {
-        "chat_id": chat_id,
-        "text": _format_signal(signal),
-        "parse_mode": "Markdown",
-        "disable_web_page_preview": True,
-    }
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.post(url, json=payload)
-            if response.status_code != 200:
-                logger.warning(f"Telegram erreur {response.status_code} pour {who}: {response.text[:200]}")
-            else:
-                logger.info(f"Signal Telegram envoye a {who} pour {signal.pair} ({signal.signal_strength.value})")
-    except Exception as e:
-        logger.warning(f"Erreur envoi Telegram {who}: {e}")
 
 
 async def send_text(text: str, parse_mode: str = "Markdown") -> None:
@@ -296,25 +227,6 @@ async def send_sales_text(text: str, parse_mode: str = "HTML") -> bool:
     except Exception as e:
         logger.warning(f"send_sales_text: erreur {e}")
         return False
-
-
-async def send_signal(signal: ScalpingSignal) -> None:
-    """DEPRECIE — le path "signal-based" Telegram pollue le canal :
-    il filtre uniquement par signal_strength (weak/moderate/strong) sans
-    vérifier le confidence_score, ce qui produit des messages STRONG à
-    51/100 que le bridge n'exécute jamais (seuil bridge = 65). Le path
-    `send_setup` (setup-based) gère correctement le filtrage par score
-    + verdict + dedup. Ce path reste comme no-op pour ne pas casser les
-    appels existants depuis le scheduler.
-    """
-    return  # no-op — voir send_setup()
-
-
-async def send_signals(signals: list[ScalpingSignal]) -> None:
-    """Envoie plusieurs signaux en parallele."""
-    if not is_configured() or not signals:
-        return
-    await asyncio.gather(*(send_signal(s) for s in signals), return_exceptions=True)
 
 
 # ─── Trade setups (potentiels) — chemin distinct des signaux ────────────────
@@ -1392,7 +1304,6 @@ async def send_veto_alert(pair: str, direction: str, rules_matched: list[str], r
                 logger.warning(f"Erreur envoi veto_alert {user}: {e}")
     except Exception as e:
         logger.warning(f"send_veto_alert error: {e}")
-
 
 
 # Caractères actifs du Markdown legacy de Telegram (parse_mode="Markdown").

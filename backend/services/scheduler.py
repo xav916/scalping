@@ -24,7 +24,6 @@ from backend.services.notification_service import (
 )
 from backend.services.telegram_service import (
     send_setups as telegram_send_setups,
-    send_signals as telegram_send_signals,
 )
 from backend.services.mt5_bridge import (
     health_check as mt5_bridge_health_check,
@@ -261,8 +260,6 @@ async def run_analysis_cycle() -> None:
         if signals:
             logger.info(f"{len(signals)} signal(s) de scalping détecté(s)")
             await broadcast_signals(signals)
-            # Push Telegram en parallele (non-bloquant, best effort)
-            asyncio.create_task(telegram_send_signals(signals))
 
         # Push Telegram des trade_setups (chemin distinct des signaux) :
         # pousse tous les setups avec verdict TAKE/WAIT + confiance au-dessus
