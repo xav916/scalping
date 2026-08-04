@@ -434,10 +434,81 @@ _PATTERN_EXPLAIN_FR: dict[str, str] = {
 # Labels lisibles pour chaque destination admin connue. Utilisé pour annoter
 # le badge "Auto-exécuté" du push Telegram avec les brokers réels touchés.
 # Cf. project_live_icmarkets_active_2026_06_12.
-_ADMIN_DEST_LABELS = {
-    "admin_legacy": "🧪 Demo Pepperstone",
-    "admin_live": "💰 Live IC Markets (€300)",
+# Libellés des destinations, source UNIQUE pour tous les messages Telegram.
+#
+# ⚠️ Cette table ne listait que `admin_legacy` et `admin_live` — 2 destinations
+# sur 7 — et une seconde liste en `if/elif` vivait sa vie plus bas dans le
+# fichier. Un trade parti chez Kraken s'affichait donc sous un identifiant
+# technique, ou pire sous le libellé générique « Démo » alors qu'il engageait
+# de l'argent réel.
+#
+# Même famille de péremption que `VALID_DESTINATIONS` (2026-08-04) : une
+# constante écrite avant l'ajout des destinations, jamais remise à jour.
+# `test_telegram_destination_labels` échoue désormais si une destination
+# connue de `bridge_destinations` n'a pas son libellé ici.
+#
+# `badge` : annotation courte du push de setup ("Auto-exécuté → …")
+# `mode`  : ligne broker du message d'ouverture de trade
+# `reel`  : True si de l'argent réel est engagé — jamais deviner, déclarer.
+DESTINATION_LABELS: dict[str, dict[str, object]] = {
+    "admin_legacy": {
+        "badge": "🧪 Demo Pepperstone",
+        "mode": "Pepperstone · Démo",
+        "reel": False,
+    },
+    "admin_live": {
+        "badge": "💰 Live IC Markets",
+        "mode": "IC Markets · LIVE (argent réel)",
+        "reel": True,
+    },
+    "admin_kraken": {
+        "badge": "🐙 Kraken Futures",
+        "mode": "Kraken Futures · LIVE (argent réel)",
+        "reel": True,
+    },
+    "admin_kraken_spot": {
+        "badge": "🐙 Kraken Spot",
+        "mode": "Kraken Spot · LIVE (argent réel)",
+        "reel": True,
+    },
+    "admin_kraken_stocks": {
+        "badge": "🐙 Kraken xStocks",
+        "mode": "Kraken xStocks · LIVE (argent réel)",
+        "reel": True,
+    },
+    "admin_binance": {
+        "badge": "🅑 Binance Testnet",
+        "mode": "Binance · Testnet (R&D)",
+        "reel": False,
+    },
 }
+
+_USER_DEST_LABEL = {
+    "badge": "👤 Compte Premium",
+    "mode": "Premium · Démo",
+    "reel": False,
+}
+
+
+def destination_label(destination_id: str | None, champ: str = "badge") -> str:
+    """Libellé lisible d'une destination. Jamais d'exception, jamais de blanc.
+
+    Une destination inconnue retombe sur son identifiant technique plutôt que
+    sur un libellé générique : mieux vaut « admin_truc » que « Démo » sur un
+    ordre en argent réel.
+    """
+    if not destination_id:
+        return "broker non identifié"
+    if destination_id.startswith("user:"):
+        return str(_USER_DEST_LABEL[champ])
+    entree = DESTINATION_LABELS.get(destination_id)
+    if entree is None:
+        return destination_id
+    return str(entree[champ])
+
+
+# Rétro-compat : ancien nom, utilisé par _describe_admin_destinations.
+_ADMIN_DEST_LABELS = {k: v["badge"] for k, v in DESTINATION_LABELS.items()}
 
 
 # Valeur en EUR par UNITÉ DE PRIX (= la valeur de `risk_pips` dans le système,
@@ -577,7 +648,7 @@ def _describe_admin_destinations(setup) -> list[str]:
                 continue
             if aclass and aclass not in dest.allowed_asset_classes:
                 continue
-            label = _ADMIN_DEST_LABELS.get(dest.destination_id, dest.destination_id)
+            label = destination_label(dest.destination_id, "badge")
             labels.append(label)
         return labels
     except Exception:
@@ -1109,16 +1180,10 @@ def _format_trade_opened(
     # - admin_legacy = Pepperstone, compte Démo
     # - admin_binance = Binance USDⓈ-M testnet (shadow R&D)
     # - user:N        = Premium user (bridge MT5 Démo Pepperstone côté EA)
-    if destination_id == "admin_live":
-        mode_label = "IC Markets · LIVE (argent réel)"
-    elif destination_id == "admin_legacy":
-        mode_label = "Pepperstone · Démo"
-    elif destination_id == "admin_binance":
-        mode_label = "Binance · Testnet (R&D)"
-    elif destination_id and destination_id.startswith("user:"):
-        mode_label = "Premium · Démo"
-    else:
-        mode_label = "Démo"
+    # Source unique : DESTINATION_LABELS. L'ancienne chaîne if/elif ne
+    # couvrait pas Kraken, dont les trades s'affichaient donc « Démo »
+    # alors qu'ils engagent de l'argent réel.
+    mode_label = destination_label(destination_id, "mode")
 
     # Prix au format FR (virgule, 2 décimales pour métaux/crypto, 5 pour forex)
     decimals = 2 if any(k in setup.pair for k in ("XAU", "XAG", "BTC", "ETH", "SOL", "LTC", "BCH", "DOT", "ADA", "XRP", "WTI")) else 5
