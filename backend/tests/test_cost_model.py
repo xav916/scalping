@@ -79,3 +79,49 @@ def test_les_deux_composantes_s_additionnent():
 
     # proportionnel : (100/1) × 0,0005 × 2 = 0,1 R ; fixe : 2/10 = 0,2 R
     assert cout == pytest.approx(0.3)
+
+
+def test_les_trois_verdicts_rendus_en_production_sont_reproduits():
+    """MT5 accepté, Kraken refusé, xStocks refusée — mesures du 2026-08-04."""
+    from backend.services.cost_model import exceeds_edge
+
+    assert exceeds_edge(0.022, 0.129, auto_exec=True) is False   # MT5, 17 %
+    assert exceeds_edge(0.288, 0.110, auto_exec=True) is True    # Kraken, 262 %
+    assert exceeds_edge(0.199, 0.129, auto_exec=True) is True    # xStocks, 154 %
+
+
+def test_le_seuil_est_bien_a_trente_pour_cent():
+    from backend.services.cost_model import EDGE_COST_MAX_SHARE, exceeds_edge
+
+    assert EDGE_COST_MAX_SHARE == 0.30
+    assert exceeds_edge(0.0299, 0.10, auto_exec=True) is False
+    assert exceeds_edge(0.0301, 0.10, auto_exec=True) is True
+
+
+def test_un_edge_inconnu_bloque_l_argent_reel():
+    """Une destination sans edge mesuré ne peut pas passer en AUTO_EXEC."""
+    from backend.services.cost_model import exceeds_edge
+
+    assert exceeds_edge(0.02, None, auto_exec=True) is True
+
+
+def test_un_edge_inconnu_laisse_passer_l_observation():
+    """En TELEGRAM aucun argent n'est engagé : la porte n'a rien à arbitrer."""
+    from backend.services.cost_model import exceeds_edge
+
+    assert exceeds_edge(0.02, None, auto_exec=False) is False
+
+
+def test_un_cout_inconnu_bloque_l_argent_reel():
+    from backend.services.cost_model import exceeds_edge
+
+    assert exceeds_edge(None, 0.129, auto_exec=True) is True
+    assert exceeds_edge(None, 0.129, auto_exec=False) is False
+
+
+def test_un_edge_nul_ou_negatif_bloque():
+    """Un edge mesuré à zéro n'est pas un edge inconnu : c'est une route morte."""
+    from backend.services.cost_model import exceeds_edge
+
+    assert exceeds_edge(0.001, 0.0, auto_exec=True) is True
+    assert exceeds_edge(0.001, -0.05, auto_exec=True) is True

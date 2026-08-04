@@ -80,3 +80,35 @@ def cost_in_r(
         cout += (par_ordre * 2.0) / risk_money
 
     return cout
+
+
+# Part maximale de l'edge brut que les frais peuvent consommer.
+#
+# Règle posée par Xavier le 2026-08-04 après la mesure xStocks, et vérifiée
+# a posteriori sur les trois routes déjà arbitrées : MT5 passe à 17 %,
+# Kraken échoue à 262 %, xStocks échoue à 154 %.
+EDGE_COST_MAX_SHARE = 0.30
+
+
+def exceeds_edge(
+    cost_r: float | None,
+    edge_r: float | None,
+    auto_exec: bool,
+) -> bool:
+    """``True`` si les frais interdisent d'envoyer ce signal.
+
+    Le cas indécidable — coût ou edge inconnu — se tranche différemment selon
+    qu'il y a de l'argent en jeu :
+
+    - ``auto_exec=True`` → **bloque**. Une route dont on ne sait pas mesurer
+      la rentabilité ne prend pas d'argent réel. C'est exactement ce qui
+      manquait quand la crypto a tourné 876 fois à perte.
+    - ``auto_exec=False`` → **laisse passer**. En observation, rien n'est
+      engagé et la porte n'a rien à arbitrer ; la bloquer priverait de la
+      mesure qui permettra un jour d'ouvrir la route.
+    """
+    if cost_r is None or edge_r is None:
+        return auto_exec
+    if edge_r <= 0:
+        return True
+    return cost_r > EDGE_COST_MAX_SHARE * edge_r
