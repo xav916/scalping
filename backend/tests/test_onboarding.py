@@ -141,16 +141,28 @@ def test_pairs_only_completes_onboarding(db):
 
 
 def test_default_pairs_for_tier_respects_cap():
-    """Les paires par défaut respectent MAX_PAIRS_PER_TIER."""
-    free = users_service.default_pairs_for_tier("free")
-    pro = users_service.default_pairs_for_tier("pro")
-    prem = users_service.default_pairs_for_tier("premium")
-    assert len(free) == 1
-    assert len(pro) == 5
-    assert len(prem) == 16
+    """Les paires par défaut respectent MAX_PAIRS_PER_TIER.
+
+    Les longueurs sont dérivées des constantes, pas écrites en dur : le cap
+    premium est passé de 16 à 22 le 2026-06-14 (ajout de 6 cryptos chez
+    IC Markets EU) et ce test échouait depuis. Un test dont l'intitulé est
+    « respecte le cap » doit vérifier le cap courant, pas une valeur figée.
+    """
+    caps = users_service.MAX_PAIRS_PER_TIER
+    pool = len(users_service.DEFAULT_PAIRS_ORDERED)
+
+    for tier in ("free", "pro", "premium"):
+        pairs = users_service.default_pairs_for_tier(tier)
+        # Le pool peut être plus court que le cap : la borne est le min.
+        assert len(pairs) == min(caps[tier], pool), tier
+        assert len(pairs) == len(set(pairs)), f"doublons dans {tier}"
+
+    # Un tier inconnu retombe sur le plancher le plus strict.
+    assert len(users_service.default_pairs_for_tier("inexistant")) == 1
+
     # EUR/USD doit être la 1ère paire (plus populaire).
-    assert free[0] == "EUR/USD"
-    assert pro[0] == "EUR/USD"
+    assert users_service.default_pairs_for_tier("free")[0] == "EUR/USD"
+    assert users_service.default_pairs_for_tier("pro")[0] == "EUR/USD"
 
 
 def test_default_pairs_unknown_tier_falls_back_to_1():

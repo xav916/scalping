@@ -44,7 +44,7 @@ class TestBlockedDirections:
     @patch("backend.services.mt5_bridge.MT5_BRIDGE_BLOCKED_DIRECTIONS", {("EUR/USD", "buy")})
     def test_buy_on_eurusd_blocked(self):
         with patch("backend.services.mt5_bridge.is_configured", return_value=True), \
-             patch("backend.services.mt5_bridge.is_market_open_for", return_value=True), \
+             patch("backend.services.mt5_bridge.is_market_open_for_destination", return_value=True), \
              patch("backend.services.mt5_bridge._count_open_trades_for_pair", return_value=0), \
              patch("backend.services.mt5_bridge.MT5_BRIDGE_MIN_CONFIDENCE", 0):
             reason = mt5_bridge._check_rejection(_setup(pair="EUR/USD", direction="buy"))
@@ -53,7 +53,7 @@ class TestBlockedDirections:
     @patch("backend.services.mt5_bridge.MT5_BRIDGE_BLOCKED_DIRECTIONS", {("EUR/USD", "buy")})
     def test_sell_on_eurusd_allowed(self):
         with patch("backend.services.mt5_bridge.is_configured", return_value=True), \
-             patch("backend.services.mt5_bridge.is_market_open_for", return_value=True), \
+             patch("backend.services.mt5_bridge.is_market_open_for_destination", return_value=True), \
              patch("backend.services.mt5_bridge._count_open_trades_for_pair", return_value=0), \
              patch("backend.services.mt5_bridge.MT5_BRIDGE_MIN_CONFIDENCE", 0):
             reason = mt5_bridge._check_rejection(_setup(pair="EUR/USD", direction="sell"))
@@ -62,7 +62,7 @@ class TestBlockedDirections:
     @patch("backend.services.mt5_bridge.MT5_BRIDGE_BLOCKED_DIRECTIONS", {("*", "buy")})
     def test_global_buy_block(self):
         with patch("backend.services.mt5_bridge.is_configured", return_value=True), \
-             patch("backend.services.mt5_bridge.is_market_open_for", return_value=True), \
+             patch("backend.services.mt5_bridge.is_market_open_for_destination", return_value=True), \
              patch("backend.services.mt5_bridge._count_open_trades_for_pair", return_value=0), \
              patch("backend.services.mt5_bridge.MT5_BRIDGE_MIN_CONFIDENCE", 0):
             reason = mt5_bridge._check_rejection(_setup(pair="GBP/USD", direction="buy"))
@@ -71,7 +71,7 @@ class TestBlockedDirections:
     @patch("backend.services.mt5_bridge.MT5_BRIDGE_BLOCKED_DIRECTIONS", set())
     def test_empty_blocklist_allows_all(self):
         with patch("backend.services.mt5_bridge.is_configured", return_value=True), \
-             patch("backend.services.mt5_bridge.is_market_open_for", return_value=True), \
+             patch("backend.services.mt5_bridge.is_market_open_for_destination", return_value=True), \
              patch("backend.services.mt5_bridge._count_open_trades_for_pair", return_value=0), \
              patch("backend.services.mt5_bridge.MT5_BRIDGE_MIN_CONFIDENCE", 0):
             assert mt5_bridge._check_rejection(_setup(direction="buy")) is None
@@ -83,7 +83,7 @@ class TestAvoidHoursUTC:
     def test_skip_during_avoid_hour(self):
         fake_now = datetime(2026, 4, 24, 19, 30, tzinfo=timezone.utc)
         with patch("backend.services.mt5_bridge.is_configured", return_value=True), \
-             patch("backend.services.mt5_bridge.is_market_open_for", return_value=True), \
+             patch("backend.services.mt5_bridge.is_market_open_for_destination", return_value=True), \
              patch("backend.services.mt5_bridge._count_open_trades_for_pair", return_value=0), \
              patch("backend.services.mt5_bridge.MT5_BRIDGE_MIN_CONFIDENCE", 0), \
              patch("backend.services.mt5_bridge.datetime") as mock_dt:
@@ -95,7 +95,7 @@ class TestAvoidHoursUTC:
     def test_allow_outside_avoid_hour(self):
         fake_now = datetime(2026, 4, 24, 10, 30, tzinfo=timezone.utc)
         with patch("backend.services.mt5_bridge.is_configured", return_value=True), \
-             patch("backend.services.mt5_bridge.is_market_open_for", return_value=True), \
+             patch("backend.services.mt5_bridge.is_market_open_for_destination", return_value=True), \
              patch("backend.services.mt5_bridge._count_open_trades_for_pair", return_value=0), \
              patch("backend.services.mt5_bridge.MT5_BRIDGE_MIN_CONFIDENCE", 0), \
              patch("backend.services.mt5_bridge.datetime") as mock_dt:
@@ -105,7 +105,7 @@ class TestAvoidHoursUTC:
     @patch("backend.services.mt5_bridge.MT5_BRIDGE_AVOID_HOURS_UTC", set())
     def test_empty_avoidlist_allows_all(self):
         with patch("backend.services.mt5_bridge.is_configured", return_value=True), \
-             patch("backend.services.mt5_bridge.is_market_open_for", return_value=True), \
+             patch("backend.services.mt5_bridge.is_market_open_for_destination", return_value=True), \
              patch("backend.services.mt5_bridge._count_open_trades_for_pair", return_value=0), \
              patch("backend.services.mt5_bridge.MT5_BRIDGE_MIN_CONFIDENCE", 0):
             # Quelle que soit l'heure actuelle, si la liste est vide, pas de skip.

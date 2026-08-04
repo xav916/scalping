@@ -67,7 +67,7 @@ LEGACY_WHITELIST_PAIRS = frozenset(
     if p.strip()
 )
 
-from backend.services.market_hours import is_market_open_for, is_market_open_for_destination
+from backend.services.market_hours import is_market_open_for_destination
 from backend.services.shadow_v2_core_long import SHADOW_PAIRS as _STAR_PAIRS
 from config.settings import (
     MT5_BRIDGE_ENABLED,

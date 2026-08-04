@@ -38,8 +38,22 @@ def test_confidence_multiplier_none_is_neutral():
 
 
 def test_compute_risk_money_applies_confidence_and_pnl(tmp_path: Path):
-    """risk_money = base * conf_mult * pnl_mult, avec TRADING_CAPITAL
-    et RISK_PER_TRADE_PCT des settings."""
+    """risk_money = base * final_mult, où final_mult agrège tous les facteurs.
+
+    Le test assertait autrefois ``base * conf_mult * pnl_mult``, en dur. Deux
+    multiplicateurs ont été ajoutés depuis à ``compute_risk_money`` —
+    ``session_mult`` et ``macro_mult`` — sans que le test suive : il échouait
+    donc en permanence (105.0 au lieu de 150.0).
+
+    Pire, la formule figée le rendait **dépendant de l'heure** :
+    ``session_mult`` vaut 0.7 en session asiatique et 1.0 ailleurs. Même
+    remis à jour avec les 4 facteurs, il aurait viré au vert ou au rouge
+    selon le moment de la journée.
+
+    On asserte donc l'invariant réel — risk_money est bien le produit de la
+    base par le multiplicateur agrégé — plus les deux facteurs que ce test
+    contrôle vraiment. Ajouter un 5e facteur ne cassera plus rien.
+    """
     trades_db = tmp_path / "trades.db"
     with patch.object(trade_log_service, "_DB_PATH", trades_db):
         trade_log_service._init_schema()  # DB vide = pnl_mult 1.0
@@ -50,8 +64,13 @@ def test_compute_risk_money_applies_confidence_and_pnl(tmp_path: Path):
     assert result["conf_mult"] == 1.5
     assert result["pnl_mult"] == 1.0
     # base = TRADING_CAPITAL * RISK_PER_TRADE_PCT / 100
-    # final = base * 1.5 * 1.0
-    assert result["risk_money"] == round(result["base"] * 1.5, 2)
+    assert result["risk_money"] == round(result["base"] * result["final_mult"], 2)
+    # final_mult agrège bien conf et pnl (± les facteurs contextuels).
+    assert result["final_mult"] == pytest.approx(
+        result["conf_mult"] * result["pnl_mult"]
+        * result["session_mult"] * result["macro_mult"],
+        rel=0.01,
+    )
 
 
 def test_recent_pnl_multiplier_halves_when_negative(tmp_path: Path):

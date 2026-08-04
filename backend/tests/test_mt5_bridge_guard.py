@@ -264,7 +264,8 @@ async def test_setup_rejected_when_sl_too_close_jpy():
          patch.object(mt5_bridge, "MT5_BRIDGE_URL", "http://test"), \
          patch.object(mt5_bridge, "MT5_BRIDGE_API_KEY", "test"), \
          patch.object(mt5_bridge, "MT5_BRIDGE_MIN_CONFIDENCE", 55), \
-         patch("backend.services.mt5_bridge.is_market_open_for", lambda p: True), \
+         patch("backend.services.mt5_bridge.is_market_open_for_destination",
+               lambda pair, destination_id="", now=None: True), \
          patch("httpx.AsyncClient") as mock_client:
         await mt5_bridge.send_setup(setup)
         mock_client.assert_not_called()
@@ -288,7 +289,8 @@ async def test_setup_accepted_when_jpy_sl_reasonable_after_per_class_fix():
          patch.object(mt5_bridge, "MT5_BRIDGE_URL", "http://test"), \
          patch.object(mt5_bridge, "MT5_BRIDGE_API_KEY", "test"), \
          patch.object(mt5_bridge, "MT5_BRIDGE_MIN_CONFIDENCE", 55), \
-         patch("backend.services.mt5_bridge.is_market_open_for", lambda p: True):
+         patch("backend.services.mt5_bridge.is_market_open_for_destination",
+               lambda pair, destination_id="", now=None: True):
         rejection = mt5_bridge._check_rejection(setup)
     assert rejection is None, f"Expected acceptance, got rejection: {rejection}"
 
@@ -349,7 +351,8 @@ async def test_setup_rejected_when_max_positions_per_pair_reached():
          patch.object(mt5_bridge, "MT5_BRIDGE_URL", "http://test"), \
          patch.object(mt5_bridge, "MT5_BRIDGE_API_KEY", "test"), \
          patch.object(mt5_bridge, "MT5_BRIDGE_MIN_CONFIDENCE", 55), \
-         patch("backend.services.mt5_bridge.is_market_open_for", lambda p: True), \
+         patch("backend.services.mt5_bridge.is_market_open_for_destination",
+               lambda pair, destination_id="", now=None: True), \
          patch("backend.services.mt5_bridge._count_open_trades_for_pair", return_value=2):
         rejection = mt5_bridge._check_rejection(setup)
     assert rejection == "max_positions_per_pair"
@@ -371,7 +374,8 @@ async def test_setup_accepted_when_below_max_positions():
          patch.object(mt5_bridge, "MT5_BRIDGE_URL", "http://test"), \
          patch.object(mt5_bridge, "MT5_BRIDGE_API_KEY", "test"), \
          patch.object(mt5_bridge, "MT5_BRIDGE_MIN_CONFIDENCE", 55), \
-         patch("backend.services.mt5_bridge.is_market_open_for", lambda p: True), \
+         patch("backend.services.mt5_bridge.is_market_open_for_destination",
+               lambda pair, destination_id="", now=None: True), \
          patch("backend.services.mt5_bridge._count_open_trades_for_pair", return_value=1):
         rejection = mt5_bridge._check_rejection(setup)
     assert rejection is None
@@ -391,7 +395,8 @@ async def test_setup_rejected_when_market_closed():
          patch.object(mt5_bridge, "MT5_BRIDGE_URL", "http://test"), \
          patch.object(mt5_bridge, "MT5_BRIDGE_API_KEY", "test"), \
          patch.object(mt5_bridge, "MT5_BRIDGE_MIN_CONFIDENCE", 55), \
-         patch("backend.services.mt5_bridge.is_market_open_for", lambda p: False), \
+         patch("backend.services.mt5_bridge.is_market_open_for_destination",
+               lambda pair, destination_id="", now=None: False), \
          patch("httpx.AsyncClient") as mock_client:
         await mt5_bridge.send_setup(setup)
         mock_client.assert_not_called()

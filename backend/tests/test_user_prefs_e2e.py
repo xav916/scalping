@@ -83,7 +83,22 @@ def cedric_backup():
     """Sauvegarde + restaure l'état initial de Cédric (broker_config + watched_pairs).
 
     Évite toute pollution de la DB de test si un test plante en milieu de course.
+
+    Ces 3 tests s'exécutent contre la **DB réelle** (cf. docstring du module) :
+    ils n'ont de sens que là où l'utilisateur 2 existe. Ailleurs — poste de dev,
+    CI — ils échouaient en cascade : ``_no_dest`` côté assertion, puis
+    ``ValueError: user_id 2 introuvable`` au teardown. Trois rouges permanents
+    qui n'apprenaient rien et érodaient la confiance dans la suite.
+
+    On skippe explicitement quand la donnée n'est pas là. Un skip est honnête :
+    il se voit dans le rapport, contrairement à un test qu'on aurait supprimé.
     """
+    if users_service.get_user_by_id(CEDRIC_USER_ID) is None:
+        pytest.skip(
+            f"user_id {CEDRIC_USER_ID} absent de la DB — test e2e prod-only, "
+            "voir docstring du module"
+        )
+
     initial_cfg = users_service.get_broker_config(CEDRIC_USER_ID)
     initial_pairs = users_service.get_watched_pairs(CEDRIC_USER_ID)
     yield {
