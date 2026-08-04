@@ -908,7 +908,7 @@ async def send_setups(setups: list) -> None:
 _notified_closes: set[int] = set()
 
 
-def _format_close(trade: dict) -> str:
+def _format_close(trade: dict, destination_id: str | None = None) -> str:
     """Format vulgarisé fermeture : 'résultat + impact sur ton solde'.
 
     Réécrit 2026-06-13 pour parler au lambda.
@@ -919,6 +919,7 @@ def _format_close(trade: dict) -> str:
     pair_label = _PAIR_FR_LABEL.get(pair, pair)
     direction = (trade.get("direction") or "").lower()
     verb_open = "Acheté" if direction == "buy" else "Vendu"
+    dir_mot = "ACHAT" if direction == "buy" else "VENTE"
     verb_close = "revendu" if direction == "buy" else "racheté"
     entry = float(trade.get("entry_price") or 0)
     exit_price = float(trade.get("exit_price") or 0)
@@ -972,19 +973,29 @@ def _format_close(trade: dict) -> str:
     except Exception:
         pass
 
-    pnl_sign = "+" if pnl >= 0 else ""
+    pnl_sign = "+" if pnl >= 0 else "−"
     # Prix au format FR
     decimals = 2 if any(k in pair for k in ("XAU", "XAG", "BTC", "ETH", "SOL", "LTC", "BCH", "DOT", "ADA", "XRP", "WTI")) else 5
     entry_str = f"{entry:.{decimals}f}".replace(".", ",")
     exit_str = f"{exit_price:.{decimals}f}".replace(".", ",")
 
-    header_impact = f" · {impact}" if impact else ""
+    # Ligne 1 : le résultat, tout de suite. Ligne 2 : comment et en combien
+    # de temps. Le broker manquait entièrement au message de clôture.
+    # Pas de .capitalize() : il transformerait « TP1 » en « Tp1 ».
+    sortie = {"TP1": "Objectif TP1 atteint", "TP2": "Objectif TP2 atteint",
+              "SL": "Stop de sécurité touché", "TIMEOUT": "Clôturé au temps",
+              "MANUAL": "Fermé à la main"}.get(close_reason, "Sortie inconnue")
+    broker = destination_label(destination_id, "mode") if destination_id else None
+    pnl_fr = f"{abs(pnl):.2f}".replace(".", ",")
+    titre = f"{outcome_icon} *{pnl_sign}{pnl_fr} €* · {dir_mot} {pair_label}"
+    if broker:
+        titre += f" · {broker}"
     lines = [
-        f"{outcome_icon} *{outcome_word}* · {pair_label} ({pair})",
-        f"*{pnl_sign}€{pnl:.2f}* en {duration_str}{header_impact}",
+        titre,
+        f"{sortie} après {duration_str}",
         "",
-        "📋 *Détail*",
-        f"{verb_open} à {entry_str} → {verb_close} à {exit_str}",
+        f"Entrée {entry_str} → sortie {exit_str}"
+        + (f" · {trade.get('size_lot')} lot".replace(".", ",") if trade.get("size_lot") else ""),
         explain,
         "",
     ]
@@ -1026,7 +1037,7 @@ async def send_close(trade: dict) -> None:
         logger.debug(f"send_close: ticket {ticket} ({dest_close}) hors argent réel — skip")
         return
 
-    text = _format_close(trade)
+    text = _format_close(trade, dest_close)
 
     # Miroir @xav_scalping_sales_bot (2026-08-02) : Xavier admin reçoit
     # TOUTES les clôtures (y compris pairs non-stars — SPX/NDX/altcoins/
@@ -1223,20 +1234,35 @@ def _format_trade_opened(
     decimals = 2 if any(k in setup.pair for k in ("XAU", "XAG", "BTC", "ETH", "SOL", "LTC", "BCH", "DOT", "ADA", "XRP", "WTI")) else 5
     fill_str = f"{fill_price:.{decimals}f}".replace(".", ",")
 
-    lines = [
-        f"🟢 *Nouveau trade* · {pair_label} ({setup.pair})",
-        f"Position *{dir_word}* à {fill_str} · {time_str}",
-        "",
-    ]
+    # Ligne 1 : QUOI. Ligne 2 : COMBIEN. Le reste est du détail consultable.
+    # Le broker figure une seule fois, dans le titre — il y était répété trois
+    # fois auparavant, et le montant n'arrivait qu'en quatrième position.
+    lines = [f"🟢 *{dir_word} {pair_label}* · {mode_label}"]
 
     eur = _estimate_eur_amounts(setup)
     if eur is not None:
         gain_visee = eur.get("reward_1") or 0
         perte_max = eur.get("risk") or 0
-        lines.append(f"💰 Gain visé : *+€{gain_visee:.2f}*")
-        lines.append(f"🛑 Perte max : *−€{perte_max:.2f}*")
-        lines.append(f"⏱ Durée moyenne : 1 à 4h")
-        lines.append("")
+        perte_fr = f"{perte_max:.2f}".replace(".", ",")
+        gain_fr = f"{gain_visee:.2f}".replace(".", ",")
+        lines.append(f"Risque *−{perte_fr} €*  →  Objectif *+{gain_fr} €*")
+    lines.append("")
+
+    # Le plan complet : ces trois valeurs manquaient au message.
+    detail = [f"Entrée {fill_str}"]
+    if volume:
+        detail.append(f"{volume} lot".replace(".", ","))
+    try:
+        sl = float(getattr(setup, "stop_loss", 0) or 0)
+        tp = float(getattr(setup, "take_profit_1", 0) or 0)
+        if sl:
+            detail.append(f"SL {sl:.{decimals}f}".replace(".", ","))
+        if tp:
+            detail.append(f"TP {tp:.{decimals}f}".replace(".", ","))
+    except (TypeError, ValueError):
+        pass
+    lines.append(" · ".join(detail))
+    lines.append("")
 
     # Justification du trade (pattern + score IA), vulgarisée
     try:
@@ -1254,7 +1280,8 @@ def _format_trade_opened(
 
     lines.append("ℹ️ Le radar a lancé un ordre auto chez ton broker. Le trade tourne seul jusqu'à toucher son objectif ou son stop.")
     lines.append("")
-    lines.append(f"`#{ticket}` · compte {mode_label}")
+    # Le broker est déjà dans le titre : le pied porte la référence et l'heure.
+    lines.append(f"`#{ticket}` · {time_str}")
     return "\n".join(lines)
 
 
