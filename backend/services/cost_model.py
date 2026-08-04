@@ -69,4 +69,14 @@ def cost_in_r(
     # simplifie, d'ou l'independance a la taille de position.
     cout = (entry / distance) * model.proportional_rate_per_leg * 2.0
 
+    # Part fixe : deux ordres (entree + sortie), plancher broker applique.
+    par_ordre = max(model.fixed_per_order, model.min_per_order)
+    if par_ordre > 0:
+        if not risk_money or risk_money <= 0:
+            # Une composante fixe est declaree mais le risque en devise est
+            # inconnu : le cout n'est pas calculable. Retourner la seule part
+            # proportionnelle sous-estimerait la route.
+            return None
+        cout += (par_ordre * 2.0) / risk_money
+
     return cout
