@@ -178,6 +178,30 @@ def attribuer_clotures(pushes, fills) -> list[dict[str, Any]]:
         if t and (c["closed_at"] is None or t > c["closed_at"]):
             c["closed_at"] = t
 
+    # Un ordre dont la PROPRE exécution porte un P&L réalisé n'a pas ouvert de
+    # position : il a réduit celle qui existait déjà, Kraken nettant par
+    # symbole. Le 2026-08-04, deux achats ETH ont ainsi été comptés comme des
+    # positions ouvertes alors qu'ils fermaient un short — le garde-fou de
+    # corrélation voyait donc ETH ouvert dans les deux sens et bloquait tout.
+    #
+    # Le montant réalisé appartient en toute rigueur à la position réduite,
+    # pas à cet ordre. L'attribuer ici reste une approximation, mais elle
+    # préserve la propriété qui compte : chaque P&L est compté une fois et
+    # une seule, aucun n'est inventé.
+    par_ordre = {p["order_id"]: p for p in pushes}
+    for f in fills:
+        push = par_ordre.get(f.get("order_id"))
+        if push is None or not float(f.get("realized_pnl") or 0):
+            continue
+        if push["push_id"] in clotures:
+            continue
+        clotures[push["push_id"]] = {
+            "push": push, "cause": CAUSE_NET, "taille": float(f.get("size") or 0),
+            "pnl_usd": float(f.get("realized_pnl") or 0),
+            "notionnel": float(f.get("size") or 0) * float(f.get("price") or 0),
+            "closed_at": f.get("fill_time"),
+        }
+
     for c in clotures.values():
         c["exit_price"] = (c["notionnel"] / c["taille"]) if c["taille"] else 0.0
         # Clôture partielle : on ne déclare fermé que ce qui l'est vraiment.

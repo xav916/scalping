@@ -383,3 +383,64 @@ def test_le_miroir_sales_a_bien_disparu():
     assert "SALES_TELEGRAM_BOT_TOKEN" not in src, (
         "le miroir sales est de retour dans send_close"
     )
+
+
+# --- un ordre qui reduit n'est pas une position ---------------------------
+
+def test_un_ordre_qui_reduit_une_position_n_est_pas_une_ouverture():
+    """Kraken nette par symbole : un achat pendant qu'on est vendeur ferme,
+    il n'ouvre pas.
+
+    Le 2026-08-04, deux achats ETH ont été comptés comme des positions
+    ouvertes alors qu'ils réduisaient un short. Le garde-fou de corrélation
+    voyait donc ETH ouvert dans les deux sens, et bloquait BTC dans les deux
+    sens aussi.
+    """
+    ouv = "ordre-achat-reducteur"
+    pushes = [_push(1, "ETH/USD", "buy", ouv, "sl-1", 0.057, 1874.0)]
+    fills = [{"order_id": ouv, "symbol": "PF_ETHUSD", "side": "buy",
+              "size": 0.057, "price": 1874.0,
+              "fill_time": "2026-08-04T18:14:38Z", "realized_pnl": -0.3342}]
+    c = ks.attribuer_clotures(pushes, fills)
+    assert len(c) == 1, "l'ordre reducteur n'a pas ete reconnu comme cloture"
+    assert c[0]["cause"] == ks.CAUSE_NET
+    assert c[0]["pnl_usd"] == pytest.approx(-0.3342)
+    assert c[0]["complete"] is True
+
+
+def test_un_ordre_qui_ouvre_vraiment_reste_ouvert():
+    """`realized_pnl` nul sur sa propre exécution = nouvelle exposition."""
+    ouv = "ordre-vente-ouvrant"
+    pushes = [_push(1, "ETH/USD", "sell", ouv, "sl-1", 0.215, 1874.6)]
+    fills = [{"order_id": ouv, "symbol": "PF_ETHUSD", "side": "sell",
+              "size": 0.215, "price": 1874.6,
+              "fill_time": "2026-08-04T18:17:38Z", "realized_pnl": 0.0}]
+    assert ks.attribuer_clotures(pushes, fills) == []
+
+
+def test_le_stop_prime_sur_la_reduction():
+    """Si le SL a été exécuté, la cause est SL — pas NET."""
+    pushes = [_push(1, "ETH/USD", "sell", "ouv", "sl-1", 0.1, 1868.0)]
+    fills = [{"order_id": "ouv", "symbol": "PF_ETHUSD", "side": "sell",
+              "size": 0.1, "price": 1868.0, "fill_time": "2026-08-04T17:00:00Z",
+              "realized_pnl": -0.05},
+             {"order_id": "sl-1", "symbol": "PF_ETHUSD", "side": "buy",
+              "size": 0.1, "price": 1878.8, "fill_time": "2026-08-04T18:20:33Z",
+              "realized_pnl": -1.08}]
+    c = ks.attribuer_clotures(pushes, fills)
+    assert len(c) == 1
+    assert c[0]["cause"] == ks.CAUSE_SL
+
+
+def test_chaque_pnl_realise_n_est_compte_qu_une_fois():
+    """La propriété qui compte : rien de double, rien d'invente."""
+    pushes = [_push(1, "ETH/USD", "sell", "ouv-a", "sl-a", 0.1, 1868.0),
+              _push(2, "ETH/USD", "buy", "ouv-b", "sl-b", 0.05, 1874.0)]
+    fills = [{"order_id": "sl-a", "symbol": "PF_ETHUSD", "side": "buy",
+              "size": 0.1, "price": 1878.8, "fill_time": "2026-08-04T18:20:33Z",
+              "realized_pnl": -1.08},
+             {"order_id": "ouv-b", "symbol": "PF_ETHUSD", "side": "buy",
+              "size": 0.05, "price": 1874.0, "fill_time": "2026-08-04T18:14:38Z",
+              "realized_pnl": -0.33}]
+    total = sum(c["pnl_usd"] for c in ks.attribuer_clotures(pushes, fills))
+    assert total == pytest.approx(-1.41)
