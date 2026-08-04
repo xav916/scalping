@@ -268,3 +268,118 @@ def test_la_reconciliation_est_planifiee():
     src = inspect.getsource(scheduler)
     assert "kraken_sync" in src
     assert "reconcile" in src
+
+
+# --- symétrie ouverture / clôture -----------------------------------------
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pair", ["BTC/USD", "ETH/USD", "SOL/USD"])
+async def test_toute_cloture_en_argent_reel_est_notifiee(pair, monkeypatch):
+    """L'ouverture était notifiée pour toute destination réelle, la clôture
+    filtrée aux « paires stars ». On recevait donc « trade ouvert BTC » sans
+    jamais « trade fermé BTC » — or c'est la clôture qui porte le résultat.
+    """
+    from backend.services import telegram_service as ts
+
+    envois: list[str] = []
+
+    class _Rep:
+        status_code = 200
+        text = "ok"
+
+    async def _post(self, url, **kw):
+        envois.append(str(url))
+        return _Rep()
+
+    monkeypatch.setattr("httpx.AsyncClient.post", _post)
+    monkeypatch.setattr(ts, "destination_for_ticket", lambda t: "admin_kraken")
+    monkeypatch.setattr(ts, "is_configured", lambda: True)
+    monkeypatch.setattr(ts, "_destinataires", lambda: [("__any__", "1")])
+    ts._notified_closes.clear()
+
+    await ts.send_close({
+        "pair": pair, "direction": "sell", "entry_price": 100.0,
+        "exit_price": 101.0, "pnl": -0.55, "close_reason": "SL",
+        "mt5_ticket": f"uuid-{pair}", "size_lot": 0.01,
+        "created_at": "2026-08-04T17:50:47+00:00",
+        "closed_at": "2026-08-04T18:15:21+00:00",
+    })
+    assert envois, f"{pair} : cloture en argent reel non notifiee"
+    assert len(envois) == 1, (
+        f"{pair} : {len(envois)} envois pour une seule cloture. Un miroir vers "
+        "le canal sales dupliquait chaque message ; une cloture est un "
+        "evenement de trade et n'appartient qu'au canal des trades."
+    )
+
+
+@pytest.mark.asyncio
+async def test_une_paire_non_star_hors_argent_reel_reste_filtree(monkeypatch):
+    """Le filtre garde son rôle pour les customers."""
+    from backend.services import telegram_service as ts
+
+    envois: list[str] = []
+
+    async def _post(self, url, **kw):
+        envois.append(str(url))
+        raise AssertionError("ne devrait pas envoyer")
+
+    monkeypatch.setattr("httpx.AsyncClient.post", _post)
+    monkeypatch.setattr(ts, "destination_for_ticket", lambda t: "admin_legacy")
+    monkeypatch.setattr(ts, "is_configured", lambda: True)
+    monkeypatch.setattr(ts, "_destinataires", lambda: [("__any__", "1")])
+    ts._notified_closes.clear()
+
+    await ts.send_close({
+        "pair": "SOL/USD", "direction": "sell", "entry_price": 100.0,
+        "exit_price": 101.0, "pnl": -0.55, "close_reason": "SL",
+        "mt5_ticket": "uuid-demo", "size_lot": 0.01,
+        "created_at": "2026-08-04T17:50:47+00:00",
+        "closed_at": "2026-08-04T18:15:21+00:00",
+    })
+    assert envois == []
+
+
+@pytest.mark.asyncio
+async def test_une_cloture_ne_part_que_sur_le_canal_des_trades(monkeypatch):
+    """Répartition convenue : infra / trades / récap, un canal par nature.
+
+    Chaque clôture partait sur le canal des trades ET en miroir sur sales,
+    dans le même format — deux messages pour un évènement.
+    """
+    from backend.services import telegram_service as ts
+
+    urls: list[str] = []
+
+    class _Rep:
+        status_code = 200
+        text = "ok"
+
+    async def _post(self, url, **kw):
+        urls.append(str(url))
+        return _Rep()
+
+    monkeypatch.setattr("httpx.AsyncClient.post", _post)
+    monkeypatch.setattr(ts, "destination_for_ticket", lambda t: "admin_kraken")
+    monkeypatch.setattr(ts, "is_configured", lambda: True)
+    monkeypatch.setattr(ts, "_destinataires", lambda: [("__any__", "1")])
+    ts._notified_closes.clear()
+
+    await ts.send_close({
+        "pair": "ETH/USD", "direction": "sell", "entry_price": 1868.0,
+        "exit_price": 1878.8, "pnl": -0.31, "close_reason": "SL",
+        "mt5_ticket": "uuid-eth-unique", "size_lot": 0.054,
+        "created_at": "2026-08-04T17:59:41+00:00",
+        "closed_at": "2026-08-04T18:20:33+00:00",
+    })
+    assert len(urls) == 1, f"{len(urls)} envois pour une cloture : {urls}"
+
+
+def test_le_miroir_sales_a_bien_disparu():
+    """Garde-fou : le miroir ne doit pas revenir par recopie."""
+    import inspect
+
+    from backend.services import telegram_service as ts
+    src = inspect.getsource(ts.send_close)
+    assert "SALES_TELEGRAM_BOT_TOKEN" not in src, (
+        "le miroir sales est de retour dans send_close"
+    )

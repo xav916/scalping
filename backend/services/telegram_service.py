@@ -1020,35 +1020,29 @@ async def send_close(trade: dict) -> None:
 
     text = _format_close(trade, dest_close)
 
-    # Miroir @xav_scalping_sales_bot (2026-08-02) : Xavier admin reçoit
-    # TOUTES les clôtures (y compris pairs non-stars — SPX/NDX/altcoins/
-    # xStocks) pour tracking business, indépendamment du filtre stars-only
-    # qui protège les customers user-facing. Best-effort silent fail.
-    try:
-        from config.settings import SALES_TELEGRAM_BOT_TOKEN, SALES_TELEGRAM_CHAT_ID
-        if SALES_TELEGRAM_BOT_TOKEN and SALES_TELEGRAM_CHAT_ID:
-            sales_url = TELEGRAM_API.format(token=SALES_TELEGRAM_BOT_TOKEN)
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                r = await client.post(sales_url, json={
-                    "chat_id": SALES_TELEGRAM_CHAT_ID,
-                    "text": text,
-                    "parse_mode": "Markdown",
-                    "disable_web_page_preview": True,
-                })
-                if r.status_code != 200:
-                    logger.warning(f"Telegram close sales miroir {r.status_code}: {r.text[:200]}")
-    except Exception as e:
-        logger.warning(f"send_close sales mirror error: {e}")
+    # ⚠️ Un miroir vers le canal sales existait ici (2026-08-02) : chaque
+    # clôture partait DEUX fois, sur deux canaux, dans le même format. Il
+    # servait à contourner le filtre stars pour les paires non-stars — un
+    # contournement devenu inutile depuis que l'argent réel court-circuite ce
+    # filtre juste en dessous. Supprimé le 2026-08-04 : une clôture est un
+    # évènement de trade, elle appartient au seul canal des trades. Le canal
+    # sales porte le récap, pas le flux.
 
-    # User-facing bot : filtre stars-only + LIVE_EXTRA_PAIRS pour customers
+    # Canal des trades : filtre stars pour les customers, argent réel exempté.
     if not is_configured():
         return
     try:
         from config.settings import MT5_BRIDGE_LIVE_EXTRA_PAIRS as _live_extras
     except Exception:
         _live_extras = frozenset()
+    # Le filtre stars protège les notifications user-facing des customers.
+    # Il ne doit PAS s'appliquer à de l'argent réel : l'ouverture est notifiée
+    # pour toute destination réelle, la clôture était filtrée aux stars. On
+    # recevait donc « trade ouvert BTC » sans jamais « trade fermé BTC », alors
+    # que c'est la clôture qui porte le résultat. Constaté le 2026-08-04 sur
+    # une perte réelle Kraken.
     allowed_pairs = _STAR_PAIRS_SET | _live_extras
-    if pair not in allowed_pairs:
+    if pair not in allowed_pairs and not destination_is_real_money(dest_close):
         return
     destinataires = _destinataires()
     if not destinataires:
