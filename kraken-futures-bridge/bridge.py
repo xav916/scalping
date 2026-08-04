@@ -39,6 +39,7 @@ import os
 import threading
 import time
 from datetime import date, datetime, timezone
+from decimal import ROUND_FLOOR, Decimal
 from functools import wraps
 from typing import Any
 from urllib.parse import urlencode
@@ -283,6 +284,10 @@ def _refresh_specs_cache() -> None:
                 "symbol": symbol,
                 "tickSize": float(inst.get("tickSize", 0.01)),
                 "contractSize": float(inst.get("contractSize", 1.0)),
+                # Nombre de décimales admises sur la TAILLE d'ordre. Absent du
+                # cache jusqu'au 2026-08-04 : la qty partait brute et Kraken
+                # rejetait tout en `invalidSize`. PF_XBTUSD=4, PF_ETHUSD=3.
+                "qtyPrecision": int(inst.get("contractValueTradePrecision", 4)),
                 "type": inst.get("type", ""),
                 "tradeable": True,
             }
@@ -291,6 +296,31 @@ def _refresh_specs_cache() -> None:
         logger.info(f"Kraken specs cache refreshed: {len(cache)} tradeable instruments")
     except Exception as e:
         logger.warning(f"_refresh_specs_cache failed: {e}")
+
+
+def round_qty_to_precision(qty: float, precision: int) -> float:
+    """Tronque une taille d'ordre à la précision admise par l'instrument.
+
+    Kraken refuse toute taille hors précision avec ``invalidSize``, sans
+    indiquer laquelle il attendait. Le 2026-08-04, ``qty=0.005744444…`` a
+    fait échouer cinq ordres consécutifs avant que la cause soit trouvée :
+    ``contractValueTradePrecision`` n'était tout simplement pas lu.
+
+    On tronque **vers le bas**. Arrondir au plus proche pourrait dépasser la
+    taille calculée par le sizing, donc engager plus de risque que voulu —
+    une taille légèrement trop petite est toujours préférable.
+
+    Retourne ``0.0`` si la taille est sous le pas minimum : à l'appelant de
+    refuser l'ordre avec un message explicite.
+
+    L'arithmétique est décimale, pas binaire : ``0.119 / 0.001`` vaut
+    ``118.99999999999999`` en flottant, ce qui rabotait d'un pas une taille
+    pourtant valide.
+    """
+    if qty <= 0 or precision < 0:
+        return 0.0
+    pas = Decimal(1).scaleb(-precision)
+    return float(Decimal(str(qty)).quantize(pas, rounding=ROUND_FLOOR))
 
 
 def _get_specs(symbol: str) -> dict | None:
@@ -505,6 +535,35 @@ def place_order():
         qty = float(qty_raw)
     except (TypeError, ValueError):
         return jsonify({"ok": False, "error": f"invalid qty {qty_raw}"}), 400
+
+    # ── Arrondi de la taille à la précision de l'instrument ──
+    # Kraken refuse toute taille hors précision avec `invalidSize`, sans dire
+    # laquelle est attendue. Le 2026-08-04, `qty=0.005744444…` a fait échouer
+    # cinq ordres d'affilée avant que la cause soit identifiée.
+    #
+    # On tronque vers le bas : arrondir au supérieur augmenterait le risque
+    # au-delà de ce que le sizing a calculé.
+    qty_precision = int(specs.get("qtyPrecision", 4))
+    step = 10.0 ** -qty_precision
+    qty_arrondi = round_qty_to_precision(qty, qty_precision)
+    if qty_arrondi <= 0:
+        # Sous le pas minimum : le compte est trop petit pour cet instrument
+        # au risque demandé. Le dire explicitement plutôt que laisser Kraken
+        # répondre `invalidSize`, qui ne distingue pas ce cas d'une erreur.
+        return jsonify({
+            "ok": False,
+            "error": (
+                f"size below minimum step: qty={qty:.10f} < {step} "
+                f"({sym}, {qty_precision} decimals)"
+            ),
+            "qty_requested": qty,
+            "min_step": step,
+        }), 400
+    if qty_arrondi != qty:
+        logger.info(
+            f"{sym}: qty {qty:.10f} -> {qty_arrondi} ({qty_precision} decimales)"
+        )
+    qty = qty_arrondi
 
     # ── Place market order ──
     market_params = {

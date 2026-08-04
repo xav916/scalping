@@ -58,21 +58,20 @@ def _build_kraken_spot_payload(setup, sz: dict, dest) -> dict[str, Any]:
 
 
 async def push_to_kraken_spot(setup, sz: dict, dest) -> None:
-    """Pousse un setup vers le kraken-spot-bridge. Logge dans mt5_pushes.
+    """Pousse un setup vers le kraken-spot-bridge. Logge dans ``mt5_pushes``.
 
     Best-effort : timeout / 4xx / 5xx → record_rejection + return. Pas
     d'exception remontée au cycle d'analyse.
-    """
-    from datetime import date
 
-    from backend.services import mt5_pushes_service
+    ⚠️ La clé de push est **réservée avant** l'appel HTTP : voir
+    ``bridge_push_ledger`` pour l'incident qu'elle prévient.
+    """
+    from backend.services.bridge_push_ledger import PushLedger
     from backend.services.rejection_service import record_rejection
 
     direction = setup.direction.value if hasattr(setup.direction, "value") else str(setup.direction)
     score = float(getattr(setup, "confidence_score", 0) or 0)
     verdict = getattr(setup, "verdict_action", None)
-    push_date = date.today().isoformat()
-    entry_5dp = f"{setup.entry_price:.5f}"
 
     # Long-only gate — Spot bridge ne supporte pas les shorts
     if direction != "buy":
@@ -132,6 +131,18 @@ async def push_to_kraken_spot(setup, sz: dict, dest) -> None:
     bridge_key = dest.bridge_api_key
     url = f"{bridge_url}/order"
 
+    # Réservation AVANT l'envoi — cf. bridge_push_ledger et l'incident du
+    # 2026-08-04 (fill réel sans aucune trace, rejoué au cycle suivant).
+    ledger = PushLedger.for_setup(dest, setup, direction)
+    if not ledger.reserve():
+        record_rejection(
+            pair=setup.pair, direction=direction, confidence=score,
+            reason_code="kraken_spot_already_pushed",
+            details={"entry_5dp": ledger.entry_5dp},
+            destination_id=dest.destination_id,
+        )
+        return
+
     try:
         async with httpx.AsyncClient(timeout=KRAKEN_SPOT_BRIDGE_TIMEOUT_SEC) as c:
             r = await c.post(
@@ -144,16 +155,15 @@ async def push_to_kraken_spot(setup, sz: dict, dest) -> None:
             body = {"raw": r.text[:200]}
 
         if r.status_code == 200 and body.get("ok"):
-            mt5_pushes_service.record_push(
-                dest.destination_id, push_date, setup.pair, direction, entry_5dp,
-                ok=True, bridge_response=body,
-            )
+            ledger.confirm(body)
             logger.warning(
                 f"kraken_spot bridge[{dest.destination_id}] → {setup.pair} {direction} "
                 f"OK txid={body.get('txid')} descr={body.get('descr')!r}"
             )
         elif r.status_code == 429 and body.get("blocked"):
+            # Contrainte temporaire du bridge : rien n'a atteint le marché.
             reason = body.get("reason", "unknown")
+            ledger.release()
             record_rejection(
                 pair=setup.pair, direction=direction, confidence=score,
                 reason_code="kraken_spot_bridge_blocked",
@@ -164,6 +174,7 @@ async def push_to_kraken_spot(setup, sz: dict, dest) -> None:
                 f"kraken_spot bridge[{dest.destination_id}] BLOCKED {setup.pair}: {reason}"
             )
         else:
+            ledger.flag_unknown({"status": r.status_code, "body": str(body)[:400]})
             record_rejection(
                 pair=setup.pair, direction=direction, confidence=score,
                 reason_code="kraken_spot_bridge_error",
@@ -174,6 +185,9 @@ async def push_to_kraken_spot(setup, sz: dict, dest) -> None:
                 f"kraken_spot bridge[{dest.destination_id}] error {r.status_code}: {str(body)[:200]}"
             )
     except httpx.TimeoutException:
+        # L'ordre a pu être rempli sans que la réponse revienne : on garde la
+        # réservation plutôt que de risquer un doublon sur un compte réel.
+        ledger.flag_unknown({"error": "timeout", "timeout_sec": KRAKEN_SPOT_BRIDGE_TIMEOUT_SEC})
         record_rejection(
             pair=setup.pair, direction=direction, confidence=score,
             reason_code="kraken_spot_bridge_timeout",
@@ -181,7 +195,17 @@ async def push_to_kraken_spot(setup, sz: dict, dest) -> None:
             destination_id=dest.destination_id,
         )
         logger.warning(f"kraken_spot bridge[{dest.destination_id}] timeout — skip {setup.pair}")
+    except httpx.ConnectError as e:
+        ledger.release()
+        record_rejection(
+            pair=setup.pair, direction=direction, confidence=score,
+            reason_code="kraken_spot_bridge_unreachable",
+            details={"error": str(e)[:200], "url": url},
+            destination_id=dest.destination_id,
+        )
+        logger.warning(f"kraken_spot bridge[{dest.destination_id}] injoignable: {url}")
     except Exception as e:
+        ledger.flag_unknown({"error": str(e)[:300]})
         record_rejection(
             pair=setup.pair, direction=direction, confidence=score,
             reason_code="kraken_spot_bridge_exception",

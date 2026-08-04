@@ -55,21 +55,23 @@ def _build_kraken_payload(setup, sz: dict, dest) -> dict[str, Any]:
 
 
 async def push_to_kraken(setup, sz: dict, dest) -> None:
-    """Pousse un setup vers le kraken-bridge. Logge dans mt5_pushes.
+    """Pousse un setup vers le kraken-bridge. Logge dans ``mt5_pushes``.
 
     Best-effort : timeout / 4xx / 5xx → record_rejection + return. Pas
     d'exception remontée au cycle d'analyse.
-    """
-    from datetime import date
 
-    from backend.services import mt5_pushes_service
+    ⚠️ La clé de push est **réservée avant** l'appel HTTP. Jusqu'au
+    2026-08-04 elle ne l'était pas, et l'enregistrement se faisait après le
+    fill via une fonction inexistante : un ordre réel partait chez Kraken
+    sans laisser la moindre trace, et se rejouait au cycle suivant. Voir
+    ``bridge_push_ledger``.
+    """
+    from backend.services.bridge_push_ledger import PushLedger
     from backend.services.rejection_service import record_rejection
 
     direction = setup.direction.value if hasattr(setup.direction, "value") else str(setup.direction)
     score = float(getattr(setup, "confidence_score", 0) or 0)
     verdict = getattr(setup, "verdict_action", None)
-    push_date = date.today().isoformat()
-    entry_5dp = f"{setup.entry_price:.5f}"
 
     # Final-score gate
     if RESPECT_VERDICT and verdict == "SKIP":
@@ -103,6 +105,18 @@ async def push_to_kraken(setup, sz: dict, dest) -> None:
     bridge_key = dest.bridge_api_key
     url = f"{bridge_url}/order"
 
+    # Réservation AVANT l'envoi : c'est elle qui empêche un doublon si la
+    # suite tourne mal, et qui garantit une trace même sans confirmation.
+    ledger = PushLedger.for_setup(dest, setup, direction)
+    if not ledger.reserve():
+        record_rejection(
+            pair=setup.pair, direction=direction, confidence=score,
+            reason_code="kraken_already_pushed",
+            details={"entry_5dp": ledger.entry_5dp},
+            destination_id=dest.destination_id,
+        )
+        return
+
     try:
         async with httpx.AsyncClient(timeout=KRAKEN_BRIDGE_TIMEOUT_SEC) as c:
             r = await c.post(
@@ -115,17 +129,17 @@ async def push_to_kraken(setup, sz: dict, dest) -> None:
             body = {"raw": r.text[:200]}
 
         if r.status_code == 200 and body.get("ok"):
-            mt5_pushes_service.record_push(
-                dest.destination_id, push_date, setup.pair, direction, entry_5dp,
-                ok=True, bridge_response=body,
-            )
+            ledger.confirm(body)
             logger.warning(
                 f"kraken bridge[{dest.destination_id}] → {setup.pair} {direction} "
                 f"OK order_id={body.get('market_order_id')} avg_price={body.get('avg_price')}"
             )
         elif r.status_code == 429 and body.get("blocked"):
-            # Kill-switch bridge (daily drawdown, whitelist, max positions)
+            # Kill-switch bridge (daily drawdown, whitelist, max positions).
+            # Rien n'est parti au marché : la contrainte peut se lever seule,
+            # donc on relâche pour laisser un cycle suivant retenter.
             reason = body.get("reason", "unknown")
+            ledger.release()
             record_rejection(
                 pair=setup.pair, direction=direction, confidence=score,
                 reason_code="kraken_bridge_blocked",
@@ -136,6 +150,10 @@ async def push_to_kraken(setup, sz: dict, dest) -> None:
                 f"kraken bridge[{dest.destination_id}] BLOCKED {setup.pair}: {reason}"
             )
         else:
+            # Rejet explicite de l'exchange (`invalidSize`, symbole inconnu…).
+            # Il se reproduirait à l'identique : on garde la réservation pour
+            # ne pas marteler Kraken toutes les cinq minutes.
+            ledger.flag_unknown({"status": r.status_code, "body": str(body)[:400]})
             record_rejection(
                 pair=setup.pair, direction=direction, confidence=score,
                 reason_code="kraken_bridge_error",
@@ -146,6 +164,10 @@ async def push_to_kraken(setup, sz: dict, dest) -> None:
                 f"kraken bridge[{dest.destination_id}] error {r.status_code}: {str(body)[:200]}"
             )
     except httpx.TimeoutException:
+        # La requête est partie ; l'ordre a pu être rempli sans que la réponse
+        # revienne. Sur un compte réel, un doublon coûte plus cher qu'un trade
+        # manqué : on conserve la réservation.
+        ledger.flag_unknown({"error": "timeout", "timeout_sec": KRAKEN_BRIDGE_TIMEOUT_SEC})
         record_rejection(
             pair=setup.pair, direction=direction, confidence=score,
             reason_code="kraken_bridge_timeout",
@@ -153,7 +175,20 @@ async def push_to_kraken(setup, sz: dict, dest) -> None:
             destination_id=dest.destination_id,
         )
         logger.warning(f"kraken bridge[{dest.destination_id}] timeout — skip {setup.pair}")
+    except httpx.ConnectError as e:
+        # Le bridge est injoignable : rien n'a atteint Kraken, on peut retenter.
+        ledger.release()
+        record_rejection(
+            pair=setup.pair, direction=direction, confidence=score,
+            reason_code="kraken_bridge_unreachable",
+            details={"error": str(e)[:200], "url": url},
+            destination_id=dest.destination_id,
+        )
+        logger.warning(f"kraken bridge[{dest.destination_id}] injoignable: {url}")
     except Exception as e:
+        # Cas du 2026-08-04 : l'exception survenait APRÈS le fill. On ne peut
+        # pas savoir, donc on garde la réservation.
+        ledger.flag_unknown({"error": str(e)[:300]})
         record_rejection(
             pair=setup.pair, direction=direction, confidence=score,
             reason_code="kraken_bridge_exception",
