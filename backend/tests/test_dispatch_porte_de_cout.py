@@ -61,3 +61,47 @@ def test_mt5_reste_non_declare_donc_inchange():
         pytest.skip("admin_live non configuree ici")
     assert dest.cost_model is None
     assert dest.expected_edge_r is None
+
+
+def test_les_fabriques_kraken_declarent_reellement_leurs_valeurs():
+    """Verifie le cablage, pas seulement le modele.
+
+    Les autres tests instancient leur propre `CostModel` et ne liraient
+    pas un oubli de branchement sur les fabriques. On inspecte donc la
+    source : les fabriques renvoient `None` quand la destination n'est
+    pas configuree dans l'environnement, ce qui rendrait un test par
+    appel muet en local — or c'est precisement le cablage qu'on veut
+    verrouiller, independamment de la configuration.
+    """
+    import inspect
+
+    from backend.services import bridge_destinations as bd
+
+    for nom, edge in (
+        ("_admin_kraken_destination", "0.110"),
+        ("_admin_kraken_spot_destination", "0.110"),
+        ("_admin_kraken_stocks_destination", "0.129"),
+    ):
+        src = inspect.getsource(getattr(bd, nom))
+        assert "cost_model=CostModel(proportional_rate_per_leg=0.0005)" in src, nom
+        assert f"expected_edge_r={edge}" in src, nom
+
+
+def test_mt5_et_binance_ne_declarent_rien():
+    """Le pendant du test precedent : l'absence doit etre verrouillee aussi.
+
+    Sans ca, un ajout ulterieur de `cost_model` sur `admin_live` passerait
+    inapercu et changerait le comportement de la seule route qui trade.
+    """
+    import inspect
+
+    from backend.services import bridge_destinations as bd
+
+    for nom in (
+        "_admin_live_destination",
+        "_admin_legacy_destination",
+        "_admin_binance_destination",
+    ):
+        src = inspect.getsource(getattr(bd, nom))
+        assert "cost_model=" not in src, nom
+        assert "expected_edge_r=" not in src, nom
