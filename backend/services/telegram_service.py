@@ -578,6 +578,89 @@ _MARGIN_AT_001_LOT_EUR: dict[str, float] = {
 }
 
 
+def _executing_destinations(setup) -> list:
+    """Destinations admin qui exécuteront effectivement ce setup.
+
+    Source unique pour l'annotation broker ET le bloc monétaire — les deux
+    doivent parler du même trade.
+    """
+    try:
+        from backend.services import bridge_destinations
+        from config.settings import asset_class_for, MT5_BRIDGE_ALLOWED_PATTERNS
+
+        score = float(getattr(setup, "confidence_score", 0) or 0)
+        pair = getattr(setup, "pair", None)
+        if not pair:
+            return []
+        try:
+            aclass = asset_class_for(pair)
+        except Exception:
+            aclass = None
+        out = []
+        for dest in bridge_destinations.resolve_destinations(setup):
+            if dest.user_id is not None or not dest.auto_exec_enabled:
+                continue
+            if score < dest.min_confidence:
+                continue
+            if aclass and aclass not in dest.allowed_asset_classes:
+                continue
+            motifs = getattr(dest, "allowed_patterns", None)
+            if motifs is None:
+                motifs = MT5_BRIDGE_ALLOWED_PATTERNS
+            if motifs and _pattern_of(setup) not in motifs:
+                continue
+            out.append(dest)
+        return out
+    except Exception:
+        return []
+
+
+def _pattern_of(setup) -> str | None:
+    try:
+        det = getattr(setup, "pattern", None)
+        if det is None:
+            return None
+        pv = getattr(det, "pattern", det)
+        v = pv.value if hasattr(pv, "value") else str(pv)
+        return v.lower() if v else None
+    except Exception:
+        return None
+
+
+def _amounts_from_sizing(setup, dest) -> dict | None:
+    """Montants réels pour une destination qui dimensionne sur son solde.
+
+    ⚠️ La table `_PIP_VALUE_AT_001_LOT_EUR` est calibrée pour du CFD MT5 en
+    lot 0,01. Appliquée à Kraken, elle annonçait « ~€8 engagés, −€0,08 de
+    risque » sur ETH — des chiffres sans rapport, assortis d'une mention
+    « Demo ×0,10 lot · Live IC Markets 0,02 lot » qui n'a aucun sens là-bas.
+
+    Sur ces bridges, `risk_money` **est** le risque réel dans la devise du
+    compte : le gain se déduit du R:R, sans table intermédiaire.
+
+    ``None`` si le solde n'est pas connu — mieux vaut pas de bloc qu'un
+    bloc faux.
+    """
+    try:
+        from backend.services import sizing
+        sz = sizing.compute_risk_money(setup, dest)
+        risque = float(sz.get("risk_money") or 0)
+        if risque <= 0:
+            return None
+        rr1 = float(getattr(setup, "risk_reward_1", 0) or 0)
+        rr2 = float(getattr(setup, "risk_reward_2", 0) or 0)
+        return {
+            "margin": None,
+            "risk": risque,
+            "reward_1": risque * rr1 if rr1 > 0 else None,
+            "reward_2": risque * rr2 if rr2 > 0 else None,
+            "devise": "USD",
+            "capital": sz.get("capital"),
+        }
+    except Exception:
+        return None
+
+
 def _estimate_eur_amounts(setup) -> dict | None:
     """Retourne dict {margin, risk, reward_1, reward_2} en EUR estimé pour 0.01 lot.
 
@@ -604,55 +687,13 @@ def _estimate_eur_amounts(setup) -> dict | None:
 
 
 def _describe_admin_destinations(setup) -> list[str]:
-    """Liste les destinations admin qui exécuteront effectivement ce setup.
+    """Libellés lisibles des destinations qui exécuteront ce setup.
 
-    Filtre sur ``confidence_score`` et ``asset_class`` pour matcher ce que
-    ``mt5_bridge._check_rejection()`` accepterait par destination. Retourne
-    une liste de labels lisibles (ex. ["🧪 Demo Pepperstone", "💰 Live IC
-    Markets (€100)"]). Les user destinations (Premium EA queue) sont
-    exclues — elles ne concernent pas le push Telegram admin.
-
-    Best-effort : exceptions retournent [] pour ne jamais casser le format
-    du message Telegram principal.
+    S'appuie sur ``_executing_destinations`` : le bloc monétaire et
+    l'annotation broker doivent décrire le même trade.
     """
-    try:
-        from backend.services import bridge_destinations
-        from config.settings import asset_class_for
-
-        from config.settings import MT5_BRIDGE_ALLOWED_PATTERNS
-        from backend.services.mt5_bridge import _pattern_value
-
-        score = float(getattr(setup, "confidence_score", 0) or 0)
-        pair = getattr(setup, "pair", None)
-        if not pair:
-            return []
-        # Whitelist de patterns (2026-08-04) : elle s'applique à toutes les
-        # destinations, donc un setup hors whitelist n'en exécutera aucune.
-        # Sans ce test, le message annoncerait « 💰 Live IC Markets » pour un
-        # setup que le bridge rejettera — une promesse fausse au lecteur.
-        if MT5_BRIDGE_ALLOWED_PATTERNS:
-            if _pattern_value(setup) not in MT5_BRIDGE_ALLOWED_PATTERNS:
-                return []
-        try:
-            aclass = asset_class_for(pair)
-        except Exception:
-            aclass = None
-
-        labels = []
-        for dest in bridge_destinations.resolve_destinations(setup):
-            if dest.user_id is not None:
-                continue  # ignore user destinations (Premium EA queue)
-            if not dest.auto_exec_enabled:
-                continue
-            if score < dest.min_confidence:
-                continue
-            if aclass and aclass not in dest.allowed_asset_classes:
-                continue
-            label = destination_label(dest.destination_id, "badge")
-            labels.append(label)
-        return labels
-    except Exception:
-        return []
+    return [destination_label(d.destination_id, "badge")
+            for d in _executing_destinations(setup)]
 
 
 def _format_setup(setup) -> str:
@@ -783,18 +824,50 @@ def _format_setup(setup) -> str:
     # (max_lot 0.10) multiplier mentalement par 10, pour Live IC Markets
     # (max_lot 0.02) multiplier par 2. Approximation : EUR/USD ~1.10 + specs
     # broker standards. Cf. _PIP_VALUE_AT_001_LOT_EUR.
-    eur = _estimate_eur_amounts(setup)
-    if eur is not None:
-        eur_lines = ["", "💵 *En euros (estimation, lot 0.01)*"]
-        if eur.get("margin") is not None:
-            eur_lines.append(f"Argent engagé : *~€{eur['margin']:.0f}* (margin requise)")
-        eur_lines.extend([
-            f"Risque max    : *−€{eur['risk']:.2f}* si SL touché",
-            f"Gain TP1      : *+€{eur['reward_1']:.2f}*"
-            + (f"  ·  TP2 : *+€{eur['reward_2']:.2f}*" if eur.get("reward_2") else ""),
-            "_Demo (×0.10 lot) ≈ ×10  ·  Live IC Markets (0.02 lot) ≈ ×2_",
-        ])
-        lines.extend(eur_lines)
+    # Montants : deux régimes selon la destination qui exécute.
+    #  - bridges à solde interrogeable (Kraken, Binance) : `risk_money` EST
+    #    le risque réel, on l'affiche tel quel
+    #  - bridges MT5 : estimation par table de pips au lot minimum
+    # Mélanger les deux donnait des chiffres faux sur crypto — cf.
+    # `_amounts_from_sizing`.
+    from backend.services import sizing as _sizing
+    _dest_live = next(
+        (d for d in _executing_destinations(setup)
+         if getattr(d, "bridge_type", "mt5") in _sizing.LIVE_BALANCE_BRIDGE_TYPES),
+        None,
+    )
+    if _dest_live is not None:
+        montants = _amounts_from_sizing(setup, _dest_live)
+        if montants is not None:
+            devise = montants["devise"]
+            bloc = ["", f"💵 *Montants réels ({devise})*"]
+            bloc.append(
+                f"Risque max    : *−{montants['risk']:.2f} {devise}* si SL touché"
+            )
+            if montants.get("reward_1"):
+                ligne = f"Gain TP1      : *+{montants['reward_1']:.2f} {devise}*"
+                if montants.get("reward_2"):
+                    ligne += f"  ·  TP2 : *+{montants['reward_2']:.2f} {devise}*"
+                bloc.append(ligne)
+            if montants.get("capital"):
+                bloc.append(
+                    f"_Dimensionné sur le solde réel du compte "
+                    f"({montants['capital']:.2f} {devise})._"
+                )
+            lines.extend(bloc)
+    else:
+        eur = _estimate_eur_amounts(setup)
+        if eur is not None:
+            eur_lines = ["", "💵 *En euros (estimation, lot 0.01)*"]
+            if eur.get("margin") is not None:
+                eur_lines.append(f"Argent engagé : *~€{eur['margin']:.0f}* (margin requise)")
+            eur_lines.extend([
+                f"Risque max    : *−€{eur['risk']:.2f}* si SL touché",
+                f"Gain TP1      : *+€{eur['reward_1']:.2f}*"
+                + (f"  ·  TP2 : *+€{eur['reward_2']:.2f}*" if eur.get("reward_2") else ""),
+                "_Demo (×0.10 lot) ≈ ×10  ·  Live IC Markets (0.02 lot) ≈ ×2_",
+            ])
+            lines.extend(eur_lines)
 
     reasons = getattr(setup, "verdict_reasons", None) or []
     warnings = getattr(setup, "verdict_warnings", None) or []
