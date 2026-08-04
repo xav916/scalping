@@ -428,6 +428,19 @@ def _check_rejection(setup, dest=None) -> str | None:
     max_allowed = _max_positions_for_pair(setup.pair)
     if open_count >= max_allowed:
         return "max_positions_per_pair"
+    # Délai minimum entre deux ordres sur un même symbole. Le cap ci-dessus
+    # borne les positions SIMULTANÉES ; il ne dit rien du rythme quand elles
+    # se ferment vite. Le 2026-08-04, six ordres ETH en vingt-sept minutes,
+    # dont deux de sens opposés à la même seconde. Réglé par destination :
+    # cf. `order_cooldown`, un délai global casserait le compte de Cédric.
+    from backend.services.order_cooldown import en_cooldown
+    bloque, restant = en_cooldown(dest, setup.pair)
+    if bloque:
+        logger.info(
+            f"cooldown[{getattr(dest, 'destination_id', '?')}] {setup.pair} : "
+            f"encore {restant}s avant un nouvel ordre"
+        )
+        return "cooldown_symbole"
     return None
 
 

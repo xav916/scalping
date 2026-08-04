@@ -75,6 +75,15 @@ class Destination:
         Classes d'actifs que ce broker accepte.
     plateforme
         Préfixe lisible pour les notifications de push (script shell).
+    order_cooldown_sec
+        Délai minimum entre deux ordres sur un **même symbole**, en secondes.
+        ``0`` ⇒ désactivé.
+
+        Le 2026-08-04, six ordres ETH sont partis en vingt-sept minutes sur
+        Kraken, dont deux de sens opposés à la même seconde. La déduplication
+        existante porte sur le prix d'entrée : un centime d'écart rouvre la
+        porte. Réglé par destination car un délai global de quinze minutes
+        bloquerait 45 % des ordres de Cédric, dont le rythme mesuré est sain.
     max_notional_leverage
         Notionnel maximal d'une position, en multiple du capital du compte.
         ``None`` ⇒ garde-fou global ``MAX_NOTIONAL_LEVERAGE``.
@@ -103,6 +112,7 @@ class Destination:
     asset_classes: frozenset[str] = field(default_factory=frozenset)
     plateforme: str = ""
     max_notional_leverage: float | None = None
+    order_cooldown_sec: int = 0
 
 
 DESTINATIONS: dict[str, Destination] = {
@@ -143,6 +153,7 @@ DESTINATIONS: dict[str, Destination] = {
             sizing="live_balance",
             asset_classes=frozenset({"crypto"}),
             max_notional_leverage=2.0,
+            order_cooldown_sec=900,
             plateforme="Kraken Futures",
         ),
         Destination(
@@ -157,6 +168,7 @@ DESTINATIONS: dict[str, Destination] = {
             sizing="live_balance",
             asset_classes=frozenset({"crypto"}),
             max_notional_leverage=2.0,
+            order_cooldown_sec=900,
             plateforme="Kraken Spot",
         ),
         Destination(
@@ -171,6 +183,7 @@ DESTINATIONS: dict[str, Destination] = {
             sizing="live_balance",
             asset_classes=frozenset({"equity"}),
             max_notional_leverage=2.0,
+            order_cooldown_sec=900,
             plateforme="Kraken xStocks",
         ),
         Destination(
@@ -250,6 +263,7 @@ def as_json() -> str:
             "key_env": d.key_env, "key_header": d.key_header,
             "sizing": d.sizing, "plateforme": d.plateforme,
             "max_notional_leverage": d.max_notional_leverage,
+            "order_cooldown_sec": d.order_cooldown_sec,
             "asset_classes": sorted(d.asset_classes),
         }
     return json.dumps(out, ensure_ascii=False, indent=2)
