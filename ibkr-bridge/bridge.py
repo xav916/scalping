@@ -88,7 +88,9 @@ MARKET_DATA_TYPE = int(os.getenv("IBKR_MARKET_DATA_TYPE", "3"))
 # C'est la garde-fou n°2 : elle survit à un bug applicatif côté bridge.
 IB_READONLY = not ALLOW_ORDERS
 
-REQUEST_TIMEOUT_SEC = 20.0
+REQUEST_TIMEOUT_SEC = 45.0
+# Attente du fill après envoi réel, pour remonter la commission.
+FILL_WAIT_SEC = float(os.getenv("IBKR_FILL_WAIT_SEC", "20"))
 
 # ─── Symbol mapping ────────────────────────────────────────────────────
 # pair scalping-radar → contrat IBKR.
@@ -554,6 +556,35 @@ def order():
         trades = worker.call_sync(
             lambda: [worker.ib.placeOrder(c, o) for o in orders]
         )
+        parent_trade = trades[0]
+
+        # Attendre le fill du parent pour remonter prix moyen et commission.
+        # whatIf ne donne jamais la commission (DBL_MAX) : le fill est la
+        # seule source. Sans ça, impossible de juger si le coût par ordre
+        # rend l'opération viable au capital courant.
+        async def _await_fill():
+            for _ in range(int(FILL_WAIT_SEC * 2)):
+                if parent_trade.orderStatus.status in (
+                    "Filled", "Cancelled", "ApiCancelled", "Inactive"
+                ):
+                    break
+                await asyncio.sleep(0.5)
+            return parent_trade.orderStatus.status
+
+        status = worker.call(_await_fill)
+
+        commission = None
+        commission_ccy = None
+        realized_pnl = None
+        avg_price = _num(parent_trade.orderStatus.avgFillPrice)
+        for fill in parent_trade.fills:
+            report = getattr(fill, "commissionReport", None)
+            if report and report.commission is not None:
+                commission = (commission or 0.0) + _num(report.commission or 0)
+                commission_ccy = report.currency or commission_ccy
+                if report.realizedPNL is not None:
+                    realized_pnl = _num(report.realizedPNL)
+
         return jsonify({
             "ok": True,
             "dry_run": False,
@@ -563,6 +594,11 @@ def order():
             "qty": qty,
             "sl": sl,
             "tp": tp,
+            "status": status,
+            "avg_fill_price": avg_price,
+            "commission": commission,
+            "commission_currency": commission_ccy,
+            "realized_pnl": realized_pnl,
             "orders": [
                 {"order_id": t.order.orderId, "type": t.order.orderType,
                  "status": t.orderStatus.status}
