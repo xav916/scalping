@@ -66,18 +66,110 @@ def _make_5min_candles(start: datetime, prices: list[float]) -> list[Candle]:
 def test_reconcile_no_pending(temp_db):
     """DB vide → résolution 0/0/0."""
     stats = asyncio.run(recon.reconcile_pending_setups(max_per_run=10))
-    assert stats == {"resolved": 0, "skipped_no_data": 0, "errors": 0, "pending_remaining": 0}
+    assert stats == {
+        "resolved": 0, "skipped_no_data": 0, "errors": 0,
+        "still_open": 0, "pending_remaining": 0,
+    }
 
 
-def test_reconcile_pending_in_window(temp_db):
-    """Setup avec bar_timestamp récent (timeout pas dépassé) → pas reconciliated."""
-    # Timeout = 96h. On insère un setup d'il y a 50h (pas encore résolvable).
-    bar_ts = datetime.now(timezone.utc) - timedelta(hours=50)
-    _insert_pending_setup(temp_db, bar_ts)
+def test_reconcile_still_open_stays_pending(temp_db):
+    """Fenêtre encore ouverte + aucun hit → reste pending, pas de faux TIMEOUT.
 
-    stats = asyncio.run(recon.reconcile_pending_setups(max_per_run=10))
+    Régression 2026-08-04 : ``simulate_trade_forward`` renvoie TIMEOUT dès
+    qu'il épuise les bougies. Sur une fenêtre non échue ça veut seulement dire
+    « pas encore dénoué » — l'enregistrer figerait un verdict faux.
+    """
+    bar_ts = datetime.now(timezone.utc) - timedelta(hours=50)  # < timeout 96h
+    _insert_pending_setup(temp_db, bar_ts, entry=2000.0, sl=1980.0, tp1=2050.0)
+
+    # Prix qui stagne : ni SL ni TP touchés.
+    async def mock_fetch(pair, start, end):
+        return _make_5min_candles(start + timedelta(minutes=5), [2000, 2001, 2002])
+
+    stats = asyncio.run(recon.reconcile_pending_setups(
+        max_per_run=10, fetch_5min_fn=mock_fetch,
+    ))
     assert stats["resolved"] == 0
+    assert stats["still_open"] == 1
     assert stats["pending_remaining"] == 1
+
+    with sqlite3.connect(temp_db) as c:
+        outcome = c.execute("SELECT outcome FROM shadow_setups").fetchone()[0]
+    assert outcome is None
+
+
+def test_reconcile_early_resolution_before_timeout(temp_db):
+    """TP touché à 50h → enregistré tout de suite, sans attendre les 96h.
+
+    C'est le cœur du fix latence : mesure sur 16802 setups H1, p50 = 0.1h.
+    Attendre l'échéance complète retardait le feedback de 4 jours sur des
+    trades déjà dénoués.
+    """
+    bar_ts = datetime.now(timezone.utc) - timedelta(hours=50)  # < timeout 96h
+    _insert_pending_setup(temp_db, bar_ts, entry=2000.0, sl=1980.0, tp1=2050.0)
+
+    async def mock_fetch(pair, start, end):
+        return _make_5min_candles(
+            start + timedelta(minutes=5), [2005, 2020, 2055],
+        )
+
+    stats = asyncio.run(recon.reconcile_pending_setups(
+        max_per_run=10, fetch_5min_fn=mock_fetch,
+    ))
+    assert stats["resolved"] == 1
+    assert stats["still_open"] == 0
+    assert stats["pending_remaining"] == 0
+
+    with sqlite3.connect(temp_db) as c:
+        row = c.execute("SELECT outcome, exit_price FROM shadow_setups").fetchone()
+    assert row[0] == "TP1"
+    assert row[1] == pytest.approx(2050.0)
+
+
+def test_reconcile_matured_rows_have_priority(temp_db):
+    """Les lignes échues passent avant les tentatives anticipées.
+
+    Sans cette priorité, un setup destiné au TIMEOUT occuperait un slot à
+    chaque run pendant ~94h sans jamais aboutir, et pourrait affamer la file.
+    Ici : 1 slot disponible, 1 ligne échue et 1 ligne récente → c'est l'échue
+    qui doit être traitée.
+    """
+    matured_ts = datetime.now(timezone.utc) - timedelta(hours=120)  # > 96h
+    early_ts = datetime.now(timezone.utc) - timedelta(hours=10)     # < 96h
+    _insert_pending_setup(temp_db, matured_ts, pair="XAU/USD")
+    _insert_pending_setup(temp_db, early_ts, pair="XAG/USD")
+
+    fetched: list[str] = []
+
+    async def mock_fetch(pair, start, end):
+        fetched.append(pair)
+        return _make_5min_candles(start + timedelta(minutes=5), [2000, 2001])
+
+    asyncio.run(recon.reconcile_pending_setups(
+        max_per_run=1, fetch_5min_fn=mock_fetch,
+    ))
+    # Le seul slot doit être allé à la ligne échue, malgré son bar_timestamp
+    # plus ancien ET plus récent selon l'ordre global.
+    assert fetched == ["XAU/USD"]
+
+
+def test_reconcile_never_fetches_beyond_now(temp_db):
+    """La fenêtre demandée est bornée à maintenant, pas à bar_ts + timeout."""
+    bar_ts = datetime.now(timezone.utc) - timedelta(hours=10)
+    _insert_pending_setup(temp_db, bar_ts)
+    seen: list[tuple] = []
+
+    async def mock_fetch(pair, start, end):
+        seen.append((start, end))
+        return _make_5min_candles(start + timedelta(minutes=5), [2000, 2001])
+
+    asyncio.run(recon.reconcile_pending_setups(
+        max_per_run=10, fetch_5min_fn=mock_fetch,
+    ))
+    assert len(seen) == 1
+    _, end = seen[0]
+    # bar_ts + 96h serait ~86h dans le futur : on doit s'arrêter à maintenant.
+    assert end <= datetime.now(timezone.utc) + timedelta(seconds=5)
 
 
 def test_reconcile_with_mock_fetch_tp1(temp_db):

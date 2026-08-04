@@ -1,8 +1,18 @@
 """Phase 4 — Reconciliation des outcomes des shadow setups.
 
-Pour chaque setup en `outcome IS NULL` dont le timeout (96h H4) est dépassé,
-résout l'outcome en simulant le forward sur les bougies 5min entre
-bar_timestamp et bar_timestamp + 96h.
+Pour chaque setup en `outcome IS NULL`, résout l'outcome en simulant le
+forward sur les bougies 5min depuis bar_timestamp.
+
+Depuis 2026-08-04, la tentative est **anticipée** : dès qu'un TP ou un SL a
+été touché, l'outcome est enregistré, sans attendre la fin de la fenêtre.
+Seule l'étiquette TIMEOUT exige que la fenêtre complète soit écoulée — c'est
+la seule conclusion qu'on ne peut pas tirer par anticipation.
+
+Motivation : l'outcome se calcule en rejouant l'historique, il est donc
+connaissable bien avant l'échéance. Mesure sur 16802 setups H1 résolus,
+p50 = 0.1h et p75 = 5.2h : la moitié des trades se dénouaient en 6 minutes
+et attendaient pourtant 4 jours pour être enregistrés. Aucun outcome n'est
+modifié par ce changement, seule la latence de feedback.
 
 Source des 5min :
   - **Prod live** : refetch via Twelve Data au moment de la reconcile
@@ -21,6 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -53,13 +64,36 @@ logger = logging.getLogger(__name__)
 # Forward timeout par timeframe — proportionnel à la taille de bougie.
 # H4 : 24 bars × 4h = 96h (4 jours)
 # 1d : 10 bars × 24h = 240h (10 jours), couverture 5min OK depuis 2023-04
-TIMEOUT_HOURS_BY_TF: dict[str, int] = {"4h": 96, "1d": 240}
+TIMEOUT_HOURS_BY_TF: dict[str, int] = {"1h": 96, "4h": 96, "1d": 240}
 TIMEOUT_HOURS_DEFAULT = 96  # H4 fallback pour rows sans timeframe explicite
+
+# "1h" est explicite depuis 2026-08-04 : il représente 98,6% des rows
+# (20726/21012) et tombait silencieusement sur TIMEOUT_HOURS_DEFAULT. La
+# valeur reste 96h — la changer reclasserait en TIMEOUT des milliers de TP/SL
+# historiques et casserait la comparabilité. C'est la *latence* qui était le
+# vrai problème, pas la durée de la fenêtre (cf. EARLY_RECONCILE_HOURS).
 
 # Cutoff SQL = le plus court possible (pour pas exclure du SELECT des setups
 # H4 prêts juste parce que les Daily n'ont pas encore atteint leur 240h).
 # La logique par-TF est appliquée dans la boucle Python.
 TIMEOUT_HOURS_MIN = min(TIMEOUT_HOURS_BY_TF.values())
+
+# Réconciliation anticipée (2026-08-04).
+#
+# Avant : un setup n'était même pas *regardé* avant 96h, alors que l'outcome
+# est calculé en rejouant les bougies — donc parfaitement connaissable bien
+# plus tôt. Mesure sur 16802 setups H1 résolus : p50 = 0.1h, p75 = 5.2h. La
+# moitié des trades se dénouaient en 6 minutes et attendaient 4 jours pour
+# être enregistrés.
+#
+# Maintenant : on tente dès EARLY_RECONCILE_HOURS. Un TP/SL touché est
+# enregistré immédiatement ; un setup encore ouvert reste pending et n'est
+# étiqueté TIMEOUT qu'une fois sa fenêtre réellement écoulée. Aucun outcome
+# n'est modifié — seule la latence de feedback change.
+EARLY_RECONCILE_HOURS = float(os.getenv("SHADOW_EARLY_RECONCILE_HOURS", "2"))
+
+# Fenêtre d'éligibilité du SELECT : la plus courte des deux.
+SELECT_CUTOFF_HOURS = min(EARLY_RECONCILE_HOURS, TIMEOUT_HOURS_MIN)
 
 SPREAD_SLIPPAGE_PCT = 0.0002  # 0.02%, identique au backtest
 
@@ -150,11 +184,21 @@ async def reconcile_pending_setups(
     fetch_fn = fetch_5min_fn or fetch_5min_for_window
 
     now = datetime.now(timezone.utc)
-    cutoff = now - timedelta(hours=TIMEOUT_HOURS_MIN)
+
+    # Sélection en deux temps, pour garantir la progression de la file.
+    #
+    # Une tentative anticipée peut ne rien conclure (trade encore ouvert) et
+    # sera rejouée au run suivant. Si on mélangeait les deux populations dans
+    # une seule requête, un setup destiné au TIMEOUT monopoliserait un slot à
+    # chaque run pendant ~94h. On sert donc d'abord les lignes échues — qui
+    # aboutissent toujours, donc vident la file de façon monotone — et on
+    # n'utilise pour l'anticipation que les slots restants.
+    matured_cutoff = now - timedelta(hours=TIMEOUT_HOURS_MIN)
+    early_cutoff = now - timedelta(hours=SELECT_CUTOFF_HOURS)
 
     with sqlite3.connect(DB_PATH) as c:
         c.row_factory = sqlite3.Row
-        rows = c.execute(
+        rows = list(c.execute(
             """
             SELECT * FROM shadow_setups
              WHERE outcome IS NULL
@@ -162,8 +206,22 @@ async def reconcile_pending_setups(
              ORDER BY bar_timestamp ASC
              LIMIT ?
             """,
-            (cutoff.isoformat(), max_per_run),
-        ).fetchall()
+            (matured_cutoff.isoformat(), max_per_run),
+        ).fetchall())
+
+        spare = max_per_run - len(rows)
+        if spare > 0:
+            rows += list(c.execute(
+                """
+                SELECT * FROM shadow_setups
+                 WHERE outcome IS NULL
+                   AND bar_timestamp <= ?
+                   AND bar_timestamp > ?
+                 ORDER BY bar_timestamp ASC
+                 LIMIT ?
+                """,
+                (early_cutoff.isoformat(), matured_cutoff.isoformat(), spare),
+            ).fetchall())
 
     if not rows:
         # Pas de pending résolvable, mais peut-être des pending pas encore au timeout
@@ -171,9 +229,18 @@ async def reconcile_pending_setups(
             remaining = c.execute(
                 "SELECT COUNT(*) FROM shadow_setups WHERE outcome IS NULL"
             ).fetchone()[0]
-        return {"resolved": 0, "skipped_no_data": 0, "errors": 0, "pending_remaining": remaining}
+        return {
+            "resolved": 0, "skipped_no_data": 0, "errors": 0,
+            "still_open": 0, "pending_remaining": remaining,
+        }
 
-    stats = {"resolved": 0, "skipped_no_data": 0, "errors": 0}
+    stats = {"resolved": 0, "skipped_no_data": 0, "errors": 0, "still_open": 0}
+
+    # Cache des bougies pour ce run. Clé exacte (pair, début, fin) : les
+    # setups d'un même cycle sur une même paire partagent leur bar_timestamp
+    # (typiquement le buy et le sell générés au même instant), donc la même
+    # fenêtre. Évite de refetcher la même série deux fois.
+    candle_cache: dict[tuple[str, str, str], list[Candle]] = {}
 
     for r in rows:
         setup_dict = dict(r)
@@ -185,16 +252,21 @@ async def reconcile_pending_setups(
         tf = setup_dict.get("timeframe", "4h")
         timeout_hours = TIMEOUT_HOURS_BY_TF.get(tf, TIMEOUT_HOURS_DEFAULT)
 
-        # Le SELECT a un cutoff = TIMEOUT_HOURS_MIN, mais une row Daily
-        # peut être renvoyée alors qu'elle n'a pas encore atteint son
-        # timeout 240h. Skip silencieusement, sera rejouée au prochain run.
-        if bar_ts > now - timedelta(hours=timeout_hours):
-            continue
+        # Le setup a-t-il atteint le bout de sa fenêtre ? Si non, on peut
+        # quand même constater un TP/SL déjà touché — mais surtout pas
+        # conclure à un TIMEOUT, le trade ayant encore le temps de se dénouer.
+        matured = bar_ts <= now - timedelta(hours=timeout_hours)
 
-        end_ts = bar_ts + timedelta(hours=timeout_hours)
+        # On ne demande jamais de bougies au-delà de maintenant.
+        end_ts = min(bar_ts + timedelta(hours=timeout_hours), now)
 
+        cache_key = (setup_dict["pair"], bar_ts.isoformat(), end_ts.isoformat())
         try:
-            candles_5min = await fetch_fn(setup_dict["pair"], bar_ts, end_ts)
+            if cache_key in candle_cache:
+                candles_5min = candle_cache[cache_key]
+            else:
+                candles_5min = await fetch_fn(setup_dict["pair"], bar_ts, end_ts)
+                candle_cache[cache_key] = candles_5min
         except Exception as e:
             logger.warning(f"reconcile fetch failed {setup_dict['pair']} {bar_ts}: {e}")
             stats["errors"] += 1
@@ -209,6 +281,14 @@ async def reconcile_pending_setups(
             outcome, exit_time, exit_price = simulate_trade_forward(
                 setup, candles_5min, bar_ts, timeout_hours=timeout_hours,
             )
+            # simulate_trade_forward renvoie TIMEOUT dès qu'il épuise les
+            # bougies sans hit. Sur une fenêtre encore ouverte, ce TIMEOUT
+            # signifie juste « pas encore dénoué » — l'enregistrer figerait un
+            # faux verdict. On laisse pending, le prochain run réessaiera.
+            if outcome == "TIMEOUT" and not matured:
+                stats["still_open"] += 1
+                continue
+
             pips, pct_net = compute_pnl(setup, exit_price, spread_slippage_pct=SPREAD_SLIPPAGE_PCT)
             position_eur = setup_dict["sizing_position_eur"]
             pnl_eur = position_eur * (pct_net / 100.0)
