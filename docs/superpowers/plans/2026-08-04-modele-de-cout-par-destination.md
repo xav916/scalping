@@ -57,7 +57,7 @@ facteur 27 selon la paire, aucun taux unique ne la décrit.
 - Consomme : rien.
 - Produit : `CostModel(proportional_rate_per_leg, fixed_per_order, min_per_order)` et `cost_in_r(entry, stop_loss, model, risk_money=None) -> float | None`.
 
-- [ ] **Step 1: Écrire le test qui échoue**
+- [x] **Step 1: Écrire le test qui échoue**
 
 ```python
 # backend/tests/test_cost_model.py
@@ -103,12 +103,12 @@ def test_un_stop_nul_ne_produit_pas_une_division_par_zero():
                      model=CostModel(proportional_rate_per_leg=0.0005)) is None
 ```
 
-- [ ] **Step 2: Lancer le test pour vérifier qu'il échoue**
+- [x] **Step 2: Lancer le test pour vérifier qu'il échoue**
 
 Run: `python -m pytest backend/tests/test_cost_model.py -q`
 Expected: FAIL avec `ModuleNotFoundError: No module named 'backend.services.cost_model'`
 
-- [ ] **Step 3: Écrire l'implémentation minimale**
+- [x] **Step 3: Écrire l'implémentation minimale**
 
 ```python
 # backend/services/cost_model.py
@@ -186,12 +186,12 @@ def cost_in_r(
     return cout
 ```
 
-- [ ] **Step 4: Lancer le test pour vérifier qu'il passe**
+- [x] **Step 4: Lancer le test pour vérifier qu'il passe**
 
 Run: `python -m pytest backend/tests/test_cost_model.py -q`
 Expected: PASS — 3 tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend/services/cost_model.py backend/tests/test_cost_model.py
@@ -210,7 +210,7 @@ git commit -m "Modele de cout : composante proportionnelle en unites de risque"
 - Consomme : `CostModel`, `cost_in_r` de la tâche 1.
 - Produit : `cost_in_r` gère désormais `fixed_per_order` et `min_per_order`, et exige `risk_money` dès qu'une composante fixe est déclarée.
 
-- [ ] **Step 1: Écrire le test qui échoue**
+- [x] **Step 1: Écrire le test qui échoue**
 
 ```python
 # à ajouter dans backend/tests/test_cost_model.py
@@ -256,12 +256,12 @@ def test_les_deux_composantes_s_additionnent():
     assert cout == pytest.approx(0.3)
 ```
 
-- [ ] **Step 2: Lancer les tests pour vérifier qu'ils échouent**
+- [x] **Step 2: Lancer les tests pour vérifier qu'ils échouent**
 
 Run: `python -m pytest backend/tests/test_cost_model.py -q`
 Expected: FAIL — le coût fixe est ignoré, `test_le_cout_fixe_decroit_quand_le_risque_grandit` retourne `0.0`.
 
-- [ ] **Step 3: Écrire l'implémentation**
+- [x] **Step 3: Écrire l'implémentation**
 
 Remplacer la fin de `cost_in_r` (le bloc `cout = ...` puis `return cout`) par :
 
@@ -284,12 +284,12 @@ Remplacer la fin de `cost_in_r` (le bloc `cout = ...` puis `return cout`) par :
     return cout
 ```
 
-- [ ] **Step 4: Lancer les tests pour vérifier qu'ils passent**
+- [x] **Step 4: Lancer les tests pour vérifier qu'ils passent**
 
 Run: `python -m pytest backend/tests/test_cost_model.py -q`
 Expected: PASS — 7 tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend/services/cost_model.py backend/tests/test_cost_model.py
@@ -308,7 +308,7 @@ git commit -m "Modele de cout : composante fixe, sensible au capital"
 - Consomme : `cost_in_r` des tâches 1 et 2.
 - Produit : `EDGE_COST_MAX_SHARE: float = 0.30` et `exceeds_edge(cost_r: float | None, edge_r: float | None, auto_exec: bool) -> bool`.
 
-- [ ] **Step 1: Écrire le test qui échoue**
+- [x] **Step 1: Écrire le test qui échoue**
 
 ```python
 # à ajouter dans backend/tests/test_cost_model.py
@@ -359,12 +359,12 @@ def test_un_edge_nul_ou_negatif_bloque():
     assert exceeds_edge(0.001, -0.05, auto_exec=True) is True
 ```
 
-- [ ] **Step 2: Lancer les tests pour vérifier qu'ils échouent**
+- [x] **Step 2: Lancer les tests pour vérifier qu'ils échouent**
 
 Run: `python -m pytest backend/tests/test_cost_model.py -q`
 Expected: FAIL avec `ImportError: cannot import name 'exceeds_edge'`
 
-- [ ] **Step 3: Écrire l'implémentation**
+- [x] **Step 3: Écrire l'implémentation**
 
 Ajouter à la fin de `backend/services/cost_model.py` :
 
@@ -401,17 +401,17 @@ def exceeds_edge(
     return cost_r > EDGE_COST_MAX_SHARE * edge_r
 ```
 
-- [ ] **Step 4: Lancer les tests pour vérifier qu'ils passent**
+- [x] **Step 4: Lancer les tests pour vérifier qu'ils passent**
 
 Run: `python -m pytest backend/tests/test_cost_model.py -q`
 Expected: PASS — 13 tests.
 
-- [ ] **Step 5: Lancer la suite complète**
+- [x] **Step 5: Lancer la suite complète**
 
 Run: `python -m pytest backend/tests -q`
 Expected: 1489 passed minimum, 4 skipped.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add backend/services/cost_model.py backend/tests/test_cost_model.py
@@ -430,7 +430,7 @@ git commit -m "Modele de cout : la decision, frais > 30 % de l'edge"
 - Consomme : `CostModel` de la tâche 1.
 - Produit : `BridgeConfig.cost_model: CostModel | None` et `BridgeConfig.expected_edge_r: float | None`, lisibles depuis `resolve_destinations`.
 
-- [ ] **Step 1: Écrire le test qui échoue**
+- [x] **Step 1: Écrire le test qui échoue**
 
 ```python
 # backend/tests/test_dispatch_porte_de_cout.py
@@ -469,12 +469,12 @@ def test_le_defaut_est_inconnu_pas_gratuit():
     assert dest.expected_edge_r is None
 ```
 
-- [ ] **Step 2: Lancer les tests pour vérifier qu'ils échouent**
+- [x] **Step 2: Lancer les tests pour vérifier qu'ils échouent**
 
 Run: `python -m pytest backend/tests/test_dispatch_porte_de_cout.py -q`
 Expected: FAIL — `assert 'cost_model' in champs`
 
-- [ ] **Step 3: Ajouter les deux champs**
+- [x] **Step 3: Ajouter les deux champs**
 
 Dans `backend/services/bridge_destinations.py`, à la fin des champs de `BridgeConfig` (juste après `leverage: int | None = None`) :
 
@@ -497,12 +497,12 @@ Et l'import en tête de fichier :
 from backend.services.cost_model import CostModel
 ```
 
-- [ ] **Step 4: Lancer les tests pour vérifier qu'ils passent**
+- [x] **Step 4: Lancer les tests pour vérifier qu'ils passent**
 
 Run: `python -m pytest backend/tests/test_dispatch_porte_de_cout.py -q`
 Expected: PASS — 2 tests.
 
-- [ ] **Step 5: Renseigner les destinations réelles**
+- [x] **Step 5: Renseigner les destinations réelles**
 
 **`_admin_live_destination()` et `_admin_legacy_destination()` : ne rien
 déclarer.** Laisser `cost_model` et `expected_edge_r` à leur défaut `None`.
@@ -546,7 +546,7 @@ Dans `_admin_binance_destination()`, laisser les deux à leur défaut `None` :
 la destination est désactivée depuis le 2026-08-02, et déclarer un coût
 non mesuré serait inventer un chiffre.
 
-- [ ] **Step 6: Écrire le test des valeurs réelles**
+- [x] **Step 6: Écrire le test des valeurs réelles**
 
 ```python
 # à ajouter dans backend/tests/test_dispatch_porte_de_cout.py
@@ -581,12 +581,12 @@ def test_mt5_reste_non_declare_donc_inchange():
     assert dest.expected_edge_r is None
 ```
 
-- [ ] **Step 7: Lancer la suite complète**
+- [x] **Step 7: Lancer la suite complète**
 
 Run: `python -m pytest backend/tests -q`
 Expected: PASS, aucun test existant cassé.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add backend/services/bridge_destinations.py backend/tests/test_dispatch_porte_de_cout.py
@@ -612,7 +612,7 @@ n'atteindrait jamais la porte de coût. La logique de coût est donc extraite
 dans `_cost_rejection`, testable sans base, sans réseau et sans horloge ; un
 test distinct vérifie qu'elle est bien appelée.
 
-- [ ] **Step 1: Écrire le test qui échoue**
+- [x] **Step 1: Écrire le test qui échoue**
 
 ```python
 # à ajouter dans backend/tests/test_dispatch_porte_de_cout.py
@@ -727,12 +727,12 @@ def test_la_porte_n_est_pas_rendue_inatteignable():
     assert "return None" not in avant_porte
 ```
 
-- [ ] **Step 2: Lancer les tests pour vérifier qu'ils échouent**
+- [x] **Step 2: Lancer les tests pour vérifier qu'ils échouent**
 
 Run: `python -m pytest backend/tests/test_dispatch_porte_de_cout.py -q`
 Expected: FAIL avec `AttributeError: module 'backend.services.mt5_bridge' has no attribute '_cost_rejection'`
 
-- [ ] **Step 3: Écrire la fonction**
+- [x] **Step 3: Écrire la fonction**
 
 Dans `backend/services/mt5_bridge.py`, juste avant `def _check_rejection`
 (ligne 214) :
@@ -779,7 +779,7 @@ def _cost_rejection(setup, dest) -> str | None:
     return None
 ```
 
-- [ ] **Step 4: Brancher la porte**
+- [x] **Step 4: Brancher la porte**
 
 Dans `_check_rejection`, **tout à la fin de la fonction**, juste avant son
 `return None` final — celui qui suit le filtre `correlated_exposure`.
@@ -809,12 +809,12 @@ en double au-dessus, sinon la porte devient inatteignable. C'est le mode de
 défaillance à surveiller ici : le code compile, les tests unitaires de
 `_cost_rejection` passent, et la porte ne s'exécute jamais.
 
-- [ ] **Step 5: Lancer les tests pour vérifier qu'ils passent**
+- [x] **Step 5: Lancer les tests pour vérifier qu'ils passent**
 
 Run: `python -m pytest backend/tests/test_dispatch_porte_de_cout.py -q`
 Expected: PASS — 11 tests.
 
-- [ ] **Step 6: Vérifier par mutation**
+- [x] **Step 6: Vérifier par mutation**
 
 Commenter temporairement l'appel `cost_reason = _cost_rejection(setup, dest)`
 dans `_check_rejection` et relancer : `test_la_porte_est_reellement_appelee_par_le_dispatch`
@@ -822,12 +822,12 @@ doit échouer. Puis remettre l'appel, commenter `return "fees_exceed_edge"`
 dans `_cost_rejection` : `test_la_porte_refuse_un_signal_trop_cher` doit
 échouer. Un test qui passe dans les deux cas ne teste rien. Tout rétablir.
 
-- [ ] **Step 7: Lancer la suite complète**
+- [x] **Step 7: Lancer la suite complète**
 
 Run: `python -m pytest backend/tests -q`
 Expected: PASS, aucun test existant cassé.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add backend/services/mt5_bridge.py backend/tests/test_dispatch_porte_de_cout.py
@@ -845,7 +845,7 @@ git commit -m "Porte de cout au dispatch : frais > 30 % de l'edge, refus trace"
 - Consomme : tout ce qui précède.
 - Produit : la preuve que `KRAKEN_BRIDGE_ENABLED=true` ne suffit plus à faire trader la crypto à perte.
 
-- [ ] **Step 1: Pousser et déployer**
+- [x] **Step 1: Pousser et déployer**
 
 ```bash
 git push origin main
@@ -855,7 +855,7 @@ bash deploy-v2.sh
 Le push est obligatoire avant le déploiement : `deploy-v2.sh` fait un
 `git pull` côté serveur, donc déployer sans pousser reconstruit à l'identique.
 
-- [ ] **Step 2: Réactiver Kraken pour éprouver la porte**
+- [x] **Step 2: Réactiver Kraken pour éprouver la porte**
 
 ```bash
 ssh -i scalping-key.pem ec2-user@13.63.77.180 \
@@ -867,7 +867,7 @@ ssh -i scalping-key.pem ec2-user@13.63.77.180 \
 C'est le test décisif : la crypto est rallumée **exprès**, pour vérifier
 qu'elle ne trade pas malgré tout.
 
-- [ ] **Step 3: Observer les refus pendant une heure**
+- [x] **Step 3: Observer les refus pendant une heure**
 
 ```bash
 ssh -i scalping-key.pem ec2-user@13.63.77.180 \
@@ -890,7 +890,7 @@ espace, alors que certaines colonnes sont en ISO avec un `T`. Si le compte
 revient à zéro, comparer sur `substr(created_at, 1, 10)` avant de conclure
 que la porte ne fonctionne pas.
 
-- [ ] **Step 4: Vérifier qu'aucun ordre crypto n'est parti**
+- [x] **Step 4: Vérifier qu'aucun ordre crypto n'est parti**
 
 ```bash
 ssh -i scalping-key.pem ec2-user@13.63.77.180 \
@@ -905,7 +905,7 @@ print(c.execute('''SELECT COUNT(*) FROM mt5_pushes
 
 Attendu : `(0,)`.
 
-- [ ] **Step 5: Vérifier que MT5 n'est pas affecté**
+- [x] **Step 5: Vérifier que MT5 n'est pas affecté**
 
 ```bash
 ssh -i scalping-key.pem ec2-user@13.63.77.180 \
@@ -924,7 +924,7 @@ Attendu : **aucune** ligne `fees_exceed_edge` sur `admin_live`. Si MT5 se
 met à refuser, le coût déclaré ou l'edge déclaré est faux — revenir à la
 tâche 4 avant toute autre chose.
 
-- [ ] **Step 6: Consigner le résultat**
+- [x] **Step 6: Consigner le résultat**
 
 Écrire le verdict dans la mémoire projet : la porte tient, ou elle ne tient
 pas et pourquoi. Si elle tient, `KRAKEN_BRIDGE_ENABLED` peut rester à `true`
