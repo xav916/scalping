@@ -219,6 +219,43 @@ def _get_current_balance_usd() -> float | None:
         return None
 
 
+FICHIER_REFERENCE = os.getenv(
+    "KRAKEN_START_OF_DAY_FILE", "/opt/kraken-bridge/state/start_of_day.json"
+)
+
+
+def _charger_reference() -> float | None:
+    """Solde de référence du jour, s'il a déjà été posé aujourd'hui.
+
+    ``None`` si le fichier est absent, illisible, ou daté d'un autre jour —
+    auquel cas l'appelant pose une référence neuve. Toute erreur est
+    silencieuse : la protection ne doit pas empêcher le bridge de démarrer,
+    et l'absence de référence est déjà le comportement d'origine.
+    """
+    try:
+        import json
+        with open(FICHIER_REFERENCE, encoding="utf-8") as f:
+            d = json.load(f)
+        if d.get("date") != date.today().isoformat():
+            return None
+        v = float(d.get("balance") or 0)
+        return v if v > 0 else None
+    except Exception:
+        return None
+
+
+def _ecrire_reference(balance: float) -> None:
+    """Fige le solde de référence du jour pour survivre à un redémarrage."""
+    try:
+        import json
+        os.makedirs(os.path.dirname(FICHIER_REFERENCE), exist_ok=True)
+        with open(FICHIER_REFERENCE, "w", encoding="utf-8") as f:
+            json.dump({"date": date.today().isoformat(),
+                       "balance": round(float(balance), 4)}, f)
+    except Exception as e:
+        logger.warning(f"reference de debut de journee non persistee : {e}")
+
+
 def _refresh_start_of_day() -> None:
     """Miroir du bridge MT5/Binance : refresh au changement de jour + anti-drift."""
     global _start_of_day_balance, _start_of_day_date
@@ -227,8 +264,22 @@ def _refresh_start_of_day() -> None:
     if current is None:
         return
     if _start_of_day_date != today:
+        # Relire le disque AVANT de rebaser : la référence ne vivait qu'en
+        # mémoire, si bien qu'un simple redémarrage effaçait la perte déjà
+        # encaissée dans la journée et rouvrait 3 % de marge de perte.
+        # Constaté le 2026-08-04 : un redéploiement du bridge à 17h48 a
+        # reposé la référence juste avant que le compte perde 4,3 %.
+        persiste = _charger_reference()
+        if persiste is not None:
+            _start_of_day_balance, _start_of_day_date = persiste, today
+            logger.info(
+                f"Kraken start-of-day balance relue sur disque = "
+                f"{_start_of_day_balance:.2f} USD (date={today.isoformat()})"
+            )
+            return
         _start_of_day_balance = current
         _start_of_day_date = today
+        _ecrire_reference(current)
         logger.info(
             f"Kraken start-of-day balance = {_start_of_day_balance:.2f} USD "
             f"(date={today.isoformat()})"
@@ -242,6 +293,7 @@ def _refresh_start_of_day() -> None:
                 f"actual={current:.2f} ratio={ratio:.2f} - resync"
             )
             _start_of_day_balance = current
+            _ecrire_reference(current)
 
 
 def _check_daily_drawdown() -> tuple[bool, str]:
