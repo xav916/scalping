@@ -711,6 +711,20 @@ def test_la_porte_est_reellement_appelee_par_le_dispatch():
 
     src = inspect.getsource(mt5_bridge._check_rejection)
     assert "_cost_rejection(" in src
+
+
+def test_la_porte_n_est_pas_rendue_inatteignable():
+    """La porte est en dernier : aucun `return None` ne doit la précéder.
+
+    Mode de défaillance visé : on ajoute le bloc à la fin sans supprimer le
+    `return None` qui s'y trouvait déjà. Le code compile, les tests unitaires
+    de `_cost_rejection` passent, et la porte ne s'exécute jamais.
+    """
+    from backend.services import mt5_bridge
+
+    src = inspect.getsource(mt5_bridge._check_rejection)
+    avant_porte = src.split("_cost_rejection(")[0]
+    assert "return None" not in avant_porte
 ```
 
 - [ ] **Step 2: Lancer les tests pour vérifier qu'ils échouent**
@@ -767,22 +781,38 @@ def _cost_rejection(setup, dest) -> str | None:
 
 - [ ] **Step 4: Brancher la porte**
 
-Dans `_check_rejection`, immédiatement après le bloc `pattern_not_allowed`
-(qui se termine par `return "pattern_not_allowed"`) :
+Dans `_check_rejection`, **tout à la fin de la fonction**, juste avant son
+`return None` final — celui qui suit le filtre `correlated_exposure`.
+
+⚠️ Emplacement corrigé le 2026-08-04 après vérification du code réel. Une
+version antérieure de ce plan disait « juste après le bloc
+`pattern_not_allowed` », ce qui contredisait sa propre justification : six
+filtres bon marché suivent ce bloc — `direction_blocked_for_pair`,
+`direction_blocked_global`, `hour_in_avoid_list`, `max_positions_per_pair`,
+`cooldown_symbole`, `correlated_exposure`. La porte de coût s'y serait
+exécutée **avant** eux, sollicitant le sizing pour des signaux que le filtre
+suivant allait écarter de toute façon.
 
 ```python
-    # Porte de coût (2026-08-04). Placée APRÈS les filtres bon marché
-    # (confidence, pattern) : elle appelle le sizing, qui peut interroger le
-    # solde du bridge. Inutile de payer ce coût pour un signal déjà écarté.
+    # Porte de coût (2026-08-04). Placée en DERNIER, après tous les filtres
+    # bon marché : elle appelle le sizing, qui peut interroger le solde du
+    # bridge par HTTP. Inutile de payer ce coût pour un signal qu'un filtre
+    # gratuit allait écarter.
     cost_reason = _cost_rejection(setup, dest)
     if cost_reason:
         return cost_reason
+    return None
 ```
+
+Le `return None` existant est remplacé par ce bloc — il ne doit pas rester
+en double au-dessus, sinon la porte devient inatteignable. C'est le mode de
+défaillance à surveiller ici : le code compile, les tests unitaires de
+`_cost_rejection` passent, et la porte ne s'exécute jamais.
 
 - [ ] **Step 5: Lancer les tests pour vérifier qu'ils passent**
 
 Run: `python -m pytest backend/tests/test_dispatch_porte_de_cout.py -q`
-Expected: PASS — 10 tests.
+Expected: PASS — 11 tests.
 
 - [ ] **Step 6: Vérifier par mutation**
 
