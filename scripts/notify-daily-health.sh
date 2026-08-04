@@ -55,6 +55,9 @@ sonder "Kraken"        KRAKEN_BRIDGE_URL          KRAKEN_BRIDGE_API_KEY         
 sonder "Kraken Spot"   KRAKEN_SPOT_BRIDGE_URL     KRAKEN_SPOT_BRIDGE_API_KEY     "X-Bridge-Key"
 
 # ── 2. Dispatch : qui pousse, qui se tait ────────────────────────────
+# Une destination muette dont les rejets sont majoritairement
+# `fees_exceed_edge` est coupee par conception (porte de cout, 2026-08-04) :
+# elle est affichee en information, pas en alerte.
 SINCE=$(date -u -d "-${FENETRE_H} hours" '+%Y-%m-%dT%H:%M:%S')
 SINCE_J=$(date -u -d "-${FENETRE_H} hours" '+%Y-%m-%d')
 
@@ -64,30 +67,47 @@ import json, os, sqlite3
 db, since, since_j = os.environ["DB"], os.environ["SINCE"], os.environ["SINCE_J"]
 c = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=30)
 
-pousses, bloques = {}, {}
+pousses, bloques, bloques_porte_cout = {}, {}, {}
 for d, n in c.execute(
         "SELECT destination_id, SUM(CASE WHEN ok=1 THEN 1 ELSE 0 END) "
         "  FROM mt5_pushes WHERE pushed_at >= ? GROUP BY 1", (since,)):
     if d:
         pousses[d] = n or 0
-for d, n in c.execute(
-        "SELECT destination_id, COUNT(*) FROM signal_rejections "
-        " WHERE created_at >= ? GROUP BY 1", (since,)):
+for d, code, n in c.execute(
+        "SELECT destination_id, reason_code, COUNT(*) FROM signal_rejections "
+        " WHERE created_at >= ? GROUP BY 1, 2", (since,)):
     if d:
         bloques[d] = bloques.get(d, 0) + n
+        if code == "fees_exceed_edge":
+            bloques_porte_cout[d] = bloques_porte_cout.get(d, 0) + n
 try:
-    for d, n in c.execute(
-            "SELECT destination_id, SUM(count) FROM silent_drop_counters "
-            " WHERE day >= ? GROUP BY 1", (since_j,)):
+    for d, code, n in c.execute(
+            "SELECT destination_id, reason_code, SUM(count) FROM silent_drop_counters "
+            " WHERE day >= ? GROUP BY 1, 2", (since_j,)):
         if d:
             bloques[d] = bloques.get(d, 0) + (n or 0)
+            if code == "fees_exceed_edge":
+                bloques_porte_cout[d] = bloques_porte_cout.get(d, 0) + (n or 0)
 except sqlite3.OperationalError:
     pass
 
 vues = sorted(set(pousses) | set(bloques))
-muettes = [d for d in vues if not pousses.get(d)]
+muettes_toutes = [d for d in vues if not pousses.get(d)]
+# Une destination coupee par conception par la porte de cout (majorite des
+# rejets = fees_exceed_edge) n'est pas une panne : elle est affichee en
+# information, sans declencher l'alerte.
+muettes_porte_cout = [
+    d for d in muettes_toutes
+    if bloques.get(d) and bloques_porte_cout.get(d, 0) > bloques[d] / 2
+]
+muettes = [d for d in muettes_toutes if d not in muettes_porte_cout]
 actives = [(d, pousses[d]) for d in vues if pousses.get(d)]
-print(json.dumps({"muettes": muettes, "actives": actives, "bloques": bloques}))
+print(json.dumps({
+    "muettes": muettes,
+    "muettes_porte_cout": muettes_porte_cout,
+    "actives": actives,
+    "bloques": bloques,
+}))
 PY
 )
 
@@ -120,6 +140,7 @@ import json, os
 d = json.loads(os.environ.get("DISPATCH") or "{}")
 alertes = [a for a in os.environ.get("ALERTES", "").split("\\n") if a.strip()]
 muettes, actives, bloques = d.get("muettes", []), d.get("actives", []), d.get("bloques", {})
+muettes_porte_cout = d.get("muettes_porte_cout", [])
 
 for m in muettes:
     alertes.append(f"• {m} n'a rien exécuté ({bloques.get(m, 0)} tentatives bloquées)")
@@ -144,7 +165,9 @@ else:
     lignes.append("  ⚠️ aucun ordre passé, toutes destinations confondues")
 for m in muettes:
     lignes.append(f"  ❌ {m} — 0 ordre, {bloques.get(m, 0)} bloqués")
-if not actives and not muettes:
+for m in muettes_porte_cout:
+    lignes.append(f"  ℹ️ {m} — arrêtée par la porte de coût ({bloques.get(m, 0)} refus)")
+if not actives and not muettes and not muettes_porte_cout:
     lignes.append("  ⚠️ aucune destination n'apparaît dans les journaux")
 lignes.append("")
 lignes.append("<b>Crons</b>" + os.environ.get("CRONS", ""))
