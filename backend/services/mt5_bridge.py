@@ -83,6 +83,7 @@ from config.settings import (
     MT5_BRIDGE_BLOCKED_PAIRS,
     MT5_BRIDGE_AVOID_HOURS_UTC,
     MT5_BRIDGE_ALLOWED_PATTERNS,
+    SILENT_DROPS_LOG_ENABLED,
     TRADING_CAPITAL,
     RISK_PER_TRADE_PCT,
     asset_class_for,
@@ -533,12 +534,25 @@ async def _push_to_destination(setup, dest) -> None:
     fonction est l'évolution V2 du corps historique de ``send_setup`` —
     cf. `docs/superpowers/specs/2026-04-28-multi-tenant-bridge-routing.md`.
     """
-    from backend.services.rejection_service import record_rejection
+    from backend.services.rejection_service import record_rejection, record_silent_drop
 
     rejection = _check_rejection(setup, dest)
     if rejection is not None:
-        # Les reason codes privés (commencent par "_") ne sont pas loggés
-        if not rejection.startswith("_"):
+        # Les reason codes privés (commencent par "_") n'ont longtemps laissé
+        # AUCUNE trace : pas de push, pas de rejet, rien. C'est ainsi que
+        # `_not_admitted` a bloqué 85 % des signaux Kraken et que `_not_a_star`
+        # a empêché les Voies A/B de trader une seule action, sans que rien ne
+        # l'indique. On les compte désormais, agrégés par jour pour ne pas
+        # noyer la table — cf. `record_silent_drop`.
+        if rejection.startswith("_"):
+            if SILENT_DROPS_LOG_ENABLED:
+                record_silent_drop(
+                    pair=setup.pair,
+                    direction=_direction_value(setup),
+                    reason_code=rejection,
+                    destination_id=dest.destination_id,
+                )
+        else:
             # Inclut signal_pattern dans details pour les rejections
             # kill_switch_pair_paused : le watchdog stop_loss_alerts s'en
             # sert pour détecter si V1 essaie encore le pattern défaillant

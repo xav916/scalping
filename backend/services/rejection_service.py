@@ -252,3 +252,144 @@ def get_rejections(
         "since": since,
         "until": until,
     }
+
+
+# ── Drops silencieux : les reason codes privés (2026-08-04) ────────────────
+#
+# Les codes commençant par "_" ne produisaient AUCUNE trace. Or c'est
+# `_not_admitted` qui bloquait 85 % des signaux Kraken, et `_not_a_star` qui
+# a empêché les Voies A/B de trader une seule action pendant leurs premiers
+# jours. Dans les deux cas : pas de push, pas de rejet, rien à voir dans les
+# logs. Une destination pouvait rester morte des semaines en silence.
+#
+# ⚠️ On ne les enregistre PAS ligne par ligne. Ces codes se déclenchent sur la
+# grande majorité des tentatives de dispatch (~30 000/jour, toutes
+# destinations confondues) et noieraient la table. Une ligne individuelle
+# n'apporte d'ailleurs rien de plus que le tuple lui-même : on agrège par
+# jour dans un compteur, ce qui répond exactement à la question posée —
+# « cette destination est-elle silencieusement morte ? ».
+
+SILENT_REASON_LABELS_FR = {
+    "_not_configured": "Bridge non configuré",
+    "_user_excluded_pair": "Paire exclue pour ce user",
+    "_not_admitted": "Paire non admise à l'auto-exec",
+    "_not_a_star": "Hors portefeuille stars (fallback legacy)",
+}
+
+
+def _ensure_silent_schema() -> None:
+    with sqlite3.connect(_db_path()) as c:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS silent_drop_counters (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                day TEXT NOT NULL,
+                destination_id TEXT,
+                pair TEXT,
+                direction TEXT,
+                reason_code TEXT NOT NULL,
+                count INTEGER NOT NULL DEFAULT 0,
+                first_at TEXT,
+                last_at TEXT,
+                UNIQUE (day, destination_id, pair, direction, reason_code)
+            )
+        """)
+        c.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sdc_day ON silent_drop_counters(day)"
+        )
+
+
+def record_silent_drop(
+    pair: str | None,
+    direction: str | None,
+    reason_code: str,
+    destination_id: str | None = None,
+) -> None:
+    """Incrémente le compteur du jour pour ce drop silencieux.
+
+    ⚠️ Le compteur mesure des **tentatives de dispatch**, pas des idées de
+    trade distinctes. Le radar réémet le même setup à chaque cycle (~6 min)
+    tant que le bar n'a pas changé, donc un même signal compte plusieurs
+    dizaines de fois. À lire comme un signal de vie, pas comme un volume.
+
+    Best-effort : toute erreur est avalée, comme `record_rejection`.
+    """
+    try:
+        _ensure_silent_schema()
+        now = datetime.now(timezone.utc).isoformat()
+        with sqlite3.connect(_db_path()) as c:
+            c.execute(
+                """
+                INSERT INTO silent_drop_counters
+                    (day, destination_id, pair, direction, reason_code,
+                     count, first_at, last_at)
+                VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+                ON CONFLICT (day, destination_id, pair, direction, reason_code)
+                DO UPDATE SET count = count + 1, last_at = excluded.last_at
+                """,
+                (now[:10], destination_id, pair, direction, reason_code, now, now),
+            )
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception("record_silent_drop failed (silencé)")
+
+
+def get_silent_drops(since_day: str, until_day: str) -> dict[str, Any]:
+    """Agrège les drops silencieux sur une plage de jours (bornes incluses).
+
+    Retourne ``{"total", "by_destination", "by_reason", "since", "until"}``
+    où ``by_destination`` porte, par destination, le volume et le motif
+    dominant — de quoi repérer d'un coup d'œil une destination qui ne laisse
+    rien passer.
+    """
+    _ensure_silent_schema()
+    with sqlite3.connect(_db_path()) as c:
+        c.row_factory = sqlite3.Row
+        rows = c.execute(
+            "SELECT destination_id, pair, reason_code, count, last_at "
+            "  FROM silent_drop_counters WHERE day >= ? AND day <= ?",
+            (since_day, until_day),
+        ).fetchall()
+
+    by_dest: dict[str, dict[str, Any]] = {}
+    by_reason: dict[str, int] = {}
+    total = 0
+    for r in rows:
+        n = r["count"] or 0
+        total += n
+        dest = r["destination_id"] or "(inconnu)"
+        e = by_dest.setdefault(dest, {"count": 0, "reasons": {}, "pairs": {}, "last_at": None})
+        e["count"] += n
+        e["reasons"][r["reason_code"]] = e["reasons"].get(r["reason_code"], 0) + n
+        if r["pair"]:
+            e["pairs"][r["pair"]] = e["pairs"].get(r["pair"], 0) + n
+        if r["last_at"] and (e["last_at"] is None or r["last_at"] > e["last_at"]):
+            e["last_at"] = r["last_at"]
+        by_reason[r["reason_code"]] = by_reason.get(r["reason_code"], 0) + n
+
+    by_destination = []
+    for dest, v in sorted(by_dest.items(), key=lambda kv: -kv[1]["count"]):
+        top = max(v["reasons"].items(), key=lambda kv: kv[1])[0]
+        by_destination.append({
+            "destination_id": dest,
+            "count": v["count"],
+            "top_reason": top,
+            "top_reason_label_fr": SILENT_REASON_LABELS_FR.get(top, top),
+            "reasons": v["reasons"],
+            "pairs": v["pairs"],
+            "last_at": v["last_at"],
+        })
+
+    return {
+        "total": total,
+        "by_destination": by_destination,
+        "by_reason": [
+            {
+                "reason_code": k,
+                "label_fr": SILENT_REASON_LABELS_FR.get(k, k),
+                "count": v,
+            }
+            for k, v in sorted(by_reason.items(), key=lambda kv: -kv[1])
+        ],
+        "since": since_day,
+        "until": until_day,
+    }

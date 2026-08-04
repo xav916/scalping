@@ -400,6 +400,20 @@ for _e in _blocked_raw.split(","):
         _pair, _dir = _e.rsplit(":", 1)
         MT5_BRIDGE_BLOCKED_DIRECTIONS.add((_pair.strip().upper(), _dir.strip().lower()))
 
+# Journalisation des drops silencieux (2026-08-04).
+#
+# Les reason codes privés (préfixe "_") ne laissaient aucune trace : ni push,
+# ni rejet, rien. `_not_admitted` bloquait ainsi 85 % des signaux Kraken et
+# `_not_a_star` a empêché les Voies A/B de trader une seule action, sans que
+# rien ne l'indique. Une destination pouvait rester morte des semaines.
+#
+# Ils sont désormais comptés, **agrégés par jour** dans `silent_drop_counters`
+# (~200 lignes/jour) plutôt qu'une ligne par événement (~30 000/jour).
+# Le drapeau permet de couper l'écriture sans redéploiement en cas d'incident.
+SILENT_DROPS_LOG_ENABLED = os.getenv(
+    "SILENT_DROPS_LOG_ENABLED", "true"
+).strip().lower() in ("1", "true", "yes")
+
 # Barème de confiance v2 (2026-08-04). Voir analysis_engine._factors_v2.
 #
 # v1 comportait 50 points constants sur 100 et comptait la volatilité deux
