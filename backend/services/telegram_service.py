@@ -423,6 +423,11 @@ _PATTERN_EXPLAIN_FR: dict[str, str] = {
     "range_bounce_down": "rejet sur résistance — le prix échoue à casser un plafond dans un range",
     "pin_bar_up": "pin bar haussière — rejet visible du bas, signal de retournement court terme",
     "pin_bar_down": "pin bar baissière — rejet visible du haut, signal de retournement court terme",
+    # Ajoutés le 2026-08-04 : sans libellé, le repli affichait la valeur brute
+    # `mean_reversion_up`, dont les underscores cassaient le Markdown et
+    # faisaient perdre TOUT le message.
+    "mean_reversion_up": "retour à la moyenne haussier — le prix s'est trop éloigné vers le bas et revient",
+    "mean_reversion_down": "retour à la moyenne baissier — le prix s'est trop éloigné vers le haut et revient",
 }
 
 
@@ -616,7 +621,12 @@ def _format_setup(setup) -> str:
     if pattern_obj is not None:
         ptype = getattr(pattern_obj, "pattern", None)
         pattern_value = ptype.value if hasattr(ptype, "value") else str(ptype or "")
-    pattern_explain = _PATTERN_EXPLAIN_FR.get(pattern_value, pattern_value or "signal technique détecté")
+    # md_safe sur le repli : un pattern ajouté à l'enum sans libellé FR ici
+    # afficherait sa valeur brute (`range_bounce_up`), dont les underscores
+    # casseraient le message entier.
+    pattern_explain = _PATTERN_EXPLAIN_FR.get(
+        pattern_value, md_safe(pattern_value) or "signal technique détecté"
+    )
 
     risk = float(getattr(setup, "risk_pips", 0) or 0)
     reward_1 = float(getattr(setup, "reward_pips_1", 0) or 0)
@@ -677,7 +687,8 @@ def _format_setup(setup) -> str:
 
     verdict_summary = getattr(setup, "verdict_summary", None)
     if verdict_summary:
-        lines.append(f"_{verdict_summary}_")
+        # Texte libre du moteur de scoring, interpolé dans une entité italique
+        lines.append(f"_{md_safe(verdict_summary)}_")
 
     lines.extend([
         "",
@@ -1245,6 +1256,34 @@ async def send_veto_alert(pair: str, direction: str, rules_matched: list[str], r
         logger.warning(f"send_veto_alert error: {e}")
 
 
+
+# Caractères actifs du Markdown legacy de Telegram (parse_mode="Markdown").
+# Un seul d'entre eux, non apparié, dans un texte libre interpolé à
+# l'intérieur d'une entité (`*gras*`, `_italique_`) fait échouer TOUT le
+# message avec un 400 « can't parse entities ».
+_MD_LEGACY_ACTIFS = {"_": "-", "*": "·", "`": "'", "[": "(", "]": ")"}
+
+
+def md_safe(text: str | None) -> str:
+    """Neutralise les caractères Markdown actifs d'un texte libre.
+
+    ⚠️ **Corrigé le 2026-08-04.** Les raisons de transition d'admission sont
+    interpolées dans `_Raison : ...._` — or elles contiennent presque toujours
+    un underscore : `pnl_pct`, `_not_admitted`, `auto_demote`,
+    `VALID_DESTINATIONS`. Telegram renvoyait alors un 400, l'exception était
+    avalée par le `try/except` best-effort, et **la notification utilisateur
+    était perdue en silence**.
+
+    Concrètement, le message qui a rétrogradé trois paires equity le
+    2026-08-04 (`auto-demote: pnl_pct -103.71`) n'est jamais arrivé.
+
+    On substitue plutôt qu'on échappe : l'échappement par antislash du
+    Markdown legacy est notoirement peu fiable à l'intérieur d'une entité.
+    """
+    if not text:
+        return ""
+    return "".join(_MD_LEGACY_ACTIFS.get(c, c) for c in str(text))
+
 async def send_pac_transition_user(pair: str, direction: str | None, from_state: str | None, to_state: str, reason: str) -> None:
     """Push une notif user d'une transition PAC (en plus de la notif infra existante).
 
@@ -1278,7 +1317,7 @@ async def send_pac_transition_user(pair: str, direction: str | None, from_state:
         elif direction == "sell":
             dir_str = " (sens vente)"
         new_state_fr = _STATE_FR.get(to_state, to_state)
-        reason_short = (reason or "")[:140]
+        reason_short = md_safe(reason)[:140]
 
         if to_state == "AUTO_EXEC":
             effect_line = "Effet : le radar prendra les ordres seul sur cette paire quand un signal apparaît."
