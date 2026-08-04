@@ -150,6 +150,14 @@ class TradeSetup(BaseModel):
     verdict_warnings: list[str] = []  # Facteurs defavorables
     verdict_blockers: list[str] = []  # Facteurs bloquants
     asset_class: str = "forex"  # "forex" | "metal" | "crypto" | "equity_index" | "energy"
+    # Horizon d'analyse : sur quelles bougies ce setup a été détecté
+    # ("5min", "4h", "1d"…). Estampillé à la source par chaque générateur,
+    # lu par la porte d'horizon du dispatch.
+    #
+    # ⚠️ `None` (horizon inconnu) et `"5min"` sont deux états distincts. Un
+    # défaut à `"5min"` ferait passer un setup non étiqueté pour du scalping
+    # et le router vers de l'argent réel.
+    horizon: str | None = None
 
 
 class ScalpingSignal(BaseModel):

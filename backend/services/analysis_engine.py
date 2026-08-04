@@ -22,6 +22,7 @@ from backend.models.schemas import (
 )
 from backend.services import macro_context_service, macro_scoring
 from config.settings import (
+    CANDLE_INTERVAL,
     EARNINGS_VETO_ENABLED,
     GEOPOLITICAL_VETO_ENABLED,
     MACRO_SCORING_ENABLED,
@@ -618,6 +619,17 @@ def enrich_trade_setup(
     events: list[EconomicEvent],
 ) -> TradeSetup:
     """Enrichit un trade setup avec score de confiance, explications et money management."""
+    # Horizon d'analyse (2026-08-05). Estampillé ici parce que c'est le seul
+    # point traversé par tous les setups V1, quel que soit leur chemin.
+    #
+    # ⚠️ **Seulement si le champ est vide.** Le flux V2 long-horizon traverse
+    # aussi cette fonction et pose son propre `4h` / `1d` en amont. Estampiller
+    # inconditionnellement l'écraserait par le CANDLE_INTERVAL global, et le
+    # routage enverrait des setups 4h sur la route scalping.
+    if not getattr(setup, "horizon", None):
+        from backend.services.horizon import normalize as _normalize_horizon
+        setup.horizon = _normalize_horizon(CANDLE_INTERVAL)
+
     # Stamp asset class if missing (default "forex")
     if not getattr(setup, "asset_class", None) or setup.asset_class == "forex":
         setup.asset_class = asset_class_for(setup.pair)

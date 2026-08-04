@@ -475,6 +475,12 @@ async def run_shadow_log(
             if setup.direction != TradeDirection.BUY:
                 continue
 
+            # Horizon d'analyse : ce setup a été détecté sur des bougies `tf`,
+            # pas sur le CANDLE_INTERVAL global. Posé AVANT tout enrichissement
+            # pour qu'`enrich_trade_setup` ne l'écrase pas.
+            from backend.services.horizon import normalize as _normalize_horizon
+            setup.horizon = _normalize_horizon(tf)
+
             # Snapshot macro features pour analyse post-hoc
             macro_features = None
             try:
