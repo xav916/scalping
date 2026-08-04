@@ -296,6 +296,16 @@ export interface RejectionByReasonHour {
   count: number;
 }
 
+/** Ventilation par destination (2026-08-04). `destination_id` vaut
+ *  "(inconnu)" pour les lignes antérieures, qui n'ont pas ce champ. */
+export interface RejectionByDestination {
+  destination_id: string;
+  count: number;
+  top_reason: string;
+  top_reason_label_fr: string;
+  reasons: Record<string, number>;
+}
+
 export interface ExposurePoint {
   bucket_time: string;
   capital_at_risk: number;
@@ -335,6 +345,8 @@ export interface RejectionsReport {
   by_reason: RejectionByReason[];
   by_hour_utc: RejectionByHour[];
   by_reason_hour: RejectionByReasonHour[];
+  /** Optionnel : absent des réponses servies par un backend antérieur au 2026-08-04. */
+  by_destination?: RejectionByDestination[];
   since: string;
   until: string;
 }

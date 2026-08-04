@@ -74,6 +74,19 @@ def _ensure_schema() -> None:
             c.execute(
                 "CREATE INDEX IF NOT EXISTS idx_sr_user_id ON signal_rejections(user_id)"
             )
+        # destination_id (2026-08-04) : `user_id` vaut None pour TOUTES les
+        # destinations admin, donc rien ne distinguait admin_live d'admin_kraken
+        # dans le log. Deux destinations ont passé des semaines à ne rien
+        # exécuter sans que rien ne l'indique — les Voies A/B, puis Kraken, dont
+        # 34 des 40 derniers signaux crypto tombaient en `_not_admitted` sans
+        # que ce soit attribuable. Diagnostiquer a exigé de reconstruire la
+        # config à la main et de rejouer le filtre.
+        if "destination_id" not in cols:
+            c.execute("ALTER TABLE signal_rejections ADD COLUMN destination_id TEXT")
+            c.execute(
+                "CREATE INDEX IF NOT EXISTS idx_sr_destination "
+                "ON signal_rejections(destination_id)"
+            )
         c.execute(
             "CREATE INDEX IF NOT EXISTS idx_sr_created ON signal_rejections(created_at)"
         )
@@ -89,6 +102,7 @@ def record_rejection(
     reason_code: str,
     details: dict[str, Any] | None = None,
     user_id: int | None = None,
+    destination_id: str | None = None,
 ) -> None:
     """Enregistre une ligne dans `signal_rejections`. Best-effort : toute
     erreur DB est silencieusement avalée pour ne pas planter le pipeline.
@@ -97,6 +111,12 @@ def record_rejection(
     Laisser None tant que le bridge MT5 ne propage pas encore l'identité
     du user (mono-tenant actuel). Les rows NULL sont rattrapées par le
     script de backfill (scripts/backfill_rejections_user_id.py).
+
+    `destination_id` (2026-08-04) : 'admin_live', 'admin_kraken', 'user:2'…
+    **Indispensable pour savoir QUI rejette.** `user_id` est None sur toutes
+    les destinations admin, donc sans ce champ un rejet `admin_kraken` est
+    indiscernable d'un rejet `admin_legacy`. None = appel legacy mono-tenant
+    (``_should_push`` sans destination).
     """
     try:
         _ensure_schema()
@@ -104,8 +124,9 @@ def record_rejection(
             c.execute(
                 """
                 INSERT INTO signal_rejections
-                    (created_at, pair, direction, confidence, reason_code, details, user_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (created_at, pair, direction, confidence, reason_code,
+                     details, user_id, destination_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     datetime.now(timezone.utc).isoformat(),
@@ -115,6 +136,7 @@ def record_rejection(
                     reason_code,
                     json.dumps(details) if details else None,
                     user_id,
+                    destination_id,
                 ),
             )
     except Exception:
@@ -135,9 +157,17 @@ def get_rejections(
           "by_reason": [{reason_code, label_fr, count, top_pair}, ...],
           "by_hour_utc": [{hour: 0..23, count}, ...],  # 24 entrées exactes
           "by_reason_hour": [[reason_code, hour, count], ...],  # pour heatmap
+          "by_destination": [{destination_id, count, top_reason}, ...],
           "since": str,
           "until": str,
         }
+
+    ``by_destination`` (2026-08-04) répond à « quelle destination rejette
+    quoi ». Sans lui, une destination peut ne rien exécuter pendant des
+    semaines sans que rien ne l'indique : c'est arrivé aux Voies A/B, puis à
+    Kraken, dont 34 des 40 derniers signaux crypto tombaient en
+    ``_not_admitted`` sans que ce soit attribuable. Les lignes antérieures au
+    2026-08-04 portent ``None`` — elles apparaissent sous ``"(inconnu)"``.
     """
     _ensure_schema()
     scope_sql = ""
@@ -154,7 +184,7 @@ def get_rejections(
         c.row_factory = sqlite3.Row
         rows = c.execute(
             f"""
-            SELECT created_at, pair, reason_code
+            SELECT created_at, pair, reason_code, destination_id
               FROM signal_rejections
              WHERE created_at >= ? AND created_at <= ?
                {scope_sql}
@@ -165,6 +195,7 @@ def get_rejections(
     by_reason: dict[str, dict[str, Any]] = {}
     by_hour_count: dict[int, int] = {h: 0 for h in range(24)}
     by_reason_hour: dict[tuple[str, int], int] = {}
+    by_dest: dict[str, dict[str, Any]] = {}
 
     for r in rows:
         reason = r["reason_code"]
@@ -182,6 +213,11 @@ def get_rejections(
         key = (reason, hour)
         by_reason_hour[key] = by_reason_hour.get(key, 0) + 1
 
+        dest = r["destination_id"] or "(inconnu)"
+        d_entry = by_dest.setdefault(dest, {"count": 0, "reasons": {}})
+        d_entry["count"] += 1
+        d_entry["reasons"][reason] = d_entry["reasons"].get(reason, 0) + 1
+
     by_reason_list = []
     for reason, v in sorted(by_reason.items(), key=lambda kv: -kv[1]["count"]):
         top_pair = max(v["pairs"].items(), key=lambda kv: kv[1])[0] if v["pairs"] else None
@@ -193,9 +229,21 @@ def get_rejections(
             "top_pair": top_pair,
         })
 
+    by_destination_list = []
+    for dest, v in sorted(by_dest.items(), key=lambda kv: -kv[1]["count"]):
+        top_reason = max(v["reasons"].items(), key=lambda kv: kv[1])[0]
+        by_destination_list.append({
+            "destination_id": dest,
+            "count": v["count"],
+            "top_reason": top_reason,
+            "top_reason_label_fr": REASON_LABELS_FR.get(top_reason, top_reason),
+            "reasons": v["reasons"],
+        })
+
     return {
         "total": len(rows),
         "by_reason": by_reason_list,
+        "by_destination": by_destination_list,
         "by_hour_utc": [{"hour": h, "count": c} for h, c in sorted(by_hour_count.items())],
         "by_reason_hour": [
             {"reason_code": r, "hour": h, "count": c}

@@ -77,6 +77,7 @@ async def push_to_kraken(setup, sz: dict, dest) -> None:
             pair=setup.pair, direction=direction, confidence=score,
             reason_code="kraken_verdict_skip",
             details={"verdict": verdict, "score": score},
+            destination_id=dest.destination_id,
         )
         return
     if score < MIN_FINAL_CONFIDENCE:
@@ -84,6 +85,7 @@ async def push_to_kraken(setup, sz: dict, dest) -> None:
             pair=setup.pair, direction=direction, confidence=score,
             reason_code="kraken_below_final_confidence",
             details={"score": score, "threshold": MIN_FINAL_CONFIDENCE},
+            destination_id=dest.destination_id,
         )
         return
 
@@ -93,6 +95,7 @@ async def push_to_kraken(setup, sz: dict, dest) -> None:
             pair=setup.pair, direction=direction, confidence=score,
             reason_code="kraken_bad_sizing",
             details={"reason": "qty<=0, likely sl==entry", "payload": payload},
+            destination_id=dest.destination_id,
         )
         return
 
@@ -127,6 +130,7 @@ async def push_to_kraken(setup, sz: dict, dest) -> None:
                 pair=setup.pair, direction=direction, confidence=score,
                 reason_code="kraken_bridge_blocked",
                 details={"status": 429, "reason": reason, "payload": payload},
+                destination_id=dest.destination_id,
             )
             logger.warning(
                 f"kraken bridge[{dest.destination_id}] BLOCKED {setup.pair}: {reason}"
@@ -136,6 +140,7 @@ async def push_to_kraken(setup, sz: dict, dest) -> None:
                 pair=setup.pair, direction=direction, confidence=score,
                 reason_code="kraken_bridge_error",
                 details={"status": r.status_code, "body": str(body)[:250]},
+                destination_id=dest.destination_id,
             )
             logger.warning(
                 f"kraken bridge[{dest.destination_id}] error {r.status_code}: {str(body)[:200]}"
@@ -145,6 +150,7 @@ async def push_to_kraken(setup, sz: dict, dest) -> None:
             pair=setup.pair, direction=direction, confidence=score,
             reason_code="kraken_bridge_timeout",
             details={"timeout_sec": KRAKEN_BRIDGE_TIMEOUT_SEC},
+            destination_id=dest.destination_id,
         )
         logger.warning(f"kraken bridge[{dest.destination_id}] timeout — skip {setup.pair}")
     except Exception as e:
@@ -152,5 +158,6 @@ async def push_to_kraken(setup, sz: dict, dest) -> None:
             pair=setup.pair, direction=direction, confidence=score,
             reason_code="kraken_bridge_exception",
             details={"error": str(e)[:200]},
+            destination_id=dest.destination_id,
         )
         logger.exception(f"kraken bridge[{dest.destination_id}] exception for {setup.pair}")

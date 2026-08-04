@@ -558,6 +558,7 @@ async def _push_to_destination(setup, dest) -> None:
                 reason_code=rejection,
                 details=details,
                 user_id=dest.user_id,
+                destination_id=dest.destination_id,
             )
         return
     # Guard asset class : broker de cette destination ne supporte pas
@@ -575,6 +576,7 @@ async def _push_to_destination(setup, dest) -> None:
             reason_code="asset_class_blocked",
             details={"asset_class": asset_class, "allowed": sorted(dest.allowed_asset_classes)},
             user_id=dest.user_id,
+            destination_id=dest.destination_id,
         )
         return
     _cleanup_old_keys()
@@ -672,6 +674,7 @@ async def _push_to_destination(setup, dest) -> None:
                 reason_code="bridge_error",
                 details={"exception": str(e)[:200]},
                 user_id=dest.user_id,
+                destination_id=dest.destination_id,
             )
             _sent_setups_today.discard(key)
             mt5_pushes_service.discard_push(
@@ -755,6 +758,7 @@ async def _push_to_destination(setup, dest) -> None:
                     reason_code=reason,
                     details={"status": r.status_code, "body": body_text[:200]},
                     user_id=dest.user_id,
+                    destination_id=dest.destination_id,
                 )
                 # Si l'ordre a été rejeté par le bridge, on retire de la dedup
                 # (mémoire + DB) pour qu'un cycle suivant puisse retenter.
@@ -772,6 +776,7 @@ async def _push_to_destination(setup, dest) -> None:
             confidence=getattr(setup, "confidence_score", None),
             reason_code="bridge_timeout",
             user_id=dest.user_id,
+            destination_id=dest.destination_id,
         )
         _sent_setups_today.discard(key)  # retente au cycle suivant
         mt5_pushes_service.discard_push(
@@ -788,6 +793,7 @@ async def _push_to_destination(setup, dest) -> None:
             reason_code="bridge_error",
             details={"exception": str(e)[:200]},
             user_id=dest.user_id,
+            destination_id=dest.destination_id,
         )
         _sent_setups_today.discard(key)
         mt5_pushes_service.discard_push(

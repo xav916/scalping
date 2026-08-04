@@ -80,6 +80,7 @@ async def push_to_kraken_spot(setup, sz: dict, dest) -> None:
             pair=setup.pair, direction=direction, confidence=score,
             reason_code="kraken_spot_short_rejected",
             details={"direction": direction, "reason": "spot bridge is long-only"},
+            destination_id=dest.destination_id,
         )
         logger.debug(
             f"kraken_spot[{dest.destination_id}] skip {setup.pair} {direction}: long-only"
@@ -92,6 +93,7 @@ async def push_to_kraken_spot(setup, sz: dict, dest) -> None:
             pair=setup.pair, direction=direction, confidence=score,
             reason_code="kraken_spot_pair_not_whitelisted",
             details={"pair": setup.pair, "supported": sorted(_SPOT_SUPPORTED_PAIRS)},
+            destination_id=dest.destination_id,
         )
         logger.debug(
             f"kraken_spot[{dest.destination_id}] skip {setup.pair}: pair not supported by Spot bridge"
@@ -104,6 +106,7 @@ async def push_to_kraken_spot(setup, sz: dict, dest) -> None:
             pair=setup.pair, direction=direction, confidence=score,
             reason_code="kraken_spot_verdict_skip",
             details={"verdict": verdict, "score": score},
+            destination_id=dest.destination_id,
         )
         return
     if score < MIN_FINAL_CONFIDENCE:
@@ -111,6 +114,7 @@ async def push_to_kraken_spot(setup, sz: dict, dest) -> None:
             pair=setup.pair, direction=direction, confidence=score,
             reason_code="kraken_spot_below_final_confidence",
             details={"score": score, "threshold": MIN_FINAL_CONFIDENCE},
+            destination_id=dest.destination_id,
         )
         return
 
@@ -120,6 +124,7 @@ async def push_to_kraken_spot(setup, sz: dict, dest) -> None:
             pair=setup.pair, direction=direction, confidence=score,
             reason_code="kraken_spot_bad_sizing",
             details={"reason": "qty<=0, likely sl==entry", "payload": payload},
+            destination_id=dest.destination_id,
         )
         return
 
@@ -153,6 +158,7 @@ async def push_to_kraken_spot(setup, sz: dict, dest) -> None:
                 pair=setup.pair, direction=direction, confidence=score,
                 reason_code="kraken_spot_bridge_blocked",
                 details={"status": 429, "reason": reason, "payload": payload},
+                destination_id=dest.destination_id,
             )
             logger.warning(
                 f"kraken_spot bridge[{dest.destination_id}] BLOCKED {setup.pair}: {reason}"
@@ -162,6 +168,7 @@ async def push_to_kraken_spot(setup, sz: dict, dest) -> None:
                 pair=setup.pair, direction=direction, confidence=score,
                 reason_code="kraken_spot_bridge_error",
                 details={"status": r.status_code, "body": str(body)[:250]},
+                destination_id=dest.destination_id,
             )
             logger.warning(
                 f"kraken_spot bridge[{dest.destination_id}] error {r.status_code}: {str(body)[:200]}"
@@ -171,6 +178,7 @@ async def push_to_kraken_spot(setup, sz: dict, dest) -> None:
             pair=setup.pair, direction=direction, confidence=score,
             reason_code="kraken_spot_bridge_timeout",
             details={"timeout_sec": KRAKEN_SPOT_BRIDGE_TIMEOUT_SEC},
+            destination_id=dest.destination_id,
         )
         logger.warning(f"kraken_spot bridge[{dest.destination_id}] timeout — skip {setup.pair}")
     except Exception as e:
@@ -178,5 +186,6 @@ async def push_to_kraken_spot(setup, sz: dict, dest) -> None:
             pair=setup.pair, direction=direction, confidence=score,
             reason_code="kraken_spot_bridge_exception",
             details={"error": str(e)[:200]},
+            destination_id=dest.destination_id,
         )
         logger.exception(f"kraken_spot bridge[{dest.destination_id}] exception for {setup.pair}")

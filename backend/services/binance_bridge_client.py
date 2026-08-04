@@ -155,6 +155,7 @@ async def push_to_binance(setup, sz: dict, dest) -> None:
             confidence=score,
             reason_code="binance_verdict_skip",
             details={"verdict": verdict, "score": score},
+            destination_id=dest.destination_id,
         )
         return
     if score < MIN_FINAL_CONFIDENCE:
@@ -167,6 +168,7 @@ async def push_to_binance(setup, sz: dict, dest) -> None:
             confidence=score,
             reason_code="binance_below_final_confidence",
             details={"score": score, "threshold": MIN_FINAL_CONFIDENCE},
+            destination_id=dest.destination_id,
         )
         return
 
@@ -182,6 +184,7 @@ async def push_to_binance(setup, sz: dict, dest) -> None:
             confidence=getattr(setup, "confidence_score", None),
             reason_code="binance_dd_breaker",
             details={"reason": breaker_reason},
+            destination_id=dest.destination_id,
         )
         return
 
@@ -199,6 +202,7 @@ async def push_to_binance(setup, sz: dict, dest) -> None:
             confidence=getattr(setup, "confidence_score", None),
             reason_code="binance_correlation_guard",
             details={"reason": corr_reason},
+            destination_id=dest.destination_id,
         )
         return
 
@@ -262,6 +266,7 @@ async def push_to_binance(setup, sz: dict, dest) -> None:
                     confidence=getattr(setup, "confidence_score", None),
                     reason_code="binance_bridge_error",
                     details={"status": r.status_code, "body": r.text[:200]},
+                    destination_id=dest.destination_id,
                 )
                 mt5_pushes_service.discard_push(
                     dest.destination_id, push_date, setup.pair, direction, entry_5dp,
@@ -272,6 +277,7 @@ async def push_to_binance(setup, sz: dict, dest) -> None:
             pair=setup.pair, direction=direction,
             confidence=getattr(setup, "confidence_score", None),
             reason_code="binance_bridge_timeout",
+            destination_id=dest.destination_id,
         )
         mt5_pushes_service.discard_push(
             dest.destination_id, push_date, setup.pair, direction, entry_5dp,
@@ -283,6 +289,7 @@ async def push_to_binance(setup, sz: dict, dest) -> None:
             confidence=getattr(setup, "confidence_score", None),
             reason_code="binance_bridge_exception",
             details={"exception": str(e)[:200]},
+            destination_id=dest.destination_id,
         )
         mt5_pushes_service.discard_push(
             dest.destination_id, push_date, setup.pair, direction, entry_5dp,
