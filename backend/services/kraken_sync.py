@@ -174,7 +174,7 @@ def volumes_ouverts() -> dict[str, float]:
         return {}
 
 
-def attribuer_clotures(pushes, fills, ouverts=None) -> list[dict[str, Any]]:
+def attribuer_clotures(pushes, fills, ouverts=None, positions=None) -> list[dict[str, Any]]:
     """Associe à chaque ordre sa clôture, quand elle est identifiable.
 
     L'attribution par ``order_id`` est exacte : un fill dont l'``order_id``
@@ -238,7 +238,15 @@ def attribuer_clotures(pushes, fills, ouverts=None) -> list[dict[str, Any]]:
         # Le 2026-08-04, un short de 0,215 réduit à 0,107 puis stoppé est resté
         # ouvert dans nos lignes alors que Kraken l'avait fermé.
         attendu = ouverts.get(str(c["push"]["order_id"])) or c["push"]["volume"]
-        c["complete"] = c["taille"] >= attendu * 0.999
+        # Un SL/TP est `reduceOnly` et dimensionné sur la position : son
+        # exécution EST la clôture. Si l'exchange ne déclare plus aucune
+        # exposition sur le symbole, elle est complète, quelle que soit la
+        # taille comparée — sinon la complétude dépendrait d'un volume ajusté
+        # plus tard dans le même cycle, ce qui est circulaire. Le
+        # 2026-08-04, ce cercle a fait perdre le P&L d'un stop réel.
+        plat = (positions is not None
+                and abs((positions or {}).get(c["push"].get("symbol"), 0.0)) <= 0)
+        c["complete"] = plat or c["taille"] >= attendu * 0.999
     return list(clotures.values())
 
 
@@ -493,7 +501,7 @@ async def reconcile() -> int:
         # paire et au garde-fou de corrélation.
         materialiser_ouvertures(pushes)
 
-        clotures = [c for c in attribuer_clotures(pushes, fills, volumes_ouverts())
+        clotures = [c for c in attribuer_clotures(pushes, fills, volumes_ouverts(), positions)
                     if c["complete"]]
         vus = {c["push"]["push_id"] for c in clotures}
         clotures += clotures_par_nettage(pushes, fills, positions, vus)

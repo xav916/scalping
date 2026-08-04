@@ -662,3 +662,42 @@ def test_une_exposition_inconnue_ne_ferme_rien(base):
     pushes = [_push(1, "ETH/USD", "sell", "D", "sl-D", 0.215, 1874.6)]
     assert ks.ajuster_volumes_ouverts(pushes, None) == 0
     assert _lignes(base)[0]["status"] == "OPEN"
+
+
+def test_un_stop_est_complet_des_lors_que_le_symbole_est_a_plat():
+    """La complétude ne doit pas dépendre d'un volume ajusté plus tard dans
+    le même cycle : c'est circulaire, et ce cercle a fait perdre le P&L d'un
+    stop réel le 2026-08-04. Un SL est `reduceOnly` et dimensionné sur la
+    position — son exécution EST la clôture."""
+    pushes = [_push(1, "ETH/USD", "sell", "D", "sl-D", 0.215, 1874.6)]
+    fills = [{"order_id": "sl-D", "symbol": "PF_ETHUSD", "side": "buy",
+              "size": 0.107, "price": 1879.6,
+              "fill_time": "2026-08-04T19:38:52Z", "realized_pnl": -0.799}]
+
+    sans = ks.attribuer_clotures(pushes, fills)[0]
+    assert sans["complete"] is False
+
+    avec = ks.attribuer_clotures(pushes, fills, None, {})[0]
+    assert avec["complete"] is True, "symbole a plat : la cloture est complete"
+    assert avec["cause"] == ks.CAUSE_SL
+    assert avec["pnl_usd"] == pytest.approx(-0.799)
+
+
+def test_une_exposition_restante_n_autorise_pas_la_completude():
+    pushes = [_push(1, "ETH/USD", "sell", "D", "sl-D", 0.215, 1874.6)]
+    fills = [{"order_id": "sl-D", "symbol": "PF_ETHUSD", "side": "buy",
+              "size": 0.05, "price": 1879.6,
+              "fill_time": "2026-08-04T19:38:52Z", "realized_pnl": -0.3}]
+    c = ks.attribuer_clotures(pushes, fills, None, {"PF_ETHUSD": -0.157})[0]
+    assert c["complete"] is False
+
+
+def test_le_stop_prime_sur_le_nettage_quand_le_symbole_est_a_plat():
+    """Sinon la cause devient NET et le P&L realise est perdu."""
+    pushes = [_push(1, "ETH/USD", "sell", "D", "sl-D", 0.215, 1874.6)]
+    fills = [{"order_id": "sl-D", "symbol": "PF_ETHUSD", "side": "buy",
+              "size": 0.107, "price": 1879.6,
+              "fill_time": "2026-08-04T19:38:52Z", "realized_pnl": -0.799}]
+    cl = [c for c in ks.attribuer_clotures(pushes, fills, None, {}) if c["complete"]]
+    vus = {c["push"]["push_id"] for c in cl}
+    assert ks.clotures_par_nettage(pushes, fills, {}, vus) == []
