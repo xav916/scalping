@@ -97,18 +97,19 @@ def exceeds_edge(
 ) -> bool:
     """``True`` si les frais interdisent d'envoyer ce signal.
 
-    Le cas indécidable — coût ou edge inconnu — se tranche différemment selon
-    qu'il y a de l'argent en jeu :
+    L'ordre d'évaluation garantit que :
 
-    - ``auto_exec=True`` → **bloque**. Une route dont on ne sait pas mesurer
-      la rentabilité ne prend pas d'argent réel. C'est exactement ce qui
-      manquait quand la crypto a tourné 876 fois à perte.
-    - ``auto_exec=False`` → **laisse passer**. En observation, rien n'est
-      engagé et la porte n'a rien à arbitrer ; la bloquer priverait de la
-      mesure qui permettra un jour d'ouvrir la route.
+    1. **Route morte** — edge mesuré à zéro ou négatif → toujours bloquer,
+       quel que soit le coût ou l'argent en jeu. Une route sans rentabilité
+       observée n'est pas un edge inconnu.
+    2. **Cas indécidable** — coût ou edge inconnu → trancher selon l'argent réel :
+       ``auto_exec=True`` bloque (aucune route non mesurable sans argent réel),
+       ``auto_exec=False`` laisse passer (observation ne risque rien).
+    3. **Route normale** — coût et edge connus et positifs → bloquer si coût
+       dépasse 30 % de l'edge.
     """
+    if edge_r is not None and edge_r <= 0:
+        return True                    # route morte : bloque toujours
     if cost_r is None or edge_r is None:
-        return auto_exec
-    if edge_r <= 0:
-        return True
+        return auto_exec               # indécidable : argent réel = bloque
     return cost_r > EDGE_COST_MAX_SHARE * edge_r

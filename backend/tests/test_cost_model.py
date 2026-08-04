@@ -125,3 +125,17 @@ def test_un_edge_nul_ou_negatif_bloque():
 
     assert exceeds_edge(0.001, 0.0, auto_exec=True) is True
     assert exceeds_edge(0.001, -0.05, auto_exec=True) is True
+
+
+def test_une_route_morte_bloque_meme_sans_cout_calculable():
+    """Un edge mesuré à zéro n'est pas un edge inconnu.
+
+    Le cas `cost_r=None` + `edge_r<=0` passait par la branche
+    « indécidable » et se retrouvait autorisé en observation, alors
+    qu'une route morte doit bloquer sans exception.
+    """
+    from backend.services.cost_model import exceeds_edge
+
+    assert exceeds_edge(None, 0.0, auto_exec=False) is True
+    assert exceeds_edge(None, -0.05, auto_exec=False) is True
+    assert exceeds_edge(None, 0.0, auto_exec=True) is True
