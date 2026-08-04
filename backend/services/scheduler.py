@@ -848,18 +848,24 @@ def start_scheduler() -> AsyncIOScheduler:
     except Exception as _e:
         logger.warning(f"scheduler: eco_calendar non installé : {_e}")
 
-    # Alertes rafales de rejections : toutes les 5 min, surveille les
-    # rejections de la derniere heure. Envoie Telegram si > 10 d'affilee
-    # sur un meme reason_code (cooldown 60 min par code).
-    from backend.services import rejection_alerts as _rej_alerts
-    _scheduler.add_job(
-        _rej_alerts.check_and_alert,
-        "interval",
-        minutes=5,
-        id="rejection_alerts_check",
-        name="Check rafales rejections + Telegram",
-        replace_existing=True,
-    )
+    # ⚠️ L'alerte « Beaucoup de signaux refusés » a été retirée le 2026-08-04.
+    #
+    # Elle se déclenchait dès que plus de dix refus partageaient le même motif
+    # en une heure. Or c'est l'état NORMAL du système : le radar analyse seize
+    # paires dans les deux sens à chaque cycle, et 84 % des refus tombent avant
+    # tout routage, sur les filtres globaux. Au moment du retrait, huit motifs
+    # dépassaient le seuil simultanément, dont 930 `below_confidence` sur une
+    # seule heure.
+    #
+    # Le message ne signalait donc pas un incident : il mesurait que le filtre
+    # filtre. Le seul « correctif » qu'il suggérait — baisser les seuils — est
+    # précisément ce que l'analyse d'edge a montré destructeur.
+    #
+    # L'information reste au récap quotidien, section « ⚙️ Activité du radar »,
+    # en une ligne : « N signaux refusés faute de confiance ».
+    #
+    # Les rejections continuent d'être enregistrées dans `signal_rejections`,
+    # avec leur destination : c'est là qu'on diagnostique, pas dans une alerte.
 
     # Auto-régulateur PnL par pair : pause auto quand sum_pnl < seuil sur
     # fenêtre glissante (default 30 trades, -3% capital). Complète le
