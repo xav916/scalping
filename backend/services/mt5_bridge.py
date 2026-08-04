@@ -211,6 +211,47 @@ def _count_open_trades_for_pair(pair: str) -> int:
         return 0
 
 
+def _cost_rejection(setup, dest) -> str | None:
+    """Refuse un signal dont les frais consomment plus de 30 % de l'edge brut.
+
+    Extraite de `_check_rejection` pour être testable sans base ni réseau :
+    les portes d'admission et de whitelist qui la précèdent lisent la base,
+    et un test unitaire ne les atteindrait jamais.
+
+    Une destination qui ne déclare pas de `cost_model` garde exactement son
+    comportement d'avant le 2026-08-04.
+    """
+    if dest is None or getattr(dest, "cost_model", None) is None:
+        return None
+
+    from backend.services.cost_model import cost_in_r, exceeds_edge
+
+    risk_money = None
+    try:
+        from backend.services.sizing import compute_risk_money
+
+        risk_money = compute_risk_money(setup, dest).get("risk_money")
+    except Exception:
+        # Sizing indisponible : `risk_money` reste None. `cost_in_r` renverra
+        # None si une composante fixe est déclarée, et `exceeds_edge` bloquera
+        # l'argent réel — jamais l'inverse.
+        risk_money = None
+
+    cout_r = cost_in_r(
+        entry=getattr(setup, "entry_price", 0) or 0,
+        stop_loss=getattr(setup, "stop_loss", 0) or 0,
+        model=dest.cost_model,
+        risk_money=risk_money,
+    )
+    if exceeds_edge(
+        cout_r,
+        getattr(dest, "expected_edge_r", None),
+        auto_exec=bool(getattr(dest, "auto_exec_enabled", False)),
+    ):
+        return "fees_exceed_edge"
+    return None
+
+
 def _check_rejection(setup, dest=None) -> str | None:
     """Retourne None si le setup peut être pushé, sinon un reason_code parmi
     ceux définis dans `rejection_service.REASON_LABELS_FR`. Seuls les cas qui
@@ -454,6 +495,13 @@ def _check_rejection(setup, dest=None) -> str | None:
             f"{direction} : meme pari que {', '.join(en_cause)}"
         )
         return "correlated_exposure"
+    # Porte de coût (2026-08-04). Placée en DERNIER, après tous les filtres
+    # bon marché : elle appelle le sizing, qui peut interroger le solde du
+    # bridge par HTTP. Inutile de payer ce coût pour un signal qu'un filtre
+    # gratuit allait écarter.
+    cost_reason = _cost_rejection(setup, dest)
+    if cost_reason:
+        return cost_reason
     return None
 
 
