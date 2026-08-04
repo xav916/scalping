@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from backend.services.market_hours import is_market_open_for
+from config.settings import CANDLE_INTERVAL
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,31 @@ logger = logging.getLogger(__name__)
 DB_PATH = Path("/app/data/trades.db") if Path("/app").exists() else Path("trades.db")
 
 V1_SYSTEM_PREFIX = "V1_SHADOW"
-V1_TIMEFRAME = "1h"  # le radar V1 analyse des bougies 1h (CANDLE_INTERVAL effectif)
+
+# ── Horizon d'analyse ────────────────────────────────────────────────────
+# L'étiquette écrite dans `shadow_setups.timeframe` doit dire sur quelles
+# bougies le setup a été détecté. Jusqu'au 2026-08-04 elle valait "1h", avec
+# un commentaire affirmant que « le radar V1 analyse des bougies 1h ».
+#
+# C'était faux. Le radar détecte sur `CANDLE_INTERVAL` (5 min en production)
+# et ne récupère les bougies 1h que pour la confirmation multi-timeframe et
+# le calcul d'ATR — cf. `scheduler.run_analysis_cycle`.
+#
+# L'étiquette est désormais **dérivée** plutôt que recopiée : elle ne peut
+# plus diverger de l'intervalle réellement analysé si celui-ci change.
+#
+# ⚠️ Les rows V1 antérieures au 2026-08-04 portent "1h" et décrivent le même
+# flux 5 min. Ne pas les agréger avec les nouvelles — de toute façon tout
+# l'historique shadow antérieur à cette date est à écarter (bug de dédup).
+V1_TIMEFRAME = CANDLE_INTERVAL
+
+# Fenêtre de déduplication — distincte de l'horizon d'analyse, et c'est le
+# point qui prêtait à confusion. Le cycle radar tourne toutes les 5 min, donc
+# un setup qui persiste 40 min est revu huit fois alors qu'il ne représente
+# qu'**une** opportunité de trade. Le regroupement horaire le compte une fois.
+# Le ramener à l'intervalle des bougies réintroduirait l'inflation corrigée le
+# 2026-08-04 (×960 sur SPX).
+V1_DEDUP_WINDOW_HOURS = 1
 DEFAULT_CAPITAL_EUR = 10000.0  # capital fictif pour sizing shadow
 DEFAULT_RISK_PCT = 0.01        # 1% risque par trade, équivalent à V2
 
@@ -64,10 +89,17 @@ def _bar_timestamp(cycle_at: datetime) -> str:
     légèrement, mais d'un facteur qui variait selon la paire, ce qui
     empêchait même de corriger a posteriori.
 
-    Aligner sur le début du bar rétablit la sémantique annoncée par le
-    docstring d'origine : **un setup par bar**.
+    Aligner sur le début de la fenêtre rétablit la sémantique annoncée par le
+    docstring d'origine : **une opportunité comptée une fois**.
+
+    ⚠️ Cette fenêtre n'est PAS l'horizon d'analyse (``V1_TIMEFRAME``, 5 min).
+    Les deux ont longtemps tenu dans une seule constante, ce qui rendait
+    l'étiquette d'horizon fausse. La troncature dérive de
+    ``V1_DEDUP_WINDOW_HOURS`` pour qu'elle ne puisse pas non plus diverger.
     """
-    return cycle_at.replace(minute=0, second=0, microsecond=0).isoformat()
+    heures = max(1, int(V1_DEDUP_WINDOW_HOURS))
+    debut = (cycle_at.hour // heures) * heures
+    return cycle_at.replace(hour=debut, minute=0, second=0, microsecond=0).isoformat()
 
 
 def _persist_v1_shadow(
