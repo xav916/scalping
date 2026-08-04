@@ -62,7 +62,12 @@ from typing import Any
 
 from flask import Flask, jsonify, request
 
-from ib_async import IB, Forex, Stock
+from ib_async import IB, Forex, LimitOrder, MarketOrder, Order, StopOrder, Stock
+
+# IBKR encode « valeur non disponible » par DBL_MAX sur les champs numériques
+# des OrderState (commission notamment) — cousin du -1 sur les prix. Vu le
+# 2026-08-04 : commission = 1.7976931348623157e+308 sur tous les whatIf forex.
+_DBL_MAX = 1.7976931348623157e308
 
 # ─── Config ────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -160,6 +165,20 @@ class IBWorker:
 
         async def _invoke():
             return await fn()
+
+        return self.submit(_invoke())
+
+    def call_sync(self, fn) -> Any:
+        """Comme ``call``, pour les méthodes **synchrones** d'``ib_async``.
+
+        ``placeOrder`` et ``client.getReqId()`` ne sont pas des coroutines,
+        mais touchent la socket et l'état interne d'``ib_async`` : les
+        appeler depuis un thread Flask corromprait la séquence d'orderId.
+        On les fait donc exécuter par le thread propriétaire de la loop.
+        """
+
+        async def _invoke():
+            return fn()
 
         return self.submit(_invoke())
 
@@ -364,17 +383,90 @@ def symbols():
     })
 
 
+def _num(x):
+    """Normalise un champ numérique d'OrderState, en filtrant la sentinelle."""
+    if x is None or x == "":
+        return None
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return x
+    return None if v >= _DBL_MAX else v
+
+
+def _build_bracket(direction: str, qty: float, sl: float, tp: float,
+                   parent_id: int) -> list[Order]:
+    """Entrée au marché + SL stop + TP limite, liés par ``parentId``.
+
+    ``ib.bracketOrder()`` impose une entrée LIMIT ; on veut du marché, donc
+    on assemble à la main. Seul le dernier ordre porte ``transmit=True`` :
+    IBKR ne libère la grappe qu'à ce moment, ce qui évite qu'un parent parte
+    seul si la construction échoue en cours de route (le piège des positions
+    nues déjà vécu côté MT5).
+
+    ``tif`` est fixé explicitement sur les trois ordres. Sans ça, IBKR
+    applique un preset et émet l'avertissement 10349 — qui **avale la
+    réponse whatIf** et fait échouer silencieusement tout le dry-run.
+    """
+    entry_action = "BUY" if direction.lower() == "buy" else "SELL"
+    exit_action = "SELL" if entry_action == "BUY" else "BUY"
+
+    parent = MarketOrder(entry_action, qty)
+    parent.orderId = parent_id
+    parent.tif = "DAY"
+    parent.transmit = False
+
+    take_profit = LimitOrder(exit_action, qty, tp)
+    take_profit.orderId = parent_id + 1
+    take_profit.parentId = parent_id
+    take_profit.tif = "GTC"
+    take_profit.transmit = False
+
+    stop_loss = StopOrder(exit_action, qty, sl)
+    stop_loss.orderId = parent_id + 2
+    stop_loss.parentId = parent_id
+    stop_loss.tif = "GTC"
+    stop_loss.transmit = True  # libère la grappe entière
+
+    return [parent, take_profit, stop_loss]
+
+
 @app.route("/order", methods=["POST"])
 @require_bridge_key
 def order():
-    """Placeholder — refuse tant que IBKR_ALLOW_ORDERS n'est pas activé.
+    """Passe un ordre bracket, ou le simule.
 
-    L'implémentation viendra en Phase 2 avec des bracket orders natifs
-    (`ib.bracketOrder`), plus propres que le watcher SL/TP émulé du bridge
-    Kraken Spot. Rien n'est branché ici tant que la Voie C n'a pas été
-    validée en lecture.
+    Payload : ``{pair, direction, qty, sl, tp, dry_run}``.
+
+    ``dry_run`` vaut **true par défaut**. En dry-run on interroge le
+    pré-contrôle natif d'IBKR (``whatIfOrder``) : il renvoie l'impact marge
+    et refuse si l'ordre est irrecevable, **sans rien placer**. C'est le
+    substitut au paper account, indisponible sur ce compte tant que les
+    Actions US ne sont pas approuvées.
+
+    Le dry-run fonctionne en session ``readonly=True`` — vérifié le
+    2026-08-04. La garantie forte du Gateway n'a donc pas à être levée pour
+    simuler.
     """
-    if not ALLOW_ORDERS:
+    payload = request.get_json(silent=True) or {}
+    pair = payload.get("pair")
+    direction = (payload.get("direction") or "").lower()
+    qty = payload.get("qty")
+    sl = payload.get("sl")
+    tp = payload.get("tp")
+    dry_run = payload.get("dry_run", True)
+
+    if not pair or direction not in ("buy", "sell") or not qty:
+        return jsonify({
+            "ok": False,
+            "error": "payload requires pair, direction (buy/sell), qty",
+        }), 400
+
+    contract = contract_for(pair)
+    if contract is None:
+        return jsonify({"ok": False, "error": f"unsupported pair {pair}"}), 400
+
+    if not dry_run and not ALLOW_ORDERS:
         return jsonify({
             "ok": False,
             "error": "orders disabled",
@@ -385,11 +477,101 @@ def order():
                 "redémarrer pour activer."
             ),
         }), 403
-    return jsonify({
-        "ok": False,
-        "error": "not implemented",
-        "detail": "Envoi d'ordres prévu en Phase 2 (bracket orders natifs IBKR).",
-    }), 501
+
+    try:
+        worker.ensure_connected()
+        qualified = worker.call(lambda: worker.ib.qualifyContractsAsync(contract))
+        if not qualified:
+            return jsonify({
+                "ok": False,
+                "error": f"contrat non résolu pour {pair} — permission marché manquante ?",
+            }), 404
+        c = qualified[0]
+
+        # ─── Dry-run : pré-contrôle IBKR, rien n'est placé ──────────────
+        if dry_run:
+            probe = MarketOrder("BUY" if direction == "buy" else "SELL", qty)
+            probe.tif = "DAY"
+            state = worker.call(lambda: worker.ib.whatIfOrderAsync(c, probe))
+            # whatIfOrderAsync rend une liste vide quand IBKR ne répond pas
+            # (ordre irrecevable, ou avertissement ayant avalé la réponse).
+            if isinstance(state, list) or state is None:
+                return jsonify({
+                    "ok": False,
+                    "dry_run": True,
+                    "error": "IBKR n'a pas répondu au pré-contrôle",
+                    "detail": (
+                        "Ordre probablement irrecevable : permission de marché "
+                        "manquante, taille invalide, ou marché fermé."
+                    ),
+                }), 422
+            init_margin = _num(state.initMarginChange)
+
+            # IBKR rapporte la marge sans juger si le compte peut la couvrir :
+            # un whatIf à 25 000 EUR/USD renvoie 752.95 de marge sur un compte
+            # de 100 € sans le moindre avertissement. C'est au bridge de
+            # trancher, sinon un ordre voué au rejet partirait quand même.
+            available = None
+            affordable = None
+            try:
+                values = worker.call(lambda: worker.ib.accountSummaryAsync())
+                for v in values:
+                    if v.tag == "AvailableFunds":
+                        available = float(v.value)
+                        break
+                if available is not None and init_margin is not None:
+                    affordable = init_margin <= available
+            except Exception as e:
+                logger.debug(f"available funds lookup: {e}")
+
+            return jsonify({
+                "ok": True,
+                "dry_run": True,
+                "placed": False,
+                "pair": pair.upper(),
+                "direction": direction,
+                "qty": qty,
+                "init_margin": init_margin,
+                "maint_margin": _num(state.maintMarginChange),
+                "equity_after": _num(state.equityWithLoanChange),
+                "commission": _num(state.commission),
+                "commission_currency": state.commissionCurrency or None,
+                "available_funds": available,
+                "affordable": affordable,
+                "warning": state.warningText or None,
+            })
+
+        # ─── Envoi réel ─────────────────────────────────────────────────
+        if sl is None or tp is None:
+            return jsonify({
+                "ok": False,
+                "error": "sl et tp obligatoires en envoi réel",
+                "detail": "Aucune position ne part sans stop — cf. incident MT5 positions nues.",
+            }), 400
+
+        base_id = worker.call_sync(lambda: worker.ib.client.getReqId())
+        orders = _build_bracket(direction, qty, float(sl), float(tp), base_id)
+        trades = worker.call_sync(
+            lambda: [worker.ib.placeOrder(c, o) for o in orders]
+        )
+        return jsonify({
+            "ok": True,
+            "dry_run": False,
+            "placed": True,
+            "pair": pair.upper(),
+            "direction": direction,
+            "qty": qty,
+            "sl": sl,
+            "tp": tp,
+            "orders": [
+                {"order_id": t.order.orderId, "type": t.order.orderType,
+                 "status": t.orderStatus.status}
+                for t in trades
+            ],
+        })
+    except Exception as e:
+        logger.warning(f"order error {pair}: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 if __name__ == "__main__":
