@@ -155,6 +155,29 @@ async def test_le_message_est_echappe_en_html(monkeypatch):
     assert "&lt;" in envoyes[0] or "&amp;" in envoyes[0]
 
 
+# ─── Convention de parsing des drapeaux booléens ───────────────────────
+#
+# Trouvaille de revue (2026-08-05) : `TELEGRAM_LONG_HORIZON_ENABLED`
+# n'acceptait pas "on", alors que les drapeaux voisins de config/settings.py
+# (MT5_BRIDGE_ENABLED, BINANCE_*_ENABLED, WEEKEND_HOLD_BLOCK_ENABLED…)
+# acceptent tous ("1", "true", "yes", "on"). `TELEGRAM_LONG_HORIZON_ENABLED=on`
+# valait donc silencieusement faux.
+
+
+def test_telegram_long_horizon_enabled_accepte_on(monkeypatch):
+    import importlib
+
+    import config.settings as st
+
+    monkeypatch.setenv("TELEGRAM_LONG_HORIZON_ENABLED", "on")
+    importlib.reload(st)
+    try:
+        assert st.TELEGRAM_LONG_HORIZON_ENABLED is True
+    finally:
+        monkeypatch.delenv("TELEGRAM_LONG_HORIZON_ENABLED")
+        importlib.reload(st)
+
+
 def test_le_flux_v2_notifie_seulement_les_lignes_nouvelles():
     # `_persist_setup` respecte UNIQUE (system_id, bar_timestamp) et rend
     # True seulement pour une ligne reellement nouvelle. Notifier sur cette

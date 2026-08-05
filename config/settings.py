@@ -521,7 +521,7 @@ TELEGRAM_SETUP_VERDICTS = [
 # quelques setups par jour.
 TELEGRAM_LONG_HORIZON_ENABLED = os.getenv(
     "TELEGRAM_LONG_HORIZON_ENABLED", "true"
-).strip().lower() in ("1", "true", "yes")
+).strip().lower() in ("1", "true", "yes", "on")
 TELEGRAM_LONG_HORIZON_MIN_CONFIDENCE = float(
     os.getenv("TELEGRAM_LONG_HORIZON_MIN_CONFIDENCE", "61")
 )
