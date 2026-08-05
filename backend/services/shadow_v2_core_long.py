@@ -143,6 +143,17 @@ def ensure_schema() -> None:
         cols = [r[1] for r in c.execute("PRAGMA table_info(shadow_setups)").fetchall()]
         if "geopolitical_features_json" not in cols:
             c.execute("ALTER TABLE shadow_setups ADD COLUMN geopolitical_features_json TEXT")
+        # Migration : ajout funding_features_json (taux funding Kraken relatif
+        # + seuil "extrême" en vigueur + verdict contrefactuel du veto funding
+        # au moment du log). Idempotent — relit PRAGMA table_info à chaque
+        # appel, donc sûre à rejouer sur une table déjà migrée ou déjà peuplée
+        # de lignes NULL sur cette colonne (ALTER TABLE ADD COLUMN sur SQLite
+        # ne réécrit pas les lignes existantes, il ajoute juste la colonne).
+        # Sans le seuil enregistré ICI, un recalibrage futur de
+        # `KRAKEN_FUNDING_EXTREME_THRESHOLD` rendrait les verdicts
+        # contrefactuels historiques ininterprétables.
+        if "funding_features_json" not in cols:
+            c.execute("ALTER TABLE shadow_setups ADD COLUMN funding_features_json TEXT")
         c.execute(
             "CREATE INDEX IF NOT EXISTS idx_shadow_setups_pair_time "
             "ON shadow_setups (pair, bar_timestamp DESC)"
@@ -254,6 +265,98 @@ def _capture_geopolitical_snapshot(pair: str, direction: str) -> dict | None:
     return snapshot
 
 
+def _capture_funding_snapshot(pair: str, direction: str) -> dict | None:
+    """Capture le funding Kraken Futures au moment d'un setup crypto.
+
+    Le veto funding (``kraken_funding_scoring``) est une hypothèse dosée sur
+    une fréquence de déclenchement plausible, jamais démontrée prédictive —
+    parce que le taux au moment du signal n'était persisté nulle part. Cette
+    fonction comble ce trou, sur le modèle de `_capture_geopolitical_snapshot`
+    ci-dessus : un instantané passif, qui n'influence ni score ni décision.
+
+    Persiste, pour une (pair, direction) crypto uniquement :
+    - ``rate`` : le taux de funding RELATIF au moment du signal (source :
+      ``kraken_funding_scoring.get_funding_rate_for_pair``) ; ``None`` si
+      indisponible (jamais ``0.0`` — un taux inconnu doit rester distinguable
+      d'un taux nul).
+    - ``symbol`` : le symbole Kraken Futures correspondant (ex: ``PF_XBTUSD``).
+    - ``captured_at`` : horodatage de la capture.
+    - ``extreme_threshold`` : le seuil "extrême" EN VIGUEUR au moment de la
+      capture. ⚠️ C'est le champ à ne pas rater : sans lui, un recalibrage
+      futur du seuil (cf. ``KRAKEN_FUNDING_EXTREME_THRESHOLD``, déjà recalibré
+      une fois le 2026-08-05) rendrait tous les verdicts contrefactuels
+      historiques ininterprétables — on ne saurait plus si un `would_veto`
+      à faux signifiait "funding normal" ou "seuil de l'époque plus haut".
+      Avec le taux ET le seuil dans le même instantané, une analyse future
+      peut recalculer le verdict à n'importe quel seuil hypothétique.
+    - ``would_veto`` : verdict contrefactuel — le veto funding se
+      serait-il déclenché sur CE setup, dans CETTE direction, avec CE taux
+      et CE seuil. ``None`` si le taux est indisponible (verdict inconnu,
+      pas "non vetoé").
+
+    Rend ``None`` pour une paire non-crypto : la question du funding ne se
+    pose pas, un dict vide laisserait croire à une mesure absente.
+
+    Best-effort : ne lève jamais, dict partiel si un sous-appel échoue.
+    """
+    try:
+        from backend.services import kraken_funding_scoring as kfs
+    except Exception as e:
+        logger.debug(f"shadow: import kraken_funding_scoring failed: {e}")
+        return None
+
+    try:
+        if not kfs.is_crypto_pair(pair):
+            return None
+    except Exception as e:
+        logger.debug(f"shadow: is_crypto_pair failed pour {pair}: {e}")
+        return None
+
+    snapshot: dict[str, Any] = {
+        "captured_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    try:
+        snapshot["symbol"] = kfs._PAIR_TO_SYMBOL.get(pair)
+    except Exception as e:
+        logger.debug(f"shadow: funding symbol lookup failed pour {pair}: {e}")
+        snapshot["symbol"] = None
+
+    rate: float | None = None
+    try:
+        rate = kfs.get_funding_rate_for_pair(pair)
+    except Exception as e:
+        logger.debug(f"shadow: funding rate fetch failed pour {pair}: {e}")
+        rate = None
+    snapshot["rate"] = rate
+
+    threshold: float | None = None
+    try:
+        threshold = kfs._EXTREME_THRESHOLD
+    except Exception as e:
+        logger.debug(f"shadow: funding threshold lookup failed: {e}")
+        threshold = None
+    snapshot["extreme_threshold"] = threshold
+
+    # Verdict contrefactuel — même logique que `apply_kraken_funding`, sans
+    # toucher au score : long surcrowdé (BUY) ou short surcrowdé (SELL).
+    would_veto: bool | None = None
+    if rate is not None and threshold is not None:
+        try:
+            if direction == "buy":
+                would_veto = rate > threshold
+            elif direction == "sell":
+                would_veto = rate < -threshold
+            else:
+                would_veto = False
+        except Exception as e:
+            logger.debug(f"shadow: funding veto contrefactuel failed pour {pair}: {e}")
+            would_veto = None
+    snapshot["would_veto"] = would_veto
+
+    return snapshot
+
+
 # ─── Aggrégation H1 → H4 ────────────────────────────────────────────────────
 
 
@@ -344,6 +447,7 @@ def _persist_setup(
     cycle_at: datetime,
     macro_features: dict | None = None,
     geopolitical_features: dict | None = None,
+    funding_features: dict | None = None,
     system_id_override: str | None = None,
 ) -> bool:
     """Insert idempotent (UNIQUE system_id, bar_timestamp). Retourne True si nouveau.
@@ -371,6 +475,7 @@ def _persist_setup(
 
     macro_json = json.dumps(macro_features) if macro_features else None
     geopol_json = json.dumps(geopolitical_features) if geopolitical_features else None
+    funding_json = json.dumps(funding_features) if funding_features else None
 
     with sqlite3.connect(DB_PATH) as c:
         try:
@@ -382,8 +487,9 @@ def _persist_setup(
                     take_profit_1, take_profit_2, risk_pct, rr,
                     sizing_capital_eur, sizing_risk_pct,
                     sizing_position_eur, sizing_max_loss_eur,
-                    macro_features_json, geopolitical_features_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    macro_features_json, geopolitical_features_json,
+                    funding_features_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     cycle_at.isoformat(), bar_timestamp.isoformat(),
@@ -396,7 +502,7 @@ def _persist_setup(
                     risk_pct, rr,
                     DEFAULT_CAPITAL_EUR, risk_pct_for_pair,
                     sizing_position_eur, sizing_max_loss_eur,
-                    macro_json, geopol_json,
+                    macro_json, geopol_json, funding_json,
                 ),
             )
             return True
@@ -495,10 +601,16 @@ async def run_shadow_log(
             direction_str = setup.direction.value if hasattr(setup.direction, "value") else str(setup.direction)
             geopolitical_features = _capture_geopolitical_snapshot(pair, direction_str)
 
+            # Snapshot funding Kraken (taux relatif + seuil en vigueur +
+            # verdict contrefactuel). None sur une paire non-crypto (ex: XAU,
+            # WTI, XLI, XLK) — seul ETH/USD ici est concerné.
+            funding_features = _capture_funding_snapshot(pair, direction_str)
+
             if _persist_setup(
                 setup, pair, pattern_name, last_bar_ts, cycle_at,
                 macro_features=macro_features,
                 geopolitical_features=geopolitical_features,
+                funding_features=funding_features,
             ):
                 n_new += 1
                 logger.info(

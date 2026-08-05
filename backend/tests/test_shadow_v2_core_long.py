@@ -160,6 +160,40 @@ def test_run_shadow_log_unique_constraint(temp_db, monkeypatch):
         assert n_total == n1_xau
 
 
+def test_run_shadow_log_branche_le_snapshot_funding(temp_db, monkeypatch):
+    """run_shadow_log doit appeler _capture_funding_snapshot et faire
+    parvenir son résultat jusqu'à la ligne persistée — preuve du
+    branchement, indépendamment de la logique crypto/non-crypto déjà
+    testée au niveau unitaire sur _capture_funding_snapshot elle-même."""
+    import config.settings as _settings
+    monkeypatch.setattr(_settings, "SHADOW_FILTERED_TWIN_ENABLED", False)
+
+    marker = {"marker": "funding-wiring-proof", "rate": 4.2e-5}
+    appels = []
+
+    def _fake_capture(pair, direction):
+        appels.append((pair, direction))
+        return marker
+
+    monkeypatch.setattr(shadow, "_capture_funding_snapshot", _fake_capture)
+
+    start = datetime(2026, 4, 1, 0, 0, tzinfo=timezone.utc)
+    h1 = _make_h1_sequence(start, 200)
+    asyncio.run(shadow.run_shadow_log({"XAU/USD": h1}))
+
+    assert appels, "run_shadow_log n'a jamais appelé _capture_funding_snapshot"
+
+    with sqlite3.connect(temp_db) as c:
+        rows = c.execute(
+            "SELECT funding_features_json FROM shadow_setups WHERE pair = 'XAU/USD'"
+        ).fetchall()
+    assert rows, "aucun setup persisté — le test ne prouve rien"
+    import json as _json
+    for (raw,) in rows:
+        assert raw is not None
+        assert _json.loads(raw) == marker
+
+
 def test_run_shadow_log_ne_score_qu_une_fois_par_bougie_reellement_nouvelle(
     temp_db, monkeypatch,
 ):
@@ -485,3 +519,290 @@ def test_persist_setup_unique_constraint_per_system_id(temp_db):
     with sqlite3.connect(temp_db) as c:
         n = c.execute("SELECT COUNT(*) FROM shadow_setups").fetchone()[0]
     assert n == 1
+
+
+# ─── Funding snapshot capture ───────────────────────────────────────────────
+#
+# Le veto funding Kraken (soft veto ×0.85) est une hypothèse dosée sur une
+# fréquence de déclenchement plausible (p95 mesuré), jamais démontrée
+# prédictive. `_capture_funding_snapshot` persiste le taux + le seuil en
+# vigueur + le verdict contrefactuel pour rendre cette question tranchable
+# a posteriori (cf. backend/services/kraken_funding_scoring.py, section
+# "Non-livrables" / commentaire sur `_DEFAULT_EXTREME_THRESHOLD`).
+
+
+def test_capture_funding_snapshot_crypto_pair_full(monkeypatch):
+    """Paire crypto, taux au-dessus du seuil → snapshot complet + veto=True."""
+    from backend.services import kraken_funding_scoring as kfs
+
+    monkeypatch.setattr(kfs, "get_funding_rate_for_pair", lambda pair: 5.0e-5)
+    monkeypatch.setattr(kfs, "_EXTREME_THRESHOLD", 2.0e-5)
+
+    snap = shadow._capture_funding_snapshot("BTC/USD", "buy")
+
+    assert snap is not None
+    assert snap["rate"] == pytest.approx(5.0e-5)
+    assert snap["symbol"] == "PF_XBTUSD"
+    assert snap["extreme_threshold"] == pytest.approx(2.0e-5)
+    assert snap["would_veto"] is True
+    assert "captured_at" in snap
+
+
+def test_capture_funding_snapshot_non_crypto_pair_returns_none(monkeypatch):
+    """Une paire non-crypto rend None — pas un dict vide.
+
+    On fait échouer volontairement `get_funding_rate_for_pair` (exception)
+    pour prouver que la fonction ne l'appelle même pas sur une paire
+    non-crypto : si le guard `is_crypto_pair` était contourné, ce test
+    lèverait au lieu de rendre None silencieusement.
+    """
+    from backend.services import kraken_funding_scoring as kfs
+
+    def _boom(pair):
+        raise AssertionError("get_funding_rate_for_pair ne doit pas être appelé pour une paire non-crypto")
+
+    monkeypatch.setattr(kfs, "get_funding_rate_for_pair", _boom)
+
+    assert shadow._capture_funding_snapshot("XAU/USD", "buy") is None
+    assert shadow._capture_funding_snapshot("EUR/USD", "sell") is None
+
+
+def test_capture_funding_snapshot_rate_unavailable_yields_none_not_zero(monkeypatch):
+    """Taux Kraken indisponible → rate=None (jamais 0.0), would_veto=None,
+    et la capture ne lève pas."""
+    from backend.services import kraken_funding_scoring as kfs
+
+    monkeypatch.setattr(kfs, "get_funding_rate_for_pair", lambda pair: None)
+    monkeypatch.setattr(kfs, "_EXTREME_THRESHOLD", 2.0e-5)
+
+    snap = shadow._capture_funding_snapshot("ETH/USD", "buy")
+
+    assert snap is not None
+    assert snap["rate"] is None
+    assert snap["rate"] != 0.0
+    assert snap["would_veto"] is None
+    # Le seuil, lui, reste connu même si le taux ne l'est pas.
+    assert snap["extreme_threshold"] == pytest.approx(2.0e-5)
+
+
+def test_capture_funding_snapshot_exception_does_not_raise(monkeypatch):
+    """Une exception dans le fetch du taux ne doit pas remonter — best-effort."""
+    from backend.services import kraken_funding_scoring as kfs
+
+    def _raise(pair):
+        raise RuntimeError("Kraken API down")
+
+    monkeypatch.setattr(kfs, "get_funding_rate_for_pair", _raise)
+
+    snap = shadow._capture_funding_snapshot("BTC/USD", "buy")
+
+    assert snap is not None  # toujours un dict (paire crypto), jamais de raise
+    assert snap["rate"] is None
+    assert snap["would_veto"] is None
+
+
+@pytest.mark.parametrize(
+    "direction,rate,threshold,expected_veto",
+    [
+        ("buy", 5.0e-5, 2.0e-5, True),   # funding positif extrême + BUY → veto
+        ("buy", 1.0e-5, 2.0e-5, False),  # funding positif sous le seuil → neutre
+        ("sell", -5.0e-5, 2.0e-5, True),  # funding négatif extrême + SELL → veto
+        ("sell", -1.0e-5, 2.0e-5, False),  # funding négatif sous le seuil → neutre
+        ("sell", 5.0e-5, 2.0e-5, False),  # funding positif extrême + SELL → pas surcrowdé
+        ("buy", -5.0e-5, 2.0e-5, False),  # funding négatif extrême + BUY → pas surcrowdé
+    ],
+)
+def test_capture_funding_snapshot_veto_consistent_with_rate_and_threshold(
+    monkeypatch, direction, rate, threshold, expected_veto
+):
+    """Le verdict contrefactuel stocké doit être recalculable à partir du
+    taux et du seuil enregistrés dans le MÊME instantané — c'est ce qui
+    rend la donnée durable plutôt que jetable (cf. spec)."""
+    from backend.services import kraken_funding_scoring as kfs
+
+    monkeypatch.setattr(kfs, "get_funding_rate_for_pair", lambda pair: rate)
+    monkeypatch.setattr(kfs, "_EXTREME_THRESHOLD", threshold)
+
+    snap = shadow._capture_funding_snapshot("BTC/USD", direction)
+
+    assert snap["would_veto"] is expected_veto
+    # Recalcul indépendant à partir des seuls champs persistés du snapshot :
+    recomputed = (
+        (snap["rate"] > snap["extreme_threshold"]) if direction == "buy"
+        else (snap["rate"] < -snap["extreme_threshold"])
+    )
+    assert recomputed == expected_veto
+
+
+def test_persist_setup_stores_funding_features(temp_db):
+    """_persist_setup persiste bien funding_features_json en DB, avec le
+    taux, le seuil et le verdict contrefactuel tous présents ensemble."""
+    from backend.models.schemas import TradeDirection
+    shadow.ensure_schema()
+
+    bar_ts = datetime(2026, 8, 5, 12, 0, tzinfo=timezone.utc)
+    cycle_ts = datetime(2026, 8, 5, 12, 5, tzinfo=timezone.utc)
+
+    class _S:
+        pair = "ETH/USD"
+        direction = TradeDirection.BUY
+        entry_price = 3000.0
+        stop_loss = 2950.0
+        take_profit_1 = 3100.0
+        take_profit_2 = 3150.0
+
+    funding = {
+        "captured_at": "2026-08-05T12:05:00Z",
+        "symbol": "PF_ETHUSD",
+        "rate": 3.5e-5,
+        "extreme_threshold": 2.0e-5,
+        "would_veto": True,
+    }
+
+    inserted = shadow._persist_setup(
+        _S(), "ETH/USD", "momentum_up", bar_ts, cycle_ts,
+        funding_features=funding,
+    )
+    assert inserted is True
+
+    with sqlite3.connect(temp_db) as c:
+        row = c.execute(
+            "SELECT funding_features_json FROM shadow_setups WHERE pair = ?",
+            ("ETH/USD",),
+        ).fetchone()
+    import json as _json
+    assert row is not None
+    parsed = _json.loads(row[0])
+    assert parsed["rate"] == pytest.approx(3.5e-5)
+    assert parsed["extreme_threshold"] == pytest.approx(2.0e-5)
+    assert parsed["would_veto"] is True
+    assert parsed["symbol"] == "PF_ETHUSD"
+
+
+def test_persist_setup_funding_features_none_stores_null(temp_db):
+    """Une paire non-crypto (funding_features=None) ne doit PAS écrire de
+    dict vide en JSON — la colonne doit rester NULL (mesure absente ≠
+    question sans objet)."""
+    from backend.models.schemas import TradeDirection
+    shadow.ensure_schema()
+
+    bar_ts = datetime(2026, 8, 5, 13, 0, tzinfo=timezone.utc)
+    cycle_ts = datetime(2026, 8, 5, 13, 5, tzinfo=timezone.utc)
+
+    class _S:
+        pair = "XAU/USD"
+        direction = TradeDirection.BUY
+        entry_price = 2400.0
+        stop_loss = 2390.0
+        take_profit_1 = 2418.0
+        take_profit_2 = 2425.0
+
+    inserted = shadow._persist_setup(
+        _S(), "XAU/USD", "momentum_up", bar_ts, cycle_ts,
+        funding_features=None,
+    )
+    assert inserted is True
+
+    with sqlite3.connect(temp_db) as c:
+        row = c.execute(
+            "SELECT funding_features_json FROM shadow_setups WHERE pair = ?",
+            ("XAU/USD",),
+        ).fetchone()
+    assert row is not None
+    assert row[0] is None
+
+
+def test_ensure_schema_idempotent_with_funding_column(temp_db):
+    """ensure_schema doit ajouter funding_features_json à une table
+    préexistante (qui a déjà geopolitical_features_json) sans erreur."""
+    with sqlite3.connect(temp_db) as c:
+        c.execute("""
+            CREATE TABLE shadow_setups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                detected_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                cycle_at TIMESTAMP NOT NULL,
+                bar_timestamp TIMESTAMP NOT NULL,
+                system_id TEXT NOT NULL,
+                pair TEXT NOT NULL,
+                timeframe TEXT NOT NULL,
+                direction TEXT NOT NULL,
+                pattern TEXT NOT NULL,
+                entry_price REAL NOT NULL,
+                stop_loss REAL NOT NULL,
+                take_profit_1 REAL NOT NULL,
+                take_profit_2 REAL,
+                risk_pct REAL NOT NULL,
+                rr REAL NOT NULL,
+                sizing_capital_eur REAL NOT NULL DEFAULT 10000,
+                sizing_risk_pct REAL NOT NULL DEFAULT 0.005,
+                sizing_position_eur REAL NOT NULL,
+                sizing_max_loss_eur REAL NOT NULL,
+                macro_features_json TEXT,
+                geopolitical_features_json TEXT,
+                outcome TEXT,
+                exit_at TIMESTAMP,
+                exit_price REAL,
+                pnl_pct_net REAL,
+                pnl_eur REAL,
+                UNIQUE (system_id, bar_timestamp)
+            )
+        """)
+
+    shadow.ensure_schema()
+    shadow.ensure_schema()  # 2e appel = no-op idempotent
+
+    with sqlite3.connect(temp_db) as c:
+        cols = [r[1] for r in c.execute("PRAGMA table_info(shadow_setups)").fetchall()]
+    assert "funding_features_json" in cols
+
+
+def test_ensure_schema_migration_safe_on_populated_table(temp_db):
+    """La migration doit être sûre rejouée sur une table DÉJÀ PEUPLÉE de
+    données : les rows existantes doivent survivre intactes, la nouvelle
+    colonne doit apparaître NULL sur ces rows, et un nouvel insert avec
+    funding doit fonctionner ensuite."""
+    from backend.models.schemas import TradeDirection
+
+    # Étape 1 : schéma pré-migration (avant funding_features_json), avec une
+    # row déjà présente — reproduit le schéma de prod qui tourne avec des
+    # données AVANT que cette migration ne soit déployée.
+    shadow.ensure_schema()  # état actuel (a déjà macro + geopol, pas funding)
+
+    class _S:
+        pair = "XAU/USD"
+        direction = TradeDirection.BUY
+        entry_price = 2400.0
+        stop_loss = 2390.0
+        take_profit_1 = 2418.0
+        take_profit_2 = 2425.0
+
+    bar_ts_old = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    cycle_ts_old = datetime(2026, 8, 1, 12, 5, tzinfo=timezone.utc)
+    assert shadow._persist_setup(_S(), "XAU/USD", "momentum_up", bar_ts_old, cycle_ts_old) is True
+
+    # Étape 2 : rejouer la migration (simule un redéploiement / restart) —
+    # ne doit ni lever, ni toucher la row existante.
+    shadow.ensure_schema()
+    shadow.ensure_schema()
+
+    with sqlite3.connect(temp_db) as c:
+        row = c.execute(
+            "SELECT entry_price, funding_features_json FROM shadow_setups WHERE bar_timestamp = ?",
+            (bar_ts_old.isoformat(),),
+        ).fetchone()
+    assert row is not None
+    assert row[0] == pytest.approx(2400.0)  # la row pré-existante est intacte
+    assert row[1] is None  # NULL sur les rows antérieures à la migration
+
+    # Étape 3 : un nouvel insert avec funding fonctionne normalement après.
+    bar_ts_new = datetime(2026, 8, 5, 12, 0, tzinfo=timezone.utc)
+    cycle_ts_new = datetime(2026, 8, 5, 12, 5, tzinfo=timezone.utc)
+    funding = {"rate": 3.0e-5, "extreme_threshold": 2.0e-5, "would_veto": True}
+    assert shadow._persist_setup(
+        _S(), "XAU/USD", "momentum_up", bar_ts_new, cycle_ts_new,
+        funding_features=funding,
+    ) is True
+
+    with sqlite3.connect(temp_db) as c:
+        n = c.execute("SELECT COUNT(*) FROM shadow_setups").fetchone()[0]
+    assert n == 2

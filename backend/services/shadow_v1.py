@@ -21,6 +21,7 @@ de `compute_promotion_score` pour les pairs OBSERVED.
 """
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 from datetime import datetime
@@ -107,11 +108,18 @@ def _persist_v1_shadow(
     pair: str,
     direction: str,
     cycle_at: datetime,
+    funding_features: dict | None = None,
 ) -> bool:
     """INSERT shadow_setups V1_SHADOW. Idempotent via UNIQUE.
 
     Retourne True si une nouvelle row a été créée, False sinon (collision
     UNIQUE = même bar logué au cycle précédent, normal pendant warmup).
+
+    ``funding_features`` : instantané funding Kraken (cf.
+    ``shadow_v2_core_long._capture_funding_snapshot``), ``None`` pour une
+    paire non-crypto ou si la capture a échoué. C'est la SEULE feature
+    capturée par le flux V1 aujourd'hui — volontairement minimal, ce flux
+    ne capture ni macro ni géopolitique (cf. docstring de module).
     """
     entry = float(setup.entry_price)
     sl = float(setup.stop_loss)
@@ -154,6 +162,7 @@ def _persist_v1_shadow(
     system_id = system_id_for(pair, direction)
     cycle_iso = cycle_at.isoformat()
     bar_iso = _bar_timestamp(cycle_at)
+    funding_json = json.dumps(funding_features) if funding_features else None
 
     with sqlite3.connect(DB_PATH) as c:
         try:
@@ -164,8 +173,9 @@ def _persist_v1_shadow(
                     direction, pattern, entry_price, stop_loss,
                     take_profit_1, take_profit_2, risk_pct, rr,
                     sizing_capital_eur, sizing_risk_pct,
-                    sizing_position_eur, sizing_max_loss_eur
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    sizing_position_eur, sizing_max_loss_eur,
+                    funding_features_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     cycle_iso, bar_iso, system_id, pair, V1_TIMEFRAME,
@@ -173,6 +183,7 @@ def _persist_v1_shadow(
                     entry, sl, tp1, tp2, risk_pct, rr,
                     DEFAULT_CAPITAL_EUR, DEFAULT_RISK_PCT,
                     sizing_position_eur, sizing_max_loss_eur,
+                    funding_json,
                 ),
             )
             return True
@@ -192,6 +203,7 @@ def log_v1_shadows_for_observed_pairs(setups: list, cycle_at: datetime) -> dict[
         {"logged": int, "skipped_not_observed": int, "errors": int}
     """
     from backend.services import pair_admission_controller as pac
+    from backend.services.shadow_v2_core_long import _capture_funding_snapshot
 
     counts = {"logged": 0, "skipped_not_observed": 0, "errors": 0}
     for setup in setups:
@@ -204,7 +216,15 @@ def log_v1_shadows_for_observed_pairs(setups: list, cycle_at: datetime) -> dict[
                 counts["skipped_not_observed"] += 1
                 continue
 
-            if _persist_v1_shadow(setup, pair, direction, cycle_at):
+            # Funding Kraken — seule feature capturée par V1 (cf. docstring
+            # module). None sur une paire non-crypto ; jamais bloquant.
+            funding_features = None
+            try:
+                funding_features = _capture_funding_snapshot(pair, direction)
+            except Exception as e:
+                logger.debug(f"shadow_v1: funding capture failed pour {pair}: {e}")
+
+            if _persist_v1_shadow(setup, pair, direction, cycle_at, funding_features=funding_features):
                 counts["logged"] += 1
         except Exception as e:
             logger.warning(f"shadow_v1 log failed for {getattr(setup, 'pair', '?')}: {e}")
