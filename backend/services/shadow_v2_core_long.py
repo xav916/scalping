@@ -531,6 +531,17 @@ async def run_shadow_log(
                     f"pattern={pattern_name} entry={setup.entry_price:.4f} "
                     f"SL={setup.stop_loss:.4f} TP1={setup.take_profit_1:.4f}"
                 )
+                # Notification long-horizon. Placée sous `_persist_setup`, qui
+                # rend True seulement pour une ligne réellement nouvelle
+                # (UNIQUE system_id, bar_timestamp) : la déduplication est
+                # celle de la base, il n'y a pas d'état à inventer.
+                try:
+                    from backend.services.telegram_service import (
+                        send_long_horizon_setup,
+                    )
+                    await send_long_horizon_setup(setup)
+                except Exception as e:
+                    logger.warning(f"shadow: notif long-horizon a échoué: {e}")
 
             # Twin filtered : si le veto contrefactuel laisse passer le setup,
             # logger AUSSI une entry jumelle avec system_id suffixé `_FILTERED`.

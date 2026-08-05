@@ -506,6 +506,18 @@ TELEGRAM_SETUP_VERDICTS = [
     if v.strip()
 ]
 
+# ── Canal long-horizon (2026-08-05) ──────────────────────────────────────
+# Le flux 4h/1d obtient son propre canal parce que `TELEGRAM_SETUP_VERDICTS`
+# est vide en production : les alertes setup temps-réel sont éteintes et les
+# rallumer produirait ~2000 messages/jour. Le flux long-horizon, lui, pèse
+# quelques setups par jour.
+TELEGRAM_LONG_HORIZON_ENABLED = os.getenv(
+    "TELEGRAM_LONG_HORIZON_ENABLED", "true"
+).strip().lower() in ("1", "true", "yes")
+TELEGRAM_LONG_HORIZON_MIN_CONFIDENCE = float(
+    os.getenv("TELEGRAM_LONG_HORIZON_MIN_CONFIDENCE", "61")
+)
+
 # Mapping par utilisateur : "user1:chat_id1,user2:chat_id2"
 # Si defini, chaque user recoit les signaux sur son propre chat Telegram et
 # son mode silencieux est verifie individuellement. Si vide, fallback sur

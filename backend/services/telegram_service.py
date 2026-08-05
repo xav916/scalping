@@ -22,6 +22,8 @@ from config.settings import (
     TELEGRAM_BOT_TOKEN,
     TELEGRAM_CHAT_ID,
     TELEGRAM_CHATS,
+    TELEGRAM_LONG_HORIZON_ENABLED,
+    TELEGRAM_LONG_HORIZON_MIN_CONFIDENCE,
     TELEGRAM_SETUP_MIN_CONFIDENCE,
     TELEGRAM_SETUP_VERDICTS,
 )
@@ -226,6 +228,51 @@ async def send_sales_text(text: str, parse_mode: str = "HTML") -> bool:
         return True
     except Exception as e:
         logger.warning(f"send_sales_text: erreur {e}")
+        return False
+
+
+async def send_long_horizon_setup(setup) -> bool:
+    """Annonce un setup 4h / 1d sur le canal sales, hors gate global.
+
+    Ce canal est **indépendant** du réglage qui autorise les alertes setup
+    temps-réel : il vaut chaîne vide en production, ce qui les éteint toutes,
+    et le rallumer produirait ~2000 messages/jour. Le flux long-horizon, lui,
+    en pèse quelques-uns.
+
+    Rend `True` si un message est parti. Best-effort : jamais d'exception
+    propagée — le shadow log ne doit pas dépendre de Telegram.
+    """
+    try:
+        if not TELEGRAM_LONG_HORIZON_ENABLED:
+            return False
+
+        from backend.services.horizon import is_long as _is_long
+
+        if not _is_long(getattr(setup, "horizon", None)):
+            return False
+        score = getattr(setup, "confidence_score", None) or 0
+        if score < TELEGRAM_LONG_HORIZON_MIN_CONFIDENCE:
+            return False
+
+        import html as _html
+
+        def _e(v) -> str:
+            return _html.escape(str(v), quote=False)
+
+        direction = getattr(getattr(setup, "direction", None), "value", "")
+        lignes = [
+            f"<b>Horizon {_e(setup.horizon)} — {_e(setup.pair)}</b>",
+            f"{_e(str(direction).upper())} · confiance {score:.0f}/100"
+            f" · verdict {_e(getattr(setup, 'verdict_action', '') or 'n/a')}",
+            f"Entrée {setup.entry_price:.4f} · SL {setup.stop_loss:.4f}"
+            f" · TP1 {setup.take_profit_1:.4f}",
+            f"<i>{_e(getattr(setup, 'shadow_system_id', '') or '')}</i>",
+            "",
+            "Observation seule — aucune position n'est ouverte.",
+        ]
+        return bool(await send_sales_text("\n".join(lignes), parse_mode="HTML"))
+    except Exception as e:
+        logger.warning(f"send_long_horizon_setup a échoué: {e}")
         return False
 
 
