@@ -239,6 +239,14 @@ EARNINGS_VETO_ENABLED = os.getenv("EARNINGS_VETO_ENABLED", "true").lower() in ("
 # Défaut : vendredi 18h UTC = 20h Paris (marge sécurité vs close forex 22h UTC).
 NO_FRIDAY_LATE_OPEN_ENERGY_ENABLED = os.getenv("NO_FRIDAY_LATE_OPEN_ENERGY_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 NO_FRIDAY_LATE_OPEN_ENERGY_HOUR_UTC = int(os.getenv("NO_FRIDAY_LATE_OPEN_ENERGY_HOUR_UTC", "18"))
+# Gel de détention longue à travers le week-end (2026-08-05, suivi revue tâche 7) :
+# généralise le gel énergie ci-dessus à TOUTE classe d'actif qui ferme (hors
+# crypto, marché continu) pour les horizons longs (4h/1j) — une position ouverte
+# vendredi soir franchit la clôture et ne peut plus être fermée avant le gap de
+# réouverture. Interrupteur dédié et indépendant du gel énergie ci-dessus : les
+# deux règles coexistent, se coupent séparément. Défaut activé (comportement
+# inchangé au déploiement).
+WEEKEND_HOLD_BLOCK_ENABLED = os.getenv("WEEKEND_HOLD_BLOCK_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 # Gap 2 (2026-08-02) : Kraken Futures scoring = miroir des 3 features Binance
 # (funding, OI, orderbook) pour signaux routés vers admin_kraken. Données natives
 # Kraken complémentaires aux 6 features Binance (les 2 sources cumulées, le pire

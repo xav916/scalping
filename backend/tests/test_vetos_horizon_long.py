@@ -100,6 +100,35 @@ def test_la_crypto_ne_subit_pas_le_gel_de_week_end(monkeypatch):
     assert _event_rejection(_setup("4h", "BTC/USD"), _dest()) is None
 
 
+def test_classification_indisponible_ne_bloque_pas_la_crypto(monkeypatch):
+    # Revue tache 7, trouvaille 1 : si asset_class_for n'est plus importable
+    # depuis config.settings, le repli ne doit PAS deviner "forex" et geler
+    # une position crypto a tort. Classification indisponible => pas de gel.
+    import config.settings as settings
+
+    monkeypatch.setattr("backend.services.mt5_bridge._now_utc", _vendredi_soir,
+                        raising=False)
+    monkeypatch.delattr(settings, "asset_class_for", raising=False)
+    assert _event_rejection(_setup("4h", "BTC/USD"), _dest()) is None
+
+
+def test_drapeau_desactive_laisse_passer_le_gel_de_weekend(monkeypatch):
+    # Revue tache 7, trouvaille 2 : interrupteur dedie, independant du gel
+    # energie preexistant. Patch au point de lecture reel : config.settings,
+    # relu a chaque appel par l'import local dans _event_rejection.
+    monkeypatch.setattr("backend.services.mt5_bridge._now_utc", _vendredi_soir,
+                        raising=False)
+    monkeypatch.setattr("config.settings.WEEKEND_HOLD_BLOCK_ENABLED", False)
+    assert _event_rejection(_setup("4h", "XAU/USD"), _dest()) is None
+
+
+def test_drapeau_active_bloque_toujours_le_gel_de_weekend(monkeypatch):
+    monkeypatch.setattr("backend.services.mt5_bridge._now_utc", _vendredi_soir,
+                        raising=False)
+    monkeypatch.setattr("config.settings.WEEKEND_HOLD_BLOCK_ENABLED", True)
+    assert _event_rejection(_setup("4h", "XAU/USD"), _dest()) == "weekend_hold_blocked"
+
+
 # ── Traçabilité et branchement ──────────────────────────────────────────
 
 def test_les_codes_sont_publics_et_libelles():

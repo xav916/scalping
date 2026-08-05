@@ -364,16 +364,24 @@ def _event_rejection(setup, dest) -> str | None:
     #    exécuté à 79,57 au gap de réouverture, −20,75 € au lieu de −4 à −5).
     #    Une détention ouverte vendredi soir franchit la clôture par
     #    construction, quelle que soit la classe d'actif qui ferme.
+    #    Interrupteur dédié (WEEKEND_HOLD_BLOCK_ENABLED), indépendant du
+    #    NO_FRIDAY_LATE_OPEN_ENERGY_ENABLED du gel énergie préexistant — les
+    #    deux règles coexistent et se coupent séparément.
     try:
         from config.settings import (
+            WEEKEND_HOLD_BLOCK_ENABLED,
             NO_FRIDAY_LATE_OPEN_ENERGY_HOUR_UTC,
             asset_class_for as _acf,
         )
-    except Exception:
-        NO_FRIDAY_LATE_OPEN_ENERGY_HOUR_UTC = 18
+    except Exception as e:
+        # Classification indisponible : impossible de distinguer la crypto
+        # (jamais gelée) du reste. Deviner une classe bloquerait des
+        # positions crypto à tort — on ne bloque pas plutôt que de deviner.
+        logger.debug(f"_event_rejection weekend gate indisponible {pair}: {e}")
+        return None
 
-        def _acf(_p):
-            return "forex"
+    if not WEEKEND_HOLD_BLOCK_ENABLED:
+        return None
 
     if _acf(pair) != "crypto":
         # Le marché crypto ne ferme pas : pas de gap de réouverture.
