@@ -121,6 +121,31 @@ class BridgeConfig:
     allowed_horizons: frozenset[str] | None = None
 
 
+def _mt5_scalping_horizons() -> frozenset[str] | None:
+    """Horizons acceptés par les routes MT5 (``admin_legacy``, ``admin_live``).
+
+    Dérivé de ``CANDLE_INTERVAL`` plutôt que codé en dur : c'est ce même
+    réglage que ``analysis_engine.enrich_trade_setup`` utilise pour
+    estampiller l'horizon des setups V1. Un `frozenset({"5min"})` figé
+    désynchroniserait silencieusement la porte de routage du réglage qui
+    pilote réellement l'estampille — passer `CANDLE_INTERVAL` à `15min`
+    referait alors refuser TOUS les pushes MT5 en `horizon_not_allowed`,
+    sans autre trace que des lignes de refus. C'est le mode de défaillance
+    d'un kill-switch oublié (cf. incident 2026-07-13).
+
+    ``normalize`` rend ``None`` sur une valeur hors du vocabulaire d'horizon
+    (ex: ``CANDLE_INTERVAL=1min`` ou ``30min``, valides côté source de
+    données mais absents de ``horizon.HORIZONS``). On retombe alors sur
+    « aucun filtre » — le comportement d'avant le 2026-08-05 — plutôt que de
+    bloquer aveuglément sur une valeur qu'on ne sait pas interpréter.
+    """
+    from config.settings import CANDLE_INTERVAL
+    from backend.services.horizon import normalize as _normalize_horizon
+
+    h = _normalize_horizon(CANDLE_INTERVAL)
+    return frozenset({h}) if h else None
+
+
 def _admin_legacy_destination() -> BridgeConfig | None:
     """Retourne la config admin legacy depuis l'env, ou ``None`` si absente.
 
@@ -171,7 +196,9 @@ def _admin_legacy_destination() -> BridgeConfig | None:
         extra_pairs_allowed=extra_pairs,
         # MT5 est dimensionné pour le scalping : SL serrés, TP à quelques
         # dixièmes de pourcent, frais absorbés dans le spread (0,022 R mesuré).
-        allowed_horizons=frozenset({"5min"}),
+        # Dérivé de CANDLE_INTERVAL, pas codé en dur — cf. docstring de
+        # `_mt5_scalping_horizons`.
+        allowed_horizons=_mt5_scalping_horizons(),
     )
 
 
@@ -210,7 +237,9 @@ def _admin_live_destination() -> BridgeConfig | None:
         extra_pairs_allowed=getattr(st, "MT5_BRIDGE_LIVE_EXTRA_PAIRS", frozenset()),
         # MT5 est dimensionné pour le scalping : SL serrés, TP à quelques
         # dixièmes de pourcent, frais absorbés dans le spread (0,022 R mesuré).
-        allowed_horizons=frozenset({"5min"}),
+        # Dérivé de CANDLE_INTERVAL, pas codé en dur — cf. docstring de
+        # `_mt5_scalping_horizons`.
+        allowed_horizons=_mt5_scalping_horizons(),
     )
 
 

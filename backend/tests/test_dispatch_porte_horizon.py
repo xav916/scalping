@@ -105,6 +105,73 @@ def test_kraken_declare_les_horizons_longs():
         assert kraken.allowed_horizons == frozenset({"4h", "1d"})
 
 
+# ─── L'horizon MT5 est dérivé de CANDLE_INTERVAL, pas codé en dur ──────
+#
+# Trouvaille de revue (2026-08-05) : `frozenset({"5min"})` codé en dur dans
+# les deux fabriques MT5 désynchroniserait silencieusement la porte du
+# réglage `CANDLE_INTERVAL` qui pilote réellement l'estampille des setups
+# V1 (`analysis_engine.enrich_trade_setup`). Passer `CANDLE_INTERVAL` à
+# `15min` ferait alors refuser TOUS les pushes MT5 en `horizon_not_allowed`
+# sans que la porte de routage en soit informée — kill-switch oublié.
+
+
+def test_horizon_mt5_derive_de_candle_interval(monkeypatch):
+    from config import settings as st
+    from backend.services import bridge_destinations as bd
+
+    monkeypatch.setattr(st, "CANDLE_INTERVAL", "15min")
+    assert bd._mt5_scalping_horizons() == frozenset({"15min"})
+
+
+def test_horizon_mt5_suit_candle_interval_par_defaut(monkeypatch):
+    from config import settings as st
+    from backend.services import bridge_destinations as bd
+
+    monkeypatch.setattr(st, "CANDLE_INTERVAL", "5min")
+    assert bd._mt5_scalping_horizons() == frozenset({"5min"})
+
+
+def test_horizon_mt5_retombe_sur_aucun_filtre_si_candle_interval_inconnu(monkeypatch):
+    # "1min" et "30min" sont des intervalles valides côté source de données
+    # (Twelve Data) mais absents du vocabulaire d'horizon
+    # (`backend.services.horizon.HORIZONS`). `normalize` rend None : on
+    # retombe sur "aucun filtre" plutôt que de bloquer aveuglément.
+    from config import settings as st
+    from backend.services import bridge_destinations as bd
+
+    monkeypatch.setattr(st, "CANDLE_INTERVAL", "1min")
+    assert bd._mt5_scalping_horizons() is None
+
+    monkeypatch.setattr(st, "CANDLE_INTERVAL", "30min")
+    assert bd._mt5_scalping_horizons() is None
+
+
+def test_admin_legacy_et_admin_live_derivent_leur_horizon(monkeypatch):
+    # Verrouille le cablage (pas seulement le helper isole) : un changement
+    # de CANDLE_INTERVAL doit se propager aux DEUX fabriques MT5.
+    from config import settings as st
+    from backend.services import bridge_destinations as bd, mt5_bridge as mb
+
+    monkeypatch.setattr(mb, "MT5_BRIDGE_ENABLED", True)
+    monkeypatch.setattr(mb, "MT5_BRIDGE_URL", "http://x")
+    monkeypatch.setattr(mb, "MT5_BRIDGE_API_KEY", "k" * 32)
+    monkeypatch.setattr(mb, "MT5_BRIDGE_ALLOWED_ASSET_CLASSES", ["forex"])
+    monkeypatch.setattr(st, "CANDLE_INTERVAL", "15min")
+
+    legacy = bd._admin_legacy_destination()
+    assert legacy is not None
+    assert legacy.allowed_horizons == frozenset({"15min"})
+
+    monkeypatch.setattr(st, "MT5_BRIDGE_LIVE_ENABLED", True)
+    monkeypatch.setattr(st, "MT5_BRIDGE_LIVE_URL", "http://y")
+    monkeypatch.setattr(st, "MT5_BRIDGE_LIVE_API_KEY", "k" * 32)
+    monkeypatch.setattr(st, "MT5_BRIDGE_LIVE_MIN_CONFIDENCE", 55.0)
+    monkeypatch.setattr(st, "MT5_BRIDGE_LIVE_ALLOWED_ASSET_CLASSES", ["forex"])
+    live = bd._admin_live_destination()
+    assert live is not None
+    assert live.allowed_horizons == frozenset({"15min"})
+
+
 def test_les_destinations_user_ne_filtrent_pas_l_horizon():
     # Cedric doit continuer a recevoir exactement ce qu'il recoit.
     import inspect
