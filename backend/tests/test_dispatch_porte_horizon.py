@@ -172,6 +172,50 @@ def test_admin_legacy_et_admin_live_derivent_leur_horizon(monkeypatch):
     assert live.allowed_horizons == frozenset({"15min"})
 
 
+# ─── Un refus d'horizon porte l'horizon vu du signal dans ses details ──
+#
+# Trouvaille de revue (2026-08-05) : `details` ne contenait que
+# `signal_pattern`, ce qui rend une vague de refus `horizon_not_allowed`
+# indiagnosticable — impossible de savoir quel horizon le signal portait
+# sans rejouer `_check_rejection` hors ligne (même mode de défaillance que
+# `_not_admitted`/`_not_a_star`, cf. `test_rejection_destination_id.py`).
+
+
+def test_le_refus_d_horizon_porte_l_horizon_dans_les_details(tmp_path, monkeypatch):
+    import asyncio
+    import json
+    import sqlite3
+    from types import SimpleNamespace as NS
+
+    from backend.services import mt5_bridge, trade_log_service
+
+    monkeypatch.setattr(trade_log_service, "_DB_PATH", tmp_path / "trades.db")
+
+    dest = NS(destination_id="admin_kraken", user_id=None,
+              min_confidence=60.0, allowed_asset_classes=frozenset({"crypto"}),
+              excluded_pairs=frozenset(), bridge_url="", auto_exec_enabled=True,
+              extra_pairs_allowed=frozenset())
+    setup = NS(pair="BTC/USD", direction=NS(value="buy"), confidence_score=90,
+               entry_price=50000.0, stop_loss=49000.0, take_profit_1=51800.0,
+               take_profit_2=None, verdict_action="TAKE", verdict_blockers=[],
+               is_simulated=False, pattern=None, horizon="5min")
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(mt5_bridge, "_check_rejection", lambda s, d: "horizon_not_allowed")
+        asyncio.run(mt5_bridge._push_to_destination(setup, dest))
+
+    with sqlite3.connect(tmp_path / "trades.db") as c:
+        row = c.execute(
+            "SELECT reason_code, details FROM signal_rejections"
+        ).fetchone()
+
+    assert row[0] == "horizon_not_allowed"
+    details = json.loads(row[1])
+    assert details["horizon"] == "5min"
+    # Ne casse pas la clé existante consommée par le watchdog stop_loss_alerts.
+    assert "signal_pattern" in details
+
+
 def test_les_destinations_user_ne_filtrent_pas_l_horizon():
     # Cedric doit continuer a recevoir exactement ce qu'il recoit.
     import inspect

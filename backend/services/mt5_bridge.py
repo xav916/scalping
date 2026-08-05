@@ -796,7 +796,15 @@ async def _push_to_destination(setup, dest) -> None:
             # sert pour détecter si V1 essaie encore le pattern défaillant
             # (smart resume). Inutile pour les autres reason_codes mais
             # peu cher à porter, donc on log universellement.
-            details = {"signal_pattern": _pattern_value(setup)}
+            #
+            # `horizon` (2026-08-05) : même logique pour `horizon_not_allowed`
+            # — sans lui, une vague de refus d'horizon n'est pas
+            # diagnosticable (quel horizon le signal portait-il vraiment ?).
+            # Universel comme `signal_pattern`, et pour la même raison.
+            details = {
+                "signal_pattern": _pattern_value(setup),
+                "horizon": getattr(setup, "horizon", None),
+            }
             # Persister les blockers en clair pour les dashboards
             # (geopolitical_veto en particulier — sinon on perd la règle
             # qui a déclenché et le détail prob/jours).
