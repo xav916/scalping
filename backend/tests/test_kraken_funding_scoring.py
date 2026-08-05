@@ -11,6 +11,7 @@ from unittest.mock import patch
 import pytest
 
 from backend.services.kraken_funding_scoring import (
+    _DEFAULT_EXTREME_THRESHOLD,
     _EXTREME_THRESHOLD,
     _PAIR_TO_SYMBOL,
     _SOFT_VETO_MULTIPLIER,
@@ -45,7 +46,11 @@ class TestApplyKrakenFunding:
 
     # ── Soft veto BUY ──────────────────────────────────────────────────
     def test_buy_extreme_positive_funding_triggers_veto(self):
-        rate = _EXTREME_THRESHOLD * 2  # double du seuil
+        # Proche du maximum BTC réellement observé (mesure du 2026-08-05,
+        # 8968h/paire, ~374 jours, endpoint historicalfundingrates) :
+        # 1.773e-04 — nettement au-dessus du seuil recalibré (p95 = 2.0e-5,
+        # cf. commentaire sur _DEFAULT_EXTREME_THRESHOLD dans le module).
+        rate = 1.773e-04
         with self._patch_rate(rate):
             new_score, meta = apply_kraken_funding("BTC/USD", "buy", 70.0)
         assert meta["multiplier"] == _SOFT_VETO_MULTIPLIER
@@ -62,7 +67,10 @@ class TestApplyKrakenFunding:
 
     # ── Soft veto SELL ─────────────────────────────────────────────────
     def test_sell_extreme_negative_funding_triggers_veto(self):
-        rate = -_EXTREME_THRESHOLD * 2
+        # Proche du maximum ETH réellement observé (mesure du 2026-08-05,
+        # 8968h/paire, ~374 jours) : 5.485e-04 — nettement au-dessus du
+        # seuil recalibré (p95 = 2.0e-5).
+        rate = -5.485e-04
         with self._patch_rate(rate):
             new_score, meta = apply_kraken_funding("ETH/USD", "sell", 65.0)
         assert meta["multiplier"] == _SOFT_VETO_MULTIPLIER
@@ -88,7 +96,10 @@ class TestApplyKrakenFunding:
 
     # ── Neutre : funding normal ────────────────────────────────────────
     def test_neutral_funding_no_veto(self):
-        rate = 0.0001  # bien sous le seuil 0.0005
+        # Médiane |taux| BTC mesurée (2026-08-05, 8968h, ~374 jours) :
+        # 6.107e-06 — bien sous le seuil recalibré (p95 = 2.0e-5, cf.
+        # commentaire sur _DEFAULT_EXTREME_THRESHOLD dans le module).
+        rate = 6.107e-06
         with self._patch_rate(rate):
             new_score, meta = apply_kraken_funding("BTC/USD", "buy", 70.0)
         assert meta["multiplier"] == 1.0
@@ -136,7 +147,10 @@ class TestApplyKrakenFunding:
 
     # ── Meta contient symbol et rate ──────────────────────────────────
     def test_meta_contains_symbol_and_rate(self):
-        rate = 0.0002
+        # Médiane |taux| ETH mesurée (2026-08-05) : 5.867e-06 — sous le
+        # seuil recalibré, n'affecte pas le comportement testé ici (meta
+        # renseignée quel que soit le multiplicateur appliqué).
+        rate = 5.867e-06
         with self._patch_rate(rate):
             _, meta = apply_kraken_funding("ETH/USD", "buy", 60.0)
         assert meta["symbol"] == "PF_ETHUSD"
@@ -149,6 +163,32 @@ class TestApplyKrakenFunding:
             new_score, meta = apply_kraken_funding("SOL/USD", "buy", 80.0)
         assert meta["multiplier"] == _SOFT_VETO_MULTIPLIER
         assert new_score < 80.0
+
+
+class TestExtremeThresholdCalibration:
+    """Verrouille la valeur du seuil recalibré contre une dérive silencieuse.
+
+    Recalibré le 2026-08-05 sur le p95 mesuré du funding relatif Kraken
+    Futures (endpoint historique ``historicalfundingrates``, champ
+    ``relativeFundingRate``, 8968 observations horaires par paire, ~374
+    jours, 2025-07-27 → 2026-08-05) :
+    - p95 PF_XBTUSD = 1.879e-05
+    - p95 PF_ETHUSD = 1.989e-05
+    Ces deux valeurs, mesurées sur deux actifs différents, convergent au
+    même endroit — c'est cette convergence qui rend le p95 (arrondi à
+    2.0e-5) crédible comme seuil plutôt qu'un ajustement fait sur une seule
+    série (voir le commentaire complet sur ``_DEFAULT_EXTREME_THRESHOLD``
+    dans le module, qui inclut aussi les autres percentiles).
+
+    Si ce test casse : soit la constante a été modifiée sans nouvelle
+    mesure (à corriger), soit un recalibrage documenté avec la même
+    méthode (percentile convergent sur les deux paires tradées) le
+    justifie — dans ce cas, mettre à jour ce test ET le commentaire source
+    avec la nouvelle mesure, pas seulement la valeur.
+    """
+
+    def test_default_threshold_equals_measured_p95(self):
+        assert _DEFAULT_EXTREME_THRESHOLD == pytest.approx(2.0e-5)
 
 
 class TestFetchAllRates:

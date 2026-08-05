@@ -30,14 +30,27 @@ La cadence horaire est donc confirmée par la mesure, cohérente avec
 ## Logique
 
 Identique au filtre Binance :
-- Funding relatif > +0.05% (longs surcrowdés) + setup BUY  → soft veto ×0.85
-- Funding relatif < -0.05% (shorts surcrowdés) + setup SELL → soft veto ×0.85
+- Funding relatif > seuil extrême (longs surcrowdés) + setup BUY  → soft veto ×0.85
+- Funding relatif < -seuil extrême (shorts surcrowdés) + setup SELL → soft veto ×0.85
 - Sinon : multiplier 1.0 (neutre)
 
-⚠️ Chantier ouvert : ``0.05%`` par échéance horaire correspond à ~438%/an
-(voir commentaire sur ``_DEFAULT_EXTREME_THRESHOLD`` ci-dessous) — un seuil
-que le funding réel n'atteint quasiment jamais. Il n'a pas été recalibré
-ici (décision produit hors périmètre de ce fix d'unité).
+## Seuil "extrême" — recalibré le 2026-08-05
+
+``_DEFAULT_EXTREME_THRESHOLD`` valait ``0.0005`` (0.05%/heure, ~438%/an) —
+un artefact du bug d'unité ci-dessus : quand ``fundingRate`` était pris tel
+quel (valeur absolue), ce seuil se déclenchait quasi toujours ; une fois le
+taux converti en relatif, il ne se déclenche quasi plus jamais (le funding
+relatif réel est de l'ordre de 1e-5 à 1e-6). Il a été recalibré sur une
+mesure de la distribution réelle du funding relatif Kraken — voir le
+commentaire détaillé au-dessus de ``_DEFAULT_EXTREME_THRESHOLD`` ci-dessous
+pour la méthode, les percentiles mesurés et la justification du choix
+(``2.0e-5``, le p95 convergent des deux paires tradées).
+
+⚠️ Cette recalibration règle la FRÉQUENCE de déclenchement du veto, pas sa
+VALEUR : aucune mesure ne démontre qu'un funding extrême prédit un moins
+bon résultat de trade. Cette question reste hors de portée tant que le
+taux de funding au moment du signal n'est pas persisté (voir le même
+commentaire pour le chantier de validation, distinct et non fait ici).
 
 ## Cache
 
@@ -91,16 +104,50 @@ _PAIR_TO_SYMBOL: dict[str, str] = {
 # échéance de règlement Kraken (horaire — cf. docstring d'en-tête pour la
 # preuve de mesure du 2026-08-05).
 #
-# ⚠️ Chantier ouvert — seuil non recalibré : 0.0005 par échéance HORAIRE
-# représente 0.05%/heure, soit environ 438%/an. Le funding relatif réel
-# mesuré est de l'ordre de 1e-5 à 1e-6 (voir relevé du 2026-08-05 dans le
-# docstring d'en-tête), donc ce seuil ne se déclenchera pour ainsi dire
-# jamais — le veto passe de "se déclenche toujours" (bug d'unité, avant fix)
-# à "ne se déclenche presque jamais" (après fix, seuil inchangé). Les deux
-# extrêmes sont également inutiles comme discriminant. Le seuil doit être
-# recalibré sur une mesure de la distribution réelle du funding relatif
-# Kraken — ce n'est PAS fait ici, c'est une décision produit distincte.
-_DEFAULT_EXTREME_THRESHOLD = 0.0005
+# Recalibré le 2026-08-05 sur une mesure de la distribution réelle du
+# funding relatif Kraken Futures. Source : endpoint public historique
+# ``GET https://futures.kraken.com/derivatives/api/v4/historicalfundingrates
+# ?symbol=<SYM>``, champ ``relativeFundingRate`` (déjà relatif, contrairement
+# au ``fundingRate`` absolu de l'endpoint ``tickers`` utilisé plus bas dans
+# ce module). Échantillon : 8968 observations horaires par paire, ~374
+# jours (2025-07-27 → 2026-08-05), sur les deux seules paires tradées :
+#
+#                       PF_XBTUSD      PF_ETHUSD
+#   part négative         27,2 %         31,1 %
+#   |taux| médiane      6,107e-06      5,867e-06
+#   |taux| p75          1,047e-05      1,030e-05
+#   |taux| p90          1,515e-05      1,564e-05
+#   |taux| p95          1,879e-05      1,989e-05
+#   |taux| p99          2,769e-05      3,159e-05
+#   |taux| p99,9        3,643e-05      7,104e-05
+#   |taux| maximum      1,773e-04      5,485e-04
+#
+# Constat qui motive la recalibration : l'ancien seuil (0.0005) est
+# AU-DESSUS du maximum observé sur BTC en un an. Rejoué sur l'historique,
+# il ne se serait déclenché 0 fois sur 8968 heures pour BTC, et 1 seule
+# fois pour ETH — un no-op mesuré, pas supposé.
+#
+# Seuil retenu : 2.0e-5 — le p95 des deux paires, qui tombent au même
+# endroit (1,879e-05 et 1,989e-05). C'est cette convergence entre deux
+# actifs différents qui rend la valeur crédible comme seuil plutôt
+# qu'ajustée sur une seule série. Avec ce seuil, le veto se déclenche sur
+# environ 5% des heures, majoritairement côté achat (BUY) puisque ~72%
+# des heures ont un funding positif (27,2%/31,1% de funding négatif
+# mesuré ci-dessus).
+#
+# ⚠️ Ce que cette mesure NE valide PAS : elle règle la FRÉQUENCE de
+# déclenchement du veto, pas sa VALEUR. Rien ne démontre qu'un funding
+# extrême prédit un moins bon résultat de trade — et on ne peut
+# aujourd'hui pas le mesurer, car le taux de funding au moment du signal
+# n'est persisté nulle part (ni dans `signals`, ni dans les features
+# shadow). Le veto reste donc une hypothèse non validée, désormais dosée
+# sur une fréquence plausible plutôt que sur un seuil inatteignable — une
+# mesure de fréquence n'est pas une validation de pertinence. Prochaine
+# étape pour trancher (chantier distinct, PAS fait ici) : persister le
+# taux relatif au moment du signal (ex: dans les features shadow), pour
+# pouvoir comparer a posteriori les résultats de trade avec/sans funding
+# extrême.
+_DEFAULT_EXTREME_THRESHOLD = 2.0e-5
 _EXTREME_THRESHOLD = float(
     os.getenv("KRAKEN_FUNDING_EXTREME_THRESHOLD", _DEFAULT_EXTREME_THRESHOLD)
 )
