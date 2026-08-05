@@ -158,6 +158,10 @@ class TradeSetup(BaseModel):
     # défaut à `"5min"` ferait passer un setup non étiqueté pour du scalping
     # et le router vers de l'argent réel.
     horizon: str | None = None
+    # Système générateur pour les setups issus du shadow V2 long-horizon
+    # ("V2_CORE_LONG_XAUUSD_4H"…). Sert à retrouver la durée de détention
+    # médiane du système (coût de portage) et à dédupliquer les notifications.
+    shadow_system_id: str | None = None
 
 
 class ScalpingSignal(BaseModel):

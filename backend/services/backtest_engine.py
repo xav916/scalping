@@ -122,15 +122,26 @@ def load_candles(
 # ─── Reconstruction volatility + trend à partir des candles ────────────────
 
 
-def compute_volatility(candles_1h: list[Candle], pair: str) -> VolatilityData:
+def compute_volatility(
+    candles_1h: list[Candle], pair: str, timeframe: str = "1H",
+) -> VolatilityData:
     """Volatility via ATR : current (14-bar) vs average (50-bar). Ratio
-    classe en LOW/MEDIUM/HIGH."""
+    classe en LOW/MEDIUM/HIGH.
+
+    ``timeframe`` est purement descriptif : le calcul est agnostique à
+    l'échelle de temps, seule l'étiquette change. Le défaut ``"1H"`` préserve
+    les appelants existants.
+
+    ⚠️ L'étiquette doit dire la vérité. Elle finit dans le score d'un setup,
+    et une étiquette fausse s'y propage silencieusement — même leçon que le
+    correctif d'horizon du shadow V1 (commit ``057def9``).
+    """
     if len(candles_1h) < 15:
         return VolatilityData(
             pair=pair,
             current_volatility=0.0, average_volatility=0.0,
             volatility_ratio=1.0, level=VolatilityLevel.MEDIUM,
-            timeframe="1H", updated_at=candles_1h[-1].timestamp if candles_1h else datetime.now(timezone.utc),
+            timeframe=timeframe, updated_at=candles_1h[-1].timestamp if candles_1h else datetime.now(timezone.utc),
         )
     recent = candles_1h[-15:]
     atr_current = _calculate_atr(recent, period=14)
@@ -156,7 +167,7 @@ def compute_volatility(candles_1h: list[Candle], pair: str) -> VolatilityData:
         average_volatility=atr_baseline,
         volatility_ratio=round(ratio, 3),
         level=level,
-        timeframe="1H",
+        timeframe=timeframe,
         updated_at=candles_1h[-1].timestamp,
     )
 

@@ -475,11 +475,36 @@ async def run_shadow_log(
             if setup.direction != TradeDirection.BUY:
                 continue
 
-            # Horizon d'analyse : ce setup a été détecté sur des bougies `tf`,
-            # pas sur le CANDLE_INTERVAL global. Posé AVANT tout enrichissement
-            # pour qu'`enrich_trade_setup` ne l'écrase pas.
+            # Horizon d'analyse : ce setup a été détecté sur des bougies `tf`.
+            # Posé AVANT l'enrichissement pour qu'il ne soit pas écrasé.
             from backend.services.horizon import normalize as _normalize_horizon
             setup.horizon = _normalize_horizon(tf)
+            setup.shadow_system_id = cfg["system_id"]
+
+            # Score et verdict (2026-08-05). `calculate_trade_setup` ne
+            # renseigne pas `confidence_score` : sans cet enrichissement, tout
+            # le flux long-horizon vaudrait 0 et serait refusé en
+            # `below_confidence`.
+            #
+            # ⚠️ La volatilité est calculée sur `signal_candles`, les bougies
+            # sur lesquelles le setup a été DÉTECTÉ. Le barème v2 conditionne
+            # sa composante Volatilité à `if volatility:` — sans elle le score
+            # plafonne à 60, soit un point sous le seuil Telegram de 61, et le
+            # flux serait invisible sans produire le moindre refus.
+            try:
+                from backend.services.analysis_engine import enrich_trade_setup
+                from backend.services.backtest_engine import compute_volatility
+                from backend.services.coaching import compute_verdict
+
+                volatilite = compute_volatility(signal_candles, pair, timeframe=tf)
+                enrich_trade_setup(setup, volatilite, None, [])
+                verdict = compute_verdict(setup, volatility=volatilite, events=[])
+                setup.verdict_action = verdict.get("action", "")
+                setup.verdict_summary = verdict.get("summary", "") or ""
+            except Exception as e:
+                # Best-effort : un échec de scoring ne doit pas empêcher la
+                # persistance shadow, qui reste la source de mesure.
+                logger.warning(f"shadow: scoring {cfg['system_id']} {pair} a échoué: {e}")
 
             # Snapshot macro features pour analyse post-hoc
             macro_features = None
