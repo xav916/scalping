@@ -326,6 +326,63 @@ def _horizon_rejection(setup, dest) -> str | None:
     return None
 
 
+def _now_utc():
+    """Horloge isolée pour que les portes temporelles soient testables."""
+    from datetime import datetime as _dt, timezone as _tz
+
+    return _dt.now(_tz.utc)
+
+
+def _event_rejection(setup, dest) -> str | None:
+    """Refuse une détention longue qui traverserait un événement connu.
+
+    Principe : à horizon long, un veto qui réduit la taille ne suffit plus.
+    Un événement connu à l'avance et tombant pendant la détention doit
+    empêcher l'ouverture, puisqu'on ne peut plus sortir avant.
+
+    Ne s'applique qu'aux horizons longs : en scalping la position se ferme
+    avant l'événement, et les vetos doux existants continuent de jouer au
+    scoring.
+    """
+    from backend.services.horizon import is_long as _is_long
+
+    if not _is_long(getattr(setup, "horizon", None)):
+        return None
+    pair = getattr(setup, "pair", "") or ""
+
+    # 1. Earnings — la publication tombe pendant la détention.
+    try:
+        from backend.services import earnings_veto
+
+        if earnings_veto.blocks_at_long_horizon(pair, now=_now_utc()):
+            return "earnings_blackout"
+    except Exception as e:
+        logger.debug(f"_event_rejection earnings {pair}: {e}")
+
+    # 2. Gap de week-end — généralisation du gel énergie du vendredi
+    #    (incident 2026-08-03 : 2 positions WTI tenues 3 nuits, SL à 83,15
+    #    exécuté à 79,57 au gap de réouverture, −20,75 € au lieu de −4 à −5).
+    #    Une détention ouverte vendredi soir franchit la clôture par
+    #    construction, quelle que soit la classe d'actif qui ferme.
+    try:
+        from config.settings import (
+            NO_FRIDAY_LATE_OPEN_ENERGY_HOUR_UTC,
+            asset_class_for as _acf,
+        )
+    except Exception:
+        NO_FRIDAY_LATE_OPEN_ENERGY_HOUR_UTC = 18
+
+        def _acf(_p):
+            return "forex"
+
+    if _acf(pair) != "crypto":
+        # Le marché crypto ne ferme pas : pas de gap de réouverture.
+        maintenant = _now_utc()
+        if maintenant.weekday() == 4 and maintenant.hour >= NO_FRIDAY_LATE_OPEN_ENERGY_HOUR_UTC:
+            return "weekend_hold_blocked"
+    return None
+
+
 def _check_rejection(setup, dest=None) -> str | None:
     """Retourne None si le setup peut être pushé, sinon un reason_code parmi
     ceux définis dans `rejection_service.REASON_LABELS_FR`. Seuls les cas qui
@@ -509,6 +566,12 @@ def _check_rejection(setup, dest=None) -> str | None:
     horizon_reason = _horizon_rejection(setup, dest)
     if horizon_reason:
         return horizon_reason
+    # Portes événementielles (2026-08-05). Après l'horizon — inutile
+    # d'interroger le calendrier earnings pour un setup que la route ne sert
+    # pas — et avant la porte de coût, qui est la plus chère.
+    event_reason = _event_rejection(setup, dest)
+    if event_reason:
+        return event_reason
     # Whitelist de patterns (2026-08-04). S'ajoute au seuil de confidence,
     # ne le remplace pas — cf. MT5_BRIDGE_ALLOWED_PATTERNS dans settings.
     # Sur 100 657 trades suivis, `range_bounce_up/down` fait +0,129 R/trade

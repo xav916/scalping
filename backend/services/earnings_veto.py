@@ -158,3 +158,45 @@ def apply_earnings_veto(
     except Exception as e:
         logger.warning(f"earnings_veto: top-level error for {pair}: {e}")
         return base_score, {"earnings_error": str(e)}
+
+
+def _next_earnings_at(pair: str):
+    """Prochaine publication de résultats pour cette paire, ou ``None``.
+
+    Isolé pour être remplaçable en test — le calendrier dépend de yfinance,
+    donc du réseau.
+    """
+    from backend.services import earnings_calendar_service
+
+    return earnings_calendar_service.get_next_earnings(pair)
+
+
+def blocks_at_long_horizon(pair: str, now: Optional[datetime] = None) -> bool:
+    """``True`` si une position tenue à horizon long traverserait des earnings.
+
+    À horizon court, le veto reste **doux** : la position se ferme avant la
+    publication, et le multiplicateur ×0,60 appliqué au scoring suffit. À 4h
+    ou 1d, la position traverse l'événement et ne peut plus être fermée
+    avant — un veto qui réduit la taille ne protège plus de rien.
+
+    Best-effort : toute erreur rend ``False``. Le calendrier dépend de
+    yfinance, et une indisponibilité ne doit pas couper tout le flux equity.
+    """
+    try:
+        from config.settings import EARNINGS_VETO_ENABLED
+
+        if not EARNINGS_VETO_ENABLED:
+            return False
+        from config.settings import asset_class_for
+
+        if asset_class_for(pair) != _EQUITY_CLASS:
+            return False
+        maintenant = now or datetime.now(timezone.utc)
+        prochain = _next_earnings_at(pair)
+        if prochain is None:
+            return False
+        delta = (prochain - maintenant).total_seconds() / 3600.0
+        return 0 <= delta <= _WINDOW_HOURS
+    except Exception as e:
+        logger.debug(f"earnings_veto.blocks_at_long_horizon({pair}): {e}")
+        return False

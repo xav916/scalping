@@ -47,6 +47,8 @@ REASON_LABELS_FR = {
     "bridge_timeout": "Bridge injoignable",
     "fees_exceed_edge": "frais supérieurs à 30 % de l'edge",
     "horizon_not_allowed": "horizon non servi par cette route",
+    "earnings_blackout": "résultats publiés pendant la détention",
+    "weekend_hold_blocked": "détention à travers le week-end",
 }
 
 
