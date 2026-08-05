@@ -90,6 +90,36 @@ async def test_le_canal_global_reste_ferme(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_un_reglage_global_hostile_ne_bloque_pas_le_canal(monkeypatch):
+    # Complement comportemental au test precedent (qui ne fait qu'une
+    # inspection de source, donc ne garantit rien a l'execution). Ici on
+    # rend TELEGRAM_SETUP_VERDICTS hostile (liste vide, comme en prod) et on
+    # verifie que le canal long-horizon emet quand meme : la preuve qu'il ne
+    # depend pas du gate global au moment de s'executer, pas seulement dans
+    # son texte source.
+    #
+    # Patch sur `tg.TELEGRAM_SETUP_VERDICTS` : c'est le nom global du module
+    # telegram_service (importe une fois depuis config.settings a l'import),
+    # celui que `_should_push_setup` consomme reellement (ligne ~337). Un
+    # patch sur config.settings.TELEGRAM_SETUP_VERDICTS ne serait pas vu par
+    # une lecture par nom deja liee dans ce module.
+    envoyes = []
+    from backend.services import telegram_service as tg
+
+    async def _faux(text, parse_mode="HTML"):
+        envoyes.append(text)
+        return True
+
+    monkeypatch.setattr(tg, "send_sales_text", _faux)
+    monkeypatch.setattr(tg, "TELEGRAM_LONG_HORIZON_ENABLED", True, raising=False)
+    monkeypatch.setattr(tg, "TELEGRAM_LONG_HORIZON_MIN_CONFIDENCE", 61.0, raising=False)
+    monkeypatch.setattr(tg, "TELEGRAM_SETUP_VERDICTS", [], raising=False)
+
+    assert await tg.send_long_horizon_setup(_setup()) is True
+    assert len(envoyes) == 1
+
+
+@pytest.mark.asyncio
 async def test_un_echec_d_envoi_ne_leve_pas(monkeypatch):
     from backend.services import telegram_service as tg
 
