@@ -281,11 +281,11 @@ def _admin_kraken_spot_destination() -> BridgeConfig | None:
         # nettement plus élevé et n'a pas été mesuré. Edge à None : jamais
         # mesuré sur cette route, donc la porte bloque en exécution réelle.
         #
-        # `funding_interval_hours` reste à 0,0 (défaut) : ce spot est un achat
-        # réel long-only sans marge (`leverage=1`), donc il ne traverse aucune
-        # échéance de funding — à la différence des perpétuels `admin_kraken`
-        # ci-dessus. Vérifié au 2026-08-05 en même temps que la périodicité
-        # perpétuelle.
+        # Le champ de périodicité de funding du cost_model garde son défaut
+        # (aucune échéance) : ce spot est un achat réel long-only sans marge
+        # (`leverage=1`), donc il ne traverse aucun règlement de financement —
+        # à la différence des perpétuels `admin_kraken` ci-dessus. Vérifié le
+        # 2026-08-05 en même temps que la périodicité perpétuelle.
         expected_edge_r=None,
         # Kraken n'est viable qu'en détention : ses 0,10 % d'aller-retour
         # valent 2,6 fois l'edge à l'échelle du scalping. Le restreindre aux

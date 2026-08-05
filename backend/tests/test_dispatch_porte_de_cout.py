@@ -98,6 +98,11 @@ def test_les_fabriques_kraken_declarent_reellement_leurs_valeurs():
         assert "proportional_rate_per_leg=0.0005" in src, nom
         if nom == "_admin_kraken_destination":
             assert "funding_interval_hours=1.0" in src, nom
+        else:
+            # Le spot et les xStocks ne sont pas margés : un
+            # `funding_interval_hours` ajoute par erreur facturerait
+            # silencieusement un portage sur une route qui n'en a pas.
+            assert "funding_interval_hours" not in src, nom
         assert f"expected_edge_r={edge}" in src, nom
 
 
@@ -232,6 +237,34 @@ def test_l_observation_n_est_pas_bloquee_faute_d_edge_connu():
                          edge=None, auto_exec=False)
 
     assert _cost_rejection(_setup_factice(), dest) is None
+
+
+def test_le_portage_bloque_largent_reel_quand_la_duree_est_inconnue():
+    """Integration du branchement de l'etape 7 dans `_cost_rejection` (2026-08-05).
+
+    Les autres tests de ce fichier construisent tous un `CostModel` avec
+    `funding_interval_hours=0.0` (le defaut) : aucun n'entre dans la branche
+    de portage. Ici, un `CostModel(funding_interval_hours=1.0)` avec un
+    signal a horizon long declenche le calcul. `shadow_system_id` n'existe
+    pas encore (tache 5) : `getattr` renvoie `None`, donc la duree de
+    detention est inconnue, donc le portage est `None`, donc le cout total
+    est `None` — `exceeds_edge` bloque alors l'argent reel (`auto_exec=True`)
+    sans bloquer l'observation (`auto_exec=False`).
+    """
+    from backend.services.cost_model import CostModel
+    from backend.services.mt5_bridge import _cost_rejection
+
+    setup = _setup_factice()
+    setup.horizon = "4h"
+    assert not hasattr(setup, "shadow_system_id")
+
+    modele = CostModel(proportional_rate_per_leg=0.0005, funding_interval_hours=1.0)
+
+    dest_auto_exec = _dest_factice("admin_kraken", modele, edge=0.110, auto_exec=True)
+    assert _cost_rejection(setup, dest_auto_exec) == "fees_exceed_edge"
+
+    dest_observation = _dest_factice("admin_kraken", modele, edge=0.110, auto_exec=False)
+    assert _cost_rejection(setup, dest_observation) is None
 
 
 def test_la_porte_est_reellement_appelee_par_le_dispatch():
