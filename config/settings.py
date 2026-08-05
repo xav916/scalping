@@ -365,7 +365,7 @@ PAC_TELEGRAM_TO_AUTOEXEC_DAYS = int(os.getenv("PAC_TELEGRAM_TO_AUTOEXEC_DAYS", "
 # garde-fou de fraîcheur de données).
 PAC_MIN_REAL_TRADES = int(os.getenv("PAC_MIN_REAL_TRADES", "30"))
 
-# ─── Retour de pause : délai + contrôle par entrées aléatoires (2026-08-05) ───
+# ─── Retour de pause : délai + comparaison inter-paires (2026-08-05) ─────
 #
 # Jusqu'ici, `evaluate_pair` rendait l'argent réel à une pair PAUSED après un
 # simple délai écoulé (14j codé en dur), sans aucune condition de score — le
@@ -374,13 +374,17 @@ PAC_MIN_REAL_TRADES = int(os.getenv("PAC_MIN_REAL_TRADES", "30"))
 # ressortait donc automatiquement, sans preuve qu'elle méritait cette confiance.
 #
 # Décision d'architecture (Xavier, 2026-08-05) : le retour est désormais
-# conditionné à « bat le hasard », pas à un seuil de rentabilité absolu — les
-# seuils absolus (PROMOTE_MIN_PF, PROMOTE_MIN_WR_PCT) sont franchis par des
-# entrées prises au hasard dans un marché haussier (jusqu'à +0.216 R/trade
-# mesuré sur des actions US 2021-2026), donc ne discriminent pas une vraie
-# compétence d'une dérive de marché. La porte de coût (frais mesurés) reste
-# seule responsable de la question de rentabilité — deux questions
-# distinctes, deux mécanismes.
+# conditionné à « la pair fait-elle mieux que la moyenne des autres pairs de
+# la MÊME CLASSE D'ACTIF ? » — une comparaison ENTRE PAIRES, PAS un tirage
+# réellement aléatoire (cf. `pair_admission_controller` section « Retour de
+# pause » pour la mise en garde complète : condition nécessaire, jamais
+# suffisante) —, pas à un seuil de rentabilité absolu. Les seuils absolus
+# (PROMOTE_MIN_PF, PROMOTE_MIN_WR_PCT) sont franchis par des entrées VRAIMENT
+# prises au hasard dans un marché haussier (jusqu'à +0.216 R/trade mesuré sur
+# des actions US 2021-2026 — ceci est une mesure distincte, contre une VRAIE
+# entrée aléatoire), donc ne discriminent pas une vraie compétence d'une
+# dérive de marché. La porte de coût (frais mesurés) reste seule responsable
+# de la question de rentabilité — deux questions distinctes, deux mécanismes.
 
 # Délai de refroidissement avant réévaluation d'une pair PAUSED. Anciennement
 # 14 codé en dur dans `pair_admission_controller.evaluate_pair` — même valeur
@@ -390,7 +394,7 @@ PAC_PAUSE_COOLOFF_DAYS = int(os.getenv("PAC_PAUSE_COOLOFF_DAYS", "14"))
 # Taille de bloc (en positions consécutives du domaine trié par temps) du
 # bootstrap par blocs apparié — cf. `backend.services.random_entry_control`.
 # Défaut aligné sur celui du module (10).
-PAC_RANDOM_CONTROL_BLOCK_SIZE = int(os.getenv("PAC_RANDOM_CONTROL_BLOCK_SIZE", "10"))
+PAC_PEER_CONTROL_BLOCK_SIZE = int(os.getenv("PAC_PEER_CONTROL_BLOCK_SIZE", "10"))
 
 # Nombre de tirages bootstrap. Le défaut du module est 2000 (aligné sur les
 # rapports source) ; ici 1000 par défaut — compromis coût/précision explicite
@@ -398,27 +402,34 @@ PAC_RANDOM_CONTROL_BLOCK_SIZE = int(os.getenv("PAC_RANDOM_CONTROL_BLOCK_SIZE", "
 # plusieurs pairs à chaque cycle planifié (60 min). Diviser n_boot par 2
 # double approximativement l'instabilité de l'IC d'un run à l'autre (pas son
 # exactitude en espérance) et divise le temps de calcul par ~2. Combiné à la
-# mise en cache (`PAC_RANDOM_CONTROL_CACHE_HOURS`), le coût réel par cycle
+# mise en cache (`PAC_PEER_CONTROL_CACHE_HOURS`), le coût réel par cycle
 # planifié reste marginal — voir le rapport de la tâche.
-PAC_RANDOM_CONTROL_N_BOOT = int(os.getenv("PAC_RANDOM_CONTROL_N_BOOT", "1000"))
+PAC_PEER_CONTROL_N_BOOT = int(os.getenv("PAC_PEER_CONTROL_N_BOOT", "1000"))
 
 # Nombre minimum de blocs dans le domaine pour qu'un bootstrap soit jugé
 # fiable (cf. `min_domain_blocks` de `paired_block_bootstrap_delta`). Défaut
-# aligné sur celui du module (3).
-PAC_RANDOM_CONTROL_MIN_DOMAIN_BLOCKS = int(os.getenv("PAC_RANDOM_CONTROL_MIN_DOMAIN_BLOCKS", "3"))
+# aligné sur celui du module (3). Le domaine est désormais restreint à la
+# classe d'actif de la pair testée (cf. `pair_admission_controller.
+# _build_peer_control_populations`) : ce seuil est donc mécaniquement plus
+# dur à atteindre pour les classes à faible effectif (ex. `energy` = une
+# seule pair par défaut) — voir le rapport de la tâche pour l'effet mesuré
+# classe par classe, et le commentaire de `_build_peer_control_populations`
+# pour le cas structurel d'une classe mono-pair (jamais tranchable en
+# faveur de la pair, quelle que soit la quantité de données).
+PAC_PEER_CONTROL_MIN_DOMAIN_BLOCKS = int(os.getenv("PAC_PEER_CONTROL_MIN_DOMAIN_BLOCKS", "3"))
 
 # Graine du bootstrap — reproductibilité d'un cycle à l'autre pour une même
 # fenêtre de données (cf. `random_entry_control`, jamais l'état global de
 # `random`).
-PAC_RANDOM_CONTROL_SEED = int(os.getenv("PAC_RANDOM_CONTROL_SEED", "0"))
+PAC_PEER_CONTROL_SEED = int(os.getenv("PAC_PEER_CONTROL_SEED", "0"))
 
-# Durée (heures) pendant laquelle un résultat de contrôle par entrées
-# aléatoires est réutilisé sans recalcul pour un (pair, direction) donné.
+# Durée (heures) pendant laquelle un résultat de contrôle par comparaison
+# inter-paires est réutilisé sans recalcul pour un (pair, direction) donné.
 # `evaluate_pair` tourne sur tout l'univers à chaque cycle planifié (60 min) ;
 # sans ce cache, une pair PAUSED restée éligible (délai écoulé, disjoncteur
 # non déclenché) relancerait le bootstrap à CHAQUE cycle tant qu'elle reste
 # PAUSED. Défaut 6h = au plus 4 calculs/jour par pair éligible au lieu de 24.
-PAC_RANDOM_CONTROL_CACHE_HOURS = float(os.getenv("PAC_RANDOM_CONTROL_CACHE_HOURS", "6"))
+PAC_PEER_CONTROL_CACHE_HOURS = float(os.getenv("PAC_PEER_CONTROL_CACHE_HOURS", "6"))
 # Cap par pair : N positions max SIMULTANÉMENT sur la même paire. Forcé
 # de diversifier, évite la concentration aveugle (ex: 4 XAU/USD ouverts
 # qui tombent ensemble sur un mouvement défavorable).

@@ -5,7 +5,7 @@ de "stars" + un mécanisme de pause, on a une vraie state machine par pair :
 
   OBSERVED ──(score promotion OK)──► TELEGRAM ──(admin valide)──► AUTO_EXEC
   AUTO_EXEC ──(sum_pnl < -3% sur 30 trades)──► PAUSED
-  PAUSED ──(cool-off PAC_PAUSE_COOLOFF_DAYS + signaux bat le hasard)──► AUTO_EXEC
+  PAUSED ──(cool-off PAC_PAUSE_COOLOFF_DAYS + bat la moyenne des pairs comparables)──► AUTO_EXEC
   PAUSED ──(2× re-pause sur 60j)──► DEMOTED
   DEMOTED ──(manuel)──► OBSERVED
 
@@ -24,10 +24,17 @@ de "stars" + un mécanisme de pause, on a une vraie state machine par pair :
 - **PAUSED** : équivalent au pair_pnl_regulator actuel. Push Telegram en
   mode "info" (verdict forcé SKIP), bridge bloqué. Auto-revue après le
   cool-off (`config.settings.PAC_PAUSE_COOLOFF_DAYS`, 14j par défaut) — le
-  retour à AUTO_EXEC exige EN PLUS que le contrôle par entrées aléatoires
-  (`random_control_for_pair`, cf. section dédiée plus bas) établisse que les
-  signaux de la pair battent le hasard sur `shadow_setups` récent. Le délai
-  seul ne suffit plus depuis le 2026-08-05.
+  retour à AUTO_EXEC exige EN PLUS que le contrôle par comparaison
+  inter-paires (`peer_control_for_pair`, cf. section dédiée plus bas)
+  établisse que les signaux de la pair font mieux que la moyenne des autres
+  pairs de la MÊME CLASSE D'ACTIF, sur `shadow_setups` récent. Le délai seul
+  ne suffit plus depuis le 2026-08-05.
+  ⚠️ Condition NÉCESSAIRE, jamais SUFFISANTE : ce contrôle établit seulement
+  que la pair n'est pas pire que ses semblables. Il ne dit rien sur la
+  question systémique « les patterns battent-ils une VRAIE entrée
+  aléatoire ? » — mesurable seulement hors ligne par backtest, et déjà
+  répondue négativement pour au moins un système testé (cf. section dédiée
+  plus bas).
 - **DEMOTED** : pair sortie de la plateforme après 2 pauses répétées.
   Plus de push Telegram, plus d'exec. Seul un admin manuel peut la
   remettre en OBSERVED.
@@ -1038,16 +1045,41 @@ def _count_recent_pauses(pair: str, days: int = 60) -> int:
     return int(row[0]) if row else 0
 
 
-# ─── Retour de pause : contrôle par entrées aléatoires (2026-08-05) ──────
+# ─── Retour de pause : contrôle par comparaison inter-paires (2026-08-05) ─
 #
-# Le défaut corrigé ici : `evaluate_pair` rendait l'argent réel à une pair
-# PAUSED après un simple délai écoulé, sans jamais consulter le `score`
-# calculé (enregistré en snapshot, jamais lu). Décision d'architecture
+# Le défaut corrigé le 2026-08-05 : `evaluate_pair` rendait l'argent réel à
+# une pair PAUSED après un simple délai écoulé, sans jamais consulter le
+# `score` calculé (enregistré en snapshot, jamais lu). Décision d'architecture
 # (Xavier) : le retour est désormais conditionné à « les signaux de la pair
-# battent le hasard », pas à un seuil de rentabilité absolu — cf.
+# font-ils mieux que la moyenne des autres pairs de la même classe d'actif
+# (même sens, même fenêtre) ? », pas à un seuil de rentabilité absolu — cf.
 # `config.settings` section « Retour de pause » et
-# `backend.services.random_entry_control` pour la méthode. La porte de coût
-# (frais mesurés, ailleurs) reste seule responsable de la rentabilité.
+# `backend.services.random_entry_control` (module générique, non modifié ici)
+# pour le mécanisme statistique (bootstrap par blocs apparié).
+#
+# ⚠️ Renommé le 2026-08-05 (suite) : le nom d'origine (« contrôle par entrées
+# aléatoires ») était trompeur. Le domaine comparé n'a jamais été une entrée
+# réellement aléatoire — c'est le recensement de TOUTES les pairs (même sens,
+# même fenêtre), restreint depuis ce correctif à la MÊME CLASSE D'ACTIF que
+# la pair testée (cf. `_build_peer_control_populations` : comparer une
+# crypto à des pairs forex n'aurait pas de sens même comme comparaison entre
+# pairs — régimes, volatilité, corrélations différents). La question posée
+# est donc « cette pair vaut-elle mieux que choisir une autre pair comparable
+# au hasard ? » — une comparaison ENTRE PAIRES, jamais un test contre une
+# entrée réellement aléatoire sur le marché.
+#
+# ⚠️ CONDITION NÉCESSAIRE, JAMAIS SUFFISANTE : un résultat favorable ici dit
+# seulement que la pair n'est pas pire que ses semblables — pas que les
+# patterns battent une entrée réellement aléatoire. Cette dernière question
+# est systémique (si les patterns sont mauvais partout, toutes les pairs sont
+# également mauvaises, chacune paraît moyenne, et toutes passeraient ce
+# contrôle) : elle ne se mesure que hors ligne, par backtest contre une VRAIE
+# entrée aléatoire (`random_entry_control` appelé directement, hors de ce
+# contrôleur, module non modifié ici et correct en lui-même). Réponse déjà
+# connue pour au moins un système testé : les patterns font 0,182 R de MOINS
+# qu'une entrée aléatoire (p<0,001) — cf. `scratchpad/test-difference-directe
+# .md`. La porte de coût (frais mesurés, ailleurs) reste seule responsable de
+# la rentabilité absolue.
 
 
 def _pause_cooloff_days() -> int:
@@ -1064,47 +1096,47 @@ def _pause_cooloff_days() -> int:
         return 14
 
 
-def _random_control_block_size() -> int:
+def _peer_control_block_size() -> int:
     try:
-        from config.settings import PAC_RANDOM_CONTROL_BLOCK_SIZE
-        return int(PAC_RANDOM_CONTROL_BLOCK_SIZE)
+        from config.settings import PAC_PEER_CONTROL_BLOCK_SIZE
+        return int(PAC_PEER_CONTROL_BLOCK_SIZE)
     except Exception:
         return 10
 
 
-def _random_control_n_boot() -> int:
+def _peer_control_n_boot() -> int:
     try:
-        from config.settings import PAC_RANDOM_CONTROL_N_BOOT
-        return int(PAC_RANDOM_CONTROL_N_BOOT)
+        from config.settings import PAC_PEER_CONTROL_N_BOOT
+        return int(PAC_PEER_CONTROL_N_BOOT)
     except Exception:
         return 1000
 
 
-def _random_control_min_domain_blocks() -> int:
+def _peer_control_min_domain_blocks() -> int:
     try:
-        from config.settings import PAC_RANDOM_CONTROL_MIN_DOMAIN_BLOCKS
-        return int(PAC_RANDOM_CONTROL_MIN_DOMAIN_BLOCKS)
+        from config.settings import PAC_PEER_CONTROL_MIN_DOMAIN_BLOCKS
+        return int(PAC_PEER_CONTROL_MIN_DOMAIN_BLOCKS)
     except Exception:
         return 3
 
 
-def _random_control_seed() -> int:
+def _peer_control_seed() -> int:
     try:
-        from config.settings import PAC_RANDOM_CONTROL_SEED
-        return int(PAC_RANDOM_CONTROL_SEED)
+        from config.settings import PAC_PEER_CONTROL_SEED
+        return int(PAC_PEER_CONTROL_SEED)
     except Exception:
         return 0
 
 
-def _random_control_cache_hours() -> float:
+def _peer_control_cache_hours() -> float:
     try:
-        from config.settings import PAC_RANDOM_CONTROL_CACHE_HOURS
-        return float(PAC_RANDOM_CONTROL_CACHE_HOURS)
+        from config.settings import PAC_PEER_CONTROL_CACHE_HOURS
+        return float(PAC_PEER_CONTROL_CACHE_HOURS)
     except Exception:
         return 6.0
 
 
-def _random_control_since_iso() -> str:
+def _peer_control_since_iso() -> str:
     """Borne basse (ISO UTC) de la fenêtre saine de `shadow_setups`.
 
     Constante de code, pas un réglage : c'est un fait historique du dataset,
@@ -1119,18 +1151,20 @@ def _random_control_since_iso() -> str:
     return "2026-08-04T00:00:00+00:00"
 
 
-def _fetch_random_control_rows(direction: str) -> list[tuple]:
+def _fetch_peer_control_rows(direction: str) -> list[tuple]:
     """Lignes `shadow_setups` résolues, ce sens, depuis la fenêtre saine.
 
-    Retourne (id, pair, bar_timestamp, risk_pct, pnl_pct_net) — toutes pairs
-    confondues. C'est le recensement brut ; `_build_random_control_populations`
-    en dérive le domaine (tout) et le pattern (une seule pair), toujours à
-    partir des MÊMES lignes, pour garantir que `pattern` reste un
-    sous-ensemble strict de `domain`.
+    Retourne (id, pair, bar_timestamp, risk_pct, pnl_pct_net) — TOUTES pairs
+    confondues (le filtre par classe d'actif est appliqué ensuite par
+    `_build_peer_control_populations`, pas ici). C'est le recensement brut ;
+    `_build_peer_control_populations` en dérive le domaine (pairs de la même
+    classe d'actif) et le pattern (une seule pair), toujours à partir des
+    MÊMES lignes, pour garantir que `pattern` reste un sous-ensemble strict
+    de `domain`.
     """
     from backend.services.shadow_v2_core_long import ensure_schema as _ensure_shadow_schema
     _ensure_shadow_schema()
-    since = _random_control_since_iso()
+    since = _peer_control_since_iso()
     with sqlite3.connect(_db_path()) as c:
         rows = c.execute(
             """
@@ -1147,16 +1181,35 @@ def _fetch_random_control_rows(direction: str) -> list[tuple]:
     return rows
 
 
-def _build_random_control_populations(pair: str, direction: str) -> tuple[list, list]:
+def _build_peer_control_populations(pair: str, direction: str) -> tuple[list, list]:
     """Construit (domaine, pattern) depuis `shadow_setups` pour une (pair, direction).
 
     - **pattern** = les setups de `pair`, ce `direction` — « les signaux de
-      la pair » dont on veut savoir s'ils battent le hasard.
-    - **domain** = TOUTES les lignes (toutes pairs), même `direction`, même
-      fenêtre temporelle — un domaine d'entrées comparables : même sens
-      (direction filtrée en SQL), même distribution temporelle (même requête,
-      même borne). Représente « entrer au hasard sur N'IMPORTE QUEL signal
-      détecté dans ce sens », par opposition à choisir spécifiquement `pair`.
+      la pair » dont on veut savoir s'ils font mieux que leurs semblables.
+    - **domain** = les lignes de la MÊME CLASSE D'ACTIF que `pair`
+      (`config.settings.asset_class_for`, fonction existante — pas réécrite
+      ici), même `direction`, même fenêtre temporelle. Comparer une crypto à
+      des pairs forex n'aurait pas de sens même comme comparaison entre
+      pairs : régimes, volatilité et corrélations différents. Représente
+      « choisir une autre pair de la MÊME FAMILLE au hasard », par
+      opposition à choisir spécifiquement `pair` — PAS une entrée réellement
+      aléatoire sur le marché (cf. avertissement en tête de section « Retour
+      de pause »).
+
+    ⚠️ Restreindre le domaine à la classe d'actif le rend mécaniquement plus
+    petit. Le seuil minimal du bootstrap (`min_domain_blocks × block_size`,
+    cf. `paired_block_bootstrap_delta`) porte sur CE domaine réduit : une
+    classe représentée par une SEULE pair dans `WATCHED_PAIRS` (ex. `energy`
+    = WTI/USD seule à ce jour, cf. `config.settings.asset_class_for`) fait
+    que `domain == pattern` À L'IDENTIQUE — aucune AUTRE pair de la classe
+    pour servir de comparaison. Dans ce cas, `delta_observed` est
+    STRUCTURELLEMENT nul et le contrôle ne peut JAMAIS trancher en faveur de
+    la pair, quelle que soit la qualité réelle de ses signaux : ce n'est pas
+    un bug, c'est l'absence de pairs comparables qui rend la question
+    elle-même sans réponse pour une classe mono-pair. Le repli reste sûr
+    (la pair reste en pause), mais une classe mono-pair ne pourra JAMAIS
+    revenir en AUTO_EXEC par cette voie — seule une transition manuelle le
+    peut. Voir le rapport de la tâche pour le décompte pair/classe actuel.
 
     Garantie de comparabilité : `pattern` est un sous-ensemble STRICT de
     `domain` — mêmes objets `TimedTrade`, filtrés en Python après une seule
@@ -1176,11 +1229,15 @@ def _build_random_control_populations(pair: str, direction: str) -> tuple[list, 
     d'abord, `id` seulement en cas d'égalité.
     """
     from backend.services.random_entry_control import TimedTrade, r_multiple as _rc_r_multiple
+    from config.settings import asset_class_for
 
-    rows = _fetch_random_control_rows(direction)
+    target_class = asset_class_for(pair)
+    rows = _fetch_peer_control_rows(direction)
     domain: list[TimedTrade] = []
     pattern: list[TimedTrade] = []
     for row_id, row_pair, bar_ts, risk_pct, pnl_pct_net in rows:
+        if asset_class_for(row_pair) != target_class:
+            continue  # restriction 2026-08-05 : hors classe d'actif, pas comparable
         r = _rc_r_multiple(pnl_pct_net, risk_pct)
         if r is None:
             continue
@@ -1191,22 +1248,30 @@ def _build_random_control_populations(pair: str, direction: str) -> tuple[list, 
     return domain, pattern
 
 
-def random_control_for_pair(pair: str, direction: Optional[str]):
-    """Contrôle « les signaux de `pair` battent-ils le hasard ? » (non caché).
+def peer_control_for_pair(pair: str, direction: Optional[str]):
+    """Contrôle « les signaux de `pair` font-ils mieux que la moyenne des
+    pairs comparables (même classe d'actif) ? » (non caché).
 
-    Retourne un `random_entry_control.RandomControlResult`. `direction` DOIT
-    être 'buy'/'sell' explicite : le contrôle compare des populations de même
-    sens (cf. `_build_random_control_populations`) — un bucket pair-level
-    (`direction=None`) n'a pas de sens unique à comparer, donc rend un
-    résultat explicitement indéterminé plutôt que de deviner un sens ou de
-    mélanger les deux.
+    Retourne un `random_entry_control.RandomControlResult` (type du module
+    générique, non renommé ici — cf. avertissement en tête de section
+    « Retour de pause »). `pattern` et `domain` sont restreints à la MÊME
+    classe d'actif que `pair` (`_build_peer_control_populations`).
+    `direction` DOIT être 'buy'/'sell' explicite : le contrôle compare des
+    populations de même sens — un bucket pair-level (`direction=None`) n'a
+    pas de sens unique à comparer, donc rend un résultat explicitement
+    indéterminé plutôt que de deviner un sens ou de mélanger les deux.
+
+    ⚠️ CONDITION NÉCESSAIRE, JAMAIS SUFFISANTE : un résultat favorable dit
+    seulement que `pair` n'est pas pire que ses semblables de la même classe
+    d'actif — jamais que les patterns battent une entrée réellement
+    aléatoire (question systémique distincte, cf. tête de section).
     """
     from backend.services.random_entry_control import paired_block_bootstrap_delta, RandomControlResult
 
     direction_n = _normalize_direction(direction)
-    block_size = _random_control_block_size()
-    n_boot = _random_control_n_boot()
-    seed = _random_control_seed()
+    block_size = _peer_control_block_size()
+    n_boot = _peer_control_n_boot()
+    seed = _peer_control_seed()
     if direction_n is None:
         return RandomControlResult(
             n_pattern=0, n_random=0, delta_observed=None,
@@ -1215,11 +1280,11 @@ def random_control_for_pair(pair: str, direction: Optional[str]):
             block_size=block_size, seed=seed,
             insufficient_reason="direction non spécifiée (buy/sell requis pour comparer un même sens)",
         )
-    domain, pattern = _build_random_control_populations(pair, direction_n)
+    domain, pattern = _build_peer_control_populations(pair, direction_n)
     return paired_block_bootstrap_delta(
         domain, pattern,
         block_size=block_size, n_boot=n_boot, seed=seed,
-        min_domain_blocks=_random_control_min_domain_blocks(),
+        min_domain_blocks=_peer_control_min_domain_blocks(),
     )
 
 
@@ -1229,11 +1294,11 @@ def random_control_for_pair(pair: str, direction: Optional[str]):
 # écoulé, disjoncteur non déclenché) relancerait le bootstrap par blocs à
 # CHAQUE cycle tant qu'elle reste PAUSED — coûteux et inutile, le résultat ne
 # change pas d'un cycle à l'autre en l'absence de nouvelles données shadow.
-_RANDOM_CONTROL_CACHE: dict[tuple[str, str], tuple[datetime, Any]] = {}
+_PEER_CONTROL_CACHE: dict[tuple[str, str], tuple[datetime, Any]] = {}
 
 
-def random_control_for_pair_cached(pair: str, direction: Optional[str]):
-    """`random_control_for_pair`, mémoïsé `PAC_RANDOM_CONTROL_CACHE_HOURS` heures.
+def peer_control_for_pair_cached(pair: str, direction: Optional[str]):
+    """`peer_control_for_pair`, mémoïsé `PAC_PEER_CONTROL_CACHE_HOURS` heures.
 
     Cache en mémoire de process, vidé à chaque redémarrage — acceptable : un
     recalcul de plus au démarrage n'est un problème que de coût, jamais de
@@ -1244,12 +1309,12 @@ def random_control_for_pair_cached(pair: str, direction: Optional[str]):
     direction_n = _normalize_direction(direction)
     key = (pair, direction_n or "")
     now = datetime.now(timezone.utc)
-    ttl = timedelta(hours=_random_control_cache_hours())
-    cached = _RANDOM_CONTROL_CACHE.get(key)
+    ttl = timedelta(hours=_peer_control_cache_hours())
+    cached = _PEER_CONTROL_CACHE.get(key)
     if cached is not None and (now - cached[0]) < ttl:
         return cached[1]
-    result = random_control_for_pair(pair, direction_n)
-    _RANDOM_CONTROL_CACHE[key] = (now, result)
+    result = peer_control_for_pair(pair, direction_n)
+    _PEER_CONTROL_CACHE[key] = (now, result)
     return result
 
 
@@ -1258,7 +1323,7 @@ def _fmt_r(x: Optional[float]) -> str:
     return "?" if x is None else f"{x:.3f}"
 
 
-def _random_control_summary(control) -> str:
+def _peer_control_summary(control) -> str:
     """Résumé compact du résultat, pour `reason` / logs — jamais un crash sur champ `None`."""
     return (
         f"Δ={_fmt_r(control.delta_observed)}R "
@@ -1267,27 +1332,33 @@ def _random_control_summary(control) -> str:
     )
 
 
-def _beats_random_control(control) -> bool:
+def _beats_peer_control(control) -> bool:
     """True seulement si le contrôle tranche EN FAVEUR de la pair : IC95 entièrement
     positif (`significant=True` ET `ci95_low > 0`). Tout le reste — indéterminé
     (`significant is None`), non tranché (`significant=False`, l'IC couvre 0), ou
-    significativement PIRE que le hasard (`ci95_high < 0`) — ne rend jamais l'argent
-    réel : « on ne sait pas encore » n'est pas un échec, mais ce n'est pas non plus
-    une preuve.
+    significativement SOUS la moyenne des pairs comparables (`ci95_high < 0`) — ne
+    rend jamais l'argent réel : « on ne sait pas encore » n'est pas un échec, mais ce
+    n'est pas non plus une preuve.
+
+    ⚠️ Rappel (cf. tête de section « Retour de pause ») : `True` ici signifie
+    seulement « cette pair n'est pas pire que ses semblables de la même classe
+    d'actif » — jamais « les patterns battent une entrée réellement aléatoire »,
+    question systémique distincte, non répondue par ce contrôle.
     """
     return bool(control.significant is True and control.ci95_low is not None and control.ci95_low > 0)
 
 
-def _random_control_keep_reason(control) -> str:
-    """Message expliquant pourquoi la pair reste en pause après le contrôle aléatoire."""
+def _peer_control_keep_reason(control) -> str:
+    """Message expliquant pourquoi la pair reste en pause après le contrôle par
+    comparaison inter-paires."""
     if control.significant is None:
         return (
-            f"contrôle aléatoire indécidable ({control.insufficient_reason}) "
+            f"comparaison inter-paires indécidable ({control.insufficient_reason}) "
             "— reste en pause, ce n'est pas un échec"
         )
     if control.significant is False:
-        return f"signaux ne battent pas le hasard de façon décisive ({_random_control_summary(control)}) — reste en pause"
-    return f"signaux significativement PIRES que le hasard ({_random_control_summary(control)}) — reste en pause"
+        return f"signaux non distinguables de la moyenne des pairs comparables ({_peer_control_summary(control)}) — reste en pause"
+    return f"signaux significativement SOUS la moyenne des pairs comparables ({_peer_control_summary(control)}) — reste en pause"
 
 
 def evaluate_pair(pair: str, direction: Optional[str] = None) -> dict[str, Any]:
@@ -1378,9 +1449,9 @@ def evaluate_pair(pair: str, direction: Optional[str] = None) -> dict[str, Any]:
             recent_pauses = _count_recent_pauses(pair, days=60)
             if recent_pauses >= DEMOTE_MAX_RE_PAUSES_60D:
                 # Circuit breaker anti-cascade : PRIME sur tout, y compris un
-                # contrôle aléatoire favorable (cf. 2026-06-07/08 — 17
-                # demotions en 48h). Une pair qui re-pause à répétition n'a
-                # pas besoin d'un contrôle statistique pour être jugée
+                # contrôle par comparaison inter-paires favorable (cf.
+                # 2026-06-07/08 — 17 demotions en 48h). Une pair qui re-pause
+                # à répétition n'a pas besoin d'un contrôle statistique pour être jugée
                 # instable — évalué EN PREMIER, avant même de lancer le
                 # bootstrap (inutile de payer son coût sur une pair qui de
                 # toute façon ne reviendra pas en AUTO_EXEC ce cycle-ci).
@@ -1402,41 +1473,50 @@ def evaluate_pair(pair: str, direction: Optional[str] = None) -> dict[str, Any]:
 
             # ── Le délai seul ne suffit plus (cf. section « Retour de pause »
             # ci-dessus) : le retour à l'argent réel exige que le contrôle par
-            # entrées aléatoires établisse que les signaux de la pair battent
-            # le hasard sur shadow_setups récent. `score` (compute_promotion_score,
+            # comparaison inter-paires établisse que les signaux de la pair
+            # font mieux que la moyenne des autres pairs de la même classe
+            # d'actif, sur shadow_setups récent. `score` (compute_promotion_score,
             # basé sur real trades + backtest.db) n'est PAS la condition ici —
             # une pair PAUSED ne trade plus, donc n'accumule jamais de trades
             # réels ; l'exiger verrouillerait le retour pour toujours (c'est
             # exactement ce que le garde-fou PAC_MIN_REAL_TRADES ferait s'il
             # s'appliquait ici — il ne s'applique QUE dans les branches
             # OBSERVED/TELEGRAM/AUTO_EXEC ci-dessus, jamais à ce retour).
+            #
+            # ⚠️ CONDITION NÉCESSAIRE, JAMAIS SUFFISANTE : un résultat
+            # favorable dit seulement « cette pair n'est pas pire que ses
+            # semblables de la même classe d'actif ». Il ne dit RIEN sur la
+            # question de savoir si les patterns battent une entrée réellement
+            # aléatoire — question systémique, mesurable seulement hors ligne
+            # par backtest, et déjà répondue négativement pour au moins un
+            # système testé (cf. section dédiée en tête de fichier).
             if direction is None:
                 return {
                     "action": "keep",
                     "from_state": current,
                     "score": score,
                     "reason": (
-                        f"cool-off {cooloff_days}j expiré mais direction non spécifiée — le "
-                        "contrôle par entrées aléatoires exige un sens explicite (buy/sell), "
+                        f"cool-off {cooloff_days}j expiré mais direction non spécifiée — la "
+                        "comparaison inter-paires exige un sens explicite (buy/sell), "
                         "reste en pause"
                     ),
                 }
-            control = random_control_for_pair_cached(pair, direction)
-            if _beats_random_control(control):
+            control = peer_control_for_pair_cached(pair, direction)
+            if _beats_peer_control(control):
                 from dataclasses import asdict as _asdict
-                snapshot = {**score, "random_control": _asdict(control)}
+                snapshot = {**score, "peer_control": _asdict(control)}
                 set_state(
                     pair, STATE_AUTO_EXEC,
-                    f"cool-off {cooloff_days}j expiré + signaux battent le hasard "
-                    f"({_random_control_summary(control)})",
+                    f"cool-off {cooloff_days}j expiré + signaux au-dessus de la moyenne "
+                    f"des pairs comparables ({_peer_control_summary(control)})",
                     direction=direction, score_snapshot=snapshot,
                 )
-                return {"action": "transition", "from_state": current, "to_state": STATE_AUTO_EXEC, "score": score, "reason": "bat le hasard"}
+                return {"action": "transition", "from_state": current, "to_state": STATE_AUTO_EXEC, "score": score, "reason": "bat la moyenne des pairs comparables"}
             return {
                 "action": "keep",
                 "from_state": current,
                 "score": score,
-                "reason": f"cool-off {cooloff_days}j expiré, {_random_control_keep_reason(control)}",
+                "reason": f"cool-off {cooloff_days}j expiré, {_peer_control_keep_reason(control)}",
             }
         return {"action": "keep", "from_state": current, "score": score, "reason": f"cool-off encore {(timedelta(days=cooloff_days) - elapsed).days}j"}
 

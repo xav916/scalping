@@ -1,20 +1,34 @@
-"""Tests du retour de pause conditionné au contrôle par entrées aléatoires.
+"""Tests du retour de pause conditionné au contrôle par comparaison inter-paires.
 
 Remplace le défaut décrit dans la tâche du 2026-08-05 : `evaluate_pair`
 rendait l'argent réel à une pair PAUSED après un simple délai écoulé (14j
 codé en dur), sans jamais consulter le score calculé. Le retour est
-désormais conditionné à « les signaux de la pair battent le hasard », mesuré
-par `backend.services.random_entry_control.paired_block_bootstrap_delta` sur
-des populations construites depuis `shadow_setups` :
+désormais conditionné à « les signaux de la pair font-ils mieux que la
+moyenne des autres paires COMPARABLES (même classe d'actif) ? », mesuré par
+`backend.services.random_entry_control.paired_block_bootstrap_delta` (module
+générique, non modifié) sur des populations construites depuis
+`shadow_setups` :
 
 - `pattern` = les setups de la pair testée, ce sens, depuis le 2026-08-04
   (avant cette date : bug de dédup ×960, écarté).
-- `domain`  = TOUS les setups (toutes pairs), même sens, même fenêtre — un
-  domaine d'entrées comparables au hasard (même sens, même distribution
-  temporelle). `pattern` est un sous-ensemble STRICT de `domain` (mêmes
-  lignes, filtrées après coup), donc chaque clé `pattern` existe forcément
-  dans `domain` — condition nécessaire pour que l'appariement du bootstrap
-  ait un sens.
+- `domain`  = les setups des pairs de la MÊME CLASSE D'ACTIF que la pair
+  testée (`config.settings.asset_class_for`), même sens, même fenêtre — un
+  domaine de pairs comparables entre elles (même sens, même distribution
+  temporelle, même régime de marché). `pattern` est un sous-ensemble STRICT
+  de `domain` (mêmes lignes, filtrées après coup), donc chaque clé `pattern`
+  existe forcément dans `domain` — condition nécessaire pour que
+  l'appariement du bootstrap ait un sens.
+
+⚠️ Renommé le 2026-08-05 (suite) : l'ancien nom (« contrôle par entrées
+aléatoires ») était trompeur — le domaine n'a jamais été une entrée
+réellement aléatoire, c'est une comparaison ENTRE PAIRES. Ce contrôle établit
+seulement qu'une pair n'est pas pire que ses semblables : il ne dit rien de
+la question systémique « les patterns battent-ils une VRAIE entrée
+aléatoire ? » (mesurable seulement hors ligne, cf.
+`backend/services/random_entry_control.py` et
+`backend/tests/test_pair_admission_peer_control_asset_class.py` pour les
+tests dédiés à la restriction par classe d'actif et à la disparition des
+anciens noms).
 
 Isolation complète : DB temporaire (`tmp_path`), aucun accès réseau ni à
 `trades.db` / `backtest.db` du dépôt. `shadow_v2_core_long.ensure_schema()`
@@ -53,9 +67,10 @@ def _isolated_db(tmp_path, monkeypatch):
     monkeypatch.setattr(pac, "_SCHEMA_ENSURED", False)
     monkeypatch.setattr(pair_pnl_regulator, "_SCHEMA_ENSURED", False)
     monkeypatch.setattr(ea_closed_trades_service, "_SCHEMA_ENSURED", False)
-    # Cache du contrôle aléatoire : état de process global, à vider entre
-    # chaque test pour ne jamais réutiliser le résultat d'un test précédent.
-    pac._RANDOM_CONTROL_CACHE.clear()
+    # Cache du contrôle par comparaison inter-paires : état de process
+    # global, à vider entre chaque test pour ne jamais réutiliser le
+    # résultat d'un test précédent.
+    pac._PEER_CONTROL_CACHE.clear()
 
     # Schéma shadow_setups PRODUCTION exact (pas une copie à la main).
     shadow_v2_core_long.ensure_schema()
@@ -165,10 +180,10 @@ def _set_paused_since(pac_module, pair: str, direction: str, days_ago: float):
 # domaine dense, block_size petit, n_boot modéré).
 def _tune_fast_bootstrap(monkeypatch):
     import config.settings as st
-    monkeypatch.setattr(st, "PAC_RANDOM_CONTROL_BLOCK_SIZE", 5)
-    monkeypatch.setattr(st, "PAC_RANDOM_CONTROL_N_BOOT", 1500)
-    monkeypatch.setattr(st, "PAC_RANDOM_CONTROL_MIN_DOMAIN_BLOCKS", 3)
-    monkeypatch.setattr(st, "PAC_RANDOM_CONTROL_SEED", 42)
+    monkeypatch.setattr(st, "PAC_PEER_CONTROL_BLOCK_SIZE", 5)
+    monkeypatch.setattr(st, "PAC_PEER_CONTROL_N_BOOT", 1500)
+    monkeypatch.setattr(st, "PAC_PEER_CONTROL_MIN_DOMAIN_BLOCKS", 3)
+    monkeypatch.setattr(st, "PAC_PEER_CONTROL_SEED", 42)
 
 
 # ─── 1. Une pair dont les signaux ne battent PAS le hasard reste en pause ──
@@ -178,19 +193,23 @@ def test_pattern_sans_effet_reste_en_pause(_isolated_db, monkeypatch):
     from backend.services import pair_admission_controller as pac
 
     _tune_fast_bootstrap(monkeypatch)
-    # 600 lignes réparties sur 5 pairs, AUCUN offset injecté pour la pair
-    # testée : par construction, ses signaux ne se distinguent pas du reste.
+    # 600 lignes réparties sur 5 pairs FOREX (même classe d'actif que la
+    # pair testée USD/CAD — le domaine restreint par classe reste donc
+    # intact ici), AUCUN offset injecté pour la pair testée : par
+    # construction, ses signaux ne se distinguent pas du reste.
     _seed_domain_and_pattern(
-        _isolated_db, target_pair="XAU/USD", direction="buy",
+        _isolated_db, target_pair="USD/CAD", direction="buy",
         n_total=600, offset_for_target=0.0,
     )
-    _set_paused_since(pac, "XAU/USD", "buy", days_ago=20)  # cool-off (14j) largement dépassé
+    _set_paused_since(pac, "USD/CAD", "buy", days_ago=20)  # cool-off (14j) largement dépassé
 
-    d = pac.evaluate_pair("XAU/USD", direction="buy")
+    d = pac.evaluate_pair("USD/CAD", direction="buy")
 
     assert d["action"] == "keep"
-    assert pac.get_current_state("XAU/USD", direction="buy") == pac.STATE_PAUSED
-    assert "hasard" in d["reason"].lower()
+    assert pac.get_current_state("USD/CAD", direction="buy") == pac.STATE_PAUSED
+    assert "comparables" in d["reason"].lower()
+    assert "hasard" not in d["reason"].lower()
+    assert "aléatoire" not in d["reason"].lower()
 
 
 # ─── 2. Une pair dont les signaux battent NETTEMENT le hasard revient ──────
@@ -200,17 +219,21 @@ def test_pattern_avec_effet_franc_revient_en_auto_exec(_isolated_db, monkeypatch
     from backend.services import pair_admission_controller as pac
 
     _tune_fast_bootstrap(monkeypatch)
+    # USD/CAD + 4 autres pairs forex : même classe d'actif, le domaine
+    # restreint par classe couvre donc bien les 5 pairs (cf. helper).
     _seed_domain_and_pattern(
-        _isolated_db, target_pair="XAU/USD", direction="buy",
+        _isolated_db, target_pair="USD/CAD", direction="buy",
         n_total=600, offset_for_target=0.5,  # effet franc, cf. module de référence
     )
-    _set_paused_since(pac, "XAU/USD", "buy", days_ago=20)
+    _set_paused_since(pac, "USD/CAD", "buy", days_ago=20)
 
-    d = pac.evaluate_pair("XAU/USD", direction="buy")
+    d = pac.evaluate_pair("USD/CAD", direction="buy")
 
     assert d["action"] == "transition"
     assert d["to_state"] == pac.STATE_AUTO_EXEC
-    assert pac.get_current_state("XAU/USD", direction="buy") == pac.STATE_AUTO_EXEC
+    assert pac.get_current_state("USD/CAD", direction="buy") == pac.STATE_AUTO_EXEC
+    assert "hasard" not in d["reason"].lower()
+    assert "aléatoire" not in d["reason"].lower()
 
 
 # ─── 3. Le délai seul ne suffit plus (régression directe du défaut) ───────
@@ -240,13 +263,14 @@ def test_disjoncteur_anti_cascade_prime_sur_controle_aleatoire(_isolated_db, mon
     from backend.services import pair_admission_controller as pac
 
     _tune_fast_bootstrap(monkeypatch)
-    # Effet aléatoire FRANC — sans le disjoncteur, ceci reviendrait en AUTO_EXEC.
+    # Effet FRANC (peer control favorable) — sans le disjoncteur, ceci
+    # reviendrait en AUTO_EXEC.
     _seed_domain_and_pattern(
-        _isolated_db, target_pair="XAU/USD", direction="buy",
+        _isolated_db, target_pair="USD/CAD", direction="buy",
         n_total=600, offset_for_target=0.5,
     )
     # État PAUSED courant (effectif), backdaté de 20j → cool-off dépassé.
-    _set_paused_since(pac, "XAU/USD", "buy", days_ago=20)
+    _set_paused_since(pac, "USD/CAD", "buy", days_ago=20)
 
     # + 2 PAUSED historiques supplémentaires, ANTÉRIEURES à l'état courant
     # (35j et 40j) mais dans la fenêtre de 60j de `_count_recent_pauses` :
@@ -259,14 +283,14 @@ def test_disjoncteur_anti_cascade_prime_sur_controle_aleatoire(_isolated_db, mon
             c.execute(
                 "INSERT INTO pair_admission_state (pair, direction, destination, state, "
                 "state_since, reason, transitioned_by) VALUES (?, ?, NULL, 'PAUSED', ?, 'test', 'auto')",
-                ("XAU/USD", "buy", since),
+                ("USD/CAD", "buy", since),
             )
 
-    d = pac.evaluate_pair("XAU/USD", direction="buy")
+    d = pac.evaluate_pair("USD/CAD", direction="buy")
 
     assert d["action"] == "transition"
     assert d["to_state"] == pac.STATE_DEMOTED
-    assert pac.get_current_state("XAU/USD", direction="buy") == pac.STATE_DEMOTED
+    assert pac.get_current_state("USD/CAD", direction="buy") == pac.STATE_DEMOTED
 
 
 # ─── 5. INDETERMINATE bloque toujours les rétrogradations (réconciliation) ─
@@ -298,20 +322,20 @@ def test_reglage_cooloff_est_respecte(_isolated_db, monkeypatch):
     _tune_fast_bootstrap(monkeypatch)
     monkeypatch.setattr(st, "PAC_PAUSE_COOLOFF_DAYS", 3)
     _seed_domain_and_pattern(
-        _isolated_db, target_pair="XAU/USD", direction="buy",
+        _isolated_db, target_pair="USD/CAD", direction="buy",
         n_total=600, offset_for_target=0.5,  # effet franc — reviendrait si le délai était passé
     )
 
     # 2 jours écoulés < 3j réglés → reste en pause malgré l'effet franc.
-    _set_paused_since(pac, "XAU/USD", "buy", days_ago=2)
-    d = pac.evaluate_pair("XAU/USD", direction="buy")
+    _set_paused_since(pac, "USD/CAD", "buy", days_ago=2)
+    d = pac.evaluate_pair("USD/CAD", direction="buy")
     assert d["action"] == "keep"
-    assert pac.get_current_state("XAU/USD", direction="buy") == pac.STATE_PAUSED
+    assert pac.get_current_state("USD/CAD", direction="buy") == pac.STATE_PAUSED
 
     # 4 jours écoulés >= 3j réglés → revient.
-    pac._RANDOM_CONTROL_CACHE.clear()
-    _set_paused_since(pac, "XAU/USD", "buy", days_ago=4)
-    d = pac.evaluate_pair("XAU/USD", direction="buy")
+    pac._PEER_CONTROL_CACHE.clear()
+    _set_paused_since(pac, "USD/CAD", "buy", days_ago=4)
+    d = pac.evaluate_pair("USD/CAD", direction="buy")
     assert d["action"] == "transition"
     assert d["to_state"] == pac.STATE_AUTO_EXEC
 
@@ -351,21 +375,21 @@ def test_cache_evite_le_recalcul_dans_la_fenetre_ttl(_isolated_db, monkeypatch):
 
     _tune_fast_bootstrap(monkeypatch)
     _seed_domain_and_pattern(
-        _isolated_db, target_pair="XAU/USD", direction="buy",
+        _isolated_db, target_pair="USD/CAD", direction="buy",
         n_total=600, offset_for_target=0.5,
     )
 
     calls = {"n": 0}
-    original = pac.random_control_for_pair
+    original = pac.peer_control_for_pair
 
     def _counting(pair, direction):
         calls["n"] += 1
         return original(pair, direction)
 
-    monkeypatch.setattr(pac, "random_control_for_pair", _counting)
+    monkeypatch.setattr(pac, "peer_control_for_pair", _counting)
 
-    r1 = pac.random_control_for_pair_cached("XAU/USD", "buy")
-    r2 = pac.random_control_for_pair_cached("XAU/USD", "buy")
+    r1 = pac.peer_control_for_pair_cached("USD/CAD", "buy")
+    r2 = pac.peer_control_for_pair_cached("USD/CAD", "buy")
 
     assert calls["n"] == 1  # 2e appel servi depuis le cache
     assert r1 == r2
@@ -376,28 +400,28 @@ def test_cache_expire_apres_ttl(_isolated_db, monkeypatch):
     import config.settings as st
 
     _tune_fast_bootstrap(monkeypatch)
-    monkeypatch.setattr(st, "PAC_RANDOM_CONTROL_CACHE_HOURS", 1)
+    monkeypatch.setattr(st, "PAC_PEER_CONTROL_CACHE_HOURS", 1)
     _seed_domain_and_pattern(
-        _isolated_db, target_pair="XAU/USD", direction="buy",
+        _isolated_db, target_pair="USD/CAD", direction="buy",
         n_total=600, offset_for_target=0.5,
     )
 
     calls = {"n": 0}
-    original = pac.random_control_for_pair
+    original = pac.peer_control_for_pair
 
     def _counting(pair, direction):
         calls["n"] += 1
         return original(pair, direction)
 
-    monkeypatch.setattr(pac, "random_control_for_pair", _counting)
+    monkeypatch.setattr(pac, "peer_control_for_pair", _counting)
 
-    pac.random_control_for_pair_cached("XAU/USD", "buy")
+    pac.peer_control_for_pair_cached("USD/CAD", "buy")
     # Simule l'écoulement du TTL en reculant l'entrée de cache dans le passé.
-    key = ("XAU/USD", "buy")
-    ts, cached_result = pac._RANDOM_CONTROL_CACHE[key]
-    pac._RANDOM_CONTROL_CACHE[key] = (ts - timedelta(hours=2), cached_result)
+    key = ("USD/CAD", "buy")
+    ts, cached_result = pac._PEER_CONTROL_CACHE[key]
+    pac._PEER_CONTROL_CACHE[key] = (ts - timedelta(hours=2), cached_result)
 
-    pac.random_control_for_pair_cached("XAU/USD", "buy")
+    pac.peer_control_for_pair_cached("USD/CAD", "buy")
     assert calls["n"] == 2
 
 
