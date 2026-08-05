@@ -152,38 +152,218 @@ class TestApplyKrakenFunding:
 
 
 class TestFetchAllRates:
-    """Tests de _fetch_all_rates : parsing et cache."""
+    """Tests de _fetch_all_rates : parsing, conversion absolu→relatif, cache.
 
-    def test_parse_tickers_response(self):
-        from backend.services.kraken_funding_scoring import _fetch_all_rates
-        import backend.services.kraken_funding_scoring as mod
+    Kraken expose ``fundingRate`` en valeur ABSOLUE (devise de cotation par
+    contrat), pas en taux relatif. ``_fetch_all_rates`` doit diviser par
+    ``indexPrice`` pour produire un taux relatif comparable à
+    ``_EXTREME_THRESHOLD``. Ces tests utilisent un relevé réel du
+    2026-08-05 :
+    - PF_XBTUSD  fundingRate=0.25299581803314525  indexPrice=64013.79
+      → relatif ≈ 3.95e-6
+    - PF_ETHUSD  fundingRate=0.03174136677858395  indexPrice=1862.71
+      → relatif ≈ 1.70e-5
 
-        fake_response = {
-            "tickers": [
-                {"symbol": "PF_XBTUSD", "fundingRate": 0.0003},
-                {"symbol": "PF_ETHUSD", "fundingRate": -0.0002},
-                {"symbol": "PF_SOLUSD"},  # pas de fundingRate → ignoré
-            ]
-        }
+    Avant le fix, ``_fetch_all_rates`` retournait directement ``fundingRate``
+    (la valeur absolue) sans diviser par ``indexPrice`` — ces tests
+    échouent contre ce code (confronté via ``git stash`` du service).
+    """
+
+    @staticmethod
+    def _mock_urlopen(fake_response: dict):
         import json
-        from io import BytesIO
         from unittest.mock import MagicMock
 
         mock_resp = MagicMock()
         mock_resp.read.return_value = json.dumps(fake_response).encode()
         mock_resp.__enter__ = lambda s: s
         mock_resp.__exit__ = MagicMock(return_value=False)
+        return mock_resp
 
-        # Forcer re-fetch en réinitialisant le timestamp
+    def _force_refetch(self, mod):
+        """Reset le cache module pour forcer un vrai appel réseau (mocké)."""
         original_ts = mod._LAST_FETCH_AT
+        original_data = mod._LAST_FETCH_DATA
         mod._LAST_FETCH_AT = 0.0
         mod._LAST_FETCH_DATA = {}
+        return original_ts, original_data
+
+    def test_parse_tickers_response_converts_absolute_to_relative(self):
+        """Taux absolu réaliste (relevé du 2026-08-05) → taux relatif attendu."""
+        from backend.services.kraken_funding_scoring import _fetch_all_rates
+        import backend.services.kraken_funding_scoring as mod
+
+        fake_response = {
+            "tickers": [
+                {
+                    "symbol": "PF_XBTUSD",
+                    "fundingRate": 0.25299581803314525,
+                    "indexPrice": 64013.79,
+                },
+                {
+                    "symbol": "PF_ETHUSD",
+                    "fundingRate": 0.03174136677858395,
+                    "indexPrice": 1862.71,
+                },
+                {"symbol": "PF_SOLUSD"},  # pas de fundingRate → ignoré
+            ]
+        }
+        mock_resp = self._mock_urlopen(fake_response)
+        original_ts, original_data = self._force_refetch(mod)
         try:
             with patch("urllib.request.urlopen", return_value=mock_resp):
                 rates = _fetch_all_rates()
         finally:
             mod._LAST_FETCH_AT = original_ts
+            mod._LAST_FETCH_DATA = original_data
 
-        assert rates.get("PF_XBTUSD") == pytest.approx(0.0003)
-        assert rates.get("PF_ETHUSD") == pytest.approx(-0.0002)
+        assert rates.get("PF_XBTUSD") == pytest.approx(3.9520e-6, rel=1e-3)
+        assert rates.get("PF_ETHUSD") == pytest.approx(1.7038e-5, rel=1e-3)
         assert "PF_SOLUSD" not in rates
+        # Le taux relatif doit être très inférieur à la valeur absolue brute
+        # (facteur ~64000 pour BTC) — sinon la conversion n'a pas eu lieu.
+        assert rates["PF_XBTUSD"] < 0.25299581803314525 / 1000
+
+    def test_missing_index_price_symbol_absent_not_zero(self):
+        """``indexPrice`` absent → le symbole est absent du dict (jamais 0.0
+        ni la valeur absolue en repli)."""
+        from backend.services.kraken_funding_scoring import (
+            _fetch_all_rates,
+            _get_funding_rate,
+        )
+        import backend.services.kraken_funding_scoring as mod
+
+        fake_response = {
+            "tickers": [
+                {"symbol": "PF_XBTUSD", "fundingRate": 0.253},  # pas d'indexPrice
+            ]
+        }
+        mock_resp = self._mock_urlopen(fake_response)
+        original_ts, original_data = self._force_refetch(mod)
+        try:
+            with patch("urllib.request.urlopen", return_value=mock_resp):
+                rates = _fetch_all_rates()
+                rate = _get_funding_rate("PF_XBTUSD")
+        finally:
+            mod._LAST_FETCH_AT = original_ts
+            mod._LAST_FETCH_DATA = original_data
+
+        assert "PF_XBTUSD" not in rates
+        assert rate is None
+        assert rate != 0.0
+        assert rate != 0.253
+
+    def test_zero_or_negative_index_price_symbol_absent_not_zero(self):
+        """``indexPrice`` nul ou négatif → incalculable, symbole absent."""
+        from backend.services.kraken_funding_scoring import _fetch_all_rates
+        import backend.services.kraken_funding_scoring as mod
+
+        fake_response = {
+            "tickers": [
+                {"symbol": "PF_XBTUSD", "fundingRate": 0.253, "indexPrice": 0.0},
+                {"symbol": "PF_ETHUSD", "fundingRate": 0.03, "indexPrice": -100.0},
+            ]
+        }
+        mock_resp = self._mock_urlopen(fake_response)
+        original_ts, original_data = self._force_refetch(mod)
+        try:
+            with patch("urllib.request.urlopen", return_value=mock_resp):
+                rates = _fetch_all_rates()
+        finally:
+            mod._LAST_FETCH_AT = original_ts
+            mod._LAST_FETCH_DATA = original_data
+
+        assert "PF_XBTUSD" not in rates
+        assert "PF_ETHUSD" not in rates
+
+
+class TestRealFundingNoLongerVetoesEveryBuy:
+    """Le test qui démontre la correction du bug de production, de bout en
+    bout (mock au niveau HTTP, PAS au niveau ``_get_funding_rate``).
+
+    Avant le fix : ``_fetch_all_rates`` retournait directement
+    ``fundingRate`` (valeur ABSOLUE Kraken, ex: 0.253 pour BTC), largement
+    > ``_EXTREME_THRESHOLD`` (0.0005) → tout achat crypto au funding positif
+    était vetoé. Un test qui patche ``_get_funding_rate`` directement avec
+    une valeur déjà relative ne détecterait PAS ce bug (il passerait aussi
+    contre le code d'avant fix) — d'où le mock au niveau
+    ``urllib.request.urlopen``, qui force le passage par la conversion
+    ``fundingRate / indexPrice`` dans ``_fetch_all_rates``.
+
+    Après le fix : le taux RELATIF réel (≈3.95e-6 pour BTC, ≈1.70e-5 pour
+    ETH, mesurés le 2026-08-05) est très en dessous du seuil → plus de
+    veto sur ces cas réels.
+    """
+
+    @staticmethod
+    def _mock_urlopen(fake_response: dict):
+        import json
+        from unittest.mock import MagicMock
+
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps(fake_response).encode()
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        return mock_resp
+
+    def _apply_with_mocked_ticker(self, pair: str, direction: str, base_score: float,
+                                   symbol: str, funding_rate: float, index_price: float):
+        import backend.services.kraken_funding_scoring as mod
+
+        fake_response = {
+            "tickers": [
+                {"symbol": symbol, "fundingRate": funding_rate, "indexPrice": index_price}
+            ]
+        }
+        mock_resp = self._mock_urlopen(fake_response)
+        original_ts, original_data = mod._LAST_FETCH_AT, mod._LAST_FETCH_DATA
+        mod._LAST_FETCH_AT = 0.0
+        mod._LAST_FETCH_DATA = {}
+        try:
+            with patch("urllib.request.urlopen", return_value=mock_resp):
+                return apply_kraken_funding(pair, direction, base_score)
+        finally:
+            mod._LAST_FETCH_AT = original_ts
+            mod._LAST_FETCH_DATA = original_data
+
+    def test_btc_buy_at_real_funding_is_not_vetoed(self):
+        new_score, meta = self._apply_with_mocked_ticker(
+            "BTC/USD", "buy", 70.0,
+            symbol="PF_XBTUSD", funding_rate=0.25299581803314525, index_price=64013.79,
+        )
+        assert meta["multiplier"] == 1.0
+        assert meta["reason"] is None
+        assert new_score == 70.0
+
+    def test_eth_buy_at_real_funding_is_not_vetoed(self):
+        new_score, meta = self._apply_with_mocked_ticker(
+            "ETH/USD", "buy", 70.0,
+            symbol="PF_ETHUSD", funding_rate=0.03174136677858395, index_price=1862.71,
+        )
+        assert meta["multiplier"] == 1.0
+        assert meta["reason"] is None
+        assert new_score == 70.0
+
+    def test_relative_funding_still_vetoes_extreme_buy(self):
+        """Un funding réellement extrême (au-dessus du seuil, en relatif)
+        déclenche toujours le veto — direction BUY."""
+        extreme_relative_rate = _EXTREME_THRESHOLD * 3
+        with patch(
+            "backend.services.kraken_funding_scoring._get_funding_rate",
+            return_value=extreme_relative_rate,
+        ):
+            new_score, meta = apply_kraken_funding("BTC/USD", "buy", 70.0)
+        assert meta["multiplier"] == _SOFT_VETO_MULTIPLIER
+        assert new_score < 70.0
+
+    def test_relative_funding_still_vetoes_extreme_sell(self):
+        """Un funding réellement extrême (au-dessus du seuil, en relatif)
+        déclenche toujours le veto — direction SELL."""
+        extreme_relative_rate = -_EXTREME_THRESHOLD * 3
+        with patch(
+            "backend.services.kraken_funding_scoring._get_funding_rate",
+            return_value=extreme_relative_rate,
+        ):
+            new_score, meta = apply_kraken_funding("ETH/USD", "sell", 70.0)
+        assert meta["multiplier"] == _SOFT_VETO_MULTIPLIER
+        assert new_score < 70.0
