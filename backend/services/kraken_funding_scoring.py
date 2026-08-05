@@ -128,6 +128,22 @@ def _get_funding_rate(symbol: str) -> float | None:
     return rates.get(symbol)
 
 
+def get_funding_rate_for_pair(pair: str) -> float | None:
+    """Taux de funding Kraken pour une paire interne (``"BTC/USD"``), ou ``None``.
+
+    Accesseur public — le modèle de coût a besoin du taux comme **coût**,
+    là où ce module l'utilisait jusqu'ici seulement comme feature de scoring.
+    Best-effort : toute erreur rend ``None``, jamais ``0.0``.
+    """
+    try:
+        symbol = _PAIR_TO_SYMBOL.get(pair)
+        if not symbol:
+            return None
+        return _get_funding_rate(symbol)
+    except Exception:
+        return None
+
+
 def apply_kraken_funding(
     pair: str, direction: str, base_score: float
 ) -> tuple[float, dict]:

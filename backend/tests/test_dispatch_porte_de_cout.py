@@ -90,7 +90,14 @@ def test_les_fabriques_kraken_declarent_reellement_leurs_valeurs():
         ("_admin_kraken_stocks_destination", "None"),
     ):
         src = inspect.getsource(getattr(bd, nom))
-        assert "cost_model=CostModel(proportional_rate_per_leg=0.0005)" in src, nom
+        # `_admin_kraken_destination` (2026-08-05) declare son cost_model sur
+        # plusieurs lignes pour porter aussi `funding_interval_hours` — seule
+        # cette fabrique paie du funding (perpetuels). On verifie donc le
+        # taux proportionnel independamment de la mise en forme, et le champ
+        # de funding en plus pour cette seule fabrique.
+        assert "proportional_rate_per_leg=0.0005" in src, nom
+        if nom == "_admin_kraken_destination":
+            assert "funding_interval_hours=1.0" in src, nom
         assert f"expected_edge_r={edge}" in src, nom
 
 

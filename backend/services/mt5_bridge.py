@@ -256,6 +256,40 @@ def _cost_rejection(setup, dest) -> str | None:
             model=modele,
             risk_money=risk_money,
         )
+
+    # Coût de portage (2026-08-05). N'existe qu'à horizon long : une position
+    # de scalping ne traverse aucune échéance de funding.
+    #
+    # La durée de détention attendue n'est pas connue tant qu'aucun
+    # échantillon propre postérieur au 2026-08-04 n'existe. Elle vaut donc
+    # `None`, ce qui rend le coût total non calculable — et `exceeds_edge`
+    # bloque alors l'argent réel sans bloquer l'observation. C'est le
+    # comportement voulu : ces routes restent en état TELEGRAM.
+    if modele is not None and getattr(modele, "funding_interval_hours", 0.0) > 0:
+        from backend.services.horizon import is_long as _is_long
+
+        if _is_long(getattr(setup, "horizon", None)):
+            from backend.services.cost_model import (
+                holding_cost_in_r, median_holding_hours,
+            )
+            from backend.services.kraken_funding_scoring import (
+                get_funding_rate_for_pair,
+            )
+
+            systeme = getattr(setup, "shadow_system_id", None)
+            duree = median_holding_hours(systeme) if systeme else None
+            portage = holding_cost_in_r(
+                entry=getattr(setup, "entry_price", 0) or 0,
+                stop_loss=getattr(setup, "stop_loss", 0) or 0,
+                rate_per_interval=get_funding_rate_for_pair(getattr(setup, "pair", "")),
+                interval_hours=float(modele.funding_interval_hours),
+                holding_hours=duree,
+            )
+            # Un portage non calculable rend le coût TOTAL non calculable.
+            # L'ignorer sous-estimerait la route exactement là où le modèle
+            # doit être sévère.
+            cout_r = None if portage is None else (cout_r or 0.0) + portage
+
     if exceeds_edge(
         cout_r,
         edge,

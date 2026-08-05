@@ -42,6 +42,9 @@ class CostModel:
     proportional_rate_per_leg: float = 0.0
     fixed_per_order: float = 0.0
     min_per_order: float = 0.0
+    funding_interval_hours: float = 0.0
+    """Périodicité de l'échéance de funding, en heures. ``0.0`` = route sans
+    funding (CFD MT5, compte cash IBKR). Kraken Futures : 1,0."""
 
 
 def cost_in_r(
@@ -80,6 +83,103 @@ def cost_in_r(
         cout += (par_ordre * 2.0) / risk_money
 
     return cout
+
+
+def holding_cost_in_r(
+    entry: float,
+    stop_loss: float,
+    rate_per_interval: float | None,
+    interval_hours: float,
+    holding_hours: float | None,
+) -> float | None:
+    """Coût de **détention** d'une position, exprimé en unités de risque.
+
+    Le scalping ne payait pas ce coût : une position ouverte et fermée dans
+    la même heure ne traverse aucune échéance de funding. À 4h et 1d, si.
+
+    Même structure que la part proportionnelle de ``cost_in_r`` — le risque
+    en devise se simplifie, donc le coût **ne dépend pas de la taille de
+    position**. Plus de capital ne sauve pas une route dont le portage est
+    trop cher.
+
+    ⚠️ **Plancher à zéro.** Un funding négatif rapporte au détenteur d'une
+    position longue. Le compter comme un gain financerait une position sur
+    une recette qui peut s'inverser d'une heure à l'autre. On ne facture pas
+    un crédit, on l'ignore.
+
+    Retourne ``None`` — jamais ``0.0`` — dès qu'une composante manque. Une
+    durée de détention inconnue est le cas nominal tant qu'aucun échantillon
+    propre postérieur au 2026-08-04 n'existe.
+    """
+    if rate_per_interval is None or holding_hours is None:
+        return None
+    if not entry or entry <= 0:
+        return None
+    distance = abs(entry - stop_loss)
+    if distance <= 0:
+        return None
+    if interval_hours is None or interval_hours <= 0:
+        return None
+    if holding_hours < 0:
+        return None
+
+    echeances = holding_hours / interval_hours
+    cout = (entry / distance) * rate_per_interval * echeances
+    return max(0.0, cout)
+
+
+# Échantillon minimal pour qu'une durée de détention médiane veuille dire
+# quelque chose. Même ordre de grandeur que les autres seuils d'échantillon
+# du projet, et volontairement au-dessus du bruit d'une poignée de trades.
+HOLDING_MIN_SAMPLE = 30
+
+# Tout le shadow antérieur à cette date est à écarter : la déduplication
+# comptait un même setup jusqu'à 960 fois (corrigé le 2026-08-04). L'inclure
+# biaiserait toute médiane vers le comportement des setups sur-représentés.
+SHADOW_CLEAN_SINCE = "2026-08-05"
+
+
+def median_holding_hours(
+    system_id: str,
+    min_sample: int = HOLDING_MIN_SAMPLE,
+    db_path=None,
+) -> float | None:
+    """Durée de détention médiane observée pour un système, en heures.
+
+    Mesurée sur les setups shadow **résolus** et **postérieurs à
+    l'échantillon propre**. Retourne ``None`` sous ``min_sample`` : une
+    médiane sur trois trades n'est pas une mesure, et l'inventer ferait
+    passer une route non mesurée pour une route évaluable.
+    """
+    import sqlite3
+    from pathlib import Path
+
+    chemin = db_path
+    if chemin is None:
+        chemin = Path("/app/data/trades.db") if Path("/app").exists() else Path("trades.db")
+    try:
+        with sqlite3.connect(chemin) as c:
+            rows = c.execute(
+                """SELECT (julianday(exit_at) - julianday(bar_timestamp)) * 24.0
+                     FROM shadow_setups
+                    WHERE system_id = ?
+                      AND outcome IS NOT NULL
+                      AND exit_at IS NOT NULL
+                      AND substr(bar_timestamp, 1, 10) >= ?
+                 ORDER BY 1""",
+                (system_id, SHADOW_CLEAN_SINCE),
+            ).fetchall()
+    except Exception:
+        return None
+
+    durees = [r[0] for r in rows if r[0] is not None and r[0] >= 0]
+    if len(durees) < min_sample:
+        return None
+    n = len(durees)
+    milieu = n // 2
+    if n % 2:
+        return float(durees[milieu])
+    return float((durees[milieu - 1] + durees[milieu]) / 2.0)
 
 
 # Part maximale de l'edge brut que les frais peuvent consommer.

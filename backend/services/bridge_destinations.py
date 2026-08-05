@@ -280,6 +280,12 @@ def _admin_kraken_spot_destination() -> BridgeConfig | None:
         # Le taux 0,0005 est celui des PERPÉTUELS. Le barème spot Kraken est
         # nettement plus élevé et n'a pas été mesuré. Edge à None : jamais
         # mesuré sur cette route, donc la porte bloque en exécution réelle.
+        #
+        # `funding_interval_hours` reste à 0,0 (défaut) : ce spot est un achat
+        # réel long-only sans marge (`leverage=1`), donc il ne traverse aucune
+        # échéance de funding — à la différence des perpétuels `admin_kraken`
+        # ci-dessus. Vérifié au 2026-08-05 en même temps que la périodicité
+        # perpétuelle.
         expected_edge_r=None,
         # Kraken n'est viable qu'en détention : ses 0,10 % d'aller-retour
         # valent 2,6 fois l'edge à l'échelle du scalping. Le restreindre aux
@@ -370,7 +376,16 @@ def _admin_kraken_destination() -> BridgeConfig | None:
         leverage=int(getattr(st, "KRAKEN_BRIDGE_LEVERAGE", 5)),
         allowed_patterns=getattr(st, "KRAKEN_BRIDGE_ALLOWED_PATTERNS", None),
         # 0,05 % par jambe (taker). Donne 0,288 R au SL médian mesuré.
-        cost_model=CostModel(proportional_rate_per_leg=0.0005),
+        # `funding_interval_hours=1.0` : les perpétuels Kraken règlent leur
+        # funding toutes les heures pour les clients EEA (dont Xavier, résident
+        # FR) — vérifié le 2026-08-05 contre le support Kraken ("perpetual
+        # contract specifications for clients in the EEA" : règlement "à la
+        # fin de chaque heure"). Les clients US règlent une fois par jour ;
+        # sans objet ici, ce compte est EEA.
+        cost_model=CostModel(
+            proportional_rate_per_leg=0.0005,
+            funding_interval_hours=1.0,
+        ),
         expected_edge_r=0.110,  # mesuré sur 876 trades réels le 2026-08-04
         # Kraken n'est viable qu'en détention : ses 0,10 % d'aller-retour
         # valent 2,6 fois l'edge à l'échelle du scalping. Le restreindre aux
