@@ -55,14 +55,26 @@ sonder "Kraken"        KRAKEN_BRIDGE_URL          KRAKEN_BRIDGE_API_KEY         
 sonder "Kraken Spot"   KRAKEN_SPOT_BRIDGE_URL     KRAKEN_SPOT_BRIDGE_API_KEY     "X-Bridge-Key"
 
 # ── 2. Dispatch : qui pousse, qui se tait ────────────────────────────
-# Une destination muette dont les rejets sont majoritairement
-# `fees_exceed_edge` est coupee par conception (porte de cout, 2026-08-04) :
-# elle est affichee en information, pas en alerte.
+# Une destination muette dont les rejets sont majoritairement une coupure
+# VOLONTAIRE (porte de cout, porte d'horizon, blackout earnings, gel
+# week-end) est coupee par conception : elle est affichee en information,
+# pas en alerte.
 SINCE=$(date -u -d "-${FENETRE_H} hours" '+%Y-%m-%dT%H:%M:%S')
 SINCE_J=$(date -u -d "-${FENETRE_H} hours" '+%Y-%m-%d')
 
 DISPATCH=$(SINCE="$SINCE" SINCE_J="$SINCE_J" DB="$DB" python3 <<'PY'
 import json, os, sqlite3
+
+# Codes de refus « par conception » : une coupure volontaire, pas une panne.
+# ⚠️ Tout futur code de refus volontaire (nouvelle porte, nouveau veto
+# structurel) DOIT être ajouté ici, sous peine de faire déclencher une
+# fausse alerte 🚨 sur des destinations correctement coupées.
+CODES_PAR_CONCEPTION = frozenset({
+    "fees_exceed_edge",
+    "horizon_not_allowed",
+    "earnings_blackout",
+    "weekend_hold_blocked",
+})
 
 db, since, since_j = os.environ["DB"], os.environ["SINCE"], os.environ["SINCE_J"]
 c = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=30)
@@ -78,7 +90,7 @@ for d, code, n in c.execute(
         " WHERE created_at >= ? GROUP BY 1, 2", (since,)):
     if d:
         bloques[d] = bloques.get(d, 0) + n
-        if code == "fees_exceed_edge":
+        if code in CODES_PAR_CONCEPTION:
             bloques_porte_cout[d] = bloques_porte_cout.get(d, 0) + n
 try:
     for d, code, n in c.execute(
@@ -86,15 +98,15 @@ try:
             " WHERE day >= ? GROUP BY 1, 2", (since_j,)):
         if d:
             bloques[d] = bloques.get(d, 0) + (n or 0)
-            if code == "fees_exceed_edge":
+            if code in CODES_PAR_CONCEPTION:
                 bloques_porte_cout[d] = bloques_porte_cout.get(d, 0) + (n or 0)
 except sqlite3.OperationalError:
     pass
 
 vues = sorted(set(pousses) | set(bloques))
 muettes_toutes = [d for d in vues if not pousses.get(d)]
-# Une destination coupee par conception par la porte de cout (majorite des
-# rejets = fees_exceed_edge) n'est pas une panne : elle est affichee en
+# Une destination coupee par conception (majorite des rejets dans
+# CODES_PAR_CONCEPTION) n'est pas une panne : elle est affichee en
 # information, sans declencher l'alerte.
 muettes_porte_cout = [
     d for d in muettes_toutes
