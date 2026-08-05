@@ -61,13 +61,13 @@ def _isolated_db(tmp_path, monkeypatch):
     yield db_path
 
 
-def _insert_trade(db_path, pair: str, pnl: float, closed_at: str | None = None):
+def _insert_trade(db_path, pair: str, pnl: float, closed_at: str | None = None, direction: str | None = None):
     closed_at = closed_at or datetime.now(timezone.utc).isoformat()
     with sqlite3.connect(db_path) as c:
         c.execute(
-            "INSERT INTO personal_trades (pair, status, pnl, is_auto, closed_at, close_reason) "
-            "VALUES (?, 'CLOSED', ?, 1, ?, ?)",
-            (pair, pnl, closed_at, "SL" if pnl < 0 else "TP1"),
+            "INSERT INTO personal_trades (pair, direction, status, pnl, is_auto, closed_at, close_reason) "
+            "VALUES (?, ?, 'CLOSED', ?, 1, ?, ?)",
+            (pair, direction, pnl, closed_at, "SL" if pnl < 0 else "TP1"),
         )
 
 
@@ -132,10 +132,18 @@ def test_is_telegram_eligible(_isolated_db):
 
 
 def test_compute_promotion_score_no_data(_isolated_db):
+    """Sans AUCUNE donnée (ni trade réel, ni signal simulé résolu), le score
+    est INDÉCIDABLE — cf. section « garde-fou échantillon réel » plus bas.
+
+    Avant le 2026-08-05, ce cas rendait ``eligible_for == STATE_OBSERVED``,
+    la même valeur qu'une pair dont on SAIT qu'elle est mauvaise. Le nouveau
+    comportement distingue explicitement « on ne sait pas » de « on sait que
+    c'est mauvais ».
+    """
     from backend.services import pair_admission_controller as pac
     score = pac.compute_promotion_score("EUR/USD")
     assert score["sample"] == 0
-    assert score["eligible_for"] == pac.STATE_OBSERVED
+    assert score["eligible_for"] == pac.STATE_INDETERMINATE
 
 
 def test_compute_promotion_score_meets_threshold(_isolated_db, monkeypatch):
@@ -345,3 +353,217 @@ def test_get_full_state_includes_destination(_isolated_db):
     assert full["state"] == pac.STATE_AUTO_EXEC
     assert full["destination"] == "admin_legacy"
     assert full["direction"] == "sell"
+
+
+# ─── Garde-fou échantillon réel (2026-08-05) ───────────────────────────
+#
+# Neutralise la promotion/rétrogradation automatique sur un échantillon
+# majoritairement (voire entièrement) simulé. Avant ce correctif, `n_real <
+# window` déclenchait un complément par `_fetch_signal_pnls` (signaux résolus
+# du radar, jamais tradés) et `evaluate_pair` décidait sur ce mélange comme
+# s'il s'agissait de résultats réels — c'est ce qui a verrouillé 28 pairs en
+# DEMOTED le 2026-08-04 sur des métriques mathématiquement impossibles.
+#
+# `config.settings.PAC_MIN_REAL_TRADES` (défaut 30) fixe le plancher de
+# trades réels sous lequel `compute_promotion_score` rend
+# `eligible_for = STATE_INDETERMINATE` plutôt que de statuer, et
+# `evaluate_pair` ne transitionne alors jamais (ni promotion, ni
+# rétrogradation).
+
+
+def _emit_signal(pair: str, direction: str, rr: float, idx: int = 0, outcome: str | None = None):
+    """Insère un signal *simulé* résolu dans `backtest.db.trades`.
+
+    Jamais un euro réel engagé — sert uniquement à vérifier que le
+    contrôleur refuse désormais de décider dessus tant que le plancher
+    `PAC_MIN_REAL_TRADES` n'est pas atteint en trades RÉELS.
+    """
+    from backend.services import backtest_service as bs
+    bs._init_schema()
+    outcome = outcome or ("WIN_TP1" if rr > 0 else "LOSS")
+    checked_at = (datetime.now(timezone.utc) + timedelta(minutes=idx)).isoformat()
+    with bs._conn() as c:
+        c.execute(
+            """
+            INSERT INTO trades (pair, direction, entry_price, stop_loss,
+                                take_profit_1, take_profit_2, emitted_at,
+                                checked_at, outcome, rr_realized)
+            VALUES (?, ?, 1.0, 0.9, 1.2, 1.4, ?, ?, ?, ?)
+            """,
+            (pair, direction, checked_at, checked_at, outcome, rr),
+        )
+
+
+def test_no_data_at_all_is_indeterminate_not_observed(_isolated_db):
+    """Zéro trade réel ET zéro signal résolu → INDÉCIDABLE, pas OBSERVED.
+
+    « On ne sait rien » doit être distinguable de « on sait que c'est
+    mauvais » — les deux rendaient STATE_OBSERVED avant ce correctif.
+    """
+    from backend.services import pair_admission_controller as pac
+
+    score = pac.compute_promotion_score("GBP/JPY", direction="buy")
+    assert score["sample"] == 0
+    assert score["eligible_for"] == pac.STATE_INDETERMINATE
+    assert "donnée" in score["reason"].lower()
+
+
+def test_only_simulated_data_is_indeterminate_not_observed_nor_eligible(_isolated_db):
+    """0 trade réel + 30 signaux simulés gagnants → toujours INDÉCIDABLE.
+
+    Distinct du cas précédent : ici il y a un échantillon (mixte), mais pas
+    assez de trades RÉELS pour s'y fier. La raison doit le dire explicitement
+    (≠ « pas de données du tout »).
+    """
+    from backend.services import pair_admission_controller as pac
+
+    for i in range(30):
+        rr = 0.2 if i % 5 < 3 else -0.1  # 18 gagnants / 12 perdants, PF>1.3, WR=60%
+        _emit_signal("GBP/JPY", "buy", rr, idx=i)
+
+    score = pac.compute_promotion_score("GBP/JPY", direction="buy")
+    assert score["sample"] == 30
+    assert score["eligible_for"] == pac.STATE_INDETERMINATE
+    # La raison doit parler de trades réels manquants, pas d'absence totale de données.
+    assert "réel" in score["reason"].lower()
+    assert "donnée" not in score["reason"].lower() or "pas de données du tout" not in score["reason"].lower()
+
+
+def test_indeterminate_is_distinct_from_every_real_state(_isolated_db):
+    """STATE_INDETERMINATE n'est ni un état DB valide, ni confondu avec eux."""
+    from backend.services import pair_admission_controller as pac
+
+    assert pac.STATE_INDETERMINATE not in pac.VALID_STATES
+    assert pac.STATE_INDETERMINATE not in (
+        pac.STATE_OBSERVED, pac.STATE_TELEGRAM, pac.STATE_AUTO_EXEC,
+        pac.STATE_PAUSED, pac.STATE_DEMOTED,
+    )
+
+
+def test_evaluate_observed_zero_real_thirty_simulated_triggers_no_transition(_isolated_db):
+    """LE test qui mord : sans le correctif, ceci PROMEUT la pair.
+
+    0 trade réel, 30 signaux simulés gagnants (exactement le scénario qui
+    permettait « la promotion auto from scratch » décrit dans le code
+    d'origine). Avec le plancher par défaut (30), doit rester OBSERVED.
+    """
+    from backend.services import pair_admission_controller as pac
+
+    for i in range(30):
+        rr = 0.2 if i % 5 < 3 else -0.1
+        _emit_signal("GBP/JPY", "buy", rr, idx=i)
+
+    d = pac.evaluate_pair("GBP/JPY", direction="buy")
+    assert d["action"] == "keep"
+    assert d["score"]["eligible_for"] == pac.STATE_INDETERMINATE
+    assert pac.get_current_state("GBP/JPY", direction="buy") == pac.STATE_OBSERVED
+
+
+def test_evaluate_observed_with_enough_real_trades_unchanged_behavior(_isolated_db):
+    """Avec 30 trades RÉELS gagnants, le comportement reste STRICTEMENT celui
+    d'avant : promotion vers AUTO_PROMOTE_TARGET.
+    """
+    from backend.services import pair_admission_controller as pac
+
+    for i in range(30):
+        _insert_trade(
+            _isolated_db, "GBP/JPY", 50.0,
+            closed_at=(datetime.now(timezone.utc) + timedelta(minutes=i)).isoformat(),
+            direction="buy",
+        )
+    d = pac.evaluate_pair("GBP/JPY", direction="buy")
+    assert d["action"] == "transition"
+    assert d["to_state"] == pac.AUTO_PROMOTE_TARGET
+    assert pac.get_current_state("GBP/JPY", direction="buy") == pac.AUTO_PROMOTE_TARGET
+
+
+def test_evaluate_auto_exec_not_demoted_on_insufficient_real_sample(_isolated_db):
+    """LE test qui mord : rejoue le mécanisme exact du -251% du 2026-08-04.
+
+    Pair déjà AUTO_EXEC (argent réel engagé), 0 trade réel dans la fenêtre,
+    30 signaux SIMULÉS massivement perdants (-90% de pnl_pct, très en dessous
+    du seuil -3%). Sans le correctif, ceci rétrograde la pair en PAUSED sur
+    une donnée entièrement fictive. Avec le correctif, aucune décision.
+    """
+    from backend.services import pair_admission_controller as pac
+
+    pac.set_state("NZD/USD", pac.STATE_AUTO_EXEC, "test init", direction="buy")
+    for i in range(30):
+        _emit_signal("NZD/USD", "buy", -3.0, idx=i)  # -300€/trade à 10k capital = -90%
+
+    d = pac.evaluate_pair("NZD/USD", direction="buy")
+    assert d["action"] == "keep"
+    assert d["score"]["eligible_for"] == pac.STATE_INDETERMINATE
+    assert pac.get_current_state("NZD/USD", direction="buy") == pac.STATE_AUTO_EXEC
+
+
+def test_evaluate_auto_exec_demote_unchanged_with_enough_real_trades(_isolated_db):
+    """Avec assez de trades RÉELS perdants, la rétrogradation reste
+    STRICTEMENT celle d'avant (déjà couvert par
+    ``test_evaluate_auto_exec_demotes_to_paused_on_drawdown`` ci-dessus,
+    reproduit ici dans le contexte du garde-fou pour lisibilité)."""
+    from backend.services import pair_admission_controller as pac
+
+    pac.set_state("NZD/USD", pac.STATE_AUTO_EXEC, "test init", direction="buy")
+    for i in range(30):
+        _insert_trade(
+            _isolated_db, "NZD/USD", -50.0,
+            closed_at=(datetime.now(timezone.utc) + timedelta(minutes=i)).isoformat(),
+            direction="buy",
+        )
+    d = pac.evaluate_pair("NZD/USD", direction="buy")
+    assert d["action"] == "transition"
+    assert d["to_state"] == pac.STATE_PAUSED
+
+
+def test_permissive_setting_restores_prior_promote_behavior(_isolated_db, monkeypatch):
+    """PAC_MIN_REAL_TRADES=0 doit restaurer EXACTEMENT le comportement
+    antérieur au 2026-08-05 : promotion possible sur échantillon 100% simulé.
+
+    Vérifie que le réglage est bien lu au point d'appel (`compute_promotion_score`
+    / `evaluate_pair`), pas seulement au chargement du module.
+    """
+    import config.settings as st
+    from backend.services import pair_admission_controller as pac
+    monkeypatch.setattr(st, "PAC_MIN_REAL_TRADES", 0)
+
+    for i in range(30):
+        rr = 0.2 if i % 5 < 3 else -0.1
+        _emit_signal("GBP/JPY", "buy", rr, idx=i)
+
+    d = pac.evaluate_pair("GBP/JPY", direction="buy")
+    assert d["action"] == "transition"
+    assert d["to_state"] == pac.AUTO_PROMOTE_TARGET
+    assert pac.get_current_state("GBP/JPY", direction="buy") == pac.AUTO_PROMOTE_TARGET
+
+
+def test_permissive_setting_restores_prior_demote_behavior(_isolated_db, monkeypatch):
+    """PAC_MIN_REAL_TRADES=0 restaure aussi la rétrogradation auto sur
+    échantillon 100% simulé — symétrique du test de promotion ci-dessus.
+    """
+    import config.settings as st
+    from backend.services import pair_admission_controller as pac
+    monkeypatch.setattr(st, "PAC_MIN_REAL_TRADES", 0)
+
+    pac.set_state("NZD/USD", pac.STATE_AUTO_EXEC, "test init", direction="buy")
+    for i in range(30):
+        _emit_signal("NZD/USD", "buy", -3.0, idx=i)
+
+    d = pac.evaluate_pair("NZD/USD", direction="buy")
+    assert d["action"] == "transition"
+    assert d["to_state"] == pac.STATE_PAUSED
+
+
+def test_reason_distinguishes_no_data_from_not_enough_real_trades(_isolated_db):
+    """Les deux motifs d'indécision doivent être textuellement différenciables
+    (diagnostic actionnable dans 6 mois, sans avoir à relire le code)."""
+    from backend.services import pair_admission_controller as pac
+
+    no_data = pac.compute_promotion_score("CAD/CHF", direction="sell")
+    for i in range(30):
+        _emit_signal("CAD/CHF", "sell", 0.1, idx=i)
+    padded = pac.compute_promotion_score("CAD/CHF", direction="sell")
+
+    assert no_data["eligible_for"] == pac.STATE_INDETERMINATE
+    assert padded["eligible_for"] == pac.STATE_INDETERMINATE
+    assert no_data["reason"] != padded["reason"]

@@ -167,8 +167,14 @@ def test_shadow_setups_corrompu_nest_plus_lu(monkeypatch):
 
 
 def test_aucune_donnee_reste_conservateur():
-    """Sans signal résolu, on ne promeut pas — surtout pas par défaut."""
+    """Sans signal résolu, on ne promeut pas — surtout pas par défaut.
+
+    Depuis le garde-fou échantillon réel du 2026-08-05
+    (`PAC_MIN_REAL_TRADES`, cf. `test_pair_admission_controller.py`), ce cas
+    devient explicitement INDÉCIDABLE plutôt que STATE_OBSERVED : « je ne
+    sais rien » n'est plus confondu avec « je sais que c'est mauvais ». Le
+    résultat pratique (aucune promotion) reste inchangé.
+    """
     score = pac.compute_promotion_score("XAU/USD", window=30, direction="buy")
     assert score["sample"] == 0
-    assert score["eligible_for"] == pac.STATE_OBSERVED
-    assert score["reason"] == "no data"
+    assert score["eligible_for"] == pac.STATE_INDETERMINATE

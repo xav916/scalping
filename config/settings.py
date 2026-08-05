@@ -337,6 +337,33 @@ PAC_CIRCUIT_BREAKER_WINDOW_DAYS = int(os.getenv("PAC_CIRCUIT_BREAKER_WINDOW_DAYS
 # puis seule la stabilité prolongée déclenche le passage AUTO_EXEC sans humain.
 # Default 7j ≈ 1 cycle hebdo macro complet.
 PAC_TELEGRAM_TO_AUTOEXEC_DAYS = int(os.getenv("PAC_TELEGRAM_TO_AUTOEXEC_DAYS", "7"))
+
+# Nombre minimum de trades RÉELS (personal_trades / ea_closed_trades, argent
+# effectivement engagé) requis pour qu'une transition automatique d'admission
+# (promotion OU rétrogradation) soit autorisée. En dessous de ce seuil, le
+# score est jugé INDÉCIDABLE — cf. `pair_admission_controller.STATE_INDETERMINATE`
+# — et `evaluate_pair` / `check_and_regulate` ne transitionnent rien, quel que
+# soit le résultat calculé sur l'échantillon complété par des signaux simulés.
+#
+# ⚠️ Avant le 2026-08-05, ce plancher n'existait pas (= 0) : une pair sans
+# aucun trade réel pouvait être promue OU rétrogradée sur un échantillon
+# 100 % simulé. C'est ce qui a verrouillé 28 pairs en DEMOTED sur des
+# métriques mathématiquement impossibles (jusqu'à −251 % de capital sur une
+# fenêtre de 30, cf. bug de déduplication shadow corrigé le 2026-08-04).
+#
+# Défaut = 30, aligné sur la fenêtre d'évaluation (`PROMOTE_MIN_SAMPLE` dans
+# pair_admission_controller.py) : zéro tolérance à la contamination simulée —
+# une décision qui engage ou retire l'accès à de l'argent réel exige une
+# fenêtre 100 % réelle. Une analyse de puissance du 2026-08-05 montre qu'à
+# n=30 seul un écart ≥ 0,44 R est détectable (6 à 24× le plancher de
+# rentabilité des routes disponibles) : 30 est déjà un seuil faible pour
+# discriminer quoi que ce soit — en dessous, l'échantillon ne mesure plus
+# rien d'utile à la décision.
+#
+# PAC_MIN_REAL_TRADES=0 restaure explicitement le comportement antérieur au
+# 2026-08-05 (permissif : complète toujours avec des signaux simulés, aucun
+# garde-fou de fraîcheur de données).
+PAC_MIN_REAL_TRADES = int(os.getenv("PAC_MIN_REAL_TRADES", "30"))
 # Cap par pair : N positions max SIMULTANÉMENT sur la même paire. Forcé
 # de diversifier, évite la concentration aveugle (ex: 4 XAU/USD ouverts
 # qui tombent ensemble sur un mouvement défavorable).

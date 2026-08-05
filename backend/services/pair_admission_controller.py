@@ -64,6 +64,15 @@ VALID_STATES = frozenset([
     STATE_OBSERVED, STATE_TELEGRAM, STATE_AUTO_EXEC, STATE_PAUSED, STATE_DEMOTED
 ])
 
+# « Indécidable » — classification de `compute_promotion_score()["eligible_for"]`,
+# PAS un état de la state machine (absent de VALID_STATES, n'apparaît jamais
+# dans la colonne `pair_admission_state.state`). Distingue explicitement
+# « on ne sait pas » (échantillon réel insuffisant) de « on sait que c'est
+# mauvais » (STATE_OBSERVED avec échantillon réel suffisant) — cf. garde-fou
+# `PAC_MIN_REAL_TRADES` 2026-08-05. Inconnu ≠ 0 / négatif : cette valeur est
+# le pendant de ce principe au niveau de la décision d'admission.
+STATE_INDETERMINATE = "INDETERMINATE"
+
 # Default si pair n'a jamais été vue par le controller : on observe par défaut
 # (= ne pas envoyer Telegram ni auto-exec sans décision explicite)
 DEFAULT_STATE = STATE_OBSERVED
@@ -123,6 +132,24 @@ def _count_recent_auto_demotions(window_days: int = 7) -> int:
         return int(row[0]) if row else 0
     except Exception:
         return 0
+
+
+def _min_real_trades() -> int:
+    """Plancher de trades RÉELS requis pour qu'une décision d'admission auto
+    (promotion OU rétrogradation) soit prise. Cf. `config.settings.PAC_MIN_REAL_TRADES`.
+
+    ⚠️ Import différé, relu à *chaque* appel (jamais mis en cache dans une
+    constante de module) : c'est ce qui permet à un test de monkeypatcher
+    `config.settings.PAC_MIN_REAL_TRADES` et de voir l'effet immédiatement,
+    sans reload de module. Même schéma que `_breaker_window` / `_breaker_threshold`
+    ci-dessus — un monkeypatch sur autre chose que `config.settings` ne serait
+    lu par personne.
+    """
+    try:
+        from config.settings import PAC_MIN_REAL_TRADES
+        return int(PAC_MIN_REAL_TRADES)
+    except Exception:
+        return 30
 
 
 def is_demotion_blocked() -> bool:
@@ -867,25 +894,41 @@ def compute_promotion_score(pair: str, window: int = 30, direction: Optional[str
     Si direction 'buy'/'sell' : scoring restreint à ce sens.
 
     Retourne :
-    - sample : nb total de trades évalués
+    - sample : nb total de trades évalués (réels + simulés de complément)
+    - n_real : nb de trades RÉELS dans ce total (sous-ensemble de `sample`)
     - sum_pnl : PnL cumulé en euros
     - pnl_pct : PnL en % du capital (cf TRADING_CAPITAL config)
     - wr : Win Rate en %
     - pf : Profit Factor
     - max_dd_pct : Max Drawdown en % du capital (négatif)
-    - eligible_for : 'AUTO_EXEC' | 'TELEGRAM' | 'OBSERVED' (la cible naturelle)
+    - eligible_for : 'AUTO_EXEC' | 'TELEGRAM' | 'OBSERVED' | 'INDETERMINATE'
+      (INDETERMINATE si n_real < PAC_MIN_REAL_TRADES — cf garde-fou ci-dessous)
+
+    ⚠️ Garde-fou échantillon réel (2026-08-05) : quand `n_real` (trades
+    RÉELS, argent effectivement engagé) est sous le plancher
+    `config.settings.PAC_MIN_REAL_TRADES`, la fonction rend
+    `eligible_for = STATE_INDETERMINATE` plutôt que de statuer — même si le
+    complément par signaux simulés suffit à remplir `window`. Les métriques
+    (sum_pnl, wr, pf, ...) restent calculées sur l'échantillon complet pour
+    l'affichage/debug, mais ne doivent jamais servir de base à une transition
+    automatique tant que `eligible_for == STATE_INDETERMINATE` : c'est
+    `evaluate_pair` qui applique cette règle côté écriture.
     """
     from config.settings import TRADING_CAPITAL
-    pnls = _fetch_real_trades_for_pair(pair, window, direction=direction)
-    n_real = len(pnls)
+    real_pnls = _fetch_real_trades_for_pair(pair, window, direction=direction)
+    n_real = len(real_pnls)
+    pnls = list(real_pnls)
     # Complément signaux : les trades réels sont rares (une pair en OBSERVED
     # n'en a aucun), donc on remplit la fenêtre avec les signaux résolus du
-    # radar. C'est ce qui permet la promotion auto from scratch — sans quoi
-    # une pair non tradée ne pourrait jamais accumuler d'historique.
+    # radar pour calculer des métriques informatives. Cf. garde-fou ci-dessus :
+    # ce complément n'autorise plus, à lui seul, une décision automatique.
     if n_real < window:
         pnls.extend(_fetch_signal_pnls(pair, _normalize_direction(direction),
                                        window - n_real))
     sample = len(pnls)
+    n_simulated = sample - n_real
+    min_real = _min_real_trades()
+    indeterminate = n_real < min_real
 
     # Étiquette honnête : jusqu'au 2026-08-04 `pnl_source` annonçait
     # 'personal_trades' même quand 100 % de l'échantillon venait du shadow.
@@ -895,14 +938,26 @@ def compute_promotion_score(pair: str, window: int = 30, direction: Optional[str
         pnl_source = "backtest_trades"
     else:
         pnl_source = f"mixed({n_real}/{sample} réels)"
+
     if sample == 0:
+        if indeterminate:
+            eligible = STATE_INDETERMINATE
+            reason = (
+                f"indécidable : pas assez de données du tout "
+                f"(0 trade réel, 0 signal résolu ; seuil minimum de trades "
+                f"réels = {min_real})"
+            )
+        else:
+            eligible = STATE_OBSERVED
+            reason = "no data"
         return {
-            "sample": 0, "sum_pnl": 0.0, "pnl_pct": 0.0,
+            "sample": 0, "n_real": 0, "sum_pnl": 0.0, "pnl_pct": 0.0,
             "wr": 0.0, "pf": 0.0, "max_dd_pct": 0.0,
-            "eligible_for": STATE_OBSERVED,
-            "reason": "no data",
+            "eligible_for": eligible,
+            "reason": reason,
             "pnl_source": pnl_source,
         }
+
     sum_pnl = round(sum(pnls), 2)
     wins = sum(1 for p in pnls if p > 0)
     wr = round(100.0 * wins / sample, 2)
@@ -910,6 +965,22 @@ def compute_promotion_score(pair: str, window: int = 30, direction: Optional[str
     pnl_pct = round(100.0 * sum_pnl / TRADING_CAPITAL, 2)
     max_dd_pct = _compute_max_dd(pnls, TRADING_CAPITAL)
 
+    if indeterminate:
+        eligible = STATE_INDETERMINATE
+        reason = (
+            f"indécidable : pas assez de trades réels ({n_real}/{min_real} "
+            f"requis ; échantillon complété par {n_simulated} signal(aux) "
+            "simulé(s) — insuffisant pour une décision auto)"
+        )
+        return {
+            "sample": sample, "n_real": n_real,
+            "sum_pnl": sum_pnl, "pnl_pct": pnl_pct,
+            "wr": wr, "pf": pf, "max_dd_pct": max_dd_pct,
+            "eligible_for": eligible, "reason": reason,
+            "pnl_source": pnl_source,
+        }
+
+    # ---- n_real >= min_real : comportement inchangé depuis avant 2026-08-05 ----
     # Décision : tous les critères doivent passer pour promotion AUTO_EXEC
     eligible = STATE_OBSERVED
     reason_parts = []
@@ -934,6 +1005,7 @@ def compute_promotion_score(pair: str, window: int = 30, direction: Optional[str
 
     return {
         "sample": sample,
+        "n_real": n_real,
         "sum_pnl": sum_pnl,
         "pnl_pct": pnl_pct,
         "wr": wr,
@@ -975,6 +1047,9 @@ def evaluate_pair(pair: str, direction: Optional[str] = None) -> dict[str, Any]:
 
     if current == STATE_OBSERVED:
         # Accepte TELEGRAM ou AUTO_EXEC comme cible selon AUTO_PROMOTE_TARGET env.
+        # Garde-fou échantillon réel : STATE_INDETERMINATE n'est jamais dans
+        # (STATE_TELEGRAM, STATE_AUTO_EXEC), donc une pair sans assez de
+        # trades réels tombe naturellement dans la branche "keep" ci-dessous.
         target = score["eligible_for"]
         if target in (STATE_TELEGRAM, STATE_AUTO_EXEC):
             set_state(pair, target, f"auto-promote: {score['reason']}", direction=direction, score_snapshot=score)
@@ -982,6 +1057,10 @@ def evaluate_pair(pair: str, direction: Optional[str] = None) -> dict[str, Any]:
         return {"action": "keep", "from_state": current, "score": score, "reason": score["reason"]}
 
     elif current == STATE_TELEGRAM:
+        # Idem : `eligible_for == STATE_OBSERVED` et `eligible_for in (TELEGRAM,
+        # AUTO_EXEC)` ci-dessous sont tous deux naturellement faux quand
+        # eligible_for == STATE_INDETERMINATE — aucune transition n'est prise
+        # sur un échantillon insuffisamment réel, sans code de garde dédié.
         if score["eligible_for"] == STATE_OBSERVED and score["sample"] >= PROMOTE_MIN_SAMPLE:
             set_state(pair, STATE_OBSERVED, f"auto-demote: {score['reason']}", direction=direction, score_snapshot=score)
             return {"action": "transition", "from_state": current, "to_state": STATE_OBSERVED, "score": score, "reason": score["reason"]}
@@ -1015,6 +1094,15 @@ def evaluate_pair(pair: str, direction: Optional[str] = None) -> dict[str, Any]:
         return {"action": "keep", "from_state": current, "score": score, "reason": f"telegram stable {elapsed.days}j (encore {days_left}j avant AUTO_EXEC)"}
 
     elif current == STATE_AUTO_EXEC:
+        # Garde-fou échantillon réel : `sample`/`pnl_pct` peuvent être calculés
+        # sur un échantillon complété par des signaux simulés (cf.
+        # `compute_promotion_score`). Une rétrogradation retire l'accès à de
+        # l'argent réel — elle ne doit jamais se décider sur cette contamination.
+        # C'est le chemin exact de l'incident du 2026-08-04 (jusqu'à -251 %
+        # de capital sur une fenêtre de 30, entièrement due à un artefact de
+        # déduplication côté données simulées).
+        if score["eligible_for"] == STATE_INDETERMINATE:
+            return {"action": "keep", "from_state": current, "score": score, "reason": score["reason"]}
         if score["sample"] >= PROMOTE_MIN_SAMPLE and score["pnl_pct"] < -3.0:
             set_state(pair, STATE_PAUSED, f"auto-pause: pnl_pct {score['pnl_pct']}% < -3%", direction=direction, score_snapshot=score)
             return {"action": "transition", "from_state": current, "to_state": STATE_PAUSED, "score": score, "reason": "saignement détecté"}
