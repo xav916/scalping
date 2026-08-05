@@ -481,31 +481,6 @@ async def run_shadow_log(
             setup.horizon = _normalize_horizon(tf)
             setup.shadow_system_id = cfg["system_id"]
 
-            # Score et verdict (2026-08-05). `calculate_trade_setup` ne
-            # renseigne pas `confidence_score` : sans cet enrichissement, tout
-            # le flux long-horizon vaudrait 0 et serait refusé en
-            # `below_confidence`.
-            #
-            # ⚠️ La volatilité est calculée sur `signal_candles`, les bougies
-            # sur lesquelles le setup a été DÉTECTÉ. Le barème v2 conditionne
-            # sa composante Volatilité à `if volatility:` — sans elle le score
-            # plafonne à 60, soit un point sous le seuil Telegram de 61, et le
-            # flux serait invisible sans produire le moindre refus.
-            try:
-                from backend.services.analysis_engine import enrich_trade_setup
-                from backend.services.backtest_engine import compute_volatility
-                from backend.services.coaching import compute_verdict
-
-                volatilite = compute_volatility(signal_candles, pair, timeframe=tf)
-                enrich_trade_setup(setup, volatilite, None, [])
-                verdict = compute_verdict(setup, volatility=volatilite, events=[])
-                setup.verdict_action = verdict.get("action", "")
-                setup.verdict_summary = verdict.get("summary", "") or ""
-            except Exception as e:
-                # Best-effort : un échec de scoring ne doit pas empêcher la
-                # persistance shadow, qui reste la source de mesure.
-                logger.warning(f"shadow: scoring {cfg['system_id']} {pair} a échoué: {e}")
-
             # Snapshot macro features pour analyse post-hoc
             macro_features = None
             try:
@@ -531,6 +506,45 @@ async def run_shadow_log(
                     f"pattern={pattern_name} entry={setup.entry_price:.4f} "
                     f"SL={setup.stop_loss:.4f} TP1={setup.take_profit_1:.4f}"
                 )
+
+                # Score et verdict (2026-08-05), déplacés À L'INTÉRIEUR du
+                # `if _persist_setup` (correctif perf 2026-08-05) : la ligne
+                # persistée ne stocke PAS le score (cf. les colonnes explicites
+                # de `_persist_setup` — aucune n'est `confidence_score` ni
+                # `verdict_*`), et son seul consommateur est la notification
+                # juste en dessous, qui vit déjà dans ce bloc. Calculer sur
+                # CHAQUE cycle de 5 min alors qu'une seule persistance réussit
+                # par bougie (contrainte UNIQUE system_id/bar_timestamp)
+                # répétait jusqu'à 48 fois par bougie et par paire un travail
+                # réseau (snapshot macro) et calcul (pile de vetos) inutile 47
+                # fois sur 48.
+                #
+                # `calculate_trade_setup` ne renseigne pas `confidence_score` :
+                # sans cet enrichissement, tout le flux long-horizon vaudrait 0
+                # et serait refusé en `below_confidence`.
+                #
+                # ⚠️ La volatilité est calculée sur `signal_candles`, les
+                # bougies sur lesquelles le setup a été DÉTECTÉ. Le barème v2
+                # conditionne sa composante Volatilité à `if volatility:` —
+                # sans elle le score plafonne à 60, soit un point sous le
+                # seuil Telegram de 61, et le flux serait invisible sans
+                # produire le moindre refus.
+                try:
+                    from backend.services.analysis_engine import enrich_trade_setup
+                    from backend.services.backtest_engine import compute_volatility
+                    from backend.services.coaching import compute_verdict
+
+                    volatilite = compute_volatility(signal_candles, pair, timeframe=tf)
+                    enrich_trade_setup(setup, volatilite, None, [])
+                    verdict = compute_verdict(setup, volatility=volatilite, events=[])
+                    setup.verdict_action = verdict.get("action", "")
+                    setup.verdict_summary = verdict.get("summary", "") or ""
+                except Exception as e:
+                    # Best-effort : un échec de scoring ne doit pas empêcher
+                    # la persistance shadow (déjà faite au-dessus), qui reste
+                    # la source de mesure.
+                    logger.warning(f"shadow: scoring {cfg['system_id']} {pair} a échoué: {e}")
+
                 # Notification long-horizon. Placée sous `_persist_setup`, qui
                 # rend True seulement pour une ligne réellement nouvelle
                 # (UNIQUE system_id, bar_timestamp) : la déduplication est

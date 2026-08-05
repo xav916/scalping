@@ -124,10 +124,23 @@ def test_shadow_system_id_vaut_none_par_defaut():
     assert _setup().shadow_system_id is None
 
 
-def test_run_shadow_log_score_et_juge_avant_de_persister():
+def test_run_shadow_log_score_et_juge_seulement_si_persiste():
     # Verification par inspection : l'enrichissement et le verdict doivent
     # exister dans la fonction, et la volatilite doit etre calculee sur les
     # bougies de detection (signal_candles), pas ailleurs.
+    #
+    # Ordre invert le 2026-08-05 (correctif perf) : le scoring vit desormais
+    # A L'INTERIEUR du `if _persist_setup(...)`, pas avant. La ligne
+    # persistee ne stocke pas le score (aucune colonne confidence_score /
+    # verdict_* dans `_persist_setup`) et son seul consommateur, la
+    # notification long-horizon, vit deja dans ce bloc : calculer le score a
+    # chaque cycle de 5 min alors qu'une seule persistance reussit par
+    # bougie (contrainte UNIQUE) repetait jusqu'a 48 fois par bougie et par
+    # paire un travail reseau (snapshot macro) et calcul (pile de vetos)
+    # inutile 47 fois sur 48. Verifie donc l'ordre, pas seulement la
+    # presence : `_persist_setup(` doit apparaitre AVANT `enrich_trade_setup`
+    # dans le source, puisque le scoring est maintenant gate par la reussite
+    # de la persistance.
     import inspect
 
     from backend.services import shadow_v2_core_long
@@ -139,3 +152,10 @@ def test_run_shadow_log_score_et_juge_avant_de_persister():
         "la volatilite doit etre calculee sur les bougies de detection"
     )
     assert "shadow_system_id" in src
+
+    pos_persist = src.index("if _persist_setup(")
+    pos_scoring = src.index("enrich_trade_setup(")
+    assert pos_persist < pos_scoring, (
+        "le scoring doit etre gate par la reussite de _persist_setup, "
+        "pas execute avant"
+    )

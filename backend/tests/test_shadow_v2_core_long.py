@@ -160,6 +160,49 @@ def test_run_shadow_log_unique_constraint(temp_db, monkeypatch):
         assert n_total == n1_xau
 
 
+def test_run_shadow_log_ne_score_qu_une_fois_par_bougie_reellement_nouvelle(
+    temp_db, monkeypatch,
+):
+    """Le scoring (volatilité + enrichissement + verdict) ne doit tourner
+    qu'une fois par bougie qui persiste réellement, pas à chaque cycle de
+    5 minutes sur la même bougie 4h/1d inchangée — jusqu'à 48 fois par
+    bougie et par paire avant le correctif perf du 2026-08-05, puisque le
+    scheduler tourne toutes les 5 min et qu'une seule persistance réussit
+    par bougie (contrainte UNIQUE system_id/bar_timestamp).
+    """
+    import config.settings as _settings
+    from backend.services import analysis_engine
+
+    monkeypatch.setattr(_settings, "SHADOW_FILTERED_TWIN_ENABLED", False)
+
+    appels = []
+    original = analysis_engine.enrich_trade_setup
+
+    def _compte(setup, *a, **k):
+        appels.append(1)
+        return original(setup, *a, **k)
+
+    monkeypatch.setattr(analysis_engine, "enrich_trade_setup", _compte)
+
+    start = datetime(2026, 4, 1, 0, 0, tzinfo=timezone.utc)
+    h1 = _make_h1_sequence(start, 200)  # 200 H1 = 50 H4 buckets
+    h1_dict = {"XAU/USD": h1, "XAG/USD": h1}
+
+    # 1er cycle : bougie nouvelle, le scoring doit tourner au moins une fois.
+    asyncio.run(shadow.run_shadow_log(h1_dict))
+    n_apres_1er_cycle = len(appels)
+    assert n_apres_1er_cycle > 0, "le premier cycle doit scorer au moins un setup"
+
+    # Cycles suivants sur les MÊMES bougies : la persistance échoue (UNIQUE),
+    # le scoring ne doit PAS retourner à chaque fois.
+    for _ in range(5):
+        asyncio.run(shadow.run_shadow_log(h1_dict))
+
+    assert len(appels) == n_apres_1er_cycle, (
+        "le scoring a tourné alors qu'aucune nouvelle bougie n'a été persistée"
+    )
+
+
 # ─── list_setups / summary ──────────────────────────────────────────────────
 
 
