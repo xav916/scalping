@@ -77,6 +77,13 @@ def test_paire_crypto_non_observee_est_journalisee_par_defaut(temp_db, monkeypat
     # journalise bien la crypto.
     assert shadow_v1.SHADOW_V1_UNOBSERVED_ASSET_CLASSES == ["crypto"]
 
+    # Simuler _capture_funding_snapshot pour éviter un appel réseau réel vers Kraken.
+    # Tous les autres tests touchant la crypto le font, pour garder la cohérence.
+    marker = {"captured_at": "2026-08-05T12:00:00Z", "symbol": "PF_XBTUSD", "rate": 1.0e-5}
+    def _fake_capture(pair, direction):
+        return marker
+    monkeypatch.setattr(shadow, "_capture_funding_snapshot", _fake_capture)
+
     setups = [_setup("BTC/USD", "buy")]
     counts = shadow_v1.log_v1_shadows_for_tracked_pairs(setups, cycle_at=CYCLE)
 
