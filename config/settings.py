@@ -692,6 +692,33 @@ FOREXFACTORY_CALENDAR_URL = "https://www.forexfactory.com/calendar"
 MACRO_SCORING_ENABLED = os.getenv("MACRO_SCORING_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 MACRO_VETO_ENABLED = os.getenv("MACRO_VETO_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 
+# Audit du 2026-08-05 : macro_context_service.vix_value (ci-dessus) vaut
+# 17.0 dans 100% des lignes en production depuis des mois — c'est la valeur
+# de repli codée en dur, la vraie donnée n'a jamais été récupérée. Deux
+# historiques réels existaient déjà dans le dépôt sans être branchés :
+# macro_daily (backend.services.macro_data, VIX/DXY/SPX/10Y/BTC quotidien
+# depuis 2024) et fear_greed_snapshots (backend.services.fear_greed_service,
+# CNN Fear & Greed quotidien depuis mai 2026). `macro_history_features`
+# les expose désormais en lecture point-in-time (jamais de look-ahead,
+# jamais de constante de repli — None si inconnu).
+#
+# DÉSACTIVÉ PAR DÉFAUT. Les seuils de décision actuels (42, 61, 71) ont été
+# calibrés avec une couche macro constante (donc neutre pour le modèle) ;
+# la rendre vivante déplacerait la distribution des scores sans qu'on sache
+# si c'est en mieux. Avant d'activer :
+#   1. Réentraîner/ré-évaluer le modèle ML avec les nouvelles features
+#      (préfixe `mh_`) et confirmer un gain d'AUC hors échantillon.
+#   2. Vérifier qu'aucun des thresholds figés (42/61/71) ne dérive une fois
+#      la couche macro non-constante — comparer la distribution des scores
+#      avant/après sur un échantillon shadow.
+#   3. Confirmer côté prod que macro_daily et fear_greed_snapshots restent
+#      alimentés (crons actifs, pas de régression silencieuse comme celle
+#      qui a touché macro_context_service).
+# Aujourd'hui ce flag ne gouverne que l'enrichissement des features ML en
+# shadow log (backend/services/ml_features.py) — aucune décision live n'en
+# dépend tant qu'il reste à false.
+MACRO_HISTORY_FEATURES_ENABLED = os.getenv("MACRO_HISTORY_FEATURES_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+
 # Chantier 1 SaaS : feature-flag du parcours signup self-service. OFF par
 # défaut tant que les chantiers 2-3 (login UI + data isolation) ne sont pas
 # livrés. L'endpoint existe mais répond 404 si désactivé.

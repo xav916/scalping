@@ -159,6 +159,57 @@ def get_current() -> dict | None:
     }
 
 
+def get_value_at(ts: datetime) -> dict | None:
+    """Dernier snapshot F&G connu à l'instant `ts` — accès point-in-time.
+
+    Contrairement à `get_current()` (toujours le TOUT dernier snapshot, quel
+    que soit l'instant demandé), cette fonction ne retourne jamais une ligne
+    dont `recorded_at` est postérieur à `ts` : `recorded_at` est l'instant
+    réel où notre cron a récupéré et inséré la donnée CNN (append-only,
+    jamais réécrit), donc une ligne postérieure à `ts` n'existait tout
+    simplement pas encore en base à cet instant. Aucune marge de sécurité
+    supplémentaire n'est donc nécessaire (contrairement à `macro_data`, où
+    la date d'une observation daily n'est pas un timestamp de publication
+    exact — voir `macro_history_features` pour la comparaison).
+
+    Retourne None si aucun snapshot n'est antérieur ou égal à `ts` (avant
+    le début de l'historique, table absente/vide, ou erreur) — jamais une
+    valeur de repli.
+    """
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    try:
+        _init_schema()
+        with _conn() as c:
+            rows = c.execute(
+                "SELECT recorded_at, value, classification "
+                "FROM fear_greed_snapshots ORDER BY recorded_at ASC"
+            ).fetchall()
+    except Exception as e:
+        logger.debug(f"fear_greed: get_value_at failed: {e}")
+        return None
+
+    best = None
+    for row in rows:
+        try:
+            rec_dt = datetime.fromisoformat(row["recorded_at"])
+        except ValueError:
+            continue
+        if rec_dt.tzinfo is None:
+            rec_dt = rec_dt.replace(tzinfo=timezone.utc)
+        if rec_dt <= ts:
+            best = row
+        else:
+            break  # rows triés ASC : tout ce qui suit est aussi dans le futur
+    if best is None:
+        return None
+    return {
+        "recorded_at": best["recorded_at"],
+        "value": best["value"],
+        "classification": best["classification"],
+    }
+
+
 def is_extreme() -> bool:
     """Raccourci pour les alertes : current in (extreme_fear, extreme_greed)."""
     current = get_current()

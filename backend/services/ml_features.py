@@ -310,4 +310,27 @@ def extract_features_for_setup(setup: Any, candles: list[Candle]) -> dict[str, A
             "tips_yield": 0, "tips_delta_bp": 0,
             "tips_high_yield": 0, "tips_low_yield": 0, "tips_available": 0,
         })
+    # Historique macro/sentiment réel (macro_daily + fear_greed_snapshots),
+    # accès point-in-time sans look-ahead — voir macro_history_features
+    # pour le détail des décalages appliqués par source. Contrairement aux
+    # blocs ci-dessus, celui-ci est derrière un drapeau explicite car il
+    # remplace la couche macro constante (vix_value figé à 17.0) qui a
+    # servi jusqu'ici à calibrer les seuils de décision (42/61/71).
+    # Désactivé par défaut : voir MACRO_HISTORY_FEATURES_ENABLED dans
+    # config/settings.py pour la justification et ce qu'il faut vérifier
+    # avant de l'activer. Le réglage est relu à chaque appel (pas de copie
+    # au chargement du module) pour que le monkeypatch de test comme le
+    # rechargement de config en production soient bien pris en compte.
+    try:
+        from config.settings import MACRO_HISTORY_FEATURES_ENABLED as _mh_enabled
+    except Exception:
+        _mh_enabled = False
+    if _mh_enabled:
+        try:
+            from backend.services import macro_history_features as _mh
+            last_ts = candles[-1].timestamp if candles else None
+            if last_ts is not None:
+                features.update(_mh.get_features_at(getattr(setup, "pair", ""), last_ts))
+        except Exception:
+            pass  # best-effort : une source macro en panne ne casse jamais le cycle radar
     return features
