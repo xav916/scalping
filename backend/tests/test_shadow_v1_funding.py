@@ -94,11 +94,11 @@ def test_persist_v1_shadow_funding_none_stores_null(temp_db):
     assert _funding_json(temp_db, "EUR/USD") is None
 
 
-# ─── log_v1_shadows_for_observed_pairs : branchement bout en bout ─────────
+# ─── log_v1_shadows_for_tracked_pairs : branchement bout en bout ─────────
 
 
 def test_log_v1_shadows_capture_funding_for_observed_crypto_pair(temp_db, monkeypatch):
-    """Pour une paire OBSERVED crypto, log_v1_shadows_for_observed_pairs doit
+    """Pour une paire OBSERVED crypto, log_v1_shadows_for_tracked_pairs doit
     appeler _capture_funding_snapshot et faire parvenir son résultat jusqu'à
     la ligne persistée."""
     from backend.services import pair_admission_controller as pac
@@ -116,7 +116,7 @@ def test_log_v1_shadows_capture_funding_for_observed_crypto_pair(temp_db, monkey
     monkeypatch.setattr(shadow, "_capture_funding_snapshot", _fake_capture)
 
     setups = [_setup("BTC/USD", "buy")]
-    counts = shadow_v1.log_v1_shadows_for_observed_pairs(
+    counts = shadow_v1.log_v1_shadows_for_tracked_pairs(
         setups, cycle_at=datetime(2026, 8, 5, 12, 0, tzinfo=timezone.utc),
     )
 
@@ -138,7 +138,7 @@ def test_log_v1_shadows_non_crypto_pair_stores_null_funding(temp_db, monkeypatch
     monkeypatch.setattr(shadow_v1, "is_market_open_for", lambda pair, now=None: True)
 
     setups = [_setup("EUR/USD", "buy", entry=1.08, sl=1.075, tp=1.09)]
-    counts = shadow_v1.log_v1_shadows_for_observed_pairs(
+    counts = shadow_v1.log_v1_shadows_for_tracked_pairs(
         setups, cycle_at=datetime(2026, 8, 5, 12, 0, tzinfo=timezone.utc),
     )
 
@@ -161,7 +161,7 @@ def test_log_v1_shadows_funding_capture_exception_does_not_block_persist(temp_db
     monkeypatch.setattr(shadow, "_capture_funding_snapshot", _boom)
 
     setups = [_setup("BTC/USD", "buy")]
-    counts = shadow_v1.log_v1_shadows_for_observed_pairs(
+    counts = shadow_v1.log_v1_shadows_for_tracked_pairs(
         setups, cycle_at=datetime(2026, 8, 5, 12, 0, tzinfo=timezone.utc),
     )
 

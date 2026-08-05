@@ -730,6 +730,26 @@ GEOPOLITICAL_VETO_TARIFF_DAYS = int(os.getenv("GEOPOLITICAL_VETO_TARIFF_DAYS", "
 # seule pure). Le twin n'apparaît que si le veto laisse passer.
 SHADOW_FILTERED_TWIN_ENABLED = os.getenv("SHADOW_FILTERED_TWIN_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 
+# ─── Shadow V1 — paires journalisées hors admission OBSERVED (2026-08-05) ──
+# `log_v1_shadows_for_tracked_pairs` (backend/services/shadow_v1.py) ne
+# journalisait historiquement que les paires en état OBSERVED côté
+# pair_admission_controller. Mesuré en prod le 2026-08-05 : aucune paire
+# crypto n'atteint cet état (BTC/USD, ETH/USD sont DEMOTED en global ou
+# AUTO_EXEC par destination) → ~1 seule ligne shadow crypto/semaine, contre
+# ~2900 côté actions observées. Or la crypto est bloquée au dispatch par la
+# porte d'horizon et la porte de coût (cf. project_crypto_fees_kill_edge) :
+# économiquement, elle est dans la même situation qu'une paire observée —
+# jamais de vraie exécution, donc la mesurer sans risquer de capital a un sens.
+# Liste de classes d'actif (cf. `asset_class_for`) à journaliser dans le flux
+# shadow V1 INDÉPENDAMMENT de leur état d'admission. Vide = comportement
+# historique (observées uniquement). Défaut = "crypto". Couper par .env +
+# redémarrage si le volume `shadow_setups` devient un problème.
+SHADOW_V1_UNOBSERVED_ASSET_CLASSES = [
+    c.strip().lower()
+    for c in os.getenv("SHADOW_V1_UNOBSERVED_ASSET_CLASSES", "crypto").split(",")
+    if c.strip()
+]
+
 # ─── Reddit sentiment scoring (P3 MVP — 2026-08-03) ─────────────────
 # Filtre contrarien soft ×0.90 sur BTC/USD et ETH/USD quand le sentiment
 # Reddit (r/CryptoCurrency + r/Bitcoin + r/ethtrader) est extrême et

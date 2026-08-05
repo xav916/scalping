@@ -305,16 +305,20 @@ async def run_analysis_cycle() -> None:
         except Exception as e:
             logger.warning(f"shadow log V2_CORE_LONG failed (non-bloquant): {e}")
 
-        # Option C — shadow log V1 pour pairs OBSERVED.
-        # Persiste les TradeSetups V1 high-confidence dans shadow_setups
-        # pour les pairs en état OBSERVED, permettant à compute_promotion_score
-        # d'évaluer la fiabilité d'une pair sans engager d'argent (résout le
-        # chicken-and-egg de la promotion auto OBSERVED → AUTO_EXEC).
+        # Option C — shadow log V1 pour pairs trackées.
+        # Persiste les TradeSetups V1 high-confidence dans shadow_setups pour
+        # les pairs en état OBSERVED (permet à compute_promotion_score
+        # d'évaluer la fiabilité d'une pair sans engager d'argent, résout le
+        # chicken-and-egg de la promotion auto OBSERVED → AUTO_EXEC), ET pour
+        # les classes d'actif configurées via SHADOW_V1_UNOBSERVED_ASSET_CLASSES
+        # (défaut "crypto" — bloquée au dispatch par les portes horizon/coût,
+        # donc jamais exécutée en réel malgré un état d'admission autre
+        # qu'OBSERVED : mesurer sans risquer de capital a un sens).
         # La reconciliation existante (shadow_reconciliation.py) résout ces
         # shadows comme les V2 — pas de logique dédiée.
         try:
-            from backend.services.shadow_v1 import log_v1_shadows_for_observed_pairs
-            v1_counts = log_v1_shadows_for_observed_pairs(all_trade_setups, cycle_at=now)
+            from backend.services.shadow_v1 import log_v1_shadows_for_tracked_pairs
+            v1_counts = log_v1_shadows_for_tracked_pairs(all_trade_setups, cycle_at=now)
             logger.info(f"shadow log V1: {v1_counts}")
         except Exception as e:
             logger.warning(f"shadow log V1 failed (non-bloquant): {e}")

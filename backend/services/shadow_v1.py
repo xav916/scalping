@@ -1,4 +1,5 @@
-"""Shadow log V1 — persiste les signaux V1 pour les pairs OBSERVED.
+"""Shadow log V1 — persiste les signaux V1 pour les pairs OBSERVED, et pour
+les classes d'actif désignées pour une mesure indépendante de l'admission.
 
 Permet à `compute_promotion_score` (pair_admission_controller) d'évaluer
 empiriquement les pairs en mode observation sans engager d'argent réel,
@@ -6,9 +7,14 @@ résolvant le chicken-and-egg de la promotion auto OBSERVED → AUTO_EXEC.
 
 Architecture :
 - À chaque cycle radar, pour chaque TradeSetup généré (passant
-  filter_high_confidence_setups), on check si la (pair, direction) est
-  en état OBSERVED via pair_admission_controller.
-- Si oui, on INSERT une row dans `shadow_setups` avec
+  filter_high_confidence_setups), on journalise la (pair, direction) si :
+    - elle est en état OBSERVED via pair_admission_controller (comportement
+      d'origine) ; OU
+    - sa classe d'actif figure dans `SHADOW_V1_UNOBSERVED_ASSET_CLASSES`
+      (config/settings.py, défaut "crypto") — cas de la crypto, bloquée au
+      dispatch par la porte d'horizon et la porte de coût, donc jamais
+      exécutée en réel malgré un état d'admission qui n'est pas OBSERVED.
+- Dans les deux cas, on INSERT une row dans `shadow_setups` avec
   `system_id='V1_SHADOW_<PAIR>_<DIR>'` (unique par pair-direction pour
   respecter la contrainte UNIQUE (system_id, bar_timestamp)).
 - La reconciliation existante (`shadow_reconciliation.py`) résout ces
@@ -16,8 +22,9 @@ Architecture :
   sont traités uniformément.
 
 Note : le système est en lecture seule côté V1 prod. Il ne déclenche
-ni Telegram ni auto-exec. Sa seule sortie est d'alimenter le calcul
-de `compute_promotion_score` pour les pairs OBSERVED.
+ni Telegram ni auto-exec. Sa seule sortie est d'alimenter des mesures
+(compute_promotion_score pour les pairs OBSERVED, validation du veto
+funding crypto pour les paires trackées hors admission).
 """
 from __future__ import annotations
 
@@ -29,7 +36,7 @@ from pathlib import Path
 from typing import Any
 
 from backend.services.market_hours import is_market_open_for
-from config.settings import CANDLE_INTERVAL
+from config.settings import CANDLE_INTERVAL, SHADOW_V1_UNOBSERVED_ASSET_CLASSES, asset_class_for
 
 logger = logging.getLogger(__name__)
 
@@ -193,27 +200,39 @@ def _persist_v1_shadow(
             return False
 
 
-def log_v1_shadows_for_observed_pairs(setups: list, cycle_at: datetime) -> dict[str, int]:
-    """Pour chaque TradeSetup, log un V1_SHADOW si (pair, direction) en OBSERVED.
+def log_v1_shadows_for_tracked_pairs(setups: list, cycle_at: datetime) -> dict[str, int]:
+    """Pour chaque TradeSetup, log un V1_SHADOW si (pair, direction) est trackée.
+
+    Une (pair, direction) est trackée si :
+    - elle est en état OBSERVED via pair_admission_controller (comportement
+      d'origine, alimente compute_promotion_score) ; OU
+    - la classe d'actif de `pair` (cf. `asset_class_for`) figure dans
+      `SHADOW_V1_UNOBSERVED_ASSET_CLASSES` (config/settings.py, défaut
+      "crypto") — mesure indépendante de l'admission pour une classe
+      qui n'atteint jamais OBSERVED mais n'est pas non plus réellement
+      exécutée (bloquée au dispatch par la porte d'horizon et la porte de
+      coût).
 
     Appelé depuis scheduler.run_analysis_cycle après filter_high_confidence_setups.
     Idempotent et non-bloquant : log + counts d'erreurs sans propager d'exception.
 
     Returns:
-        {"logged": int, "skipped_not_observed": int, "errors": int}
+        {"logged": int, "skipped_not_tracked": int, "errors": int}
     """
     from backend.services import pair_admission_controller as pac
     from backend.services.shadow_v2_core_long import _capture_funding_snapshot
 
-    counts = {"logged": 0, "skipped_not_observed": 0, "errors": 0}
+    counts = {"logged": 0, "skipped_not_tracked": 0, "errors": 0}
     for setup in setups:
         try:
             pair = setup.pair
             direction = setup.direction.value if hasattr(setup.direction, "value") else str(setup.direction)
 
             current = pac.get_current_state(pair, direction)
-            if current != pac.STATE_OBSERVED:
-                counts["skipped_not_observed"] += 1
+            observed = current == pac.STATE_OBSERVED
+            unobserved_tracked = asset_class_for(pair) in SHADOW_V1_UNOBSERVED_ASSET_CLASSES
+            if not observed and not unobserved_tracked:
+                counts["skipped_not_tracked"] += 1
                 continue
 
             # Funding Kraken — seule feature capturée par V1 (cf. docstring
