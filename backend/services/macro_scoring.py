@@ -57,6 +57,22 @@ def _setup_sign(direction: str) -> int:
     return 1 if direction.lower() == "buy" else -1
 
 
+def _vix_sign(vix_level: VixLevel | None) -> int:
+    """+1 si VIX élevé/haut (risk-off), -1 si VIX bas (risk-on), 0 si normal.
+
+    Réparation VIX (2026-08-05) : retourne aussi 0 si `vix_level` est None
+    (mesure indisponible) — traitement EXPLICITE de l'absence de donnée
+    comme "pas d'ajustement", jamais une valeur neutre déguisée en mesure
+    (ex: VIX=0 interprété comme "calme")."""
+    if vix_level is None:
+        return 0
+    if vix_level in (VixLevel.ELEVATED, VixLevel.HIGH):
+        return 1
+    if vix_level == VixLevel.LOW:
+        return -1
+    return 0
+
+
 def _pair_is_usd_long_on_buy(pair: str) -> int:
     base, _, quote = pair.partition("/")
     if base == "USD":
@@ -108,9 +124,7 @@ def _primaries_for(pair: str, ctx: MacroContext, setup_sign: int) -> list[tuple[
 
     if pair_u in _JPY_PAIR:
         if "vix" not in used:
-            vix_sign = 1 if ctx.vix_level in (VixLevel.ELEVATED, VixLevel.HIGH) else (
-                -1 if ctx.vix_level == VixLevel.LOW else 0
-            )
+            vix_sign = _vix_sign(ctx.vix_level)
             align = -setup_sign * vix_sign
             if align != 0:
                 result.append(("vix", align, f"VIX {ctx.vix_level.value}"))
@@ -134,9 +148,7 @@ def _primaries_for(pair: str, ctx: MacroContext, setup_sign: int) -> list[tuple[
     if pair_u in _CHF_PAIR and "vix" not in used:
         base, _, quote = pair_u.partition("/")
         chf_long_on_buy = 1 if base == "CHF" else (-1 if quote == "CHF" else 0)
-        vix_sign = 1 if ctx.vix_level in (VixLevel.ELEVATED, VixLevel.HIGH) else (
-            -1 if ctx.vix_level == VixLevel.LOW else 0
-        )
+        vix_sign = _vix_sign(ctx.vix_level)
         align = setup_sign * chf_long_on_buy * vix_sign
         if align != 0:
             result.append(("vix", align, f"VIX {ctx.vix_level.value} (CHF refuge)"))
@@ -144,9 +156,7 @@ def _primaries_for(pair: str, ctx: MacroContext, setup_sign: int) -> list[tuple[
 
     if pair_u in _XAU:
         if "vix" not in used:
-            vix_sign = 1 if ctx.vix_level in (VixLevel.ELEVATED, VixLevel.HIGH) else (
-                -1 if ctx.vix_level == VixLevel.LOW else 0
-            )
+            vix_sign = _vix_sign(ctx.vix_level)
             align = setup_sign * vix_sign
             if align != 0:
                 result.append(("vix", align, f"VIX {ctx.vix_level.value} (refuge)"))
@@ -165,9 +175,7 @@ def _primaries_for(pair: str, ctx: MacroContext, setup_sign: int) -> list[tuple[
     # --- New: XAG/USD (silver) -- treat like gold refuge --------
     if pair_u in _XAG:
         if "vix" not in used:
-            vix_sign = 1 if ctx.vix_level in (VixLevel.ELEVATED, VixLevel.HIGH) else (
-                -1 if ctx.vix_level == VixLevel.LOW else 0
-            )
+            vix_sign = _vix_sign(ctx.vix_level)
             align = setup_sign * vix_sign
             if align != 0:
                 result.append(("vix", align, f"VIX {ctx.vix_level.value} (silver refuge)"))
@@ -189,9 +197,7 @@ def _primaries_for(pair: str, ctx: MacroContext, setup_sign: int) -> list[tuple[
             used.add("spx")
         if "vix" not in used:
             # VIX up = risk-off = crypto down. Inversely aligned.
-            vix_sign = 1 if ctx.vix_level in (VixLevel.ELEVATED, VixLevel.HIGH) else (
-                -1 if ctx.vix_level == VixLevel.LOW else 0
-            )
+            vix_sign = _vix_sign(ctx.vix_level)
             align = -setup_sign * vix_sign
             if align != 0:
                 result.append(("vix", align, f"VIX {ctx.vix_level.value} (crypto)"))
@@ -208,9 +214,7 @@ def _primaries_for(pair: str, ctx: MacroContext, setup_sign: int) -> list[tuple[
     # but for non-SPX indices it still signals global risk).
     if pair_u in _EQUITY_INDICES:
         if "vix" not in used:
-            vix_sign = 1 if ctx.vix_level in (VixLevel.ELEVATED, VixLevel.HIGH) else (
-                -1 if ctx.vix_level == VixLevel.LOW else 0
-            )
+            vix_sign = _vix_sign(ctx.vix_level)
             align = -setup_sign * vix_sign
             if align != 0:
                 result.append(("vix", align, f"VIX {ctx.vix_level.value} (equity)"))
@@ -257,7 +261,10 @@ def _check_vetoes(pair: str, direction: str, ctx: MacroContext) -> list[str]:
     setup_sign = _setup_sign(direction)
     pair_u = pair.upper()
 
-    if ctx.vix_value > 30.0 and ctx.risk_regime == RiskRegime.RISK_OFF:
+    # ctx.vix_value peut être None (mesure indisponible, réparation VIX
+    # 2026-08-05) — traité explicitement comme "pas de veto possible",
+    # jamais comme 0.0 (qui donnerait à tort un régime "calme").
+    if ctx.vix_value is not None and ctx.vix_value > 30.0 and ctx.risk_regime == RiskRegime.RISK_OFF:
         if pair_u in _COMMODITY_CURRENCY and setup_sign == 1:
             reasons.append(f"VIX={ctx.vix_value:.1f}>30 and risk_off, against commodity currency buy")
         elif pair_u in _JPY_PAIR and setup_sign == 1 and pair_u.startswith(("USD", "EUR", "GBP")):

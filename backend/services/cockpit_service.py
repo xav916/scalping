@@ -253,7 +253,9 @@ def _macro_snapshot() -> dict | None:
         "risk_regime": snap.risk_regime.value,
         "dxy": snap.dxy_direction.value,
         "spx": snap.spx_direction.value,
-        "vix_level": snap.vix_level.value,
+        # vix_level peut être None (réparation VIX 2026-08-05) — on le
+        # laisse tel quel, jamais de valeur plausible de substitution.
+        "vix_level": snap.vix_level.value if snap.vix_level is not None else None,
         "vix_value": snap.vix_value,
         "fetched_at": snap.fetched_at.isoformat(),
     }

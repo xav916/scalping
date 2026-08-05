@@ -64,3 +64,31 @@ class TestMacroContextConstruction:
         )
         assert ctx.vix_value == 17.5
         assert ctx.risk_regime == RiskRegime.NEUTRAL
+
+    def test_can_build_with_unknown_vix(self):
+        """Réparation VIX (2026-08-05) : une mesure indisponible doit pouvoir
+        être représentée par None — jamais forcée à une valeur plausible."""
+        ctx = MacroContext(
+            fetched_at=datetime.now(timezone.utc),
+            dxy_direction=MacroDirection.NEUTRAL,
+            spx_direction=MacroDirection.NEUTRAL,
+            vix_level=None,
+            vix_value=None,
+            us10y_trend=MacroDirection.NEUTRAL,
+            de10y_trend=MacroDirection.NEUTRAL,
+            us_de_spread_trend="flat",
+            oil_direction=MacroDirection.NEUTRAL,
+            nikkei_direction=MacroDirection.NEUTRAL,
+            gold_direction=MacroDirection.NEUTRAL,
+            risk_regime=RiskRegime.NEUTRAL,
+            raw_values={},
+        )
+        assert ctx.vix_value is None
+        assert ctx.vix_level is None
+
+
+class TestVixLevelFromValueNone:
+    def test_vix_level_from_value_none_is_none(self):
+        """Jamais de catégorie plausible fabriquée à partir d'une mesure
+        absente — None doit rester None, pas 'normal'."""
+        assert vix_level_from_value(None) is None

@@ -107,16 +107,21 @@ def _dxy_alignment(pair: str, direction: str, dxy: MacroDirection) -> tuple[floa
 def _index_alignment(
     pair: str,
     direction: str,
-    vix_level: VixLevel,
+    vix_level: VixLevel | None,
     risk_regime: RiskRegime,
 ) -> tuple[float, str | None]:
     if pair.upper() not in _ALL_INDICES:
         return 1.0, None
     is_long = direction.lower() == "buy"
+    # Réparation VIX (2026-08-05) : vix_level peut être None (mesure
+    # indisponible). Le libellé de la raison le montre explicitement
+    # ("inconnu") plutôt que de planter sur `.value` — risk_regime seul
+    # reste suffisant pour déclencher la pénalité si besoin.
+    vix_label = vix_level.value if vix_level is not None else "inconnu"
     if is_long and (vix_level == VixLevel.HIGH or risk_regime == RiskRegime.RISK_OFF):
-        return 0.5, f"long index + VIX {vix_level.value} / regime {risk_regime.value}"
+        return 0.5, f"long index + VIX {vix_label} / regime {risk_regime.value}"
     if not is_long and vix_level == VixLevel.LOW and risk_regime == RiskRegime.RISK_ON:
-        return 0.7, f"short index + VIX {vix_level.value} / regime {risk_regime.value}"
+        return 0.7, f"short index + VIX {vix_label} / regime {risk_regime.value}"
     return 1.0, None
 
 

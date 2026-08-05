@@ -118,6 +118,16 @@ def test_multiplicative_combination_floors_at_point_3():
     assert result["multiplier"] == 0.49
 
 
+def test_index_alignment_with_unknown_vix_does_not_crash():
+    """Réparation VIX (2026-08-05) : vix_level peut désormais valoir None.
+    Le risk_off à lui seul doit toujours pouvoir déclencher la pénalité
+    'long index', sans lever sur `vix_level.value`."""
+    with _patch_snap(_snapshot(vix_level=None, risk_regime=RiskRegime.RISK_OFF)):
+        result = macro_alignment.alignment_for("SPX", "buy")
+    assert result["multiplier"] == 0.5
+    assert any("inconnu" in r for r in result["reasons"])
+
+
 def test_sizing_compute_uses_macro_alignment(tmp_path, monkeypatch):
     """sizing.compute_risk_money doit ajouter macro_mult au pipeline."""
     from backend.services import session_service, sizing, trade_log_service

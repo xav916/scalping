@@ -9,7 +9,7 @@ from backend.models.macro_schemas import (
     RiskRegime,
     VixLevel,
 )
-from backend.services.macro_scoring import apply
+from backend.services.macro_scoring import apply, _vix_sign
 
 
 def _make_ctx(
@@ -212,3 +212,43 @@ class TestSilver:
         mult, _, primaries = apply("XAG/USD", "buy", ctx)
         assert mult >= 1.1
         assert any("silver" in p["reason"].lower() or p["indicator"] == "vix" for p in primaries)
+
+
+class TestVixSignHandlesUnknown:
+    """Réparation VIX (2026-08-05) : le consommateur doit traiter un VIX
+    inconnu (None) explicitement comme 'pas d'ajustement' (sign=0), jamais
+    comme une valeur neutre déguisée (ex: VIX=0 -> 'calme')."""
+
+    def test_vix_sign_none_is_zero(self):
+        assert _vix_sign(None) == 0
+
+    def test_vix_sign_elevated_is_positive(self):
+        assert _vix_sign(VixLevel.ELEVATED) == 1
+        assert _vix_sign(VixLevel.HIGH) == 1
+
+    def test_vix_sign_low_is_negative(self):
+        assert _vix_sign(VixLevel.LOW) == -1
+
+    def test_vix_sign_normal_is_zero(self):
+        assert _vix_sign(VixLevel.NORMAL) == 0
+
+    def test_xau_buy_with_unknown_vix_drops_vix_primary_without_crash(self):
+        """XAU/USD dépend normalement de VIX + DXY + US10Y. Avec VIX inconnu,
+        le multiplicateur ne doit refléter que DXY/US10Y — le composant VIX
+        est absent des primaries, pas neutre-par-substitution."""
+        ctx = _make_ctx(vix_level=None, vix_value=None, dxy=MacroDirection.NEUTRAL, us10y=MacroDirection.NEUTRAL)
+        mult, veto, primaries = apply("XAU/USD", "buy", ctx)
+        assert veto is False
+        assert all(p["indicator"] != "vix" for p in primaries)
+        assert mult == 1.0
+
+    def test_check_vetoes_does_not_crash_when_vix_value_is_none(self):
+        """ctx.vix_value > 30.0 ne doit jamais lever si vix_value est None —
+        et ne doit surtout pas déclencher de veto par accident."""
+        ctx = _make_ctx(
+            vix_value=None,
+            vix_level=None,
+            risk=RiskRegime.RISK_OFF,
+        )
+        mult, veto, primaries = apply("AUD/USD", "buy", ctx)
+        assert veto is False

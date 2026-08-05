@@ -14,6 +14,42 @@ class _FakeTick:
         self.price = price
 
 
+def test_macro_snapshot_serializes_unknown_vix_without_crash():
+    """Réparation VIX (2026-08-05) : vix_level/vix_value peuvent valoir None
+    quand toutes les sources échouent. _macro_snapshot ne doit pas planter
+    sur `.value` — le None doit se voir tel quel côté API, pas disparaître
+    derrière une valeur plausible."""
+    from backend.models.macro_schemas import MacroContext, MacroDirection, RiskRegime
+
+    fake_snap = MacroContext(
+        fetched_at=datetime.now(timezone.utc),
+        dxy_direction=MacroDirection.NEUTRAL,
+        spx_direction=MacroDirection.NEUTRAL,
+        vix_level=None,
+        vix_value=None,
+        us10y_trend=MacroDirection.NEUTRAL,
+        de10y_trend=MacroDirection.NEUTRAL,
+        us_de_spread_trend="flat",
+        oil_direction=MacroDirection.NEUTRAL,
+        nikkei_direction=MacroDirection.NEUTRAL,
+        gold_direction=MacroDirection.NEUTRAL,
+        risk_regime=RiskRegime.NEUTRAL,
+        raw_values={},
+    )
+    with (
+        patch(
+            "backend.services.macro_context_service.get_macro_snapshot",
+            return_value=fake_snap,
+        ),
+        patch("backend.services.macro_context_service.is_fresh", return_value=True),
+    ):
+        result = cockpit_service._macro_snapshot()
+
+    assert result is not None
+    assert result["vix_level"] is None
+    assert result["vix_value"] is None
+
+
 @pytest.mark.asyncio
 async def test_build_cockpit_empty_state():
     """Cockpit ne doit pas planter même sans trade ni overview ni bridge."""

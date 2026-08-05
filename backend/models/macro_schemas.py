@@ -46,8 +46,12 @@ class MacroContext:
     fetched_at: datetime
     dxy_direction: MacroDirection
     spx_direction: MacroDirection
-    vix_level: VixLevel
-    vix_value: float
+    # Réparation VIX (2026-08-05) : vix_level/vix_value valent None quand la
+    # mesure est indisponible (aucune source réelle n'a répondu) — jamais une
+    # constante plausible. Voir MACRO_VIX_REAL_SOURCE_ENABLED (config/settings.py)
+    # et macro_context_service._vix_from_service / _vix_from_macro_daily.
+    vix_level: VixLevel | None
+    vix_value: float | None
     us10y_trend: MacroDirection
     de10y_trend: MacroDirection
     us_de_spread_trend: str  # widening | flat | narrowing
@@ -72,8 +76,14 @@ def direction_from_zscore(z: float) -> MacroDirection:
     return MacroDirection.NEUTRAL
 
 
-def vix_level_from_value(v: float) -> VixLevel:
-    """Maps a VIX raw value to a VixLevel using absolute thresholds."""
+def vix_level_from_value(v: float | None) -> VixLevel | None:
+    """Maps a VIX raw value to a VixLevel using absolute thresholds.
+
+    Retourne None si `v` est None — une mesure absente ne doit jamais être
+    catégorisée dans un régime plausible (ex: "normal") qui masquerait
+    l'absence de donnée réelle."""
+    if v is None:
+        return None
     if v >= MACRO_VIX_HIGH:
         return VixLevel.HIGH
     if v >= MACRO_VIX_ELEVATED:

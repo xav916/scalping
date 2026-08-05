@@ -1244,7 +1244,7 @@ async def debug_macro(_=Depends(verify_credentials)):
             "fetched_at": snap.fetched_at.isoformat(),
             "dxy": snap.dxy_direction.value,
             "spx": snap.spx_direction.value,
-            "vix_level": snap.vix_level.value,
+            "vix_level": snap.vix_level.value if snap.vix_level is not None else None,
             "vix_value": snap.vix_value,
             "us10y": snap.us10y_trend.value,
             "de10y": snap.de10y_trend.value,
@@ -1843,7 +1843,10 @@ async def api_macro():
         "indicators": {
             "dxy": {"direction": snap.dxy_direction.value, "value": snap.raw_values.get("dxy")},
             "spx": {"direction": snap.spx_direction.value, "value": snap.raw_values.get("spx")},
-            "vix": {"level": snap.vix_level.value, "value": snap.vix_value},
+            "vix": {
+                "level": snap.vix_level.value if snap.vix_level is not None else None,
+                "value": snap.vix_value,
+            },
             "us10y": {"direction": snap.us10y_trend.value, "value": snap.raw_values.get("us10y")},
             "de10y": {"direction": snap.de10y_trend.value, "value": snap.raw_values.get("de10y")},
             "oil": {"direction": snap.oil_direction.value, "value": snap.raw_values.get("oil")},

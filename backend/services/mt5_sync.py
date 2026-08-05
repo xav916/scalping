@@ -121,7 +121,7 @@ def _upsert_open_trade(row: dict[str, Any], user: str) -> None:
         ctx_json = json.dumps({
             "dxy": snap.dxy_direction.value,
             "spx": snap.spx_direction.value,
-            "vix_level": snap.vix_level.value,
+            "vix_level": snap.vix_level.value if snap.vix_level is not None else None,
             "vix_value": snap.vix_value,
             "risk_regime": snap.risk_regime.value,
             "fetched_at": snap.fetched_at.isoformat(),

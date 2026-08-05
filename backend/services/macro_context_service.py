@@ -4,6 +4,13 @@
 - `get_macro_snapshot()` is called synchronously from enrich_trade_setup().
 - `is_fresh(dt)` returns True if `dt` is within MACRO_CACHE_MAX_AGE_SEC.
 - If all fetches fail, the previous cached snapshot is kept.
+
+Réparation VIX (2026-08-05) : le symbole Twelve Data pour le VIX est
+structurellement invalide (404 permanent — voir MACRO_VIX_REAL_SOURCE_ENABLED
+dans config/settings.py pour le diagnostic complet). Derrière ce drapeau,
+`vix_value`/`vix_level` sont résolus via une chaîne de repli qui ne retombe
+jamais sur une constante : Twelve Data direct -> `vix_service` (Yahoo, déjà
+live en prod) -> `macro_daily` (Yahoo, historique depuis 2024) -> None.
 """
 from __future__ import annotations
 
@@ -26,6 +33,7 @@ from config.settings import (
     MACRO_SYMBOL_SPX,
     MACRO_SYMBOL_US10Y,
     MACRO_SYMBOL_VIX,
+    MACRO_VIX_REAL_SOURCE_ENABLED,
     TWELVEDATA_API_KEY,
 )
 from backend.models.macro_schemas import (
@@ -97,7 +105,7 @@ def _extract_last_and_series(candles: list[dict]) -> tuple[Optional[float], list
     return current, prior
 
 
-def _derive_risk_regime(vix_level: VixLevel, spx_dir: MacroDirection) -> RiskRegime:
+def _derive_risk_regime(vix_level: VixLevel | None, spx_dir: MacroDirection) -> RiskRegime:
     if vix_level in (VixLevel.ELEVATED, VixLevel.HIGH) and spx_dir in (
         MacroDirection.DOWN,
         MacroDirection.STRONG_DOWN,
@@ -106,6 +114,38 @@ def _derive_risk_regime(vix_level: VixLevel, spx_dir: MacroDirection) -> RiskReg
     if vix_level == VixLevel.LOW and spx_dir in (MacroDirection.UP, MacroDirection.STRONG_UP):
         return RiskRegime.RISK_ON
     return RiskRegime.NEUTRAL
+
+
+def _vix_from_service() -> Optional[float]:
+    """Repli n°1 : VIX déjà récupéré en direct par `vix_service` (Yahoo
+    ^VIX, symbole valide — contrairement à "VIX" sur Twelve Data), rafraîchi
+    toutes les 5 min par un job scheduler indépendant et déjà utilisé par le
+    veto equity de `vix_scoring`. Best-effort : ne lève jamais, None si
+    indisponible."""
+    try:
+        from backend.services import vix_service
+        snap = vix_service.get_current()
+        if snap.get("available"):
+            return float(snap["value"])
+    except Exception as e:
+        logger.debug(f"macro: vix_service indisponible: {e}")
+    return None
+
+
+def _vix_from_macro_daily() -> Optional[float]:
+    """Repli n°2 : dernière clôture quotidienne connue dans `macro_daily`
+    (Yahoo ^VIX, historique depuis 2024 — voir backend/services/macro_data.py).
+    Point-in-time, sans anticipation (macro_data.get_macro_features_at
+    applique déjà un asof T-1 jour calendaire plein). Best-effort : ne lève
+    jamais, None si la source est elle aussi indisponible."""
+    try:
+        from backend.services import macro_data
+        feats = macro_data.get_macro_features_at(datetime.now(timezone.utc))
+        v = feats.get("vix_level")  # clé macro_data = le close numérique, pas une catégorie
+        return float(v) if v is not None else None
+    except Exception as e:
+        logger.debug(f"macro: repli macro_daily indisponible: {e}")
+        return None
 
 
 def _spread_trend(us_z: float, de_z: float) -> str:
@@ -159,7 +199,19 @@ async def refresh_macro_context() -> bool:
     def _dir(key: str) -> MacroDirection:
         return direction_from_zscore(zscore.get(key, 0.0))
 
-    vix_value = spot.get("vix", 17.0)
+    # Réparation VIX (2026-08-05) — voir MACRO_VIX_REAL_SOURCE_ENABLED
+    # (config/settings.py) pour le diagnostic complet et la mesure d'impact.
+    if MACRO_VIX_REAL_SOURCE_ENABLED:
+        vix_value = spot.get("vix")
+        if vix_value is None:
+            vix_value = _vix_from_service()
+        if vix_value is None:
+            vix_value = _vix_from_macro_daily()
+        # Toujours None si les trois sources échouent — jamais 17.0.
+    else:
+        # Comportement historique STRICTEMENT inchangé tant que le drapeau
+        # est désactivé : c'est exactement le défaut qu'on répare.
+        vix_value = spot.get("vix", 17.0)
     vix_level = vix_level_from_value(vix_value)
     spx_dir = _dir("spx")
 
@@ -181,9 +233,11 @@ async def refresh_macro_context() -> bool:
     )
 
     _cache_snapshot = snapshot
+    vix_log = f"{vix_value:.1f}" if vix_value is not None else "NA"
+    vix_level_log = vix_level.value if vix_level is not None else "NA"
     logger.info(
         f"macro: refreshed — dxy={snapshot.dxy_direction.value} "
-        f"spx={snapshot.spx_direction.value} vix={vix_value:.1f}({vix_level.value}) "
+        f"spx={snapshot.spx_direction.value} vix={vix_log}({vix_level_log}) "
         f"risk={snapshot.risk_regime.value}"
     )
     return True

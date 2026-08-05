@@ -719,6 +719,77 @@ MACRO_VETO_ENABLED = os.getenv("MACRO_VETO_ENABLED", "false").lower() in ("1", "
 # dépend tant qu'il reste à false.
 MACRO_HISTORY_FEATURES_ENABLED = os.getenv("MACRO_HISTORY_FEATURES_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 
+# ── Réparation VIX du multiplicateur macro live (2026-08-05) ────────────
+#
+# Cause réelle, vérifiée en production avec la clé Twelve Data live : le
+# symbole configuré pour le VIX (`MACRO_SYMBOL_VIX`, "VIX" par défaut)
+# n'existe PAS côté Twelve Data — HTTP 404 "symbol or figi parameter is
+# missing or invalid" à 100%, sur "VIX", "^VIX" et "VIX.INDX" testés. Ce
+# n'est pas une panne intermittente : `spot.get("vix", 17.0)` retombait donc
+# STRUCTURELLEMENT et en permanence sur la constante de repli, jamais sur
+# une vraie mesure — confirmé sur les 277 610 lignes de `signals.macro_context`
+# en base (`backtest.db`) : vix_value=17.0 et dxy="neutral" à 100%.
+#
+# (Découverte annexe, hors périmètre ici : le symbole "SPX" configuré ne
+# pointe pas non plus vers le S&P 500 mais vers une action TSXV canadienne
+# homonyme — cotée en CAD à ~0,08. Le dxy_direction est également mort. Ces
+# deux défauts restent non réparés par ce chantier, volontairement limité au
+# VIX comme demandé.)
+#
+# Pendant ce temps, une source VIX réelle et DÉJÀ VIVANTE en production
+# existe dans le même dépôt sans être branchée ici : `vix_service.py`
+# interroge Yahoo Finance (^VIX, symbole valide) toutes les 5 min via un job
+# scheduler indépendant ("vix_refresh", non gated par MACRO_SCORING_ENABLED)
+# et alimente déjà le soft-veto equity de `vix_scoring.py`. macro_context_service
+# ignorait cette source vivante et refaisait (mal, et pour rien) sa propre
+# tentative de fetch.
+#
+# Réparation (derrière ce drapeau) : vix_value est désormais résolu dans
+# l'ordre (1) Twelve Data direct si un jour corrigé — conservé, coût nul —
+# (2) `vix_service.get_current()` (Yahoo, déjà live, quasi temps réel), (3)
+# `macro_daily` (backend/services/macro_data.py, Yahoo quotidien depuis
+# 2024, asof T-1 jour, no look-ahead) — (4) None si tout échoue. Plus aucun
+# retour furtif à 17.0 : une mesure absente reste None et se voit.
+#
+# Mesure d'impact (rejeu de 277 651 signaux de mai-août 2026, VIX réel via
+# macro_daily contre le VIX constant actuel, à base_score et tout le reste
+# identiques — seule la variable VIX change entre les deux passes) :
+#   - VIX affecte le multiplicateur sur 3,2% des signaux (8 841 / 277 651) —
+#     seules les paires où VIX intervient dans macro_scoring._primaries_for
+#     (JPY, CHF, XAU/XAG, crypto, indices actions) sont concernées.
+#   - Distribution quasi inchangée globalement (médiane 58,4 -> 58,4,
+#     écart-type 9,97 -> 10,16) : l'effet est réel mais localisé, pas un
+#     décalage uniforme façon barème v2.
+#   - Bascules de seuil sur les lignes affectées : seuil 42 -> 1 853
+#     bascules (0,67%, majorité en défaveur : 1 489 perdent le seuil contre
+#     364 qui le gagnent) ; seuil 61 -> 2 966 (1,07%, quasi équilibré :
+#     1 433 gagnent / 1 533 perdent) ; seuil 71 -> 1 417 (0,51%, très
+#     majoritairement EN FAVEUR : 1 264 gagnent le seuil contre 153 qui le
+#     perdent).
+#   - Concentré sur les pics de volatilité, pas diffus : le VIX réel n'est
+#     sorti de la zone "normal" (15-20) qu'en juin-juillet 2026 (5,8% des
+#     lignes en "elevated", jamais "high" ni "low" sur la fenêtre) — mai et
+#     août montrent un delta strictement nul (VIX resté dans le même bucket
+#     que la constante 17.0 tout le mois).
+#   - Paires les plus concernées : XAU/USD, USD/CHF, ETH/USD, BTC/USD,
+#     USD/JPY, XAG/USD, GBP/JPY, EUR/JPY.
+#
+# DÉSACTIVÉ PAR DÉFAUT — MACRO_SCORING_ENABLED est déjà `true` en production
+# aujourd'hui : ce drapeau agit directement sur le multiplicateur consulté
+# par le dispatch réel (macro_scoring.apply, appelé depuis analysis_engine),
+# pas seulement sur du logging shadow. Les seuils 42/61/71 ont été calibrés
+# avec cette couche VIX morte (donc neutre côté seuil bas 42, où VIX ne
+# jouait déjà aucun rôle). Avant d'activer :
+#   1. Confirmer que le job "vix_refresh" reste actif en prod (5 min, Yahoo)
+#      et que macro_daily continue d'être alimenté (cron fetch-all).
+#   2. Vérifier sur un échantillon shadow récent que la répartition
+#      "3,2% des signaux affectés / bascules concentrées sur seuil 61" tient
+#      toujours (les chiffres ci-dessus datent d'une fenêtre calme en VIX).
+#   3. Décider si le seuil 61 (le plus sensible, quasi 50/50 gagnants vs
+#      perdants) doit être recalibré avant activation, ou si le déséquilibre
+#      42 (défavorable) / 71 (favorable) est acceptable tel quel.
+MACRO_VIX_REAL_SOURCE_ENABLED = os.getenv("MACRO_VIX_REAL_SOURCE_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+
 # Chantier 1 SaaS : feature-flag du parcours signup self-service. OFF par
 # défaut tant que les chantiers 2-3 (login UI + data isolation) ne sont pas
 # livrés. L'endpoint existe mais répond 404 si désactivé.
