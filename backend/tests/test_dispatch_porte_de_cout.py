@@ -267,6 +267,52 @@ def test_le_portage_bloque_largent_reel_quand_la_duree_est_inconnue():
     assert _cost_rejection(setup, dest_observation) is None
 
 
+def test_un_cout_de_base_non_calculable_ne_devient_pas_gratuit_face_au_portage(
+    monkeypatch,
+):
+    """Un modèle qui déclare une composante fixe (risque en devise inconnu,
+    donc `cost_in_r` renvoie `None`) **et** un intervalle de funding
+    calculable ne doit pas voir son coût de base remplacé par zéro : le coût
+    TOTAL doit rester `None`, et bloquer l'argent réel — pas ne facturer que
+    le portage.
+
+    C'est la forme interdite par la contrainte du chantier : un coût
+    partiellement calculable rend le coût TOTAL non calculable, jamais la
+    seule composante connue. La route IBKR (commission par ordre **et**
+    financement) sera exactement cette forme.
+    """
+    from backend.services import cost_model as cost_model_mod
+    from backend.services import kraken_funding_scoring
+    from backend.services import sizing
+    from backend.services.cost_model import CostModel
+    from backend.services.mt5_bridge import _cost_rejection
+
+    # Sizing indisponible : `risk_money` reste `None`, donc `cost_in_r`
+    # renvoie `None` à cause de la composante fixe (`fixed_per_order=5.0`).
+    def _sizing_indisponible(*a, **k):
+        raise RuntimeError("sizing indisponible (test)")
+
+    monkeypatch.setattr(sizing, "compute_risk_money", _sizing_indisponible)
+
+    # Durée de détention et taux de funding tous deux connus : le portage,
+    # lui, EST calculable. Valeurs choisies pour rester sous le seuil de 30 %
+    # de l'edge (0,110) à elles seules — c'est ce qui fait mordre le test :
+    # si le bug remplace le coût de base par zéro, la porte laisse passer.
+    monkeypatch.setattr(cost_model_mod, "median_holding_hours", lambda systeme: 1.0)
+    monkeypatch.setattr(
+        kraken_funding_scoring, "get_funding_rate_for_pair", lambda pair: 0.0001
+    )
+
+    setup = _setup_factice()
+    setup.horizon = "4h"
+    setup.shadow_system_id = "S"
+
+    modele = CostModel(fixed_per_order=5.0, funding_interval_hours=1.0)
+    dest = _dest_factice("admin_kraken", modele, edge=0.110, auto_exec=True)
+
+    assert _cost_rejection(setup, dest) == "fees_exceed_edge"
+
+
 def test_la_porte_est_reellement_appelee_par_le_dispatch():
     """Une fonction qui existe sans etre appelee ne protege de rien.
 

@@ -285,10 +285,14 @@ def _cost_rejection(setup, dest) -> str | None:
                 interval_hours=float(modele.funding_interval_hours),
                 holding_hours=duree,
             )
-            # Un portage non calculable rend le coût TOTAL non calculable.
-            # L'ignorer sous-estimerait la route exactement là où le modèle
-            # doit être sévère.
-            cout_r = None if portage is None else (cout_r or 0.0) + portage
+            # Un coût partiellement calculable rend le coût TOTAL non
+            # calculable, jamais la seule composante connue : ni un portage
+            # non calculable (`portage is None`) ne doit ignorer un coût de
+            # base connu, ni un coût de base non calculable (`cout_r is
+            # None` — composante fixe déclarée mais risque en devise
+            # inconnu) ne doit se voir remplacé par zéro et ne facturer que
+            # le portage.
+            cout_r = None if (portage is None or cout_r is None) else cout_r + portage
 
     if exceeds_edge(
         cout_r,
