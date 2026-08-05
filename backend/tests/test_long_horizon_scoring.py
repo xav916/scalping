@@ -46,23 +46,52 @@ def _setup(horizon="4h"):
 def test_le_piege_sans_volatilite_le_score_plafonne_a_60(monkeypatch):
     # CE test documente POURQUOI la tache existe. S'il se met a echouer,
     # c'est que le bareme a change : relire la tache avant de le "reparer".
-    monkeypatch.setenv("CONFIDENCE_SCORE_V2", "true")
+    #
+    # ⚠️ Le drapeau doit etre bascule sur l'attribut VIVANT de config.settings :
+    # `_build_confidence_factors` refait `from config.settings import
+    # CONFIDENCE_SCORE_V2` a chaque appel, donc monkeypatcher `analysis_engine`
+    # (ou passer par `setenv`, deja lu a l'import du module) est sans effet.
+    # Meme motif que `test_le_drapeau_choisit_le_bareme`
+    # (test_confidence_score_v2.py).
+    import config.settings as st
     from backend.services import analysis_engine
 
-    monkeypatch.setattr(analysis_engine, "CONFIDENCE_SCORE_V2", True, raising=False)
+    monkeypatch.setattr(st, "CONFIDENCE_SCORE_V2", True)
     enrichi = analysis_engine.enrich_trade_setup(_setup(), None, None, [])
+    # Verifie qu'on exerce bien le bareme v2 a deux composantes (Pattern +
+    # Volatilite) et pas l'ancien bareme v1 a cinq composantes — sinon le
+    # plafond a 60 serait atteint par une autre voie (Risk/Reward, Tendance,
+    # Contexte eco) et ne prouverait rien sur le piege documente ici.
+    noms_facteurs = {f.name for f in enrichi.confidence_factors}
+    assert noms_facteurs == {"Pattern", "Volatilite"}, (
+        "le test doit exercer le bareme v2 (Pattern + Volatilite uniquement), "
+        f"pas: {noms_facteurs}"
+    )
     assert enrichi.confidence_score <= 60.0, (
         "sans volatilite le bareme v2 plafonne a 60 — un point sous le seuil "
         "Telegram de 61"
     )
 
 
-def test_avec_sa_volatilite_le_score_peut_depasser_le_seuil_telegram():
+def test_avec_sa_volatilite_le_score_peut_depasser_le_seuil_telegram(monkeypatch):
+    import config.settings as st
     from backend.services import analysis_engine
 
+    monkeypatch.setattr(st, "CONFIDENCE_SCORE_V2", True)
     vol = compute_volatility(_bougies(), "XAU/USD", timeframe="4h")
-    enrichi = analysis_engine.enrich_trade_setup(_setup(), vol, None, [])
-    assert enrichi.confidence_score > 60.0
+
+    sans_volatilite = analysis_engine.enrich_trade_setup(_setup(), None, None, [])
+    avec_volatilite = analysis_engine.enrich_trade_setup(_setup(), vol, None, [])
+
+    assert avec_volatilite.confidence_score > 60.0
+    # La composante Volatilite doit etre la cause du depassement, pas une
+    # coincidence arithmetique : sans elle, le meme setup reste sous le seuil.
+    assert sans_volatilite.confidence_score <= 60.0
+    vol_score = next(
+        f.score for f in avec_volatilite.confidence_factors if f.name == "Volatilite"
+    )
+    assert vol_score > 0.0, "le depassement doit venir de la composante Volatilite"
+    assert avec_volatilite.confidence_score - sans_volatilite.confidence_score == vol_score
 
 
 def test_compute_volatility_etiquette_le_timeframe_qu_on_lui_donne():
