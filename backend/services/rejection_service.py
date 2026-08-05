@@ -46,6 +46,7 @@ REASON_LABELS_FR = {
     "bridge_error": "Bridge : erreur autre",
     "bridge_timeout": "Bridge injoignable",
     "fees_exceed_edge": "frais supérieurs à 30 % de l'edge",
+    "horizon_not_allowed": "horizon non servi par cette route",
 }
 
 

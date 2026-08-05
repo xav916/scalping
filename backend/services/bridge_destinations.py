@@ -110,6 +110,15 @@ class BridgeConfig:
     # n'importe quelle route éligible, un edge nul la condamnerait à tort.
     cost_model: CostModel | None = None
     expected_edge_r: float | None = None
+    # ── Horizon (2026-08-05) ─────────────────────────────────────────
+    # Horizons d'analyse que cette route accepte. `None` = pas de filtre,
+    # c'est-à-dire le comportement d'avant le 2026-08-05 — c'est ce qui
+    # garantit que les destinations `user:N` ne changent pas.
+    #
+    # ⚠️ Déclarer un `frozenset` est un opt-in **fail-closed** : un setup
+    # d'horizon inconnu face à une porte active est refusé, comme pour la
+    # whitelist de patterns. On ne devine pas l'échelle de temps d'un ordre.
+    allowed_horizons: frozenset[str] | None = None
 
 
 def _admin_legacy_destination() -> BridgeConfig | None:
@@ -160,6 +169,9 @@ def _admin_legacy_destination() -> BridgeConfig | None:
         allowed_asset_classes=allowed_classes,
         auto_exec_enabled=True,
         extra_pairs_allowed=extra_pairs,
+        # MT5 est dimensionné pour le scalping : SL serrés, TP à quelques
+        # dixièmes de pourcent, frais absorbés dans le spread (0,022 R mesuré).
+        allowed_horizons=frozenset({"5min"}),
     )
 
 
@@ -196,6 +208,9 @@ def _admin_live_destination() -> BridgeConfig | None:
         auto_exec_enabled=True,
         symbol_map=live_symbol_map,
         extra_pairs_allowed=getattr(st, "MT5_BRIDGE_LIVE_EXTRA_PAIRS", frozenset()),
+        # MT5 est dimensionné pour le scalping : SL serrés, TP à quelques
+        # dixièmes de pourcent, frais absorbés dans le spread (0,022 R mesuré).
+        allowed_horizons=frozenset({"5min"}),
     )
 
 
@@ -266,6 +281,11 @@ def _admin_kraken_spot_destination() -> BridgeConfig | None:
         # nettement plus élevé et n'a pas été mesuré. Edge à None : jamais
         # mesuré sur cette route, donc la porte bloque en exécution réelle.
         expected_edge_r=None,
+        # Kraken n'est viable qu'en détention : ses 0,10 % d'aller-retour
+        # valent 2,6 fois l'edge à l'échelle du scalping. Le restreindre aux
+        # horizons longs coupe le flux 5 min à la porte la moins chère,
+        # avant même la porte de coût.
+        allowed_horizons=frozenset({"4h", "1d"}),
     )
 
 
@@ -311,6 +331,11 @@ def _admin_kraken_stocks_destination() -> BridgeConfig | None:
         # sont décorrélés du NYSE. Emprunter l'edge MT5 serait extrapoler hors
         # du domaine de mesure. À None, la porte bloque en exécution réelle.
         expected_edge_r=None,
+        # Kraken n'est viable qu'en détention : ses 0,10 % d'aller-retour
+        # valent 2,6 fois l'edge à l'échelle du scalping. Le restreindre aux
+        # horizons longs coupe le flux 5 min à la porte la moins chère,
+        # avant même la porte de coût.
+        allowed_horizons=frozenset({"4h", "1d"}),
     )
 
 
@@ -347,6 +372,11 @@ def _admin_kraken_destination() -> BridgeConfig | None:
         # 0,05 % par jambe (taker). Donne 0,288 R au SL médian mesuré.
         cost_model=CostModel(proportional_rate_per_leg=0.0005),
         expected_edge_r=0.110,  # mesuré sur 876 trades réels le 2026-08-04
+        # Kraken n'est viable qu'en détention : ses 0,10 % d'aller-retour
+        # valent 2,6 fois l'edge à l'échelle du scalping. Le restreindre aux
+        # horizons longs coupe le flux 5 min à la porte la moins chère,
+        # avant même la porte de coût.
+        allowed_horizons=frozenset({"4h", "1d"}),
     )
 
 

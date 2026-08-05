@@ -265,6 +265,33 @@ def _cost_rejection(setup, dest) -> str | None:
     return None
 
 
+def _horizon_rejection(setup, dest) -> str | None:
+    """Refuse un setup dont l'horizon d'analyse n'est pas servi par la route.
+
+    Extraite comme `_cost_rejection` pour être testable sans base ni réseau.
+
+    Une route dimensionnée pour le scalping et une route dimensionnée pour la
+    détention n'ont ni le même sizing, ni les mêmes stops, ni les mêmes frais.
+    Router un setup 4h vers MT5 enverrait un ordre pensé pour une autre
+    échelle de temps.
+
+    `dest.allowed_horizons is None` ⇒ aucun filtre, comportement d'avant le
+    2026-08-05. Sinon **fail-closed** : horizon absent ou inconnu = refus.
+    """
+    if dest is None:
+        return None
+    admis = getattr(dest, "allowed_horizons", None)
+    if not admis:
+        return None
+
+    from backend.services.horizon import normalize as _normalize_horizon
+
+    h = _normalize_horizon(getattr(setup, "horizon", None))
+    if h is None or h not in admis:
+        return "horizon_not_allowed"
+    return None
+
+
 def _check_rejection(setup, dest=None) -> str | None:
     """Retourne None si le setup peut être pushé, sinon un reason_code parmi
     ceux définis dans `rejection_service.REASON_LABELS_FR`. Seuls les cas qui
@@ -440,6 +467,14 @@ def _check_rejection(setup, dest=None) -> str | None:
     min_conf = dest.min_confidence if dest is not None else MT5_BRIDGE_MIN_CONFIDENCE
     if score < min_conf:
         return "below_confidence"
+    # Porte d'horizon (2026-08-05). Placée TÔT, à l'inverse de la porte de
+    # coût qui est en dernier : une appartenance à un frozenset ne coûte
+    # rien, là où la porte de coût appelle le sizing, qui peut interroger le
+    # solde du bridge en HTTP. Inutile de payer ce prix pour un signal qui
+    # n'est de toute façon pas à la bonne échelle de temps.
+    horizon_reason = _horizon_rejection(setup, dest)
+    if horizon_reason:
+        return horizon_reason
     # Whitelist de patterns (2026-08-04). S'ajoute au seuil de confidence,
     # ne le remplace pas — cf. MT5_BRIDGE_ALLOWED_PATTERNS dans settings.
     # Sur 100 657 trades suivis, `range_bounce_up/down` fait +0,129 R/trade

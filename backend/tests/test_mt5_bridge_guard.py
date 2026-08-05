@@ -22,6 +22,11 @@ def _mk_setup(pair: str) -> MagicMock:
     s.verdict_blockers = []
     s.is_simulated = False
     s.timestamp = datetime.now(timezone.utc)
+    # MT5 sert le scalping (allowed_horizons={"5min"}) depuis le 2026-08-05 :
+    # sans estampille explicite, un MagicMock() renvoie un autre MagicMock
+    # pour `.horizon`, que la porte d'horizon refuse (fail-closed). Le flux
+    # V1 réel estampille "5min" dans enrich_trade_setup — cf. tache 2.
+    s.horizon = "5min"
     return s
 
 
