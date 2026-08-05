@@ -44,6 +44,17 @@ WTI_OPTIMAL_PATTERNS: set[str] = {"momentum_up", "engulfing_bullish", "range_bou
 # 2 patterns BUY only — pas de breakout_up. Mean PF 2.14 sur XLI 1d.
 TIGHT_LONG_PATTERNS: set[str] = {"momentum_up", "engulfing_bullish"}
 
+# Patterns retenus pour les 4 actions US individuelles (AAPL/TSLA/NVDA/MSFT
+# H4, ajout 2026-08-05). AUCUN backtest n'existe pour ces 4 titres — la porte
+# de coût de la route DMA "actions US à coût fixe" (cf. docs/superpowers
+# roadmap Voie C) exige un edge mesuré et n'a que `None` faute d'observation.
+# Ce jeu de patterns est un CHOIX PAR ANALOGIE, pas une validation :
+# l'analogue le plus proche déjà couvert est XLK (ETF technologique, exp
+# #35), qui utilise WTI_OPTIMAL_PATTERNS. On applique la même hypothèse aux
+# 4 megacaps tech — elle est À RÉVISER dès que le shadow aura produit assez
+# d'observations pour trancher (cf. PROMOTE_MIN_SAMPLE côté admission).
+US_EQUITY_TECH_PATTERNS: set[str] = WTI_OPTIMAL_PATTERNS
+
 # Configuration unifiée par paire : timeframe, patterns, system_id, sizing.
 # Ajouté ETH/USD Daily V2_CORE_LONG (exp #34) en 4e candidat.
 DEFAULT_CAPITAL_EUR: float = 10_000.0
@@ -85,6 +96,53 @@ SHADOW_CONFIG: dict[str, dict[str, Any]] = {
         "patterns": WTI_OPTIMAL_PATTERNS,
         "system_id": "V2_WTI_OPTIMAL_XLK_1D",
         "risk_pct": 0.004,  # exp #35 : mean PF 1.69, Sharpe 12M 1.01, maxDD 0.4%
+    },
+    # ── Actions US individuelles, H4 (ajout 2026-08-05) ──────────────────
+    # Objectif : ouvrir la mesure d'edge pour la route DMA "actions US à
+    # coût fixe" (voir CLAUDE.md Phase 3b / Voie C), qui ne peut pas
+    # s'ouvrir tant que l'edge mesuré vaut `None`. AUCUN backtest n'existe
+    # sur ces 4 titres : patterns ET risk_pct sont des hypothèses PAR
+    # ANALOGIE avec XLK (ETF techno déjà couvert), pas des valeurs
+    # validées. Déjà dans WATCHED_PAIRS de prod (config/settings.py) → le
+    # scheduler fournit les H1 nécessaires à l'aggrégation H4 (même
+    # mécanisme que XAU/XAG/WTI, cf. `_SHADOW_PAIRS` dans scheduler.py).
+    # H4 choisi (pas 1d) : le fetch Daily direct de `run_shadow_log`
+    # (branche `tf == "1d"`) n'est pas voulu ici — le H1 scheduler suffit.
+    "AAPL": {
+        "tf": "4h",
+        "patterns": US_EQUITY_TECH_PATTERNS,
+        "system_id": "V2_WTI_OPTIMAL_AAPL_4H",
+        # Non mesuré : aucun backtest sur AAPL. Valeur alignée sur le
+        # palier "instrument sans validation propre" (XAG/WTI 0.003) plutôt
+        # que sur XLK (0.004, ETF diversifié) — une action individuelle
+        # porte un risque idiosyncratique (gaps résultats, actu titre)
+        # qu'un ETF n'a pas. N'affecte que le sizing fictif du shadow, pas
+        # l'edge mesuré en unités de risque (R).
+        "risk_pct": 0.003,
+    },
+    "TSLA": {
+        "tf": "4h",
+        "patterns": US_EQUITY_TECH_PATTERNS,
+        "system_id": "V2_WTI_OPTIMAL_TSLA_4H",
+        # Non mesuré, même raisonnement que AAPL ci-dessus. TSLA est
+        # notoirement plus volatile qu'AAPL/MSFT (bêta élevé, gaps
+        # fréquents) — on ne descend pas plus bas que 0.003 faute de
+        # mesure justifiant un écart chiffré ; à réviser après backtest.
+        "risk_pct": 0.003,
+    },
+    "NVDA": {
+        "tf": "4h",
+        "patterns": US_EQUITY_TECH_PATTERNS,
+        "system_id": "V2_WTI_OPTIMAL_NVDA_4H",
+        # Non mesuré, même raisonnement que AAPL ci-dessus.
+        "risk_pct": 0.003,
+    },
+    "MSFT": {
+        "tf": "4h",
+        "patterns": US_EQUITY_TECH_PATTERNS,
+        "system_id": "V2_WTI_OPTIMAL_MSFT_4H",
+        # Non mesuré, même raisonnement que AAPL ci-dessus.
+        "risk_pct": 0.003,
     },
 }
 

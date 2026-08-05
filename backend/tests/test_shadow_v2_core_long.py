@@ -756,6 +756,146 @@ def test_ensure_schema_idempotent_with_funding_column(temp_db):
     assert "funding_features_json" in cols
 
 
+# ─── Actions US individuelles (AAPL/TSLA/NVDA/MSFT), ajout 2026-08-05 ───────
+#
+# Ouvre la mesure d'edge pour la route DMA "actions US à coût fixe" (porte de
+# coût bloquée sur edge=None faute d'observation). Les 4 titres sont ajoutés
+# à l'horizon 4h, patterns par analogie avec XLK (déjà couvert) — cf.
+# commentaire `US_EQUITY_TECH_PATTERNS` dans shadow_v2_core_long.py.
+
+
+_US_EQUITY_TECH_PAIRS = ("AAPL", "TSLA", "NVDA", "MSFT")
+
+
+def test_shadow_config_includes_us_equities_at_4h():
+    """Les 4 actions US sont dans SHADOW_CONFIG, à l'horizon 4h (pas 1d)."""
+    for pair in _US_EQUITY_TECH_PAIRS:
+        assert pair in shadow.SHADOW_CONFIG, f"{pair} absent de SHADOW_CONFIG"
+        assert shadow.SHADOW_CONFIG[pair]["tf"] == "4h", (
+            f"{pair} doit être à l'horizon 4h (aggrégation H1 scheduler), "
+            "pas 1d (qui déclencherait un fetch Daily direct non voulu)"
+        )
+        assert pair in shadow.SHADOW_PAIRS
+
+
+def test_us_equities_use_xlk_analogy_patterns_not_core_long():
+    """Patterns par analogie avec XLK (WTI_OPTIMAL_PATTERNS), PAS
+    CORE_LONG_PATTERNS ni TIGHT_LONG_PATTERNS — le choix documenté dans le
+    code doit se retrouver dans la config réellement chargée."""
+    for pair in _US_EQUITY_TECH_PAIRS:
+        cfg_patterns = shadow.SHADOW_CONFIG[pair]["patterns"]
+        assert cfg_patterns == shadow.WTI_OPTIMAL_PATTERNS
+        assert cfg_patterns == shadow.SHADOW_CONFIG["XLK"]["patterns"]
+        assert cfg_patterns != shadow.CORE_LONG_PATTERNS
+        assert "breakout_up" not in cfg_patterns
+
+
+def test_us_equities_derived_mappings_consistent():
+    """PATTERNS_BY_PAIR / SYSTEM_ID_BY_PAIR / RISK_PCT_BY_PAIR /
+    TIMEFRAME_BY_PAIR restent dérivés fidèlement de SHADOW_CONFIG pour les 4
+    nouveaux titres (pas de valeur codée en dur qui diverge)."""
+    for pair in _US_EQUITY_TECH_PAIRS:
+        cfg = shadow.SHADOW_CONFIG[pair]
+        assert shadow.PATTERNS_BY_PAIR[pair] == cfg["patterns"]
+        assert shadow.SYSTEM_ID_BY_PAIR[pair] == cfg["system_id"]
+        assert shadow.RISK_PCT_BY_PAIR[pair] == cfg["risk_pct"]
+        assert shadow.TIMEFRAME_BY_PAIR[pair] == cfg["tf"]
+        # system_id suit la convention V2_WTI_OPTIMAL_<PAIR>_4H
+        assert cfg["system_id"] == f"V2_WTI_OPTIMAL_{pair}_4H"
+        # risk_pct non nul, non mesuré mais explicitement choisi (pas 0.0)
+        assert cfg["risk_pct"] is not None
+        assert cfg["risk_pct"] > 0
+
+
+def test_existing_pairs_config_unchanged_after_us_equities_addition():
+    """Régression : XAU/XAG/WTI/ETH/XLI/XLK gardent EXACTEMENT leur config
+    d'avant l'ajout des actions US (patterns, system_id, risk_pct, tf)."""
+    assert shadow.SHADOW_CONFIG["XAU/USD"] == {
+        "tf": "4h",
+        "patterns": shadow.CORE_LONG_PATTERNS,
+        "system_id": "V2_CORE_LONG_XAUUSD_4H",
+        "risk_pct": 0.005,
+    }
+    assert shadow.SHADOW_CONFIG["XAG/USD"] == {
+        "tf": "4h",
+        "patterns": shadow.CORE_LONG_PATTERNS,
+        "system_id": "V2_CORE_LONG_XAGUSD_4H",
+        "risk_pct": 0.003,
+    }
+    assert shadow.SHADOW_CONFIG["WTI/USD"] == {
+        "tf": "4h",
+        "patterns": shadow.WTI_OPTIMAL_PATTERNS,
+        "system_id": "V2_WTI_OPTIMAL_WTIUSD_4H",
+        "risk_pct": 0.003,
+    }
+    assert shadow.SHADOW_CONFIG["ETH/USD"] == {
+        "tf": "1d",
+        "patterns": shadow.CORE_LONG_PATTERNS,
+        "system_id": "V2_CORE_LONG_ETHUSD_1D",
+        "risk_pct": 0.0025,
+    }
+    assert shadow.SHADOW_CONFIG["XLI"] == {
+        "tf": "1d",
+        "patterns": shadow.TIGHT_LONG_PATTERNS,
+        "system_id": "V2_TIGHT_LONG_XLI_1D",
+        "risk_pct": 0.004,
+    }
+    assert shadow.SHADOW_CONFIG["XLK"] == {
+        "tf": "1d",
+        "patterns": shadow.WTI_OPTIMAL_PATTERNS,
+        "system_id": "V2_WTI_OPTIMAL_XLK_1D",
+        "risk_pct": 0.004,
+    }
+    # Le set complet des paires observées = les 6 historiques + les 4 nouvelles
+    assert set(shadow.SHADOW_PAIRS) == {
+        "XAU/USD", "XAG/USD", "WTI/USD", "ETH/USD", "XLI", "XLK",
+        "AAPL", "TSLA", "NVDA", "MSFT",
+    }
+
+
+def test_run_shadow_log_persists_us_equity_setup_with_correct_horizon(
+    temp_db, monkeypatch,
+):
+    """Un setup détecté sur AAPL (H4, patterns XLK-analogie) doit produire
+    une ligne persistée avec system_id `V2_WTI_OPTIMAL_AAPL_4H` et
+    timeframe `4h` — preuve bout-en-bout que la config se traduit
+    correctement dans la table `shadow_setups`, pas seulement dans le dict
+    Python.
+
+    Stub `price_service.fetch_candles` (jamais de réseau en test) : les
+    autres paires de SHADOW_CONFIG à horizon 1d (ETH/XLI/XLK) déclenchent
+    un fetch Daily direct dans `run_shadow_log` même si on ne fournit que
+    des H1 pour AAPL — ce stub coupe court avant toute tentative réseau.
+    """
+    import config.settings as _settings
+    monkeypatch.setattr(_settings, "SHADOW_FILTERED_TWIN_ENABLED", False)
+
+    async def _fake_fetch(*_args, **_kwargs):
+        return ([], False)
+    monkeypatch.setattr(
+        "backend.services.price_service.fetch_candles", _fake_fetch
+    )
+
+    start = datetime(2026, 4, 1, 0, 0, tzinfo=timezone.utc)
+    h1 = _make_h1_sequence(start, 200)  # même séquence montante que XAU/XAG
+
+    result = asyncio.run(shadow.run_shadow_log({"AAPL": h1}))
+    assert result["AAPL"] > 0, "aucun setup détecté sur AAPL — le test ne prouve rien"
+
+    with sqlite3.connect(temp_db) as c:
+        c.row_factory = sqlite3.Row
+        rows = c.execute(
+            "SELECT system_id, pair, timeframe, direction FROM shadow_setups "
+            "WHERE pair = 'AAPL'"
+        ).fetchall()
+
+    assert rows, "aucune ligne persistée pour AAPL"
+    for r in rows:
+        assert r["system_id"] == "V2_WTI_OPTIMAL_AAPL_4H"
+        assert r["timeframe"] == "4h"
+        assert r["direction"] == "buy"
+
+
 def test_ensure_schema_migration_safe_on_populated_table(temp_db):
     """La migration doit être sûre rejouée sur une table DÉJÀ PEUPLÉE de
     données : les rows existantes doivent survivre intactes, la nouvelle
