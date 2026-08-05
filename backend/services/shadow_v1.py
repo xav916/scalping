@@ -10,6 +10,11 @@ Architecture :
   filter_high_confidence_setups), on journalise la (pair, direction) si :
     - elle est en état OBSERVED via pair_admission_controller (comportement
       d'origine) ; OU
+    - elle est en état PAUSED (2026-08-05) — une paire mise en pause après
+      avoir saigné en réel ne trade plus pendant son cool-off (14 jours),
+      donc n'accumule plus aucune donnée ; sans shadow, la condition de
+      retour (battre une entrée aléatoire, mesurée sur ces trades virtuels)
+      n'a rien sur quoi s'appuyer à l'issue du cool-off ; OU
     - sa classe d'actif figure dans `SHADOW_V1_UNOBSERVED_ASSET_CLASSES`
       (config/settings.py, défaut "crypto") — cas de la crypto, bloquée au
       dispatch par la porte d'horizon et la porte de coût, donc jamais
@@ -206,6 +211,10 @@ def log_v1_shadows_for_tracked_pairs(setups: list, cycle_at: datetime) -> dict[s
     Une (pair, direction) est trackée si :
     - elle est en état OBSERVED via pair_admission_controller (comportement
       d'origine, alimente compute_promotion_score) ; OU
+    - elle est en état PAUSED (2026-08-05) — pause = plus aucune exécution
+      réelle pendant le cool-off, donc plus aucune donnée si le shadow ne
+      prend pas le relais ; la condition de retour au trading réel (battre
+      une entrée aléatoire) se mesure sur ces lignes ; OU
     - la classe d'actif de `pair` (cf. `asset_class_for`) figure dans
       `SHADOW_V1_UNOBSERVED_ASSET_CLASSES` (config/settings.py, défaut
       "crypto") — mesure indépendante de l'admission pour une classe
@@ -230,8 +239,9 @@ def log_v1_shadows_for_tracked_pairs(setups: list, cycle_at: datetime) -> dict[s
 
             current = pac.get_current_state(pair, direction)
             observed = current == pac.STATE_OBSERVED
+            paused = current == pac.STATE_PAUSED
             unobserved_tracked = asset_class_for(pair) in SHADOW_V1_UNOBSERVED_ASSET_CLASSES
-            if not observed and not unobserved_tracked:
+            if not observed and not paused and not unobserved_tracked:
                 counts["skipped_not_tracked"] += 1
                 continue
 
