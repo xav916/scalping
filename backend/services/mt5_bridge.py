@@ -952,6 +952,19 @@ async def _push_to_destination(setup, dest) -> None:
     # en drawdown sur 7j, sinon 1.0x). Voir sizing.compute_risk_money.
     # Note V1 : sizing reste global (pas per-user). À adresser en V2.
     from backend.services import sizing
+    # Capital réel de CETTE destination (2026-08-06). `TRADING_CAPITAL` valait
+    # 3000 € quand le compte réel en contenait 540 : le sizing calculait sur
+    # 5,5× le capital disponible, et seuls les plafonds de lot puis
+    # l'ajustement à la marge rattrapaient l'erreur — par accident, pas par
+    # conception.
+    #
+    # Réservé aux destinations admin : une destination `user:N` passe par la
+    # file de l'EA et n'expose pas de bridge à interroger.
+    #
+    # Le refus n'est jamais possible ici : `destination_capital` retombe sur le
+    # global si le solde est indisponible (cf. sa docstring).
+    if dest.user_id is None:
+        await sizing.refresh_destination_capital(dest)
     sz = sizing.compute_risk_money(setup, dest)
     risk_money = sz["risk_money"]
     payload = _build_order_payload(setup, sz, dest=dest)

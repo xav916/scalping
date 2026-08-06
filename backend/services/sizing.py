@@ -273,19 +273,35 @@ async def refresh_destination_capital(dest) -> float | None:
     if not url:
         return None
     try:
+        # Les bridges ne parlent pas le même dialecte (2026-08-06) : MT5
+        # authentifie par `X-API-Key` et expose `equity`/`balance` en devise du
+        # compte, là où les bridges crypto utilisent `X-Bridge-Key` et
+        # `portfolio_value_usd`. Envoyer le mauvais en-tête donne un 401 lu
+        # comme « solde indisponible » — donc un refus de sizing silencieux.
+        est_mt5 = getattr(dest, "bridge_type", "mt5") == "mt5"
+        entete = "X-API-Key" if est_mt5 else "X-Bridge-Key"
         async with httpx.AsyncClient(timeout=5.0) as c:
             r = await c.get(
                 f"{url}/account",
-                headers={"X-Bridge-Key": getattr(dest, "bridge_api_key", "") or ""},
+                headers={entete: getattr(dest, "bridge_api_key", "") or ""},
             )
         if r.status_code != 200:
             logger.warning(
                 f"sizing[{dest_id}]: /account HTTP {r.status_code} — sizing refusé"
             )
             return None
-        # `portfolio_value_usd` est la clé commune aux bridges Kraken Futures,
-        # Kraken Spot et Binance. On ne devine pas au-delà.
-        value = (r.json() or {}).get("portfolio_value_usd")
+        corps = r.json() or {}
+        if est_mt5:
+            # `equity` plutôt que `balance` : c'est le capital réellement
+            # disponible, positions ouvertes déduites. Dimensionner sur le
+            # solde ignorerait une perte latente en cours.
+            value = corps.get("equity")
+            if value is None:
+                value = corps.get("balance")
+        else:
+            # `portfolio_value_usd` est la clé commune aux bridges Kraken
+            # Futures, Kraken Spot et Binance. On ne devine pas au-delà.
+            value = corps.get("portfolio_value_usd")
         capital = float(value) if value is not None else 0.0
         if capital <= 0:
             logger.warning(f"sizing[{dest_id}]: solde nul ou absent — sizing refusé")
@@ -318,5 +334,25 @@ def destination_capital(dest) -> tuple[float | None, str]:
         cached = _cache_get(getattr(dest, "destination_id", ""))
         if cached is None:
             return None, CAPITAL_UNAVAILABLE
+        return cached, "live"
+
+    # MT5 : solde réel si connu, global sinon (2026-08-06).
+    #
+    # ⚠️ Repli VOLONTAIRE, contrairement aux bridges crypto ci-dessus qui
+    # refusent. La différence est de nature : pour un compte crypto, le solde
+    # EST le capital et l'ignorer n'a pas de sens ; pour MT5 il existe un
+    # capital configuré, historiquement utilisé, qui reste une réponse
+    # acceptable. Refuser ici transformerait un `/account` momentanément
+    # injoignable en arrêt total du trading — le mode de défaillance qui a
+    # bloqué Kraken pendant des mois.
+    #
+    # Le sur-dimensionnement que ce repli peut produire est rattrapé en aval
+    # par `_fit_volume_to_free_margin` côté bridge, qui réduit le volume à ce
+    # que la marge autorise réellement.
+    #
+    # Motivation : `TRADING_CAPITAL` valait 3000 € quand le compte réel en
+    # contenait 540 — le sizing calculait sur 5,5× le capital disponible.
+    cached = _cache_get(getattr(dest, "destination_id", ""))
+    if cached is not None:
         return cached, "live"
     return TRADING_CAPITAL, "global"
