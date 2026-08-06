@@ -140,3 +140,68 @@ def test_le_capital_reel_reduit_la_taille_calculee(monkeypatch):
     reel, _ = sizing.destination_capital(_Dest())
     assert reel < global_cap
     assert global_cap / reel == pytest.approx(5.55, abs=0.1)
+
+
+# ── Miroir de capital : le demo doit refleter le reel ─────────────────
+
+def test_le_demo_emprunte_le_capital_du_compte_reel():
+    """Le compte de demonstration existe pour refleter le reel. Dimensionner
+    sur SON solde (652 EUR contre 415) produirait des tailles differentes,
+    donc des trades non comparables — ce qui annulerait sa raison d'etre."""
+    demo = _Dest(dest_id="admin_legacy")
+    demo.capital_mirror = "admin_live"
+    sizing._cache_put("admin_live", 415.33)
+    sizing._cache_put("admin_legacy", 652.13)   # son propre solde, a IGNORER
+    capital, source = sizing.destination_capital(demo)
+    assert capital == pytest.approx(415.33), "le demo doit suivre le reel"
+    assert source == "miroir:admin_live"
+
+
+def test_le_miroir_indisponible_retombe_sur_le_global():
+    """Plutot que de dimensionner sur son propre solde — ce serait produire
+    silencieusement des trades non comparables, l'erreur meme qu'on corrige."""
+    demo = _Dest(dest_id="admin_legacy")
+    demo.capital_mirror = "admin_live"
+    sizing._cache_put("admin_legacy", 652.13)
+    capital, source = sizing.destination_capital(demo)
+    assert source == "global"
+    assert capital != pytest.approx(652.13)
+
+
+def test_une_surcharge_explicite_l_emporte_sur_le_miroir():
+    demo = _Dest(dest_id="admin_legacy")
+    demo.capital_mirror = "admin_live"
+    demo.trading_capital = 900.0
+    sizing._cache_put("admin_live", 415.33)
+    capital, source = sizing.destination_capital(demo)
+    assert capital == pytest.approx(900.0)
+    assert source == "destination"
+
+
+def test_le_compte_reel_garde_son_propre_solde():
+    """Le miroir ne va que dans un sens : le reel ne suit personne."""
+    reel = _Dest(dest_id="admin_live")
+    sizing._cache_put("admin_live", 415.33)
+    capital, source = sizing.destination_capital(reel)
+    assert capital == pytest.approx(415.33)
+    assert source == "live"
+
+
+@pytest.mark.asyncio
+async def test_le_refresh_interroge_le_bridge_REFLETE(monkeypatch):
+    """Sans ca le cache du miroir resterait vide et le demo retomberait
+    indefiniment sur le global."""
+    cap = {}
+    monkeypatch.setattr(httpx, "AsyncClient", _client(cap, {"equity": 415.33}))
+    reel = _Dest(dest_id="admin_live")
+    reel.bridge_url = "http://bridge-live"
+    demo = _Dest(dest_id="admin_legacy")
+    demo.capital_mirror = "admin_live"
+    demo.bridge_url = "http://bridge-demo"
+    monkeypatch.setattr(
+        "backend.services.bridge_destinations.admin_destinations", lambda: [reel, demo]
+    )
+    val = await sizing.refresh_destination_capital(demo)
+    assert val == pytest.approx(415.33)
+    assert "bridge-live" in cap["url"], "c'est le bridge REEL qu'il faut interroger"
+    assert sizing._cache_get("admin_live") == pytest.approx(415.33)

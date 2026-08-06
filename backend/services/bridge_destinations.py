@@ -93,6 +93,15 @@ class BridgeConfig:
     # sizing.destination_capital (solde live pour les bridges crypto,
     # TRADING_CAPITAL global pour les bridges MT5).
     trading_capital: float | None = None
+    # Destination dont il faut EMPRUNTER le capital pour dimensionner
+    # (2026-08-06). `None` = dimensionner sur son propre solde.
+    #
+    # Sert au compte de démonstration : sa raison d'être est de refléter le
+    # compte réel, or dimensionner sur SON solde produirait des tailles
+    # différentes et donc des trades non comparables. Un miroir explicite,
+    # relu à chaque cycle, reste juste quand les soldes bougent — là où une
+    # valeur figée dans `trading_capital` se périmerait en silence.
+    capital_mirror: str | None = None
     # bridge_type: "mt5" pour les bridges MT5 (admin_legacy, admin_live, user
     # premium), "binance" pour le bridge Binance Futures (USDⓈ-M perp).
     # Le dispatcher dans mt5_bridge._push_to_destination utilise ce flag pour
@@ -265,6 +274,11 @@ def _admin_legacy_destination() -> BridgeConfig | None:
         # `_mt5_expected_edge` pour la calibration et le choix de fenêtre.
         cost_model=_mt5_cost_model(),
         expected_edge_r=_mt5_expected_edge(),
+        # Le compte de demonstration dimensionne sur le capital du compte REEL
+        # (2026-08-06). Sa raison d'etre est de refleter ce que le reel ferait :
+        # calculer sur son propre solde (652 EUR contre 415) produirait des
+        # tailles differentes, donc des trades non comparables.
+        capital_mirror="admin_live",
     )
 
 

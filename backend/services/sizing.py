@@ -265,6 +265,26 @@ async def refresh_destination_capital(dest) -> float | None:
     alors de produire un ordre).
     """
     import httpx
+
+    # Miroir de capital : c'est le solde de la destination REFLÉTÉE qu'il faut
+    # rafraîchir, pas le sien. Sans ça le cache du miroir resterait vide et
+    # `destination_capital` retomberait indéfiniment sur le global.
+    miroir = getattr(dest, "capital_mirror", None)
+    if miroir:
+        from backend.services.bridge_destinations import admin_destinations
+
+        cible = next(
+            (d for d in admin_destinations()
+             if getattr(d, "destination_id", None) == miroir), None
+        )
+        if cible is None:
+            logger.warning(
+                f"sizing[{getattr(dest, 'destination_id', '')}]: miroir "
+                f"'{miroir}' introuvable — repli sur le capital global"
+            )
+            return None
+        return await refresh_destination_capital(cible)
+
     dest_id = getattr(dest, "destination_id", "")
     cached = _cache_get(dest_id)
     if cached is not None:
@@ -330,6 +350,22 @@ def destination_capital(dest) -> tuple[float | None, str]:
     explicite = getattr(dest, "trading_capital", None)
     if explicite:
         return float(explicite), "destination"
+
+    # Miroir de capital (2026-08-06) — le compte de démonstration dimensionne
+    # sur le capital du compte RÉEL. Sa raison d'être est de refléter ce que le
+    # réel ferait ; calculer sur son propre solde (652 € contre 415)
+    # produirait des tailles différentes, donc des trades non comparables.
+    #
+    # Placé APRÈS la surcharge explicite (qui reste le dernier mot) et AVANT
+    # toute lecture de solde propre.
+    miroir = getattr(dest, "capital_mirror", None)
+    if miroir:
+        emprunte = _cache_get(miroir)
+        if emprunte is not None:
+            return emprunte, f"miroir:{miroir}"
+        # Miroir indisponible : on retombe sur le global plutôt que de
+        # dimensionner sur un solde qui n'est pas celui qu'on veut refléter.
+        return TRADING_CAPITAL, "global"
     if getattr(dest, "bridge_type", "mt5") in LIVE_BALANCE_BRIDGE_TYPES:
         cached = _cache_get(getattr(dest, "destination_id", ""))
         if cached is None:
