@@ -146,6 +146,75 @@ def _count_recent_auto_demotions(window_days: int = 7) -> int:
         return 0
 
 
+def _promotions_recentes_vers_auto_exec(jours: int = 7) -> int:
+    """Nombre de promotions AUTOMATIQUES vers AUTO_EXEC sur la fenêtre glissante.
+
+    Les promotions **manuelles** ne sont pas comptées : une décision humaine
+    explicite n'a pas à consommer un budget conçu pour brider l'automatisme.
+    """
+    # `timedelta` n'est pas importé au niveau module dans ce fichier.
+    from datetime import timedelta as _timedelta
+
+    depuis = (datetime.now(timezone.utc) - _timedelta(days=jours)).isoformat()
+    try:
+        _ensure_schema()
+        with sqlite3.connect(str(_DB_PATH)) as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM pair_admission_state "
+                "WHERE state = ? AND state_since >= ? AND transitioned_by LIKE 'auto%'",
+                (STATE_AUTO_EXEC, depuis),
+            ).fetchone()
+            return int(row[0]) if row else 0
+    except Exception as e:
+        logger.warning(f"budget de promotion illisible: {e}")
+        # Fail-closed : sans compteur fiable, on ne promeut pas. Une promotion
+        # de trop engage de l'argent ; une promotion retardée ne coûte rien.
+        return 10**6
+
+
+def _budget_promotions_hebdo() -> int:
+    """Combien de promotions automatiques vers l'argent réel par semaine ?
+
+    ⚠️ Ce plafond existe à cause d'une vague mesurée : au moment de corriger la
+    porte à sens unique (2026-08-06), **37 couples** étaient bloqués en
+    `OBSERVED`. Sans débit maximal, ils seraient tous entrés en `TELEGRAM` le
+    même cycle, donc tous arrivés à maturité **le même jour** — l'exposition
+    serait passée de 11 à 47 couples d'un coup, sur un système dont aucun
+    avantage n'est démontré.
+
+    Réparer une porte bloquée ne doit pas revenir à l'arracher. Le débit rend
+    l'élargissement progressif et observable : un couple promu, une semaine
+    pour en voir l'effet.
+    """
+    try:
+        from config.settings import PAC_MAX_AUTO_PROMOTIONS_PER_WEEK
+        return int(PAC_MAX_AUTO_PROMOTIONS_PER_WEEK)
+    except Exception:
+        return 2
+
+
+def _promotion_indetermine_autorisee() -> bool:
+    """Une paire « indécidable » peut-elle franchir TELEGRAM → AUTO_EXEC ?
+
+    Relu à chaque appel (jamais figé en constante de module) pour rester
+    monkeypatchable et modifiable sans redémarrage.
+
+    ⚠️ Par défaut **oui**, et c'est délibéré. `INDETERMINATE` veut dire « pas
+    assez de trades RÉELS », or seule une paire en `AUTO_EXEC` en produit :
+    exiger cette preuve avant d'accorder l'exécution est une condition
+    insatisfaisable, qui a fermé l'admission dans un seul sens.
+
+    Mettre ce drapeau à `false` rétablit la porte à sens unique. Ne le faire
+    qu'en connaissance de cause, et de préférence en promouvant à la main les
+    paires souhaitées.
+    """
+    try:
+        from config.settings import PAC_ALLOW_INDETERMINATE_PROMOTION
+        return bool(PAC_ALLOW_INDETERMINATE_PROMOTION)
+    except Exception:
+        return True
+
+
 def _min_real_trades() -> int:
     """Plancher de trades RÉELS requis pour qu'une décision d'admission auto
     (promotion OU rétrogradation) soit prise. Cf. `config.settings.PAC_MIN_REAL_TRADES`.
@@ -1375,10 +1444,27 @@ def evaluate_pair(pair: str, direction: Optional[str] = None) -> dict[str, Any]:
 
     if current == STATE_OBSERVED:
         # Accepte TELEGRAM ou AUTO_EXEC comme cible selon AUTO_PROMOTE_TARGET env.
-        # Garde-fou échantillon réel : STATE_INDETERMINATE n'est jamais dans
-        # (STATE_TELEGRAM, STATE_AUTO_EXEC), donc une pair sans assez de
-        # trades réels tombe naturellement dans la branche "keep" ci-dessous.
         target = score["eligible_for"]
+
+        # ⚠️ PORTE À SENS UNIQUE — corrigée le 2026-08-06.
+        #
+        # `INDETERMINATE` signifie « moins de PAC_MIN_REAL_TRADES trades
+        # RÉELS », pas « mauvaise paire ». Or une paire `OBSERVED` **n'exécute
+        # rien** : elle n'accumulera JAMAIS ces trades réels. La condition
+        # était donc insatisfaisable par construction — aucune paire ne pouvait
+        # plus être promue, et l'univers tradable ne pouvait que rétrécir.
+        #
+        # Le garde-fou du 2026-08-05 existe pour empêcher une décision prise
+        # sur des données SIMULÉES quand elle touche à de l'argent réel. Or
+        # `TELEGRAM` n'engage **aucun argent** : c'est une notification. Le
+        # garde-fou n'y protège rien et n'y produit que de la paralysie.
+        #
+        # On oriente donc l'indécidable vers `TELEGRAM`, **jamais** directement
+        # vers `AUTO_EXEC` : le passage à l'argent réel reste soumis au palier
+        # temporel de la branche `TELEGRAM` ci-dessous.
+        if target == STATE_INDETERMINATE:
+            target = STATE_TELEGRAM
+
         if target in (STATE_TELEGRAM, STATE_AUTO_EXEC):
             set_state(pair, target, f"auto-promote: {score['reason']}", direction=direction, score_snapshot=score)
             return {"action": "transition", "from_state": current, "to_state": target, "score": score, "reason": score["reason"]}
@@ -1407,11 +1493,54 @@ def evaluate_pair(pair: str, direction: Optional[str] = None) -> dict[str, Any]:
             elapsed = datetime.now(timezone.utc) - since
         except (ValueError, AttributeError, TypeError):
             elapsed = timedelta(days=0)
-        if (
+        # ⚠️ Second étage de la porte à sens unique (2026-08-06).
+        #
+        # Exiger `eligible_for in (TELEGRAM, AUTO_EXEC)` bloquait aussi ce
+        # passage, pour la même raison : `TELEGRAM` n'exécute pas, donc la
+        # paire n'accumule aucun trade réel et reste `INDETERMINATE` à vie.
+        # Corriger le seul premier étage aurait déplacé l'impasse d'un cran.
+        #
+        # ⚠️ Et la preuve attendue ne peut PAS arriver : la promotion par paire
+        # est statistiquement indécidable à cette échelle (~1500 trades requis
+        # par paire, 1561 existent au TOTAL — cf.
+        # `project_promotion_indecidable_2026_08_05`). Attendre une certitude
+        # impossible n'est pas de la prudence, c'est de la paralysie.
+        #
+        # On distingue donc « on ne sait pas » de « on sait que c'est mauvais » :
+        #   INDETERMINATE (inconnu, faute de trades réels)  → passe
+        #   OBSERVED      (jugé insuffisant SUR du réel)    → bloque
+        #
+        # Le risque du premier passage à l'argent réel n'est pas porté par ce
+        # test mais par les contenants en aval, tous vérifiés le 2026-08-06 :
+        # palier temporel (`PAC_TELEGRAM_TO_AUTOEXEC_DAYS`), plafonds de lot par
+        # classe, ajustement à la marge disponible, porte de coût, et
+        # rétrogradation sur drawdown mesuré.
+        _indetermine_ok = _promotion_indetermine_autorisee()
+        _juge_negatif = score["eligible_for"] == STATE_OBSERVED
+        _eligible_ok = (
+            score["eligible_for"] in (STATE_TELEGRAM, STATE_AUTO_EXEC)
+            or (_indetermine_ok and not _juge_negatif)
+        )
+        # Débit maximal vers l'argent réel — cf. `_budget_promotions_hebdo`.
+        # Placé en DERNIER des conditions pour que le message de refus
+        # distingue « pas encore mûr » de « mûr mais en file d'attente ».
+        _budget = _budget_promotions_hebdo()
+        _deja = _promotions_recentes_vers_auto_exec()
+        _pret = (
             elapsed >= timedelta(days=_tg_days)
             and score["sample"] >= PROMOTE_MIN_SAMPLE
-            and score["eligible_for"] in (STATE_TELEGRAM, STATE_AUTO_EXEC)
-        ):
+            and _eligible_ok
+        )
+        if _pret and _deja >= _budget:
+            return {
+                "action": "keep", "from_state": current, "score": score,
+                "reason": (
+                    f"éligible mais en file d'attente : {_deja} promotion(s) "
+                    f"automatique(s) vers AUTO_EXEC sur les 7 derniers jours, "
+                    f"budget = {_budget}"
+                ),
+            }
+        if _pret:
             set_state(
                 pair, STATE_AUTO_EXEC,
                 f"auto-promote TELEGRAM stable {elapsed.days}j ≥ {_tg_days}j",

@@ -440,12 +440,23 @@ def test_indeterminate_is_distinct_from_every_real_state(_isolated_db):
     )
 
 
-def test_evaluate_observed_zero_real_thirty_simulated_triggers_no_transition(_isolated_db):
-    """LE test qui mord : sans le correctif, ceci PROMEUT la pair.
+def test_evaluate_observed_zero_real_thirty_simulated_ne_touche_pas_l_argent_reel(
+    _isolated_db,
+):
+    """0 trade réel, 30 signaux simulés gagnants — le scénario qui permettait
+    « la promotion auto from scratch ».
 
-    0 trade réel, 30 signaux simulés gagnants (exactement le scénario qui
-    permettait « la promotion auto from scratch » décrit dans le code
-    d'origine). Avec le plancher par défaut (30), doit rester OBSERVED.
+    ⚠️ Assertion révisée le 2026-08-06. Ce test exigeait auparavant que la
+    paire reste `OBSERVED`. C'était trop fort : `OBSERVED` n'exécutant rien,
+    la paire n'accumulait jamais de trade réel et ne pouvait donc PLUS JAMAIS
+    être promue — une porte à sens unique qui a fermé l'admission
+    (11 couples le 04/08, 8 le 05/08). Cf.
+    `test_admission_porte_sens_unique.py`.
+
+    Ce que le test protège reste intact et c'est le seul point qui comptait :
+    **des signaux simulés ne donnent pas accès à l'argent réel.** La paire
+    monte d'un cran vers `TELEGRAM`, qui n'engage aucun argent ; le passage à
+    `AUTO_EXEC` reste soumis au palier temporel de la branche TELEGRAM.
     """
     from backend.services import pair_admission_controller as pac
 
@@ -454,9 +465,11 @@ def test_evaluate_observed_zero_real_thirty_simulated_triggers_no_transition(_is
         _emit_signal("GBP/JPY", "buy", rr, idx=i)
 
     d = pac.evaluate_pair("GBP/JPY", direction="buy")
-    assert d["action"] == "keep"
+    # L'échantillon reste honnêtement étiqueté « indécidable »…
     assert d["score"]["eligible_for"] == pac.STATE_INDETERMINATE
-    assert pac.get_current_state("GBP/JPY", direction="buy") == pac.STATE_OBSERVED
+    # …et surtout : aucun accès à l'argent réel sur du simulé.
+    assert d.get("to_state") != pac.STATE_AUTO_EXEC
+    assert pac.get_current_state("GBP/JPY", direction="buy") != pac.STATE_AUTO_EXEC
 
 
 def test_evaluate_observed_with_enough_real_trades_unchanged_behavior(_isolated_db):

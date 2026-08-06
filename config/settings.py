@@ -390,6 +390,45 @@ PAC_TELEGRAM_TO_AUTOEXEC_DAYS = int(os.getenv("PAC_TELEGRAM_TO_AUTOEXEC_DAYS", "
 # garde-fou de fraîcheur de données).
 PAC_MIN_REAL_TRADES = int(os.getenv("PAC_MIN_REAL_TRADES", "30"))
 
+# Une paire « indécidable » (moins de PAC_MIN_REAL_TRADES trades RÉELS) peut-elle
+# franchir TELEGRAM → AUTO_EXEC après son palier temporel ?
+#
+# ⚠️ `true` par défaut, et c'est le correctif du 2026-08-06. Sans lui, le
+# garde-fou ci-dessus devient une PORTE À SENS UNIQUE : seule une paire en
+# AUTO_EXEC produit des trades réels, donc exiger 30 trades réels AVANT
+# d'accorder l'exécution est insatisfaisable par construction. L'univers
+# tradable ne pouvait plus que rétrécir — constaté en production, 11 couples
+# le 04/08 puis 8 le 05/08.
+#
+# La preuve attendue ne peut d'ailleurs jamais être concluante : la promotion
+# par paire est statistiquement indécidable à cette échelle (~1500 trades
+# requis par paire, 1561 existent au total).
+#
+# La distinction retenue : « on ne sait pas » (INDETERMINATE) passe, « on sait
+# que c'est mauvais » (OBSERVED sur données réelles) bloque. Le risque du
+# premier passage à l'argent réel est porté par les contenants en aval —
+# palier temporel, plafonds de lot, ajustement à la marge, porte de coût,
+# rétrogradation sur drawdown mesuré.
+PAC_ALLOW_INDETERMINATE_PROMOTION = os.getenv(
+    "PAC_ALLOW_INDETERMINATE_PROMOTION", "true"
+).strip().lower() in ("1", "true", "yes", "on")
+
+# Débit maximal de promotions AUTOMATIQUES vers AUTO_EXEC (argent réel), sur
+# une fenêtre glissante de 7 jours. Les promotions manuelles ne le consomment
+# pas : une décision humaine explicite n'a pas à être bridée par un garde-fou
+# conçu contre l'emballement automatique.
+#
+# ⚠️ Ce plafond existe à cause d'une vague mesurée. Au moment de corriger la
+# porte à sens unique (2026-08-06), **37 couples** étaient bloqués en OBSERVED.
+# Sans débit, ils seraient tous entrés en TELEGRAM au même cycle, donc arrivés
+# à maturité le MÊME JOUR : l'exposition serait passée de 11 à 47 couples d'un
+# coup, sur un système dont aucun avantage n'est démontré.
+#
+# Réparer une porte bloquée ne doit pas revenir à l'arracher.
+PAC_MAX_AUTO_PROMOTIONS_PER_WEEK = int(
+    os.getenv("PAC_MAX_AUTO_PROMOTIONS_PER_WEEK", "2")
+)
+
 # ─── Retour de pause : délai + comparaison inter-paires (2026-08-05) ─────
 #
 # Jusqu'ici, `evaluate_pair` rendait l'argent réel à une pair PAUSED après un
