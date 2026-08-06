@@ -481,6 +481,92 @@ def _pick_filling_mode(symbol: str) -> int:
         return mt5.ORDER_FILLING_IOC
 
 
+def _fit_volume_to_free_margin(
+    volume: float,
+    marge_pour,
+    marge_libre: float | None,
+    volume_min: float,
+    step: float,
+    part_utilisable: float = 0.90,
+) -> tuple[float | None, str | None]:
+    """Réduit un volume pour qu'il tienne dans la marge disponible.
+
+    Fonction PURE : `marge_pour` est un appelable ``volume -> marge exigée``
+    (ou ``None`` si le courtier ne sait pas la calculer). Aucun appel MT5 ici,
+    pour que la règle soit testable sans terminal.
+
+    Rend ``(volume_ajusté, motif)``. ``volume_ajusté = None`` signifie que même
+    le lot minimum ne tient pas — mieux vaut le dire que d'envoyer un ordre
+    condamné.
+
+    Contexte (2026-08-06) : le compte Demo disposait de 564 € libres alors que
+    le plafond métal était à 0,1 lot, soit ~1300 € de marge exigée sur l'or.
+    Chaque ordre repartait en `No money` (retcode 10019) et le compte ne
+    tradait plus du tout. Un plafond statique par classe ne peut pas régler ça :
+    il redevient faux dès que le solde bouge.
+
+    ⚠️ **Fail-open sur l'incalculable.** Si la marge exigée ou la marge libre
+    est inconnue, on renvoie le volume inchangé plutôt que de bloquer : le
+    courtier reste l'arbitre final, et une panne de calcul ne doit pas arrêter
+    le trading. On ne bloque que sur une information *positive* d'insuffisance.
+
+    `part_utilisable` garde une réserve (10 % par défaut) : consommer la marge
+    au dernier centime placerait le compte en appel de marge au premier tick
+    défavorable.
+    """
+    if marge_libre is None:
+        return volume, None
+    budget = marge_libre * part_utilisable
+    if budget <= 0:
+        return None, "marge_libre_epuisee"
+
+    exigee = marge_pour(volume)
+    if exigee is None:
+        return volume, None
+    if exigee <= budget:
+        return volume, None
+
+    # Réduction proportionnelle, arrondie VERS LE BAS au pas du courtier.
+    if exigee <= 0 or step <= 0:
+        return None, "marge_insuffisante"
+    cible = volume * budget / exigee
+    crans = int((cible + 1e-9) // step)
+    ajuste = round(crans * step, 8)
+
+    if ajuste < volume_min:
+        # Le minimum du courtier tient-il malgré tout ?
+        exigee_min = marge_pour(volume_min)
+        if exigee_min is not None and exigee_min <= budget:
+            return volume_min, "reduit_au_lot_minimum"
+        return None, "marge_insuffisante_meme_au_lot_minimum"
+
+    # Vérification finale : l'arrondi peut avoir laissé le volume trop gros.
+    verif = marge_pour(ajuste)
+    if verif is not None and verif > budget:
+        return None, "marge_insuffisante"
+    return ajuste, "reduit_pour_tenir_dans_la_marge"
+
+
+def _marge_libre() -> float | None:
+    """Marge libre du compte, ou None si indisponible (fail-open)."""
+    try:
+        info = mt5.account_info()
+        return float(info.margin_free) if info is not None else None
+    except Exception as e:
+        logger.warning(f"_marge_libre indisponible: {e}")
+        return None
+
+
+def _marge_requise(order_type, symbol: str, volume: float, price: float) -> float | None:
+    """Marge exigée par le courtier pour ce volume, ou None si incalculable."""
+    try:
+        m = mt5.order_calc_margin(order_type, symbol, volume, price)
+        return float(m) if m is not None else None
+    except Exception as e:
+        logger.warning(f"_marge_requise indisponible ({symbol} {volume}): {e}")
+        return None
+
+
 def _send_market_order(
     symbol: str, direction: str, lots: float, sl: float, tp: float, comment: str,
     sl_dist: float = 0.0, tp_dist: float = 0.0,
@@ -502,6 +588,36 @@ def _send_market_order(
     price = tick.ask if direction == "buy" else tick.bid
     order_type = mt5.ORDER_TYPE_BUY if direction == "buy" else mt5.ORDER_TYPE_SELL
     use_dist = (sl_dist > 0.0 and tp_dist > 0.0)
+
+    # Ajustement à la marge disponible (2026-08-06) — cf. `_fit_volume_to_free_margin`.
+    # Placé ici plutôt que dans le calcul de sizing pour couvrir AUSSI les lots
+    # imposés par le payload (`data["lots"]`), qui ne passent pas par
+    # `_compute_lots_from_symbol`.
+    _sinfo = mt5.symbol_info(symbol)
+    _vmin = float(getattr(_sinfo, "volume_min", 0.01) or 0.01) if _sinfo else 0.01
+    _step = float(getattr(_sinfo, "volume_step", 0.01) or 0.01) if _sinfo else 0.01
+    lots_ajustes, motif_marge = _fit_volume_to_free_margin(
+        volume=lots,
+        marge_pour=lambda v: _marge_requise(order_type, symbol, v, price),
+        marge_libre=_marge_libre(),
+        volume_min=_vmin,
+        step=_step,
+    )
+    if lots_ajustes is None:
+        # Refus explicite et journalisé, plutôt qu'un `No money` opaque du
+        # courtier que le backend ne sait pas distinguer d'une panne.
+        logger.warning(
+            f"[LIVE] ordre refusé avant envoi : {motif_marge} "
+            f"({symbol} {direction} {lots} lot)"
+        )
+        return {"ok": False, "message": f"Marge insuffisante : {motif_marge}",
+                "margin_reason": motif_marge}
+    if motif_marge:
+        logger.info(
+            f"[LIVE] volume ajusté à la marge : {lots} → {lots_ajustes} "
+            f"({symbol}, {motif_marge})"
+        )
+        lots = lots_ajustes
 
     req = {
         "action": mt5.TRADE_ACTION_DEAL,
