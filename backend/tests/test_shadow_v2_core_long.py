@@ -846,11 +846,40 @@ def test_existing_pairs_config_unchanged_after_us_equities_addition():
         "system_id": "V2_WTI_OPTIMAL_XLK_1D",
         "risk_pct": 0.004,
     }
-    # Le set complet des paires observées = les 6 historiques + les 4 nouvelles
+    # Le set complet des paires observées = les 6 historiques + les 4 actions
+    # US (2026-08-05) + BTC/USD (2026-08-06).
     assert set(shadow.SHADOW_PAIRS) == {
         "XAU/USD", "XAG/USD", "WTI/USD", "ETH/USD", "XLI", "XLK",
         "AAPL", "TSLA", "NVDA", "MSFT",
+        "BTC/USD",
     }
+
+
+def test_btc_usd_daily_config():
+    """BTC/USD Daily, ajouté le 2026-08-06 pour doubler l'univers Kraken —
+    `PF_XBTUSD` était dans la whitelist du bridge et en `AUTO_EXEC`, mais
+    aucun système ne produisait de setup pour lui.
+
+    ⚠️ Comme les 4 actions US, ce système n'a AUCUN backtest : sa
+    configuration est un choix par analogie avec ETH/USD Daily (même classe
+    d'actif, même horizon, mêmes patterns), pas une validation. Ce test
+    verrouille l'analogie pour qu'une divergence future soit un acte
+    délibéré.
+    """
+    cfg = shadow.SHADOW_CONFIG["BTC/USD"]
+    eth = shadow.SHADOW_CONFIG["ETH/USD"]
+    assert cfg == {
+        "tf": "1d",
+        "patterns": shadow.CORE_LONG_PATTERNS,
+        "system_id": "V2_CORE_LONG_BTCUSD_1D",
+        "risk_pct": 0.0025,
+    }
+    # L'analogie doit rester vraie : même horizon, mêmes patterns, même risque.
+    assert cfg["tf"] == eth["tf"]
+    assert cfg["patterns"] == eth["patterns"]
+    assert cfg["risk_pct"] == eth["risk_pct"]
+    # Le risque le plus prudent de toute la configuration.
+    assert cfg["risk_pct"] == min(c["risk_pct"] for c in shadow.SHADOW_CONFIG.values())
 
 
 def test_run_shadow_log_persists_us_equity_setup_with_correct_horizon(

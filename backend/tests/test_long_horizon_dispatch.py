@@ -50,14 +50,26 @@ def test_tous_les_systemes_long_sont_bien_en_horizon_long(pair, cfg):
     assert is_long(tf), f"{pair} est en {tf}, pas un horizon long"
 
 
-def test_eth_est_le_seul_couple_crypto_et_il_est_journalier():
-    """ETH/USD est la seule crypto du flux long, donc le seul setup qui peut
-    atteindre Kraken. Au journalier, 100 % de ces setups passent la porte de
-    coût (mesuré) — c'est ce qui rend Kraken viable."""
+def test_les_cryptos_du_flux_long_sont_en_journalier():
+    """BTC/USD et ETH/USD sont les deux cryptos exécutables sur Kraken
+    (`PF_XBTUSD`, `PF_ETHUSD`). Elles DOIVENT être en journalier : c'est le
+    seul horizon où 100 % des setups crypto passent la porte de coût
+    (SL médian 7,69 % contre un seuil de viabilité à 3,03 %). En 4h il n'en
+    passerait qu'un tiers, en 1h aucun."""
     cryptos = {p: c for p, c in shadow.SHADOW_CONFIG.items()
                if p.split("/")[0] in ("BTC", "ETH", "XBT")}
-    assert set(cryptos) == {"ETH/USD"}
-    assert normalize(cryptos["ETH/USD"]["tf"]) == "1d"
+    assert set(cryptos) == {"BTC/USD", "ETH/USD"}
+    for pair, cfg in cryptos.items():
+        assert normalize(cfg["tf"]) == "1d", f"{pair} n'est pas en journalier"
+
+
+def test_les_systemes_crypto_sont_long_only():
+    """`CORE_LONG_PATTERNS` ne contient que des motifs haussiers. Ces systèmes
+    ne produiront donc jamais de vente — utile à savoir avant de s'interroger
+    sur l'absence de shorts côté Kraken."""
+    for pair in ("BTC/USD", "ETH/USD"):
+        motifs = shadow.SHADOW_CONFIG[pair]["patterns"]
+        assert all(m.endswith("_up") or m.endswith("_bullish") for m in motifs), motifs
 
 
 # ── Le drapeau ────────────────────────────────────────────────────────

@@ -85,6 +85,31 @@ SHADOW_CONFIG: dict[str, dict[str, Any]] = {
         "system_id": "V2_CORE_LONG_ETHUSD_1D",
         "risk_pct": 0.0025,  # maxDD 3y très élevé 158%, sample 144 trades
     },
+    # ⚠️ BTC/USD Daily, ajouté le 2026-08-06 à la demande de Xavier.
+    #
+    # AUCUN backtest n'existe pour ce système — contrairement à XAU/XAG/ETH
+    # (exp #2/#3/#4/#34) dont les `risk_pct` sont tirés d'un maxDD mesuré.
+    # C'est un CHOIX PAR ANALOGIE, pas une validation, au même titre que les
+    # 4 actions US ajoutées la veille : l'analogue le plus proche est ETH/USD
+    # Daily — même classe d'actif, même horizon, même jeu de patterns.
+    #
+    # `risk_pct` reprend donc la valeur d'ETH, qui est déjà la plus prudente
+    # de toute la configuration. À RÉVISER dès que le shadow aura produit
+    # assez d'observations pour trancher.
+    #
+    # Pourquoi c'est utile malgré l'absence de backtest : `PF_XBTUSD` est dans
+    # la whitelist du bridge Kraken et BTC/USD y est `AUTO_EXEC` des deux
+    # côtés. C'était le seul couple crypto exécutable qui ne produisait aucun
+    # setup — l'univers Kraken se limitait à ETH.
+    #
+    # ⚠️ `CORE_LONG_PATTERNS` est LONG ONLY : ce système ne produira que des
+    # achats, quel que soit l'état d'admission du côté vente.
+    "BTC/USD": {
+        "tf": "1d",
+        "patterns": CORE_LONG_PATTERNS,
+        "system_id": "V2_CORE_LONG_BTCUSD_1D",
+        "risk_pct": 0.0025,  # ⚠️ par analogie avec ETH, NON mesuré
+    },
     "XLI": {
         "tf": "1d",
         "patterns": TIGHT_LONG_PATTERNS,
