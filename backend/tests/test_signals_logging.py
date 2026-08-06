@@ -175,13 +175,25 @@ def test_upsert_open_trade_computes_slippage_and_links_signal(
         ])
 
         # Fill 1.1002 = slippage defavorable de 2 pips pour un BUY.
+        #
+        # ⚠️ Forme corrigée le 2026-08-06. Ce test envoyait auparavant
+        # `entry=1.1000` (le prix planifié) — une charge utile que le bridge
+        # n'a JAMAIS produite : il écrit le prix OBTENU dans `entry` et
+        # n'émettait aucun `entry_requested`. Le test était donc vert pendant
+        # que la fonctionnalité ne mesurait rien en production
+        # (`slippage_pips` vide sur 1581/1581 trades réels).
+        #
+        # Leçon : un test qui fabrique lui-même la charge utile d'un système
+        # externe valide sa propre fiction. Reproduire ici la forme réelle.
         mt5_sync._upsert_open_trade(
             {
                 "ticket": 999,
                 "pair": "EUR/USD",
                 "direction": "buy",
-                "entry": 1.1000,
+                "entry": 1.1002,            # ce que le bridge écrit : le fill
+                "entry_requested": 1.1000,  # le prix demandé
                 "fill_price": 1.1002,
+                "fill_source": "result",
                 "sl": 1.0950,
                 "tp": 1.1050,
                 "lots": 0.10,

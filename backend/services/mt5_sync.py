@@ -139,14 +139,29 @@ def _upsert_open_trade(row: dict[str, Any], user: str) -> None:
         or row.get("open_price")
     )
 
+    # Référence du glissement : le prix DEMANDÉ, jamais `entry`.
+    #
+    # ⚠️ Le bridge écrit le prix OBTENU dans sa colonne `entry` (le planifié y
+    # était écrasé). Comparer `entry` au fill revient donc à comparer le fill à
+    # lui-même — c'est ce qui laissait `slippage_pips` vide sur 1581/1581
+    # trades avant le 2026-08-06. `entry_requested` porte le prix demandé.
+    planned_price = row.get("entry_requested")
+
+    # `requested` = le bridge n'a pas pu observer le fill et s'est replié sur
+    # le prix demandé. Le glissement vaudrait alors zéro PAR CONSTRUCTION.
+    # Mieux vaut ne rien mesurer que d'injecter de faux zéros qui tireraient la
+    # moyenne vers l'absence de coût. Absent (ancien bridge) ⇒ pas de
+    # `entry_requested` non plus, donc pas de calcul : rétrocompatible.
+    fill_source = row.get("fill_source")
+
     slippage_pips = None
-    if fill_price and entry_price:
+    if fill_price and planned_price and fill_source != "requested":
         pip = _pip_size(pair)
-        # Slippage signe : positif = en faveur du trade, négatif = défavorable.
+        # Slippage signé : positif = en faveur du trade, négatif = défavorable.
         if direction == "buy":
-            raw = entry_price - fill_price  # on a acheté plus bas = favorable
+            raw = planned_price - fill_price  # acheté plus bas = favorable
         else:
-            raw = fill_price - entry_price  # on a vendu plus haut = favorable
+            raw = fill_price - planned_price  # vendu plus haut = favorable
         if pip:
             slippage_pips = round(raw / pip, 1)
 

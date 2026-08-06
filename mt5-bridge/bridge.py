@@ -304,6 +304,20 @@ def _db_init() -> None:
             conn.execute("ALTER TABLE orders ADD COLUMN pnl REAL")
         if "confidence" not in cols:
             conn.execute("ALTER TABLE orders ADD COLUMN confidence REAL")
+        # Migration 2026-08-06 — mesure du coût d'exécution.
+        #
+        # ⚠️ La colonne `entry` contient le prix OBTENU (`result.price`), pas le
+        # prix demandé : le planifié était écrasé à l'écriture. Le backend
+        # comparait donc le fill à lui-même, ce qui explique `slippage_pips`
+        # vide sur 1581/1581 trades. `entry` reste inchangée par continuité —
+        # `personal_trades.entry_price` en dépend — et les deux colonnes
+        # ci-dessous apportent la moitié manquante de la comparaison.
+        if "entry_requested" not in cols:
+            conn.execute("ALTER TABLE orders ADD COLUMN entry_requested REAL")
+        if "fill_price" not in cols:
+            conn.execute("ALTER TABLE orders ADD COLUMN fill_price REAL")
+        if "fill_source" not in cols:
+            conn.execute("ALTER TABLE orders ADD COLUMN fill_source TEXT")
         conn.commit()
 
 
@@ -528,34 +542,20 @@ def _send_market_order(
         sl_applied = True
         tp_applied = True
 
+    # Prix RÉELLEMENT obtenu. Hissé hors de la branche `use_dist` le
+    # 2026-08-06 : cette valeur était calculée puis jetée, alors qu'elle est
+    # la seule mesure du coût d'exécution dont dispose le système (audit du
+    # 2026-08-06 : `slippage_pips` vide sur 1581/1581 trades réels).
+    #
+    # `None` si l'ordre n'a pas abouti — jamais 0.0, qui se confondrait avec
+    # un prix valide.
+    fill_price, fill_source = (
+        _resolve_fill_price(result, price) if ok else (None, None)
+    )
+
     if ok and use_dist:
-        # Pose SL/TP relatifs au fill price.
-        #
-        # Bug fix 2026-06-12 : certains brokers (observé sur IC Markets EU
-        # avec ETH/USD) renvoient result.price=0.0 même quand l'ordre est
-        # rempli avec succès. Le check `result.price > 0` filtrait ces cas
-        # et laissait la position SANS SL/TP — risque non borné.
-        #
-        # Fix robuste : 3 sources de fill_price en fallback :
-        #   1. result.price (cas nominal MT5)
-        #   2. positions_get(ticket).price_open (vraie source de vérité)
-        #   3. price envoyé dans la request (tick.ask/bid au moment de l'envoi)
-        fill_price = result.price if result.price > 0 else 0.0
-        if fill_price <= 0:
-            try:
-                positions = mt5.positions_get(ticket=result.order)
-                if positions and len(positions) > 0:
-                    fill_price = positions[0].price_open
-                    logger.info(
-                        f"[LIVE] result.price=0, fallback positions_get → {fill_price}"
-                    )
-            except Exception as _e:
-                logger.warning(f"[LIVE] positions_get fallback failed: {_e}")
-        if fill_price <= 0:
-            fill_price = price  # dernier fallback : tick price au moment de l'envoi
-            logger.warning(
-                f"[LIVE] all fallbacks failed, using tick price {fill_price} for SL/TP"
-            )
+        # Pose SL/TP relatifs au fill price — cf. `_resolve_fill_price` pour
+        # les 3 sources et le bug broker qui les rend nécessaires.
         sltp_result = _apply_sltp_from_fill(
             symbol=symbol,
             ticket=result.order,
@@ -587,7 +587,55 @@ def _send_market_order(
         "tp_applied": tp_applied,
         "sl_error": sl_error,
         "tp_error": tp_error,
+        # `price` ci-dessus est le brut MT5, qui vaut 0.0 chez certains
+        # brokers malgré un fill réussi. `fill_price` est la valeur résolue
+        # et c'est elle qu'il faut mesurer. `fill_source` dit d'où elle vient :
+        # sans lui, les replis « requested » se lisent comme un slippage nul
+        # et diluent la mesure.
+        "fill_price": fill_price,
+        "fill_source": fill_source,
     }
+
+
+def _resolve_fill_price(result, requested_price: float) -> tuple[float, str]:
+    """Prix réellement obtenu, avec 3 sources en repli. Retourne (prix, source).
+
+    Bug fix 2026-06-12 : certains brokers (observé sur IC Markets EU avec
+    ETH/USD) renvoient `result.price = 0.0` alors même que l'ordre est rempli.
+    S'en tenir à `result.price` laissait la position SANS SL/TP.
+
+    Sources, par ordre de fiabilité :
+      1. `result`    — `result.price`, le cas nominal MT5
+      2. `position`  — `positions_get(ticket).price_open`, la source de vérité
+      3. `requested` — le tick au moment de l'envoi, dernier recours
+
+    ⚠️ La source 3 n'est PAS une mesure du fill : elle vaut par construction le
+    prix demandé, donc un slippage de zéro. C'est le bon comportement pour
+    poser un SL, mais c'est un poison pour la statistique — d'où la source
+    retournée. Toute analyse de slippage doit écarter `requested`, sinon elle
+    mélange « aucun glissement » et « glissement inconnu ».
+    """
+    fill = result.price if result.price > 0 else 0.0
+    if fill > 0:
+        return fill, "result"
+
+    try:
+        positions = mt5.positions_get(ticket=result.order)
+        if positions and len(positions) > 0:
+            fill = positions[0].price_open
+            if fill > 0:
+                logger.info(
+                    f"[LIVE] result.price=0, fallback positions_get → {fill}"
+                )
+                return fill, "position"
+    except Exception as _e:
+        logger.warning(f"[LIVE] positions_get fallback failed: {_e}")
+
+    logger.warning(
+        f"[LIVE] all fallbacks failed, using tick price {requested_price} "
+        f"(slippage non mesurable pour cet ordre)"
+    )
+    return requested_price, "requested"
 
 
 def _clamp_stops(symbol: str, is_buy: bool, new_sl: float, new_tp: float) -> tuple[float, float]:
@@ -1593,6 +1641,14 @@ def _handle_live_order(*, data, pair, mt5_symbol, direction, lots, entry, sl, tp
             risk_money=data.get("risk_money"), confidence=data.get("confidence"),
             ticket=result["ticket"], retcode=result["retcode"],
             message=result["message"], client_comment=client_comment,
+            # Mesure du coût d'exécution (2026-08-06). `entry` ci-dessus reste
+            # le prix obtenu pour ne pas changer la sémantique consommée par
+            # `personal_trades.entry_price` ; `entry_requested` est le prix que
+            # le backend avait demandé, seule référence permettant de calculer
+            # un glissement.
+            entry_requested=entry,
+            fill_price=result.get("fill_price"),
+            fill_source=result.get("fill_source"),
         )
         return jsonify({
             "ok": True, "mode": "live",
@@ -1615,6 +1671,12 @@ def _handle_live_order(*, data, pair, mt5_symbol, direction, lots, entry, sl, tp
             "tp_applied": result.get("tp_applied"),
             "sl_error": result.get("sl_error"),
             "tp_error": result.get("tp_error"),
+            # `price` ci-dessus est le brut MT5 (0.0 chez certains brokers
+            # malgré un fill réussi) ; `fill_price` est la valeur résolue, et
+            # `fill_source` indique si elle est mesurée ou repliée sur le prix
+            # demandé — auquel cas le glissement n'est pas observable.
+            "fill_price": result.get("fill_price"),
+            "fill_source": result.get("fill_source"),
             # Sucre syntaxique : True seulement si le SL est confirmé posé.
             # C'est LE champ à checker pour savoir si le risque est borné.
             "protected": result.get("sl_applied") is True,
