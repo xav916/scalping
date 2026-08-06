@@ -89,6 +89,76 @@ def _parse_symbol_map(raw: str) -> dict[str, str]:
 
 MT5_SYMBOL_MAP = _parse_symbol_map(os.getenv("MT5_SYMBOL_MAP", ""))
 
+# ─── Garde-fou SL/TP sur position déjà ouverte ───────────────────────
+# Route dédiée (/position/sltp, cf. plus bas) + garde-fou cron côté EC2
+# (scripts/check-live-positions-sltp.sh) qui pose un SL sur une position
+# LIVE découverte sans stop. Désactivé par défaut : poser un ordre
+# automatique sur de l'argent réel est un changement de comportement qui
+# doit s'allumer sciemment.
+#
+# Incident déclencheur (2026-08-05) : position XAU/USD ouverte à 02:09 UTC
+# sans SL ni TP (échec silencieux de _apply_sltp_from_fill, cf. plus bas),
+# découverte 7h après à -51€. Elle est restée volontairement sans stop sur
+# décision assumée du propriétaire — d'où l'exigence absolue ci-dessous :
+# ce garde-fou ne doit JAMAIS toucher une position déjà ouverte au moment
+# de sa mise en service.
+SLTP_GUARD_ENABLED = os.getenv("SLTP_GUARD_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+# Horodatage ISO8601 UTC à partir duquel une position devient éligible au
+# garde-fou (ex: "2026-08-06T12:00:00+00:00"). Fixé UNE FOIS, à la main, au
+# moment de l'activation — jamais recalculé automatiquement au démarrage
+# (sinon une position ouverte avant un simple redémarrage du bridge
+# deviendrait éligible par erreur). Une position ouverte à cet instant ou
+# avant reste gelée pour toujours. Vide = on ne sait pas dater l'activation
+# ⇒ fail-closed, aucune position n'est éligible (cf. `_sltp_guard_eligible`).
+SLTP_GUARD_ACTIVATED_AT = os.getenv("SLTP_GUARD_ACTIVATED_AT", "").strip()
+# Gel explicite par ticket, en plus de l'horodatage — ceinture et bretelles
+# pour une position nommément identifiée (ex: la position XAU/USD de
+# l'incident, dont le propriétaire a refusé explicitement qu'un stop y soit
+# posé). Format : "123456,789012".
+SLTP_GUARD_FROZEN_TICKETS = frozenset(
+    int(t) for t in os.getenv("SLTP_GUARD_FROZEN_TICKETS", "").split(",")
+    if t.strip().isdigit()
+)
+
+
+def _parse_iso_to_epoch(raw: str) -> int | None:
+    """Parse un horodatage ISO8601 en epoch UTC. None si vide ou invalide —
+    jamais une valeur par défaut plausible (cf. SLTP_GUARD_ACTIVATED_AT)."""
+    if not raw:
+        return None
+    try:
+        dt = datetime.fromisoformat(raw)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return int(dt.timestamp())
+    except ValueError:
+        return None
+
+
+_SLTP_GUARD_ACTIVATED_AT_EPOCH = _parse_iso_to_epoch(SLTP_GUARD_ACTIVATED_AT)
+
+
+def _sltp_guard_eligible(ticket: int, position_open_epoch: int) -> tuple[bool, str]:
+    """Décide si une position peut recevoir un stop automatique du garde-fou.
+
+    Exclusion à double verrou, chacun suffisant seul pour bloquer :
+    1. Liste explicite de tickets gelés (SLTP_GUARD_FROZEN_TICKETS) — gèle
+       une position précise pour toujours, quelle que soit sa date d'ouverture.
+    2. Horodatage d'activation (SLTP_GUARD_ACTIVATED_AT) — une position
+       ouverte AVANT (ou au même instant que) cet horodatage n'est JAMAIS
+       éligible, même après un redémarrage du bridge. Non défini = on ne
+       sait pas si la position est antérieure à l'activation ⇒ fail-closed,
+       rien n'est éligible plutôt que de deviner.
+    """
+    if ticket in SLTP_GUARD_FROZEN_TICKETS:
+        return False, "ticket explicitement gelé (SLTP_GUARD_FROZEN_TICKETS)"
+    if _SLTP_GUARD_ACTIVATED_AT_EPOCH is None:
+        return False, "SLTP_GUARD_ACTIVATED_AT non défini — impossible de dater l'activation"
+    if position_open_epoch <= _SLTP_GUARD_ACTIVATED_AT_EPOCH:
+        return False, "position ouverte avant (ou à) l'activation du garde-fou"
+    return True, "OK"
+
+
 # Génère une clé si absente (affichée au démarrage pour copie dans le client)
 if not BRIDGE_API_KEY:
     BRIDGE_API_KEY = secrets.token_urlsafe(24)
@@ -401,7 +471,9 @@ def _send_market_order(
     symbol: str, direction: str, lots: float, sl: float, tp: float, comment: str,
     sl_dist: float = 0.0, tp_dist: float = 0.0,
 ) -> dict:
-    """Envoie un ordre MARKET à MT5. Retourne un dict {ok, ticket, retcode, message}.
+    """Envoie un ordre MARKET à MT5. Retourne un dict
+    {ok, ticket, retcode, message, price, volume,
+    sl_applied, tp_applied, sl_error, tp_error}.
 
     Si ``sl_dist`` et ``tp_dist`` sont > 0 (envoyés par le backend depuis
     2026-05-18) : market order **sans** SL/TP puis modification de la
@@ -437,6 +509,25 @@ def _send_market_order(
         return {"ok": False, "message": f"order_send returned None: {mt5.last_error()}"}
     ok = result.retcode == mt5.TRADE_RETCODE_DONE
 
+    # État de protection SL/TP — cf. `_apply_sltp_from_fill` et le endpoint
+    # /order pour la sémantique complète. None = jamais tenté par CE chemin
+    # (paper, échec du fill, etc.) ; renseigné juste après si use_dist.
+    sl_applied = None
+    tp_applied = None
+    sl_error = None
+    tp_error = None
+
+    if ok and not use_dist:
+        # Legacy : sl/tp envoyés DANS la requête TRADE_ACTION_DEAL initiale.
+        # MT5 accepte ou rejette le TOUT en une seule transaction atomique —
+        # c'est justement pour contourner ce couplage (rejets en cascade sous
+        # slippage) que le chemin use_dist existe (cf. commentaire ci-dessus,
+        # incident 2026-05-18). Un ok=True ici signifie donc que sl/tp ont
+        # été acceptés avec l'ordre : pas de second call, pas de fenêtre où
+        # le fill réussit sans ses stops.
+        sl_applied = True
+        tp_applied = True
+
     if ok and use_dist:
         # Pose SL/TP relatifs au fill price.
         #
@@ -465,7 +556,7 @@ def _send_market_order(
             logger.warning(
                 f"[LIVE] all fallbacks failed, using tick price {fill_price} for SL/TP"
             )
-        _apply_sltp_from_fill(
+        sltp_result = _apply_sltp_from_fill(
             symbol=symbol,
             ticket=result.order,
             is_buy=(direction == "buy"),
@@ -473,6 +564,16 @@ def _send_market_order(
             sl_dist=sl_dist,
             tp_dist=tp_dist,
         )
+        # TRADE_ACTION_SLTP pose SL et TP en UN seul appel MT5 atomique : les
+        # deux réussissent ou échouent ensemble, d'où sl_applied == tp_applied
+        # ici (contrairement à Kraken où SL et TP sont deux ordres distincts
+        # qui peuvent échouer indépendamment — cf. sl_order_id/tp_order_id
+        # dans kraken-futures-bridge/bridge.py).
+        sl_applied = sltp_result["ok"]
+        tp_applied = sltp_result["ok"]
+        if sltp_result["ok"] is not True:
+            sl_error = sltp_result.get("error")
+            tp_error = sltp_result.get("error")
 
     return {
         "ok": ok,
@@ -481,72 +582,99 @@ def _send_market_order(
         "message": result.comment,
         "price": result.price,
         "volume": result.volume,
+        # Champs additifs (2026-08-06) — cf. `/order` pour la sémantique.
+        "sl_applied": sl_applied,
+        "tp_applied": tp_applied,
+        "sl_error": sl_error,
+        "tp_error": tp_error,
     }
 
 
-def _apply_sltp_from_fill(*, symbol: str, ticket: int, is_buy: bool, fill: float,
-                          sl_dist: float, tp_dist: float) -> None:
-    """Pose SL/TP relatifs au fill price via TRADE_ACTION_SLTP.
+def _clamp_stops(symbol: str, is_buy: bool, new_sl: float, new_tp: float) -> tuple[float, float]:
+    """Repousse SL/TP hors de la "forbidden zone" du broker autour du prix
+    courant (`trade_stops_level` points), pour éviter un retcode 10016
+    "Invalid stops" plutôt que de renoncer à poser le stop.
 
-    Préserve le R:R du backend (sl_dist / tp_dist appliqués depuis fill)
-    quand c'est possible. Si l'un tombe dans la "forbidden zone" du broker
-    (`trade_stops_level` points autour du prix courant), on clamp pour
-    sortir de la zone interdite plutôt que de skipper.
+    Fix 2026-06-14 incident : retcode 10016 observé sur IC Markets EU
+    ETH/USD weekend. Avant ce fix, le SL/TP n'était jamais posé en cas de
+    stops_level élevé, laissant la position non protégée.
 
-    Fix 2026-06-14 incident : retcode 10016 "Invalid stops" observé sur
-    IC Markets EU ETH/USD weekend. Avant ce fix, le SL/TP n'était jamais
-    posé en cas de stops_level élevé, laissant la position non protégée.
+    Extrait de `_apply_sltp_from_fill` (2026-08-06) pour être réutilisé par
+    la route `/position/sltp` (garde-fou sur position déjà ouverte) sans
+    dupliquer ce calcul.
 
-    No-op si dist invalides. Best-effort : log warning si échec mais ne
-    raise pas — l'ordre principal est déjà rempli.
+    `new_tp == 0` signifie "pas de take-profit" et n'est JAMAIS transformé
+    en une valeur inventée — seul un TP non nul est repoussé hors zone
+    interdite. Idem pour `new_sl == 0` par symétrie/robustesse, même si les
+    deux appelants actuels fournissent toujours un SL non nul.
+
+    Best-effort : si les specs symbole ou le tick sont indisponibles,
+    retourne sl/tp inchangés (rien à clamper sans référence de prix).
     """
-    if fill <= 0 or sl_dist <= 0 or tp_dist <= 0:
-        return
     info = mt5.symbol_info(symbol)
     if not info:
-        logger.warning(f"[SLTP] symbol_info None pour {symbol}, abort")
-        return
-    digits = info.digits
+        return new_sl, new_tp
     point = info.point
-    # Base : SL/TP relatifs au fill (préserve le R:R souhaité par le backend)
-    new_sl = fill + sl_dist if not is_buy else fill - sl_dist
-    new_tp = fill - tp_dist if not is_buy else fill + tp_dist
-    # Clamp anti-Invalid-stops : si l'un tombe dans la forbidden zone du
-    # broker (stops_level points autour du prix courant), on le pousse à la
-    # limite avec un buffer 20% pour absorber le slippage marché entre
-    # calcul et send (~1-2 ticks).
     stops_lvl = getattr(info, "trade_stops_level", 0) or 0
     tick = mt5.symbol_info_tick(symbol)
-    if tick and tick.bid > 0 and tick.ask > 0:
-        # Buffer mini = max(stops_level × 1.2, 5 ticks). Le `5 ticks` est
-        # crucial pour les brokers qui retournent stops_level=0 (observé
-        # 2026-06-14 sur Pepperstone Demo ETHUSD) : sans floor minimum, le
-        # SL d'un SELL pouvait être posé SOUS l'ask courant, ce que MT5
-        # rejette avec retcode=10016 puisque l'ask est le prix de clôture
-        # d'un SELL (le SL serait déjà touché).
-        min_dist = max(stops_lvl * point * 1.2, point * 5)
-        if is_buy:
-            # BUY position : SL closes via SELL (price=bid). Doit être
-            # bid - min_dist au plus haut (sinon "trop près").
+    if not (tick and tick.bid > 0 and tick.ask > 0):
+        return new_sl, new_tp
+    # Buffer mini = max(stops_level × 1.2, 5 ticks). Le `5 ticks` est
+    # crucial pour les brokers qui retournent stops_level=0 (observé
+    # 2026-06-14 sur Pepperstone Demo ETHUSD) : sans floor minimum, le
+    # SL d'un SELL pouvait être posé SOUS l'ask courant, ce que MT5
+    # rejette avec retcode=10016 puisque l'ask est le prix de clôture
+    # d'un SELL (le SL serait déjà touché).
+    min_dist = max(stops_lvl * point * 1.2, point * 5)
+    if is_buy:
+        # BUY position : SL closes via SELL (price=bid). Doit être
+        # bid - min_dist au plus haut (sinon "trop près").
+        if new_sl > 0:
             max_sl = tick.bid - min_dist
             if new_sl > max_sl:
                 new_sl = max_sl
-            # TP closes via SELL : doit être bid + min_dist au plus bas.
+        # TP closes via SELL : doit être bid + min_dist au plus bas.
+        if new_tp > 0:
             min_tp = tick.bid + min_dist
             if new_tp < min_tp:
                 new_tp = min_tp
-        else:
-            # SELL position : SL closes via BUY (price=ask). Doit être
-            # ask + min_dist au plus bas.
+    else:
+        # SELL position : SL closes via BUY (price=ask). Doit être
+        # ask + min_dist au plus bas.
+        if new_sl > 0:
             min_sl = tick.ask + min_dist
             if new_sl < min_sl:
                 new_sl = min_sl
-            # TP closes via BUY : doit être ask - min_dist au plus haut.
+        # TP closes via BUY : doit être ask - min_dist au plus haut.
+        if new_tp > 0:
             max_tp = tick.ask - min_dist
             if new_tp > max_tp:
                 new_tp = max_tp
-    new_sl = round(new_sl, digits)
-    new_tp = round(new_tp, digits)
+    return new_sl, new_tp
+
+
+def _apply_stops(*, symbol: str, ticket: int, new_sl: float, new_tp: float) -> dict:
+    """Envoie TRADE_ACTION_SLTP pour poser sl/tp (déjà calculés et clampés
+    par l'appelant — cette fonction ne décide d'aucune valeur elle-même) sur
+    une position existante.
+
+    Retourne un dict structuré ``{ok, sl, tp, retcode, error}`` :
+    - ``ok=True``  : MT5 confirme sl/tp posés (retcode DONE).
+    - ``ok=False`` : MT5 a répondu mais a rejeté la modification (retcode
+      != DONE) — ``error``/``retcode`` portent le détail.
+    - ``ok=None``  : ``order_send()`` a retourné None (pas de réponse MT5).
+      L'état réel de la position est alors INCONNU — ni protégée ni nue de
+      façon certaine — d'où None plutôt qu'une supposition dans un sens ou
+      l'autre (``mt5.last_error()`` dans ``error``).
+
+    Réutilisée par `_apply_sltp_from_fill` (pose juste après le fill d'un
+    ordre) et par la route `/position/sltp` (garde-fou sur position déjà
+    ouverte) : même mécanique TRADE_ACTION_SLTP, même forme de résultat.
+
+    Best-effort : ne raise jamais, une exception MT5 imprévue remonte à
+    l'appelant qui doit l'attraper (aucun try/except ici pour ne pas masquer
+    une erreur de programmation dans les deux seuls call-sites internes).
+    """
     req = {
         "action": mt5.TRADE_ACTION_SLTP,
         "position": ticket,
@@ -556,22 +684,73 @@ def _apply_sltp_from_fill(*, symbol: str, ticket: int, is_buy: bool, fill: float
     }
     r = mt5.order_send(req)
     if r is None:
-        logger.warning(
-            f"[SLTP] modify returned None ticket={ticket} err={mt5.last_error()}"
-        )
-        return
+        return {
+            "ok": None, "sl": new_sl, "tp": new_tp, "retcode": None,
+            "error": f"order_send returned None: {mt5.last_error()}",
+        }
     if r.retcode != mt5.TRADE_RETCODE_DONE:
-        logger.warning(
-            f"[SLTP] modify retcode={r.retcode} ticket={ticket} "
-            f"sl={new_sl} tp={new_tp} msg={r.comment} "
-            f"stops_lvl={stops_lvl} bid={getattr(tick, 'bid', '?')} "
-            f"ask={getattr(tick, 'ask', '?')}"
+        return {
+            "ok": False, "sl": new_sl, "tp": new_tp, "retcode": r.retcode,
+            "error": r.comment,
+        }
+    return {"ok": True, "sl": new_sl, "tp": new_tp, "retcode": r.retcode, "error": None}
+
+
+def _apply_sltp_from_fill(*, symbol: str, ticket: int, is_buy: bool, fill: float,
+                          sl_dist: float, tp_dist: float) -> dict:
+    """Pose SL/TP relatifs au fill price via TRADE_ACTION_SLTP.
+
+    Préserve le R:R du backend (sl_dist / tp_dist appliqués depuis fill)
+    quand c'est possible. Le clamp anti-Invalid-stops est délégué à
+    `_clamp_stops` (extrait 2026-08-06, cf. sa docstring).
+
+    Retourne un dict structuré (même forme que `_apply_stops`, cf. sa
+    docstring) — **avant le 2026-08-06, cette fonction ne retournait rien**
+    et son appelant (`_send_market_order`) ignorait totalement le résultat :
+    un échec de pose SL/TP finissait en warning dans un log local du VPS,
+    et l'appelant HTTP recevait `{"ok": true}` — identique à une position
+    protégée. C'est la cause structurelle de l'incident 2026-08-05 (position
+    XAU/USD ouverte sans SL/TP, découverte 7h après). Le retour explicite
+    permet à `_send_market_order` puis à `/order` de dire la vérité.
+
+    Best-effort : ne raise jamais. `ok=False` avec `error` renseigné pour
+    tout cas où rien n'a été tenté (paramètres invalides, symbol_info
+    indisponible) — ce n'est PAS un cas "inconnu" (`ok=None`) puisqu'on SAIT
+    qu'aucun ordre n'est parti. `ok=None` est réservé au seul cas où MT5 ne
+    répond pas à la tentative (cf. `_apply_stops`).
+    """
+    if fill <= 0 or sl_dist <= 0 or tp_dist <= 0:
+        msg = "paramètres invalides (fill/sl_dist/tp_dist doivent être > 0)"
+        logger.warning(f"[SLTP] {msg} ticket={ticket} fill={fill} sl_dist={sl_dist} tp_dist={tp_dist}")
+        return {"ok": False, "sl": None, "tp": None, "retcode": None, "error": msg}
+    info = mt5.symbol_info(symbol)
+    if not info:
+        msg = f"symbol_info None pour {symbol}"
+        logger.warning(f"[SLTP] {msg}, abort ticket={ticket}")
+        return {"ok": False, "sl": None, "tp": None, "retcode": None, "error": msg}
+    digits = info.digits
+    # Base : SL/TP relatifs au fill (préserve le R:R souhaité par le backend)
+    new_sl = fill + sl_dist if not is_buy else fill - sl_dist
+    new_tp = fill - tp_dist if not is_buy else fill + tp_dist
+    new_sl, new_tp = _clamp_stops(symbol, is_buy, new_sl, new_tp)
+    new_sl = round(new_sl, digits)
+    new_tp = round(new_tp, digits)
+
+    result = _apply_stops(symbol=symbol, ticket=ticket, new_sl=new_sl, new_tp=new_tp)
+    if result["ok"] is True:
+        logger.info(
+            f"[SLTP] ticket={ticket} SL/TP posé fill={fill} sl={new_sl} tp={new_tp}"
         )
-        return
-    logger.info(
-        f"[SLTP] ticket={ticket} SL/TP posé fill={fill} sl={new_sl} tp={new_tp} "
-        f"(stops_lvl={stops_lvl} bid={getattr(tick, 'bid', '?')} ask={getattr(tick, 'ask', '?')})"
-    )
+    elif result["ok"] is False:
+        logger.warning(
+            f"[SLTP] modify retcode={result['retcode']} ticket={ticket} "
+            f"sl={new_sl} tp={new_tp} msg={result['error']}"
+        )
+    else:
+        logger.warning(
+            f"[SLTP] modify returned None ticket={ticket} err={result['error']}"
+        )
+    return result
 
 
 def _close_position(p) -> dict:
@@ -1225,6 +1404,15 @@ def place_order():
 
     Si les deux sont présents, risk_money gagne (calcul précis).
     Si aucun n'est présent, erreur 400.
+
+    Réponse LIVE réussie (champs 2026-08-06 en plus des champs historiques
+    ok/mode/ticket/price/volume/sizing_mode/tp2_tracked, jamais retirés ni
+    renommés — le backend en prod les consomme) :
+        "sl_applied": bool | None,  # True = SL confirmé posé sur MT5
+        "tp_applied": bool | None,
+        "sl_error": str | None,
+        "tp_error": str | None,
+        "protected": bool,          # True ssi sl_applied est True
     """
     data = request.get_json(silent=True) or {}
 
@@ -1412,6 +1600,24 @@ def _handle_live_order(*, data, pair, mt5_symbol, direction, lots, entry, sl, tp
             "volume": result["volume"],
             "sizing_mode": sizing_mode,
             "tp2_tracked": tp2_float is not None,
+            # ── Champs additifs (2026-08-06) — ne PAS retirer ni renommer
+            # les champs ci-dessus, le backend en prod les consomme déjà
+            # (cf. backend/services/mt5_bridge.py). Ceux-ci permettent à
+            # l'appelant de distinguer une position PROTÉGÉE d'une position
+            # NUE sans lire les logs du VPS (incident 2026-08-05 : position
+            # XAU/USD ouverte sans SL/TP, invisible dans la réponse HTTP).
+            #
+            # sl_applied / tp_applied : True = confirmé posé, False =
+            # tentative confirmée en échec, None = jamais tenté (paper
+            # n'atteint pas ce code) ou MT5 n'a pas répondu à la tentative
+            # (état réellement inconnu — cf. `_apply_stops`).
+            "sl_applied": result.get("sl_applied"),
+            "tp_applied": result.get("tp_applied"),
+            "sl_error": result.get("sl_error"),
+            "tp_error": result.get("tp_error"),
+            # Sucre syntaxique : True seulement si le SL est confirmé posé.
+            # C'est LE champ à checker pour savoir si le risque est borné.
+            "protected": result.get("sl_applied") is True,
         })
     else:
         logger.error(
@@ -1430,6 +1636,126 @@ def _handle_live_order(*, data, pair, mt5_symbol, direction, lots, entry, sl, tp
             "retcode": result.get("retcode"),
             "message": result.get("message"),
         }), 500
+
+
+@app.route("/position/sltp", methods=["POST"])
+@require_api_key
+def set_position_sltp():
+    """Pose un SL (garde-fou) sur une position DÉJÀ OUVERTE et actuellement nue.
+
+    Payload JSON : { "ticket": int, "sl_dist": float }
+    ``sl_dist`` est une distance en unités de prix, appliquée depuis le prix
+    d'ouverture de la position (``price_open``) — pas depuis le prix courant,
+    pour que le stop reflète un risque fixé une fois pour toutes, indépendant
+    du moment où le garde-fou tourne.
+
+    Le TP existant n'est JAMAIS modifié : la valeur actuelle de la position
+    (``p.tp``, 0 si aucun) est repassée telle quelle dans la requête
+    TRADE_ACTION_SLTP — MT5 exige les deux champs dans le même appel, mais
+    "repasser tel quel" n'est pas "inventer une valeur".
+
+    Écrite pour `scripts/check-live-positions-sltp.sh` (garde-fou cron EC2)
+    suite à l'incident 2026-08-05 (position XAU/USD ouverte sans SL/TP,
+    découverte 7h après). Avant ce endpoint, le bridge n'exposait AUCUNE
+    route de modification SL/TP — un garde-fou pouvait détecter une position
+    nue mais jamais agir.
+
+    ⚠️ Trois verrous, chacun suffisant seul pour refuser d'agir :
+    1. ``SLTP_GUARD_ENABLED=false`` (défaut) → route entièrement désactivée.
+    2. Ticket dans ``SLTP_GUARD_FROZEN_TICKETS`` → gel explicite permanent.
+    3. Position ouverte avant ``SLTP_GUARD_ACTIVATED_AT`` (ou variable non
+       définie) → jamais éligible. C'est ce verrou qui garantit qu'une
+       position déjà ouverte au moment de la mise en service du garde-fou
+       n'est JAMAIS touchée, quelle que soit la configuration ultérieure.
+
+    Une position déjà protégée (``p.sl != 0``) n'est PAS modifiée : la route
+    répond ``{"ok": true, "already_protected": true}`` sans envoyer d'ordre.
+
+    Best-effort : ne raise jamais, un échec MT5 est rapporté dans la
+    réponse JSON (jamais propagé en exception HTTP 500 sauf cas imprévu).
+    """
+    if not SLTP_GUARD_ENABLED:
+        return jsonify({
+            "ok": False, "error": "SLTP_GUARD_ENABLED=false — route désactivée",
+        }), 403
+
+    data = request.get_json(silent=True) or {}
+    try:
+        ticket = int(data.get("ticket"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "ticket requis (int)"}), 400
+    try:
+        sl_dist = float(data.get("sl_dist"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "sl_dist requis (float > 0)"}), 400
+    if sl_dist <= 0:
+        return jsonify({"ok": False, "error": "sl_dist doit être > 0"}), 400
+
+    if not ensure_mt5_connected():
+        return jsonify({"ok": False, "error": "MT5 not connected"}), 503
+
+    positions = mt5.positions_get(ticket=ticket)
+    if not positions:
+        return jsonify({
+            "ok": False,
+            "error": f"position #{ticket} introuvable (fermée ou inexistante)",
+        }), 404
+    p = positions[0]
+
+    eligible, reason = _sltp_guard_eligible(ticket, int(p.time))
+    if not eligible:
+        logger.warning(f"[SLTP GUARD] refus ticket={ticket} — {reason}")
+        return jsonify({
+            "ok": False, "excluded": True, "reason": reason, "ticket": ticket,
+        }), 403
+
+    if p.sl and float(p.sl) != 0.0:
+        logger.info(f"[SLTP GUARD] ticket={ticket} déjà protégé (sl={p.sl}), no-op")
+        return jsonify({
+            "ok": True, "already_protected": True, "ticket": ticket,
+            "sl": p.sl, "tp": p.tp,
+        })
+
+    is_buy = p.type == mt5.POSITION_TYPE_BUY
+    new_sl = p.price_open - sl_dist if is_buy else p.price_open + sl_dist
+    new_tp = p.tp or 0.0  # préserve le TP existant tel quel (0 = pas de TP)
+
+    info = mt5.symbol_info(p.symbol)
+    digits = info.digits if info else 5
+    new_sl, new_tp = _clamp_stops(p.symbol, is_buy, new_sl, new_tp)
+    new_sl = round(new_sl, digits)
+    new_tp = round(new_tp, digits)
+
+    try:
+        result = _apply_stops(symbol=p.symbol, ticket=ticket, new_sl=new_sl, new_tp=new_tp)
+    except Exception as e:
+        logger.exception(f"[SLTP GUARD] exception ticket={ticket}: {e}")
+        return jsonify({
+            "ok": False, "error": f"{type(e).__name__}: {e}", "ticket": ticket,
+        }), 500
+
+    _db_log_order(
+        mode="live",
+        status="filled" if result["ok"] else "rejected",
+        symbol=p.symbol, ticket=ticket, sl=new_sl, tp=new_tp,
+        retcode=result.get("retcode"),
+        message=result.get("error") or "sltp-guard",
+        client_comment="sltp-guard",
+    )
+    if result["ok"] is True:
+        logger.warning(f"[SLTP GUARD] ✓ ticket={ticket} {p.symbol} SL posé à {new_sl}")
+    else:
+        logger.warning(f"[SLTP GUARD] échec ticket={ticket} {p.symbol}: {result.get('error')}")
+
+    return jsonify({
+        "ok": result["ok"],
+        "ticket": ticket,
+        "symbol": p.symbol,
+        "sl": result["sl"],
+        "tp": result["tp"],
+        "retcode": result.get("retcode"),
+        "error": result.get("error"),
+    })
 
 
 @app.route("/audit", methods=["GET"])
@@ -1542,6 +1868,11 @@ def main():
     logger.info(f"  DEDUP_WINDOW_SEC    : {DEDUP_WINDOW_SEC}")
     logger.info(f"  TRADING_HOURS_UTC   : {TRADING_HOURS_UTC or '(toujours)'}")
     logger.info(f"  Audit DB            : {_DB_PATH}")
+    logger.info(
+        f"  SLTP_GUARD_ENABLED  : {SLTP_GUARD_ENABLED} "
+        f"(activated_at={SLTP_GUARD_ACTIVATED_AT or '(non défini — fail-closed)'}, "
+        f"frozen_tickets={sorted(SLTP_GUARD_FROZEN_TICKETS) or '(aucun)'})"
+    )
     if _KEY_AUTOGENERATED:
         logger.warning("=" * 60)
         logger.warning(f"BRIDGE_API_KEY généré automatiquement :")

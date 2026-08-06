@@ -1002,6 +1002,31 @@ async def _push_to_destination(setup, dest) -> None:
                         )
                     except Exception as _e:
                         logger.warning(f"send_trade_opened hook error: {_e}")
+                    # Alerte immédiate si le bridge dit explicitement que la
+                    # position n'est PAS protégée (incident 2026-08-05 :
+                    # position XAU/USD ouverte sans SL/TP, découverte 7h
+                    # après par un cron qui ne pollait qu'à l'heure). `protected`
+                    # n'existe que depuis le fix bridge-side du 2026-08-06 ;
+                    # son absence (bridge pas encore mis à jour) ne déclenche
+                    # rien — on ne peut pas distinguer "non protégé" de
+                    # "bridge pas encore patché" sans le champ, donc on ne
+                    # suppose rien dans ce cas (`.get(...) is False`, pas
+                    # `not .get(...)`).
+                    if data.get("protected") is False:
+                        try:
+                            from backend.services import telegram_service as _tg
+                            await _tg.send_infra_text(
+                                "🚨 <b>Position LIVE ouverte SANS stop</b>\n"
+                                f"Destination : <code>{dest.destination_id}</code>\n"
+                                f"Pair : <code>{setup.pair}</code> {direction.upper()}\n"
+                                f"Ticket : <code>{data.get('ticket')}</code>\n"
+                                f"SL error : <code>{data.get('sl_error') or '?'}</code>\n"
+                                "\n👉 Vérifier immédiatement côté MT5 — la position "
+                                "n'a pas de stop-loss confirmé.",
+                                parse_mode="HTML",
+                            )
+                        except Exception as _e:
+                            logger.warning(f"protected=False alert failed: {_e}")
                     # Alerte infra one-shot : premier push Live (admin_live)
                     # réussi depuis l'activation 2026-06-12. Marker fichier sur
                     # disque pour idempotence à travers les restarts container.

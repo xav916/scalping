@@ -153,6 +153,31 @@ MT5_BRIDGE_ENABLED = os.getenv("MT5_BRIDGE_ENABLED", "false").lower() in ("1", "
 MT5_BRIDGE_LIVE_ENABLED = os.getenv("MT5_BRIDGE_LIVE_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 MT5_BRIDGE_LIVE_URL = os.getenv("MT5_BRIDGE_LIVE_URL", "")
 MT5_BRIDGE_LIVE_API_KEY = os.getenv("MT5_BRIDGE_LIVE_API_KEY", "")
+
+# ─── Garde-fou SL/TP sur position déjà ouverte (2026-08-06) ──────────
+# Détecte les positions LIVE sans SL sur les bridges MT5 (legacy Demo +
+# live IC Markets) et, si activé, demande au bridge de leur poser un stop
+# d'urgence via /position/sltp. Cf. backend/services/sltp_guard_check.py.
+#
+# Driver : incident 2026-08-05, position XAU/USD ouverte sans SL/TP à
+# 02:09 UTC, découverte 7h après à -51€. La cause (échec silencieux de la
+# pose SL/TP côté bridge) est corrigée en amont (mt5-bridge/bridge.py,
+# _apply_sltp_from_fill retourne désormais un résultat exploitable) ; ce
+# garde-fou reste le filet de sécurité si un mode d'échec similaire
+# réapparaît malgré tout.
+#
+# Désactivé par défaut, et volontairement DOUBLÉ avec SLTP_GUARD_ENABLED
+# côté bridge (mt5-bridge/.env) : les deux drapeaux doivent être vrais pour
+# qu'un ordre parte. Si un seul est vrai, ce module détecte et alerte mais
+# n'agit jamais — comportement historique du garde-fou avant ce chantier.
+SLTP_GUARD_AUTO_PROTECT_ENABLED = os.getenv(
+    "SLTP_GUARD_AUTO_PROTECT_ENABLED", "false"
+).lower() in ("1", "true", "yes", "on")
+# Distance du stop d'urgence, en % du prix d'entrée (price_open) de la
+# position nue. Volontairement large : ce n'est pas un stop de scalping
+# calibré par le scoring, c'est un filet qui borne une perte qui serait
+# sinon illimitée.
+SLTP_GUARD_EMERGENCY_SL_PCT = float(os.getenv("SLTP_GUARD_EMERGENCY_SL_PCT", "1.0"))
 # Le min_confidence Live peut être plus strict que Demo pour limiter le risque
 # capital réel (default = même valeur que Demo = MT5_BRIDGE_MIN_CONFIDENCE).
 MT5_BRIDGE_LIVE_MIN_CONFIDENCE = float(os.getenv("MT5_BRIDGE_LIVE_MIN_CONFIDENCE", os.getenv("MT5_BRIDGE_MIN_CONFIDENCE", "90")))
