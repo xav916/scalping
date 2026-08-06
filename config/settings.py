@@ -472,8 +472,8 @@ MIRROR_DEMO_TO_LIVE_ENABLED = os.getenv(
     "MIRROR_DEMO_TO_LIVE_ENABLED", "true"
 ).strip().lower() in ("1", "true", "yes", "on")
 
-# Nombre de pushes `admin_legacy` pendant lesquels le filtre de patterns est
-# LEVÉ, par jour. Mécanisme à usage unique et AUTO-RÉARMANT.
+# Nombre de pushes `admin_legacy` pendant lesquels le filtre de patterns ET
+# la porte de coût sont LEVÉS (routes MT5 uniquement). Mécanisme à usage unique et AUTO-RÉARMANT.
 #
 # Posé le 2026-08-06 pour observer l'alignement démo → réel sur un trade, sans
 # attendre les ~10 jours que la porte de coût impose sur `range_bounce` seul.
@@ -490,7 +490,7 @@ MIRROR_DEMO_TO_LIVE_ENABLED = os.getenv(
 # espérance de sélection nulle.
 #
 # 0 = filtre toujours actif (comportement par défaut).
-PATTERN_FILTER_BYPASS_PUSHES = int(os.getenv("PATTERN_FILTER_BYPASS_PUSHES", "0"))
+TRADE_DEROGATION_PUSHES = int(os.getenv("TRADE_DEROGATION_PUSHES", "0"))
 
 # Instant d'ARMEMENT de la levée ci-dessus (ISO 8601 UTC). Les pushes sont
 # comptés à partir de là, PAS depuis minuit.
@@ -500,7 +500,7 @@ PATTERN_FILTER_BYPASS_PUSHES = int(os.getenv("PATTERN_FILTER_BYPASS_PUSHES", "0"
 # ce qui aurait rouvert la vanne en grand pendant la nuit sans que personne
 # le demande. Vide ⇒ filtre maintenu (on ne compte pas depuis une base
 # inconnue).
-PATTERN_FILTER_BYPASS_SINCE = os.getenv("PATTERN_FILTER_BYPASS_SINCE", "").strip()
+TRADE_DEROGATION_SINCE = os.getenv("TRADE_DEROGATION_SINCE", "").strip()
 
 # ─── Retour de pause : délai + comparaison inter-paires (2026-08-05) ─────
 #

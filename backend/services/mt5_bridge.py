@@ -254,6 +254,13 @@ def _cost_rejection(setup, dest) -> str | None:
     if modele is None and edge is None:
         return None
 
+    # Jeton de dérogation (2026-08-06) — cf. `_jeton_derogation_restant`.
+    # Restreint aux routes MT5 : la porte de coût de Kraken repose sur des
+    # frais 10× supérieurs et sur un portage, l'ouvrir par effet de bord
+    # ferait passer des trades crypto non rentables.
+    if getattr(dest, "bridge_type", "mt5") == "mt5" and _jeton_derogation_restant():
+        return None
+
     from backend.services.cost_model import cost_in_r, exceeds_edge
 
     risk_money = None
@@ -644,7 +651,7 @@ def _check_rejection(setup, dest=None) -> str | None:
     allowed_patterns = MT5_BRIDGE_ALLOWED_PATTERNS
     if dest is not None and getattr(dest, "allowed_patterns", None) is not None:
         allowed_patterns = dest.allowed_patterns
-    if allowed_patterns and not _bypass_pattern_filter_restant():
+    if allowed_patterns and not _jeton_derogation_restant():
         if _pattern_value(setup) not in allowed_patterns:
             return "pattern_not_allowed"
     # Filtre direction par pair (diagnostic 2026-04-24 : les BUY ont 18%
@@ -759,13 +766,20 @@ def _notify_first_live_push(setup, bridge_response: dict) -> None:
         logger.warning(f"first_live_push send_infra_text failed: {e}")
 
 
-def _bypass_pattern_filter_restant() -> bool:
-    """Le filtre de patterns est-il momentanément levé, et pour combien encore ?
+def _jeton_derogation_restant() -> bool:
+    """Reste-t-il un jeton de dérogation, et lesquelles portes il lève.
 
-    Mécanisme **à usage unique et auto-réarmant** (2026-08-06) : le filtre est
-    ignoré tant que le nombre de pushes `admin_legacy` du jour reste sous
-    `PATTERN_FILTER_BYPASS_PUSHES`. Dès le quota atteint, il se remet seul —
-    sans dépendre de quiconque pour le réactiver.
+    Mécanisme **à usage unique et auto-réarmant** (2026-08-06). UN seul jeton
+    lève DEUX portes à la fois — le filtre de patterns et la porte de coût —
+    pour qu'un trade d'observation en consomme un, pas deux.
+
+    ⚠️ **Réservé aux routes MT5.** La porte de coût de Kraken n'est pas levée :
+    elle repose sur des frais 10× supérieurs et sur un portage, et l'ouvrir
+    par effet de bord ferait passer des trades crypto non rentables.
+
+    Le jeton est disponible tant que le nombre de pushes `admin_legacy` depuis
+    l'armement reste sous `TRADE_DEROGATION_PUSHES`. Dès le quota atteint,
+    les deux portes se remettent seules — sans dépendre de quiconque.
 
     **Pourquoi ce mécanisme plutôt qu'un simple réglage à vider.** Retirer la
     whitelist « le temps de voir » laisse toujours une fenêtre ouverte plus
@@ -784,8 +798,8 @@ def _bypass_pattern_filter_restant() -> bool:
     Défaut `0` = filtre toujours actif, comportement d'avant.
     """
     try:
-        from config.settings import PATTERN_FILTER_BYPASS_PUSHES
-        quota = int(PATTERN_FILTER_BYPASS_PUSHES)
+        from config.settings import TRADE_DEROGATION_PUSHES
+        quota = int(TRADE_DEROGATION_PUSHES)
     except Exception:
         return False
     if quota <= 0:
@@ -797,8 +811,8 @@ def _bypass_pattern_filter_restant() -> bool:
     # matin — et, pire, le remettait à zéro à minuit, ce qui aurait rouvert
     # la vanne en grand pendant la nuit sans que personne le demande.
     try:
-        from config.settings import PATTERN_FILTER_BYPASS_SINCE
-        depuis = str(PATTERN_FILTER_BYPASS_SINCE or "").strip()
+        from config.settings import TRADE_DEROGATION_SINCE
+        depuis = str(TRADE_DEROGATION_SINCE or "").strip()
     except Exception:
         depuis = ""
     if not depuis:
@@ -820,7 +834,7 @@ def _bypass_pattern_filter_restant() -> bool:
     except Exception as e:
         # Compteur illisible ⇒ filtre ACTIF. Un doute ne doit pas ouvrir la
         # vanne : c'est le sens prudent de l'incertitude ici.
-        logger.warning(f"bypass pattern: compteur illisible ({e}) — filtre maintenu")
+        logger.warning(f"dérogation: compteur illisible ({e}) — portes maintenues")
         return False
 
 
