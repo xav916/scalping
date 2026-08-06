@@ -759,6 +759,110 @@ def _notify_first_live_push(setup, bridge_response: dict) -> None:
         logger.warning(f"first_live_push send_infra_text failed: {e}")
 
 
+def _mirror_active() -> bool:
+    """Le compte de démonstration pilote-t-il le compte réel ?
+
+    Relu à chaque appel pour rester coupable sans redémarrage.
+    """
+    try:
+        from config.settings import MIRROR_DEMO_TO_LIVE_ENABLED
+        return bool(MIRROR_DEMO_TO_LIVE_ENABLED)
+    except Exception:
+        return False
+
+
+async def _mirror_fill_to_live(setup, sz: dict, fill: dict, source_id: str) -> None:
+    """Réplique sur le compte RÉEL un ordre qui vient d'être rempli en démo.
+
+    Demandé le 2026-08-06 : le compte de démonstration **pilote** le compte
+    réel, plutôt que les deux décidant en parallèle depuis le même signal.
+
+    ⚠️ Les portes de DÉCISION du backend ne sont pas rejouées ici — le démo
+    vient de décider, et les rejouer reproduirait la divergence qu'on cherche
+    à supprimer. Les garde-fous de SÉCURITÉ restent tous en place, côté bridge
+    et côté courtier : plafonds de lot par classe, nombre de positions,
+    perte journalière maximale, ajustement à la marge disponible, et le refus
+    du courtier lui-même. La copie ne peut donc pas ouvrir ce que le compte
+    réel ne peut pas porter.
+
+    ⚠️ **Le volume copié est celui réellement rempli en démo**, pas celui
+    calculé : c'est ce qui rend la copie fidèle. Le bridge le réduira s'il
+    dépasse ce que la marge du compte réel autorise.
+
+    ⚠️ Ce que la copie ne peut PAS transporter (mesuré le 2026-08-06) : la
+    marge. Sur les 8 fills du démo ce jour-là, **zéro** aurait pu être copié —
+    le compte réel avait une marge libre négative toute la journée. Le miroir
+    supprime la divergence de décision, jamais celle de capacité.
+    """
+    if source_id != "admin_legacy" or not _mirror_active():
+        return
+
+    from backend.services import bridge_destinations as _bd
+    from backend.services import mt5_pushes_service
+    # Importé ici comme partout ailleurs dans ce module : `record_rejection`
+    # n'existe pas au niveau module, et l'appeler sans cet import n'aurait
+    # explosé qu'au PREMIER refus du courtier réel — donc en production.
+    from backend.services.rejection_service import record_rejection
+
+    cible = _bd._admin_live_destination()
+    if cible is None:
+        return
+
+    # Même découpage que `_dedup_key` : (date, pair, direction, entry, dest).
+    push_date, _, direction, entry_5dp, _ = _dedup_key(setup, cible.destination_id)
+    # Dedup par la base, comme un push normal : un fill démo rejoué ne doit
+    # pas ouvrir deux positions réelles.
+    if not mt5_pushes_service.try_register_push(
+        cible.destination_id, push_date, setup.pair, direction, entry_5dp
+    ):
+        return
+
+    # Payload construit POUR la destination réelle : son `symbol_map` diffère
+    # (WTI_N6 chez IC Markets contre SpotCrude chez Pepperstone). Réutiliser
+    # celui du démo enverrait un symbole que le courtier ne connaît pas.
+    payload = _build_order_payload(setup, sz, dest=cible)
+    volume = fill.get("volume")
+    if volume:
+        payload["lots"] = float(volume)
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.post(
+                cible.bridge_url + "/order",
+                json=payload,
+                headers={"X-API-Key": cible.bridge_api_key,
+                         "Content-Type": "application/json"},
+            )
+        data = r.json() if r.status_code == 200 else {}
+        ok = bool(data.get("ok"))
+        mt5_pushes_service.update_push_result(
+            cible.destination_id, push_date, setup.pair, direction, entry_5dp,
+            ok=ok, response=data or {"status": r.status_code, "body": r.text[:200]},
+        )
+        if ok:
+            logger.info(
+                f"MIROIR démo→réel : {setup.pair} {direction} "
+                f"lot={payload.get('lots')} ticket={data.get('ticket')}"
+            )
+        else:
+            logger.warning(
+                f"MIROIR démo→réel REFUSÉ : {setup.pair} {direction} — "
+                f"{data.get('message') or r.status_code}"
+            )
+            record_rejection(
+                pair=setup.pair, direction=direction,
+                confidence=getattr(setup, "confidence_score", None),
+                reason_code="bridge_error",
+                details={"miroir": True, "reponse": str(data or r.text)[:200]},
+                user_id=None, destination_id=cible.destination_id,
+            )
+    except Exception as e:
+        logger.warning(f"MIROIR démo→réel échoué ({type(e).__name__}): {e}")
+        mt5_pushes_service.discard_push(
+            cible.destination_id, push_date, setup.pair, direction, entry_5dp
+        )
+
+
 def _build_order_payload(setup, sz: dict, dest=None) -> dict:
     """Construit le dict envoyé à l'EA MQL5 / bridge.py.
 
@@ -1044,6 +1148,17 @@ async def _push_to_destination(setup, dest) -> None:
                     + ") "
                     f"mode={data.get('mode', '?')}"
                 )
+                # Miroir démo → réel (2026-08-06) : déclenché sur un fill
+                # CONFIRMÉ, jamais sur un simple push accepté. Le compte de
+                # démonstration pilote le réel — cf. `_mirror_fill_to_live`.
+                if data.get("ok") and data.get("ticket"):
+                    try:
+                        await _mirror_fill_to_live(
+                            setup, sz, data, dest.destination_id
+                        )
+                    except Exception as _e:
+                        logger.warning(f"miroir démo→réel: {_e}")
+
                 # Notif user "Trade OUVERT" si le bridge a vraiment fillé
                 # (ticket présent, mode='live'). Best-effort, non bloquant.
                 if data.get("ok") and data.get("ticket"):

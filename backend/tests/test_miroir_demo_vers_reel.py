@@ -1,0 +1,153 @@
+"""Le compte de démonstration pilote le compte réel (2026-08-06).
+
+Demandé par Xavier après avoir refinancé le compte réel dans ce but précis :
+plutôt que les deux comptes décidant en parallèle depuis le même signal, un
+fill CONFIRMÉ en démo déclenche l'ouverture d'un ordre identique sur le réel.
+
+⚠️ Ce que ces tests verrouillent en priorité, ce sont les façons dont un
+miroir peut faire des dégâts :
+  - se déclencher sur un push simplement accepté au lieu d'un fill confirmé ;
+  - dupliquer une position si le même fill est rejoué ;
+  - envoyer au courtier réel un symbole que seul l'autre courtier connaît ;
+  - se déclencher dans le mauvais sens (le réel ne doit jamais piloter le démo).
+"""
+import pytest
+
+from backend.services import mt5_bridge as mb
+
+
+class _Dest:
+    def __init__(self, dest_id, url="http://live", symbol_map=None):
+        self.destination_id = dest_id
+        self.bridge_url = url
+        self.bridge_api_key = "cle"
+        self.symbol_map = symbol_map
+        self.user_id = None
+
+
+def _setup():
+    class S: pass
+    s = S()
+    s.pair = "WTI/USD"; s.direction = "buy"
+    s.entry_price = 74.00; s.stop_loss = 73.40; s.take_profit_1 = 75.08
+    s.take_profit_2 = None; s.confidence_score = 70.0
+    return s
+
+
+@pytest.fixture
+def env(monkeypatch):
+    """Miroir armé, destination réelle disponible, HTTP capturé."""
+    import config.settings
+    monkeypatch.setattr(config.settings, "MIRROR_DEMO_TO_LIVE_ENABLED", True)
+
+    live = _Dest("admin_live", symbol_map={"WTI/USD": "WTI_N6"})
+    monkeypatch.setattr(
+        "backend.services.bridge_destinations._admin_live_destination", lambda: live
+    )
+    envoye = {}
+
+    class _C:
+        async def __aenter__(self_): return self_
+        async def __aexit__(self_, *a): return False
+        async def post(self_, url, json=None, headers=None):
+            envoye["url"] = url
+            envoye["payload"] = json
+            class _R:
+                status_code = 200
+                text = ""
+                def json(self_r): return {"ok": True, "ticket": 999, "volume": json.get("lots")}
+            return _R()
+
+    monkeypatch.setattr(mb.httpx, "AsyncClient", lambda *a, **k: _C())
+    monkeypatch.setattr("backend.services.rejection_service.record_rejection",
+                        lambda **k: None)
+
+    poses = []
+    monkeypatch.setattr(
+        "backend.services.mt5_pushes_service.try_register_push",
+        lambda *a, **k: poses.append(a) or True)
+    monkeypatch.setattr(
+        "backend.services.mt5_pushes_service.update_push_result", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "backend.services.mt5_pushes_service.discard_push", lambda *a, **k: None)
+    envoye["registres"] = poses
+    return envoye
+
+
+# ── Le miroir fait ce qu'on attend ────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_un_fill_demo_ouvre_un_ordre_reel(env):
+    await mb._mirror_fill_to_live(
+        _setup(), {"risk_money": 3.25}, {"volume": 0.02, "ticket": 1}, "admin_legacy")
+    assert "live" in env["url"]
+    assert env["payload"]["lots"] == pytest.approx(0.02), "le volume REMPLI est copié"
+
+
+@pytest.mark.asyncio
+async def test_le_symbole_est_celui_du_courtier_REEL(env):
+    """Les deux courtiers ne nomment pas WTI pareil. Réutiliser le payload du
+    démo enverrait un symbole qu'IC Markets ne connaît pas."""
+    await mb._mirror_fill_to_live(
+        _setup(), {"risk_money": 3.25}, {"volume": 0.01}, "admin_legacy")
+    assert env["payload"].get("broker_symbol") == "WTI_N6"
+
+
+# ── Les façons dont un miroir peut nuire ──────────────────────────────
+
+@pytest.mark.asyncio
+async def test_rien_ne_part_si_le_miroir_est_desarme(env, monkeypatch):
+    import config.settings
+    monkeypatch.setattr(config.settings, "MIRROR_DEMO_TO_LIVE_ENABLED", False)
+    await mb._mirror_fill_to_live(
+        _setup(), {"risk_money": 3.25}, {"volume": 0.01}, "admin_legacy")
+    assert "url" not in env
+
+
+@pytest.mark.asyncio
+async def test_le_miroir_ne_va_que_dans_UN_sens(env):
+    """Le réel ne doit jamais piloter le démo : ce serait une boucle."""
+    await mb._mirror_fill_to_live(
+        _setup(), {"risk_money": 3.25}, {"volume": 0.01}, "admin_live")
+    assert "url" not in env
+
+
+@pytest.mark.asyncio
+async def test_un_fill_rejoue_n_ouvre_pas_deux_positions(env, monkeypatch):
+    """La dedup passe par la base, comme un push normal."""
+    monkeypatch.setattr(
+        "backend.services.mt5_pushes_service.try_register_push", lambda *a, **k: False)
+    await mb._mirror_fill_to_live(
+        _setup(), {"risk_money": 3.25}, {"volume": 0.01}, "admin_legacy")
+    assert "url" not in env
+
+
+@pytest.mark.asyncio
+async def test_destination_reelle_absente_ne_plante_pas(env, monkeypatch):
+    monkeypatch.setattr(
+        "backend.services.bridge_destinations._admin_live_destination", lambda: None)
+    await mb._mirror_fill_to_live(
+        _setup(), {"risk_money": 3.25}, {"volume": 0.01}, "admin_legacy")
+    assert "url" not in env
+
+
+@pytest.mark.asyncio
+async def test_un_refus_du_courtier_reel_est_journalise_sans_lever(env, monkeypatch):
+    """Le compte réel peut refuser (marge, plafond) — c'est attendu, et ça ne
+    doit ni lever ni interrompre le flux démo."""
+    class _C:
+        async def __aenter__(self_): return self_
+        async def __aexit__(self_, *a): return False
+        async def post(self_, url, json=None, headers=None):
+            class _R:
+                status_code = 500
+                text = '{"message":"No money"}'
+                def json(self_r): return {}
+            return _R()
+    monkeypatch.setattr(mb.httpx, "AsyncClient", lambda *a, **k: _C())
+    rejets = []
+    monkeypatch.setattr("backend.services.rejection_service.record_rejection",
+                        lambda **k: rejets.append(k))
+    await mb._mirror_fill_to_live(
+        _setup(), {"risk_money": 3.25}, {"volume": 0.01}, "admin_legacy")
+    assert rejets and rejets[0]["destination_id"] == "admin_live"

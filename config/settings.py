@@ -451,6 +451,27 @@ PAC_MAX_AUTO_PROMOTIONS_PER_WEEK = int(
 # plafond de 30 %.
 HOLDING_WORST_CASE_HOURS = float(os.getenv("HOLDING_WORST_CASE_HOURS", "96"))
 
+# Le compte de DÉMONSTRATION pilote-t-il le compte RÉEL ?
+#
+# Demandé le 2026-08-06 : plutôt que les deux comptes décidant en parallèle
+# depuis le même signal, un fill confirmé en démo déclenche l'ouverture d'un
+# ordre identique sur le réel.
+#
+# ⚠️ Les portes de DÉCISION du backend ne sont pas rejouées sur la copie — le
+# démo vient de décider, les rejouer reproduirait la divergence qu'on supprime.
+# Tous les garde-fous de SÉCURITÉ restent actifs : plafonds de lot par classe,
+# nombre de positions, perte journalière, ajustement à la marge disponible, et
+# le refus du courtier. La copie ne peut pas ouvrir ce que le compte réel ne
+# peut pas porter.
+#
+# ⚠️ Ce que le miroir ne transporte PAS : la marge. Mesuré le 2026-08-06, sur
+# les 8 fills du démo ce jour-là, ZÉRO aurait pu être copié — le compte réel
+# avait une marge libre négative toute la journée. Le miroir supprime la
+# divergence de DÉCISION, jamais celle de CAPACITÉ.
+MIRROR_DEMO_TO_LIVE_ENABLED = os.getenv(
+    "MIRROR_DEMO_TO_LIVE_ENABLED", "true"
+).strip().lower() in ("1", "true", "yes", "on")
+
 # ─── Retour de pause : délai + comparaison inter-paires (2026-08-05) ─────
 #
 # Jusqu'ici, `evaluate_pair` rendait l'argent réel à une pair PAUSED après un
