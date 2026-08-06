@@ -37,6 +37,22 @@ set -uo pipefail
 TOKEN="shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg"
 NOTIFY_URL="https://app.scalping-radar.online/api/admin/notify-infra-telegram?token=${TOKEN}&channel=infra"
 
+# ⚠️ Tickets ACQUITTÉS — positions nues connues, assumées, et volontairement
+# laissées sans stop par décision explicite de Xavier. Elles n'ALERTENT plus,
+# mais restent comptées et visibles dans le journal : on ne les rend pas
+# invisibles, on cesse seulement de notifier ce sur quoi aucune action n'est
+# attendue (cf. principe du nettoyage des pushes du 2026-08-04).
+#
+# ⚠️ INVARIANT : toute position nue NON acquittée continue d'alerter
+# normalement. Acquitter un ticket ne désarme jamais la surveillance — c'est
+# pour ça que le filtre porte sur les tickets, jamais sur le compteur global.
+#
+# 1353960866 : XAU/USD sell, ouvert le 2026-08-05 02:09 UTC (incident bridge).
+#              Xavier a posé un TP à la main et refuse un SL — il attend un
+#              rebond. À retirer d'ici dès que la position sera fermée.
+ACK_TICKETS="${SLTP_ALERT_ACK_TICKETS:-1353960866}"
+export SLTP_ALERT_ACK_TICKETS="$ACK_TICKETS"
+
 echo "$(date -Iseconds) check-live-positions-sltp : scan des positions LIVE sans stop"
 
 # Le scan + la décision (agir ou pas) vivent côté backend, dans
@@ -56,26 +72,47 @@ if [ -z "$RAPPORT" ]; then
 fi
 
 echo "$RAPPORT" | python3 -c "
-import json, sys
+import json, os, sys
 d = json.load(sys.stdin)
+ack = {t.strip() for t in os.environ.get('SLTP_ALERT_ACK_TICKETS', '').split(',') if t.strip()}
 print(f\"naked_total={d.get('naked_total')} protected_total={d.get('protected_total')} auto_protect_enabled={d.get('auto_protect_enabled')}\")
 for label, b in (d.get('bridges') or {}).items():
-    print(f\"  {label}: reachable={b.get('reachable')} naked={len(b.get('naked') or [])}\")
+    nus = b.get('naked') or []
+    acq = [p for p in nus if str(p.get('ticket')) in ack]
+    print(f\"  {label}: reachable={b.get('reachable')} naked={len(nus)} acquittes={len(acq)} a_alerter={len(nus) - len(acq)}\")
 "
 
-NAKED_TOTAL=$(echo "$RAPPORT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('naked_total', 0) or 0)")
+# On n'alerte que sur les positions nues NON acquittées. Le compteur global
+# reste inchangé dans le journal ci-dessus — seule la notification est filtrée.
+NAKED_TOTAL=$(echo "$RAPPORT" | python3 -c "
+import json, os, sys
+d = json.load(sys.stdin)
+ack = {t.strip() for t in os.environ.get('SLTP_ALERT_ACK_TICKETS', '').split(',') if t.strip()}
+n = 0
+for b in (d.get('bridges') or {}).values():
+    for p in (b.get('naked') or []):
+        if str(p.get('ticket')) not in ack:
+            n += 1
+print(n)
+")
 
 if [ "${NAKED_TOTAL:-0}" -gt 0 ]; then
   PAYLOAD=$(echo "$RAPPORT" | python3 -c "
-import json, sys
+import json, os, sys
 
 d = json.load(sys.stdin)
 bridges = d.get('bridges') or {}
+ack = {t.strip() for t in os.environ.get('SLTP_ALERT_ACK_TICKETS', '').split(',') if t.strip()}
 
 lignes = []
+acquittees = []
 for label, b in bridges.items():
     for p in (b.get('naked') or []):
-        lignes.append(f\"• {label} #{p.get('ticket')} {p.get('symbol')} {p.get('type')} — ouvert {p.get('time')}\")
+        desc = f\"• {label} #{p.get('ticket')} {p.get('symbol')} {p.get('type')} — ouvert {p.get('time')}\"
+        if str(p.get('ticket')) in ack:
+            acquittees.append(desc)
+        else:
+            lignes.append(desc)
 
 actions = []
 for label, b in bridges.items():
@@ -88,8 +125,11 @@ for label, b in bridges.items():
             etat = f\"❌ échec ({r.get('error') or '?'})\"
         actions.append(f\"• {label} #{r.get('ticket')} — {etat}\")
 
-titre = f\"🚨 {d.get('naked_total')} position(s) LIVE sans stop\"
+titre = f\"🚨 {len(lignes)} position(s) LIVE sans stop\"
 corps = 'Positions détectées sans SL :\n' + '\n'.join(lignes)
+if acquittees:
+    corps += ('\n\nAussi sans stop, mais acquittées (aucune alerte attendue) :\n'
+              + '\n'.join(acquittees))
 if actions:
     corps += '\n\nActions du garde-fou automatique :\n' + '\n'.join(actions)
 else:
@@ -114,7 +154,7 @@ print(json.dumps({
       --data "$PAYLOAD" -o /dev/null -w 'notify HTTP %{http_code}\n' || true
   fi
 else
-  echo "✓ aucune position nue détectée"
+  echo "✓ aucune position nue à alerter (les tickets acquittés ne notifient pas)"
 fi
 
 echo "check-live-positions-sltp terminé"
