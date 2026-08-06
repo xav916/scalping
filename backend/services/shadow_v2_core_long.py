@@ -149,6 +149,25 @@ SHADOW_CONFIG: dict[str, dict[str, Any]] = {
 # Liste des paires à observer (dérivé de SHADOW_CONFIG)
 SHADOW_PAIRS: list[str] = list(SHADOW_CONFIG.keys())
 
+
+def _dispatch_long_horizon_actif() -> bool:
+    """Le flux long-horizon atteint-il le dispatch ?
+
+    Relu à CHAQUE appel (jamais figé dans une constante de module) pour rester
+    monkeypatchable en test et modifiable sans redémarrage.
+
+    ⚠️ Par défaut **actif**. Un drapeau par défaut inactif produirait ici le
+    pire mode de défaillance connu du projet : zéro push ET zéro rejet, donc
+    aucune trace expliquant pourquoi rien ne trade (cf. l'incident du kill
+    switch `MT5_BRIDGE_ENABLED`). La portée reste bornée sans drapeau : les
+    portes d'horizon empêchent déjà ces setups d'atteindre MT5.
+    """
+    try:
+        from config.settings import LONG_HORIZON_DISPATCH_ENABLED
+        return bool(LONG_HORIZON_DISPATCH_ENABLED)
+    except Exception:
+        return True
+
 # Compat : mappings dérivés pour code legacy / tests
 PATTERNS_BY_PAIR: dict[str, set[str]] = {p: c["patterns"] for p, c in SHADOW_CONFIG.items()}
 SYSTEM_ID_BY_PAIR: dict[str, str] = {p: c["system_id"] for p, c in SHADOW_CONFIG.items()}
@@ -715,6 +734,23 @@ async def run_shadow_log(
                     # la source de mesure.
                     logger.warning(f"shadow: scoring {cfg['system_id']} {pair} a échoué: {e}")
 
+                # ⚠️ CORRECTION D'ESTAMPILLE — à ne jamais retirer.
+                #
+                # `enrich_trade_setup` pose `setup.horizon` depuis
+                # `CANDLE_INTERVAL` (5min), le réglage du flux V1. Sur un setup
+                # 4h ou journalier c'est FAUX, et la conséquence n'est pas
+                # cosmétique : la porte d'horizon du dispatch router*ait* ces
+                # setups vers MT5 (route scalping) au lieu de Kraken, avec des
+                # stops de 7 % du prix pensés pour une tout autre échelle.
+                #
+                # Posé APRÈS l'enrichissement et HORS du try : l'estampille ne
+                # doit pas dépendre du succès du scoring.
+                from backend.services.horizon import (
+                    is_long as _is_long,
+                    normalize as _normalize_horizon,
+                )
+                setup.horizon = _normalize_horizon(tf)
+
                 # Notification long-horizon. Placée sous `_persist_setup`, qui
                 # rend True seulement pour une ligne réellement nouvelle
                 # (UNIQUE system_id, bar_timestamp) : la déduplication est
@@ -726,6 +762,32 @@ async def run_shadow_log(
                     await send_long_horizon_setup(setup)
                 except Exception as e:
                     logger.warning(f"shadow: notif long-horizon a échoué: {e}")
+
+                # Dispatch long-horizon (2026-08-06) — la plomberie manquante
+                # du plan 2. Jusqu'ici ce flux ne produisait que de la mesure et
+                # une notification : il n'atteignait jamais `send_setup`, donc
+                # aucune destination ne pouvait l'exécuter.
+                #
+                # Aucune destination n'est choisie ici : le routage est déjà
+                # assuré par les portes d'horizon en place. MT5 n'admet que
+                # `CANDLE_INTERVAL` (5min) et refusera ces setups ; Kraken
+                # n'admet que {4h, 1d} et les acceptera. Ajouter un choix
+                # explicite créerait une seconde source de vérité.
+                #
+                # Pourquoi c'est économiquement sensé, mesuré le 2026-08-06 :
+                # au journalier, 100 % des setups crypto passent la porte de
+                # coût de Kraken (distance au stop médiane 7,69 % contre un
+                # seuil de viabilité à 3,03 %). En 1h et en 5min : aucun. Les
+                # frais Kraken ne tuent pas la crypto, ils tuent le scalping.
+                if _dispatch_long_horizon_actif() and _is_long(setup.horizon):
+                    try:
+                        from backend.services.mt5_bridge import send_setup
+                        await send_setup(setup)
+                    except Exception as e:
+                        logger.warning(
+                            f"shadow: dispatch long-horizon {cfg['system_id']} "
+                            f"{pair} a échoué: {e}"
+                        )
 
             # Twin filtered : si le veto contrefactuel laisse passer le setup,
             # logger AUSSI une entry jumelle avec system_id suffixé `_FILTERED`.

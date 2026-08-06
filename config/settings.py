@@ -644,6 +644,26 @@ TELEGRAM_LONG_HORIZON_MIN_CONFIDENCE = float(
     os.getenv("TELEGRAM_LONG_HORIZON_MIN_CONFIDENCE", "61")
 )
 
+# Le flux long-horizon atteint-il le DISPATCH (et donc l'exécution), ou
+# seulement la mesure et Telegram ?
+#
+# Branché le 2026-08-06. Jusque-là, `run_shadow_log` n'appelait jamais
+# `send_setup` : le flux 4h/1d produisait des setups que personne ne pouvait
+# exécuter — la plomberie manquante du plan 2.
+#
+# Aucune destination n'est choisie par ce drapeau : les portes d'horizon
+# routent seules. MT5 n'admet que `CANDLE_INTERVAL` (5min) et refuse ces
+# setups ; Kraken n'admet que {4h, 1d} et les accepte.
+#
+# Pourquoi c'est le SEUL horizon économiquement viable sur Kraken, mesuré le
+# 2026-08-06 sur `shadow_setups` : au journalier, 100 % des setups crypto
+# passent la porte de coût (distance au stop médiane 7,69 % contre un seuil de
+# viabilité à 3,03 %) ; en 1h et 5min, aucun. Les frais Kraken ne tuent pas la
+# crypto — ils tuent le scalping.
+LONG_HORIZON_DISPATCH_ENABLED = os.getenv(
+    "LONG_HORIZON_DISPATCH_ENABLED", "true"
+).strip().lower() in ("1", "true", "yes", "on")
+
 # Mapping par utilisateur : "user1:chat_id1,user2:chat_id2"
 # Si defini, chaque user recoit les signaux sur son propre chat Telegram et
 # son mode silencieux est verifie individuellement. Si vide, fallback sur
