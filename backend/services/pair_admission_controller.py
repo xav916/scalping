@@ -158,7 +158,7 @@ def _promotions_recentes_vers_auto_exec(jours: int = 7) -> int:
     depuis = (datetime.now(timezone.utc) - _timedelta(days=jours)).isoformat()
     try:
         _ensure_schema()
-        with sqlite3.connect(str(_DB_PATH)) as conn:
+        with sqlite3.connect(_db_path()) as conn:
             row = conn.execute(
                 "SELECT COUNT(*) FROM pair_admission_state "
                 "WHERE state = ? AND state_since >= ? AND transitioned_by LIKE 'auto%'",

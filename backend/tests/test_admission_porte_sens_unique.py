@@ -167,6 +167,12 @@ def test_le_message_distingue_pas_mur_et_en_file(monkeypatch):
 
 def test_compteur_illisible_bloque_la_promotion(monkeypatch, tmp_path):
     """Fail-closed : sans compteur fiable on ne promeut pas. Une promotion de
-    trop engage de l'argent ; une promotion retardée ne coûte rien."""
-    monkeypatch.setattr(pac, "_DB_PATH", tmp_path, raising=False)  # un répertoire
+    trop engage de l'argent ; une promotion retardée ne coûte rien.
+
+    ⚠️ Ce test passait initialement pour une MAUVAISE raison — il déclenchait un
+    `NameError` sur un accesseur inexistant plutôt que l'échec de lecture qu'il
+    prétend couvrir. Il pointe maintenant `_db_path` sur un répertoire, que
+    SQLite ne peut pas ouvrir.
+    """
+    monkeypatch.setattr(pac, "_db_path", lambda: str(tmp_path))  # un répertoire
     assert pac._promotions_recentes_vers_auto_exec() > 1000
