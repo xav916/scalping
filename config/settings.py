@@ -492,6 +492,16 @@ MIRROR_DEMO_TO_LIVE_ENABLED = os.getenv(
 # 0 = filtre toujours actif (comportement par défaut).
 PATTERN_FILTER_BYPASS_PUSHES = int(os.getenv("PATTERN_FILTER_BYPASS_PUSHES", "0"))
 
+# Instant d'ARMEMENT de la levée ci-dessus (ISO 8601 UTC). Les pushes sont
+# comptés à partir de là, PAS depuis minuit.
+#
+# ⚠️ Compter par jour calendaire avait deux défauts : le quota était consommé
+# par les pushes déjà passés le matin, et il se remettait à zéro à minuit —
+# ce qui aurait rouvert la vanne en grand pendant la nuit sans que personne
+# le demande. Vide ⇒ filtre maintenu (on ne compte pas depuis une base
+# inconnue).
+PATTERN_FILTER_BYPASS_SINCE = os.getenv("PATTERN_FILTER_BYPASS_SINCE", "").strip()
+
 # ─── Retour de pause : délai + comparaison inter-paires (2026-08-05) ─────
 #
 # Jusqu'ici, `evaluate_pair` rendait l'argent réel à une pair PAUSED après un

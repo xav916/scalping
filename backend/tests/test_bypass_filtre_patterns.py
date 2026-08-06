@@ -20,23 +20,25 @@ def base(tmp_path, monkeypatch):
     f = tmp_path / "trades.db"
     with sqlite3.connect(f) as c:
         c.execute("CREATE TABLE mt5_pushes (id INTEGER PRIMARY KEY, "
-                  "destination_id TEXT, date TEXT)")
+                  "destination_id TEXT, date TEXT, pushed_at TEXT)")
     monkeypatch.setattr("backend.services.trade_log_service._DB_PATH", f)
     return f
 
 
-def _pousse(f, n, dest="admin_legacy", jour=None):
-    from datetime import date
-    jour = jour or date.today().isoformat()
+ARME = "2026-08-06T20:00:00+00:00"
+
+
+def _pousse(f, n, dest="admin_legacy", quand="2026-08-06T21:00:00+00:00"):
     with sqlite3.connect(f) as c:
         for _ in range(n):
-            c.execute("INSERT INTO mt5_pushes (destination_id, date) VALUES (?,?)",
-                      (dest, jour))
+            c.execute("INSERT INTO mt5_pushes (destination_id, date, pushed_at) "
+                      "VALUES (?,?,?)", (dest, quand[:10], quand))
 
 
-def _quota(monkeypatch, n):
+def _quota(monkeypatch, n, depuis=ARME):
     import config.settings
     monkeypatch.setattr(config.settings, "PATTERN_FILTER_BYPASS_PUSHES", n)
+    monkeypatch.setattr(config.settings, "PATTERN_FILTER_BYPASS_SINCE", depuis)
 
 
 # ── L'ouverture, puis la fermeture automatique ────────────────────────
@@ -69,10 +71,18 @@ def test_seuls_les_pushes_du_compte_PILOTE_consomment_le_quota(base, monkeypatch
     assert mb._bypass_pattern_filter_restant() is True
 
 
-def test_les_pushes_d_hier_ne_consomment_pas_le_quota_du_jour(base, monkeypatch):
+def test_les_pushes_ANTERIEURS_a_l_armement_ne_consomment_rien(base, monkeypatch):
+    """Le cas reel : 8 pushes le matin ne doivent pas consommer un quota arme
+    le soir. Compter par jour calendaire l'aurait epuise d'avance."""
     _quota(monkeypatch, 1)
-    _pousse(base, 5, jour="2026-01-01")
+    _pousse(base, 8, quand="2026-08-06T09:00:00+00:00")
     assert mb._bypass_pattern_filter_restant() is True
+
+
+def test_sans_instant_d_armement_le_filtre_est_MAINTENU(base, monkeypatch):
+    """On ne compte pas depuis une base inconnue."""
+    _quota(monkeypatch, 1, depuis="")
+    assert mb._bypass_pattern_filter_restant() is False
 
 
 # ── Le doute doit fermer, pas ouvrir ──────────────────────────────────

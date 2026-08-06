@@ -790,16 +790,31 @@ def _bypass_pattern_filter_restant() -> bool:
         return False
     if quota <= 0:
         return False
+    # Compte depuis l'instant d'ARMEMENT, pas depuis minuit.
+    #
+    # ⚠️ Corrigé le 2026-08-06 avant mise en service : compter par jour
+    # calendaire faisait consommer le quota par les pushes DÉJÀ passés le
+    # matin — et, pire, le remettait à zéro à minuit, ce qui aurait rouvert
+    # la vanne en grand pendant la nuit sans que personne le demande.
     try:
-        from backend.services import mt5_pushes_service
+        from config.settings import PATTERN_FILTER_BYPASS_SINCE
+        depuis = str(PATTERN_FILTER_BYPASS_SINCE or "").strip()
+    except Exception:
+        depuis = ""
+    if not depuis:
+        # Sans instant d'armement, on ne sait pas depuis quand compter :
+        # filtre maintenu plutôt qu'ouvert sur une base inconnue.
+        return False
+
+    try:
         import sqlite3
         from backend.services.trade_log_service import _DB_PATH
 
         with sqlite3.connect(str(_DB_PATH)) as c:
             n = c.execute(
                 "SELECT COUNT(*) FROM mt5_pushes "
-                "WHERE destination_id = 'admin_legacy' AND date = ?",
-                (date.today().isoformat(),),
+                "WHERE destination_id = 'admin_legacy' AND pushed_at >= ?",
+                (depuis,),
             ).fetchone()[0]
         return int(n) < quota
     except Exception as e:
