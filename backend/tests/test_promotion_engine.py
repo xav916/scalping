@@ -179,9 +179,15 @@ def test_gate_2_blocks_when_wr_below_45(_isolated_db):
 
 # ─── Démotion Demo tradable ───────────────────────────────────────────
 
-def test_demotion_demo_trad_5_consec_sl(_isolated_db):
+def test_demotion_demo_trad_5_consec_sl(_isolated_db, monkeypatch):
+    """Le critère « N pertes consécutives » est INACTIF par défaut depuis le
+    2026-08-06 (il se déclenchait sur 73 % des fenêtres, cf.
+    `test_demotion_ratchet.py`). Ce test l'arme explicitement : il vérifie que
+    le mécanisme fonctionne toujours quand on le réactive sciemment."""
     from backend.services import promotion_engine as pe
     from backend.services import pair_admission_controller as pac
+
+    monkeypatch.setattr(pe, "DEMOTION_DEMO_TRAD_MAX_CONSEC_SL", 5)
 
     # Setup : XAU/USD buy AUTO_EXEC sur admin_legacy
     pac.set_state("XAU/USD", pac.STATE_AUTO_EXEC, "test",
@@ -197,9 +203,12 @@ def test_demotion_demo_trad_5_consec_sl(_isolated_db):
     assert dem["to_state"] == pac.STATE_TELEGRAM
 
 
-def test_demotion_live_trad_3_consec_sl(_isolated_db):
+def test_demotion_live_trad_3_consec_sl(_isolated_db, monkeypatch):
+    """Idem : critère armé explicitement, inactif en production."""
     from backend.services import promotion_engine as pe
     from backend.services import pair_admission_controller as pac
+
+    monkeypatch.setattr(pe, "DEMOTION_LIVE_TRAD_MAX_CONSEC_SL", 3)
 
     pac.set_state("XAU/USD", pac.STATE_AUTO_EXEC, "test",
                   direction="buy", destination="admin_live")
@@ -233,15 +242,24 @@ def test_run_cycle_empty_state(_isolated_db, monkeypatch):
 
 
 def test_run_cycle_applies_demotion(_isolated_db, monkeypatch):
-    """Cycle avec 5 SL consec sur AUTO_EXEC admin_legacy → démote automatiquement."""
+    """Cycle avec un drawdown au-delà du seuil sur AUTO_EXEC admin_legacy →
+    démote automatiquement.
+
+    Le déclencheur était « 5 pertes consécutives » ; il est inactif depuis le
+    2026-08-06. Le test bascule sur le **drawdown**, qui est le critère
+    réellement en vigueur en production — c'est donc lui que le câblage du
+    cycle doit savoir appliquer."""
+    import config.settings
     from backend.services import promotion_engine as pe
     from backend.services import pair_admission_controller as pac
 
-    # Setup : XAU/USD buy AUTO_EXEC + 5 SL récents
+    # Capital épinglé : sinon le seuil dépend de l'environnement.
+    monkeypatch.setattr(config.settings, "TRADING_CAPITAL", 3000.0)
+
+    # Setup : XAU/USD buy AUTO_EXEC + drawdown de 600 € = 20 % > seuil Demo 15 %
     pac.set_state("XAU/USD", pac.STATE_AUTO_EXEC, "seed",
                   direction="buy", destination="admin_legacy")
-    for i in range(5):
-        _insert_trade(_isolated_db, "XAU/USD", "buy", -5.0, i * 0.1)
+    _insert_trade(_isolated_db, "XAU/USD", "buy", -600.0, 0.1)
 
     # Force WATCHED_PAIRS restreint pour le test
     monkeypatch.setattr("config.settings.WATCHED_PAIRS", ["XAU/USD"], raising=False)

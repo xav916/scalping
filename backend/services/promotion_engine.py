@@ -66,9 +66,35 @@ GATE_4_MIN_SIGNALS_5D = 20
 GATE_4_MIN_AGE_DAYS = 5
 
 # Démotions
-DEMOTION_DEMO_TRAD_MAX_CONSEC_SL = 5
+#
+# ⛔ Le critère « N pertes consécutives » est DÉSACTIVÉ depuis le 2026-08-06
+#    (`None` = inactif). Il ne mesurait rien.
+#
+#    Mesuré sur les 1581 trades réels : **73,4 % des fenêtres de 7 trades**
+#    contiennent déjà une série de 3 pertes d'affilée. La plus longue série
+#    observée par couple va de 6 à 35, médiane 12 — et le couple le plus
+#    performant (EUR/USD vente, 50 % de réussite) atteint 6. Avec un taux de
+#    réussite global de 23,9 %, ces séries sont la norme, pas un signal.
+#
+#    Conséquence : le seuil à 3 se déclenchait sur TOUS les couples, TOUJOURS.
+#    Ce n'était pas un filtre de performance mais un minuteur — toute paire
+#    laissée assez longtemps en auto-exécution finissait rétrogradée. Combiné
+#    au plancher de 30 trades RÉELS exigé pour promouvoir (`PAC_MIN_REAL_TRADES`),
+#    qu'une paire non exécutante ne peut jamais atteindre, cela formait un
+#    cliquet : l'univers tradable ne pouvait que rétrécir. Constaté en
+#    production — 11 couples le 04/08, 8 le 05/08, et 62 % du volume perdu.
+#
+#    ⚠️ Aucun seuil ne répare ce critère : les bons couples produisent des
+#    séries aussi longues que les mauvais. Le remonter ne ferait que retarder
+#    le minuteur. Il est laissé configurable pour pouvoir le réactiver
+#    sciemment, jamais par défaut.
+#
+#    Le drawdown, lui, reste ACTIF : c'est une limite de perte sur une grandeur
+#    mesurée (de l'argent effectivement perdu), pas une inférence statistique
+#    sur trois observations. Les deux ne méritent pas le même traitement.
+DEMOTION_DEMO_TRAD_MAX_CONSEC_SL = None
 DEMOTION_DEMO_TRAD_MAX_DD_7D = 15.0
-DEMOTION_LIVE_TRAD_MAX_CONSEC_SL = 3
+DEMOTION_LIVE_TRAD_MAX_CONSEC_SL = None
 DEMOTION_LIVE_TRAD_MAX_DD_7D = 10.0
 
 # Sharpe veto
@@ -400,8 +426,12 @@ def check_demotion(pair: str, direction: str, destination: str) -> Optional[dict
     """Retourne dict de démotion si conditions remplies, sinon None.
 
     Règles :
-    - Demo tradable  : 5 SL consécutifs OU DD>15% sur 7j → retour Demo obs (TELEGRAM legacy)
-    - Live tradable  : 3 SL consécutifs OU DD>10% sur 7j → retour Live obs (TELEGRAM live)
+    - Demo tradable  : DD>15% sur 7j → retour Demo obs (TELEGRAM legacy)
+    - Live tradable  : DD>10% sur 7j → retour Live obs (TELEGRAM live)
+
+    Le critère « N pertes consécutives » est inactif par défaut — voir le bloc
+    de constantes pour la mesure qui l'a disqualifié. Il n'est appliqué que si
+    son seuil est explicitement renseigné (non `None`).
     """
     state = pac.get_current_state(pair, direction, destination)
     if state != pac.STATE_AUTO_EXEC:
@@ -410,19 +440,22 @@ def check_demotion(pair: str, direction: str, destination: str) -> Optional[dict
     m = _compute_metrics(trades)
 
     if destination == "admin_legacy":
-        if m["n_consec_sl"] >= DEMOTION_DEMO_TRAD_MAX_CONSEC_SL:
-            return {"trigger": f"{DEMOTION_DEMO_TRAD_MAX_CONSEC_SL}_consec_sl",
-                    "to_state": pac.STATE_TELEGRAM, "metrics": m}
-        if m["dd_pct"] > DEMOTION_DEMO_TRAD_MAX_DD_7D:
-            return {"trigger": f"dd_above_{DEMOTION_DEMO_TRAD_MAX_DD_7D}%_7d:{m['dd_pct']}",
-                    "to_state": pac.STATE_TELEGRAM, "metrics": m}
+        seuil_sl = DEMOTION_DEMO_TRAD_MAX_CONSEC_SL
+        seuil_dd = DEMOTION_DEMO_TRAD_MAX_DD_7D
     elif destination == "admin_live":
-        if m["n_consec_sl"] >= DEMOTION_LIVE_TRAD_MAX_CONSEC_SL:
-            return {"trigger": f"{DEMOTION_LIVE_TRAD_MAX_CONSEC_SL}_consec_sl",
-                    "to_state": pac.STATE_TELEGRAM, "metrics": m}
-        if m["dd_pct"] > DEMOTION_LIVE_TRAD_MAX_DD_7D:
-            return {"trigger": f"dd_above_{DEMOTION_LIVE_TRAD_MAX_DD_7D}%_7d:{m['dd_pct']}",
-                    "to_state": pac.STATE_TELEGRAM, "metrics": m}
+        seuil_sl = DEMOTION_LIVE_TRAD_MAX_CONSEC_SL
+        seuil_dd = DEMOTION_LIVE_TRAD_MAX_DD_7D
+    else:
+        return None
+
+    # Inférence statistique — désactivée par défaut, cf. bloc de constantes.
+    if seuil_sl is not None and m["n_consec_sl"] >= seuil_sl:
+        return {"trigger": f"{seuil_sl}_consec_sl",
+                "to_state": pac.STATE_TELEGRAM, "metrics": m}
+    # Limite de perte sur une grandeur mesurée — toujours active.
+    if m["dd_pct"] > seuil_dd:
+        return {"trigger": f"dd_above_{seuil_dd}%_7d:{m['dd_pct']}",
+                "to_state": pac.STATE_TELEGRAM, "metrics": m}
     return None
 
 
