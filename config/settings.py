@@ -429,6 +429,28 @@ PAC_MAX_AUTO_PROMOTIONS_PER_WEEK = int(
     os.getenv("PAC_MAX_AUTO_PROMOTIONS_PER_WEEK", "2")
 )
 
+# Borne SUPÉRIEURE de la durée de détention (heures), utilisée pour estimer le
+# coût de portage tant qu'aucune médiane n'est mesurable sur l'échantillon
+# propre (30 setups résolus depuis le 2026-08-05).
+#
+# ⚠️ Sans ce repli, la route Kraken restait fermée à l'argent réel pendant un à
+# deux mois : mesuré le 2026-08-06, les systèmes crypto journaliers avaient
+# ZÉRO setup résolu propre et en produisent au plus un par jour, chacun mettant
+# des jours à se résoudre. « Incalculable donc refus » devenait un blocage à vie.
+#
+# La détention ne peut pas dépasser le délai de sortie : cette valeur MAJORE
+# donc le portage réel. Un trade qui passe la porte de coût avec elle passerait
+# a fortiori avec la vraie médiane — c'est fail-safe, pas permissif.
+#
+# ⚠️ Ne JAMAIS descendre sous le délai de sortie effectif : ce serait
+# sous-estimer les frais. Mettre 0 restaure l'ancien comportement (portage
+# incalculable ⇒ refus de tout argent réel sur les routes à funding).
+#
+# Vérifié aux taux de funding réels : au pire cas, un setup crypto journalier à
+# 7,69 % de stop consomme 24,8 % de l'edge sur BTC et 19,1 % sur ETH, sous le
+# plafond de 30 %.
+HOLDING_WORST_CASE_HOURS = float(os.getenv("HOLDING_WORST_CASE_HOURS", "96"))
+
 # ─── Retour de pause : délai + comparaison inter-paires (2026-08-05) ─────
 #
 # Jusqu'ici, `evaluate_pair` rendait l'argent réel à une pair PAUSED après un

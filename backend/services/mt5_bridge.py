@@ -211,6 +211,28 @@ def _count_open_trades_for_pair(pair: str) -> int:
         return 0
 
 
+def _duree_detention_pire_cas() -> float | None:
+    """Borne supérieure de la durée de détention, en heures.
+
+    Utilisée pour le coût de portage tant qu'aucune médiane n'est mesurable.
+    La détention ne peut pas dépasser le délai de sortie du système, donc cette
+    valeur majore le portage réel — un trade qui passe la porte de coût ici
+    passerait *a fortiori* avec la vraie médiane.
+
+    ⚠️ Ne JAMAIS mettre une valeur inférieure au délai de sortie : ce serait
+    sous-estimer les frais et laisser passer des trades non rentables, soit
+    exactement ce que la porte de coût existe pour empêcher.
+
+    Rendre `None` restaure l'ancien comportement — portage incalculable, donc
+    refus de tout argent réel sur les routes à funding.
+    """
+    try:
+        from config.settings import HOLDING_WORST_CASE_HOURS
+        return float(HOLDING_WORST_CASE_HOURS) if HOLDING_WORST_CASE_HOURS else None
+    except Exception:
+        return 96.0
+
+
 def _cost_rejection(setup, dest) -> str | None:
     """Refuse un signal dont les frais consomment plus de 30 % de l'edge brut.
 
@@ -278,6 +300,28 @@ def _cost_rejection(setup, dest) -> str | None:
 
             systeme = getattr(setup, "shadow_system_id", None)
             duree = median_holding_hours(systeme) if systeme else None
+
+            # Repli PIRE CAS (2026-08-06) — remplace « incalculable donc refus ».
+            #
+            # La médiane exige 30 setups résolus depuis le 2026-08-05. Mesuré
+            # ce jour-là : XAU 4h en avait 2, WTI 4h 1, et les systèmes crypto
+            # journaliers ZÉRO. À un setup par jour, chacun mettant des jours à
+            # se résoudre, la route Kraken restait fermée **un à deux mois**.
+            #
+            # Or la borne supérieure suffit à trancher : la détention ne peut
+            # pas dépasser le délai de sortie. Surestimer le portage ne peut
+            # que **refuser** un trade marginal, jamais en laisser passer un
+            # mauvais — c'est fail-SAFE, là où l'ancien comportement était
+            # fail-closed-à-vie.
+            #
+            # Vérifié le 2026-08-06 aux taux de funding réels : au pire cas
+            # (96 h), un setup crypto journalier à 7,69 % de stop — la médiane
+            # observée — consomme 24,8 % de l'edge sur BTC et 19,1 % sur ETH,
+            # sous le plafond de 30 %. Ce qui échoue même au pire cas mérite
+            # d'être refusé.
+            if duree is None:
+                duree = _duree_detention_pire_cas()
+
             portage = holding_cost_in_r(
                 entry=getattr(setup, "entry_price", 0) or 0,
                 stop_loss=getattr(setup, "stop_loss", 0) or 0,
