@@ -121,6 +121,66 @@ class BridgeConfig:
     allowed_horizons: frozenset[str] | None = None
 
 
+def _mt5_cost_model() -> "CostModel":
+    """Frais des routes MT5 CFD — partagé par `admin_legacy` et `admin_live`.
+
+    Défini une seule fois pour que les deux routes ne puissent pas diverger :
+    elles servent le même flux, au même horizon, chez des courtiers au modèle
+    tarifaire équivalent (spread brut + commission).
+
+    **Calibration (2026-08-06)** — `0,005 % par jambe` n'est pas une estimation
+    de catalogue : c'est la valeur qui reproduit les **0,022 R** de référence à
+    la distance au stop médiane réellement observée (0,380 % du prix sur 1 361
+    trades). Les autres taux testés donnent 0,053 / 0,079 / 0,105 R, tous
+    incompatibles avec la mesure.
+
+    Pas de composante fixe : sur ces comptes la commission est proportionnelle
+    au notionnel, et déclarer un `fixed_per_order` sans connaître le risque en
+    devise rendrait le coût incalculable — donc bloquerait tout.
+
+    Pas de `funding_interval_hours` : le flux MT5 est en 5 minutes et ne
+    traverse aucune échéance de swap.
+    """
+    return CostModel(proportional_rate_per_leg=0.00005)
+
+
+def _mt5_expected_edge() -> float | None:
+    """Edge brut MESURÉ de la population admise sur MT5, en R.
+
+    ⚠️ **Le choix de la fenêtre de mesure décide si la route trade ou s'arrête.**
+    `exceeds_edge` bloque TOUT dès que l'edge est nul ou négatif. Mesuré le
+    2026-08-06 sur `personal_trades` (1 R = 7,49 €, perte moyenne sur stop) :
+
+    ```
+    historique complet   −0,1158 R   ⇒ route morte, blocage total
+    depuis juin          +0,1056 R   ⇒ frais à 20,8 % de l'edge
+    sans XAG             +0,0178 R   ⇒ frais à 124 %, blocage
+    ```
+
+    **Fenêtre retenue : depuis juin.** Ce n'est pas un choix de confort —
+    `XAG/USD` portait à lui seul **plus que la perte totale** du système
+    (−1 566 € sur 152 trades) et a été **arrêté en mai**. Mesurer la
+    configuration actuelle sur une fenêtre incluant un instrument qu'elle ne
+    trade plus reviendrait à mesurer un système qui n'existe plus.
+
+    ⚠️ **Trois réserves à garder en tête avant de s'appuyer là-dessus :**
+
+    1. C'est une espérance **absolue** — elle inclut ce que le marché donne à
+       qui entre au hasard. Ce n'est **pas** un avantage de sélection : celui-ci
+       est mesuré nul (+0,004 R sur 29 000 trades).
+    2. L'intervalle publié (±0,068) suppose des trades indépendants. Ils se
+       chevauchent et se corrèlent : l'intervalle réel est **plus large**.
+    3. Ce n'est pas établi hors échantillon.
+
+    Valeur arrondie **vers le bas** (0,10 au lieu de 0,1056) : à edge égal, un
+    edge sous-estimé refuse plus, jamais moins.
+
+    **Effet concret** : la porte refuse tout trade dont le stop est à moins de
+    ~0,33 % du prix — exactement ceux où les frais dévorent l'espérance.
+    """
+    return 0.10
+
+
 def _mt5_scalping_horizons() -> frozenset[str] | None:
     """Horizons acceptés par les routes MT5 (``admin_legacy``, ``admin_live``).
 
@@ -199,6 +259,12 @@ def _admin_legacy_destination() -> BridgeConfig | None:
         # Dérivé de CANDLE_INTERVAL, pas codé en dur — cf. docstring de
         # `_mt5_scalping_horizons`.
         allowed_horizons=_mt5_scalping_horizons(),
+        # Porte de coût activée sur MT5 le 2026-08-06 — elle n'était jusque-là
+        # active que sur Kraken, donc le seul mécanisme fondé sur des grandeurs
+        # mesurées ne protégeait PAS l'argent réel. Cf. `_mt5_cost_model` et
+        # `_mt5_expected_edge` pour la calibration et le choix de fenêtre.
+        cost_model=_mt5_cost_model(),
+        expected_edge_r=_mt5_expected_edge(),
     )
 
 
@@ -240,6 +306,12 @@ def _admin_live_destination() -> BridgeConfig | None:
         # Dérivé de CANDLE_INTERVAL, pas codé en dur — cf. docstring de
         # `_mt5_scalping_horizons`.
         allowed_horizons=_mt5_scalping_horizons(),
+        # Porte de coût activée sur MT5 le 2026-08-06 — elle n'était jusque-là
+        # active que sur Kraken, donc le seul mécanisme fondé sur des grandeurs
+        # mesurées ne protégeait PAS l'argent réel. Cf. `_mt5_cost_model` et
+        # `_mt5_expected_edge` pour la calibration et le choix de fenêtre.
+        cost_model=_mt5_cost_model(),
+        expected_edge_r=_mt5_expected_edge(),
     )
 
 

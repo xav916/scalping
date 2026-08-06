@@ -44,23 +44,30 @@ def test_kraken_est_refuse_par_ses_propres_chiffres():
     assert exceeds_edge(cout, 0.110, auto_exec=True) is True
 
 
-def test_mt5_reste_non_declare_donc_inchange():
-    """La route qui trade aujourd'hui ne doit pas changer de comportement.
+def test_les_deux_routes_mt5_declarent_les_memes_parametres():
+    """Les deux routes MT5 doivent porter la porte de cout, et la MEME.
 
-    Aucun taux unique ne decrit `admin_live`, qui melange forex, metaux et
-    actions CFD : la distance de stop y varie d'un facteur 27 (EUR/USD
-    0,073 %, DOT/USD 1,99 %, mesure le 2026-08-04 sur 1 352 trades auto).
-    Declarer un taux reviendrait a inventer un chiffre.
+    ⚠️ Ce test affirmait l'inverse jusqu'au 2026-08-06 : « aucun taux unique ne
+    decrit admin_live, declarer un taux reviendrait a inventer un chiffre ».
+    L'objection etait juste tant que rien n'etait mesure — elle est levee
+    depuis que le taux est CALIBRE sur la distance au stop reellement observee
+    (0,005 % par jambe reproduit les 0,022 R de reference).
+
+    Elles servent le meme flux au meme horizon : une divergence entre elles
+    serait un bug, pas un reglage.
     """
-    from backend.services.bridge_destinations import _admin_live_destination
+    from backend.services import bridge_destinations as bd
 
-    dest = _admin_live_destination()
-    if dest is None:  # destination non configuree dans cet environnement
+    legacy, live = bd._admin_legacy_destination(), bd._admin_live_destination()
+    if legacy is None or live is None:
         import pytest
 
-        pytest.skip("admin_live non configuree ici")
-    assert dest.cost_model is None
-    assert dest.expected_edge_r is None
+        pytest.skip("destinations MT5 non configurees dans cet environnement")
+    for dest in (legacy, live):
+        assert dest.cost_model is not None, dest.destination_id
+        assert dest.expected_edge_r is not None, dest.destination_id
+    assert legacy.cost_model == live.cost_model
+    assert legacy.expected_edge_r == live.expected_edge_r
 
 
 def test_les_fabriques_kraken_declarent_reellement_leurs_valeurs():
@@ -106,28 +113,71 @@ def test_les_fabriques_kraken_declarent_reellement_leurs_valeurs():
         assert f"expected_edge_r={edge}" in src, nom
 
 
-def test_mt5_et_binance_ne_declarent_rien():
-    """Le pendant du test precedent : l'absence doit etre verrouillee aussi.
+def test_binance_ne_declare_toujours_rien():
+    """Binance reste une route non mesuree : ni cout ni edge.
 
-    Sans ca, un ajout ulterieur de `cost_model` sur `admin_live` passerait
-    inapercu et changerait le comportement de la seule route qui trade.
+    ⚠️ Ce test verrouillait aussi l'ABSENCE sur les routes MT5. La porte y a ete
+    activee le 2026-08-06 — volontairement, apres mesure — donc la garde est
+    deplacee sur les VALEURS (test suivant) plutot que sur leur absence.
     """
     import inspect
 
     from backend.services import bridge_destinations as bd
 
-    for nom in (
-        "_admin_live_destination",
-        "_admin_legacy_destination",
-        "_admin_binance_destination",
-    ):
-        src = inspect.getsource(getattr(bd, nom))
-        assert "cost_model=" not in src, nom
-        assert "expected_edge_r=" not in src, nom
+    src = inspect.getsource(bd._admin_binance_destination)
+    assert "cost_model=" not in src
+    assert "expected_edge_r=" not in src
+
+
+def test_les_parametres_de_cout_mt5_sont_verrouilles():
+    """Les deux routes MT5 partagent des parametres CALIBRES sur mesure.
+
+    Verifie les valeurs, pas leur presence dans le source : une constante
+    commentee contient encore la chaine recherchee.
+
+    - taux : 0,005 % par jambe reproduit les 0,022 R de reference a la distance
+      au stop mediane observee (0,380 % du prix sur 1361 trades reels) ;
+    - edge : 0,10 R, mesure sur la fenetre « depuis juin » — XAG portait toute
+      la perte historique et a ete arrete en mai, donc une fenetre plus longue
+      mesurerait une configuration qui n'existe plus.
+    """
+    from backend.services import bridge_destinations as bd
+
+    modele = bd._mt5_cost_model()
+    assert modele.proportional_rate_per_leg == pytest.approx(0.00005)
+    assert not modele.fixed_per_order, "une composante fixe rendrait le cout incalculable"
+    assert not getattr(modele, "funding_interval_hours", 0), "le flux 5min ne porte pas"
+
+    edge = bd._mt5_expected_edge()
+    assert edge is not None and edge > 0, "un edge nul ou negatif bloquerait TOUT"
+    assert edge == pytest.approx(0.10)
+
+
+def test_la_porte_mt5_refuse_les_stops_trop_serres():
+    """Effet concret et raison d'etre de l'activation : refuser les trades dont
+    les frais devorent l'esperance. Au taux et a l'edge calibres, le seuil tombe
+    a ~0,33 % du prix — mesure sur donnees reelles, la mediane est a 0,380 %."""
+    from backend.services.cost_model import cost_in_r, exceeds_edge
+    from backend.services import bridge_destinations as bd
+
+    modele, edge = bd._mt5_cost_model(), bd._mt5_expected_edge()
+    entry = 4000.0
+
+    def refuse(ecart_pct):
+        cout = cost_in_r(entry=entry, stop_loss=entry * (1 - ecart_pct / 100),
+                         model=modele, risk_money=None)
+        return exceeds_edge(cout, edge, auto_exec=True)
+
+    assert refuse(0.10), "stop a 0,10 % : les frais valent 10 % du prix risque"
+    assert refuse(0.20)
+    assert not refuse(0.38), "la distance MEDIANE observee doit passer"
+    assert not refuse(0.71), "la mediane depuis juin doit passer largement"
 
 
 # ─── Task 5 : la porte au dispatch ──────────────────────────────────────
 import inspect
+
+import pytest
 from types import SimpleNamespace
 
 
