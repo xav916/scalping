@@ -472,6 +472,26 @@ MIRROR_DEMO_TO_LIVE_ENABLED = os.getenv(
     "MIRROR_DEMO_TO_LIVE_ENABLED", "true"
 ).strip().lower() in ("1", "true", "yes", "on")
 
+# Nombre de pushes `admin_legacy` pendant lesquels le filtre de patterns est
+# LEVÉ, par jour. Mécanisme à usage unique et AUTO-RÉARMANT.
+#
+# Posé le 2026-08-06 pour observer l'alignement démo → réel sur un trade, sans
+# attendre les ~10 jours que la porte de coût impose sur `range_bounce` seul.
+#
+# ⚠️ Pourquoi un quota plutôt que vider la whitelist : une fenêtre ouverte
+# « le temps de voir » reste toujours ouverte plus longtemps que prévu, parce
+# que personne ne revient la refermer. Le quota borne l'expérience par
+# construction — le filtre se remet seul dès le premier push.
+#
+# ⚠️ Le filtre qu'il lève repose sur un edge REFUTÉ : `range_bounce` +0,129 R
+# est une espérance ABSOLUE, pas un avantage de sélection (mesuré le
+# 2026-08-05). Le lever ne dégrade donc aucune protection démontrée — mais ne
+# fait pas gagner non plus : plus de trades = plus de frais certains pour une
+# espérance de sélection nulle.
+#
+# 0 = filtre toujours actif (comportement par défaut).
+PATTERN_FILTER_BYPASS_PUSHES = int(os.getenv("PATTERN_FILTER_BYPASS_PUSHES", "0"))
+
 # ─── Retour de pause : délai + comparaison inter-paires (2026-08-05) ─────
 #
 # Jusqu'ici, `evaluate_pair` rendait l'argent réel à une pair PAUSED après un

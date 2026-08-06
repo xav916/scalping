@@ -644,7 +644,7 @@ def _check_rejection(setup, dest=None) -> str | None:
     allowed_patterns = MT5_BRIDGE_ALLOWED_PATTERNS
     if dest is not None and getattr(dest, "allowed_patterns", None) is not None:
         allowed_patterns = dest.allowed_patterns
-    if allowed_patterns:
+    if allowed_patterns and not _bypass_pattern_filter_restant():
         if _pattern_value(setup) not in allowed_patterns:
             return "pattern_not_allowed"
     # Filtre direction par pair (diagnostic 2026-04-24 : les BUY ont 18%
@@ -757,6 +757,56 @@ def _notify_first_live_push(setup, bridge_response: dict) -> None:
         _asyncio.create_task(_tg.send_infra_text(msg, parse_mode="HTML"))
     except Exception as e:
         logger.warning(f"first_live_push send_infra_text failed: {e}")
+
+
+def _bypass_pattern_filter_restant() -> bool:
+    """Le filtre de patterns est-il momentanément levé, et pour combien encore ?
+
+    Mécanisme **à usage unique et auto-réarmant** (2026-08-06) : le filtre est
+    ignoré tant que le nombre de pushes `admin_legacy` du jour reste sous
+    `PATTERN_FILTER_BYPASS_PUSHES`. Dès le quota atteint, il se remet seul —
+    sans dépendre de quiconque pour le réactiver.
+
+    **Pourquoi ce mécanisme plutôt qu'un simple réglage à vider.** Retirer la
+    whitelist « le temps de voir » laisse toujours une fenêtre ouverte plus
+    longtemps que prévu : personne ne revient la refermer. Le quota rend
+    l'expérience bornée par construction.
+
+    **Pourquoi compter `admin_legacy` seulement.** C'est le compte qui pilote
+    (cf. `_mirror_fill_to_live`). Sa copie vers le réel ne passe pas par cette
+    porte, donc elle partira même après le réarmement : un trade consomme bien
+    un seul jeton, pas deux.
+
+    ⚠️ Le quota compte les **pushes**, pas les fills. Un push refusé par le
+    courtier consomme quand même le jeton — c'est voulu : on veut borner
+    l'ouverture, pas garantir un résultat.
+
+    Défaut `0` = filtre toujours actif, comportement d'avant.
+    """
+    try:
+        from config.settings import PATTERN_FILTER_BYPASS_PUSHES
+        quota = int(PATTERN_FILTER_BYPASS_PUSHES)
+    except Exception:
+        return False
+    if quota <= 0:
+        return False
+    try:
+        from backend.services import mt5_pushes_service
+        import sqlite3
+        from backend.services.trade_log_service import _DB_PATH
+
+        with sqlite3.connect(str(_DB_PATH)) as c:
+            n = c.execute(
+                "SELECT COUNT(*) FROM mt5_pushes "
+                "WHERE destination_id = 'admin_legacy' AND date = ?",
+                (date.today().isoformat(),),
+            ).fetchone()[0]
+        return int(n) < quota
+    except Exception as e:
+        # Compteur illisible ⇒ filtre ACTIF. Un doute ne doit pas ouvrir la
+        # vanne : c'est le sens prudent de l'incertitude ici.
+        logger.warning(f"bypass pattern: compteur illisible ({e}) — filtre maintenu")
+        return False
 
 
 def _mirror_active() -> bool:
