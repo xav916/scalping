@@ -2094,7 +2094,7 @@ def main():
     logger.info(f"  MAX_DAILY_LOSS_PCT  : {MAX_DAILY_LOSS_PCT}%")
     if DAILY_LOSS_EXCLUDED_TICKETS:
         logger.warning(
-            f"  DRAWDOWN — tickets EXCLUS : {sorted(DAILY_LOSS_EXCLUDED_TICKETS)} "
+            f"  DRAWDOWN - tickets EXCLUS : {sorted(DAILY_LOSS_EXCLUDED_TICKETS)} "
             f"(leur flottant ne compte pas ; retirer a la fermeture)"
         )
     logger.info(f"  MAX_OPEN_POSITIONS  : {MAX_OPEN_POSITIONS}")
