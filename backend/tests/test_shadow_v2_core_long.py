@@ -847,12 +847,23 @@ def test_existing_pairs_config_unchanged_after_us_equities_addition():
         "risk_pct": 0.004,
     }
     # Le set complet des paires observées = les 6 historiques + les 4 actions
-    # US (2026-08-05) + BTC/USD (2026-08-06).
+    # US (2026-08-05) + BTC/USD (2026-08-06) + les 9 paires forex de MESURE
+    # H4 (2026-08-07).
+    #
+    # Les 9 forex sont là pour trancher UNE question : la distance au stop
+    # d'un setup forex en H4. En 5 minutes le forex est à 0,021-0,036 % quand
+    # la porte de coût exige 0,33 % — rien ne passe. En H4 leurs stops
+    # n'avaient jamais été mesurés, seulement projetés (×8,1 sur deux ancres
+    # contradictoires), et les projections tombent à cheval sur le seuil.
+    FOREX_MESURE_H4 = {
+        "EUR/JPY", "GBP/JPY", "EUR/GBP", "USD/JPY", "AUD/USD",
+        "USD/CAD", "GBP/USD", "EUR/USD", "USD/CHF",
+    }
     assert set(shadow.SHADOW_PAIRS) == {
         "XAU/USD", "XAG/USD", "WTI/USD", "ETH/USD", "XLI", "XLK",
         "AAPL", "TSLA", "NVDA", "MSFT",
         "BTC/USD",
-    }
+    } | FOREX_MESURE_H4
 
 
 def test_btc_usd_daily_config():

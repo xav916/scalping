@@ -55,6 +55,17 @@ TIGHT_LONG_PATTERNS: set[str] = {"momentum_up", "engulfing_bullish"}
 # d'observations pour trancher (cf. PROMOTE_MIN_SAMPLE côté admission).
 US_EQUITY_TECH_PATTERNS: set[str] = WTI_OPTIMAL_PATTERNS
 
+# Patterns pour la MESURE forex H4 (ajout 2026-08-07). Choisi parce qu'il
+# contient `range_bounce_up`, seul motif commun avec la whitelist MT5 de prod
+# (`range_bounce_up,range_bounce_down`) : les setups produits sont donc ceux
+# qui seraient réellement dispatchés, pas un échantillon décoratif.
+#
+# ⚠️ Comme tous les jeux H4 existants, il est LONG ONLY — `range_bounce_down`
+# n'apparaît dans aucun. La mesure portera donc sur les achats seulement. La
+# distance au stop étant fixée par la volatilité du pas de temps et non par le
+# sens, c'est suffisant pour répondre à la question posée.
+FOREX_MEASURE_PATTERNS: set[str] = WTI_OPTIMAL_PATTERNS
+
 # Configuration unifiée par paire : timeframe, patterns, system_id, sizing.
 # Ajouté ETH/USD Daily V2_CORE_LONG (exp #34) en 4e candidat.
 DEFAULT_CAPITAL_EUR: float = 10_000.0
@@ -109,6 +120,54 @@ SHADOW_CONFIG: dict[str, dict[str, Any]] = {
         "patterns": CORE_LONG_PATTERNS,
         "system_id": "V2_CORE_LONG_BTCUSD_1D",
         "risk_pct": 0.0025,  # ⚠️ par analogie avec ETH, NON mesuré
+    },
+    # ── Forex H4 : MESURE, pas conviction (ajout 2026-08-07) ─────────────
+    #
+    # Question à trancher, et une seule : **quelle est la distance au stop
+    # d'un setup forex en H4 ?**
+    #
+    # Pourquoi elle décide de tout : la porte de coût refuse tout stop sous
+    # 0,33 % du prix. En 5 minutes le forex est à 0,021-0,036 % — dix fois
+    # trop serré — donc **rien ne passe, sur aucune paire** (mesuré le
+    # 2026-08-07 sur 10 instruments). En H4, 100 % des setups XAU/XAG/WTI
+    # passent. Le forex H4 est le seul candidat que le capital disponible
+    # puisse porter : ~90 à 270 EUR de capital requis contre **4 117 EUR pour
+    # l'or**, à cause de la taille de contrat (1 000 unités contre 1 once).
+    #
+    # ⚠️ Ce qu'on ne sait PAS, et c'est la raison d'être de ce bloc : les
+    # stops forex H4 n'ont jamais été mesurés. Ils étaient **projetés** depuis
+    # le 5min par un rapport ×8,1 tiré de deux ancres qui se contredisent
+    # (XAU ×10,7, WTI ×5,4). Les projections tombent entre 0,27 % et 0,45 %,
+    # soit **à cheval sur le seuil** — certaines à trois millièmes près. Une
+    # erreur de rapport inverse le verdict. Aucune décision ne doit s'appuyer
+    # sur ces projections ; ce bloc existe pour les remplacer par des mesures.
+    #
+    # ⚠️ `risk_pct` : AUCUN backtest sur ces paires en H4. On prend la valeur
+    # la plus prudente de toute la configuration (celle d'ETH), par analogie,
+    # exactement comme BTC/USD et les 4 actions US. À RÉVISER dès qu'il y aura
+    # de quoi trancher.
+    #
+    # Conséquence assumée : ces setups seront dispatchés vers le compte de
+    # DÉMONSTRATION (`MT5_LONG_HORIZON_ROUTES=admin_legacy`), qui les tradera.
+    # Le compte réel est protégé par sa propre porte d'horizon, que le miroir
+    # respecte. La mesure produit donc aussi des fills réels, sans engager un
+    # euro.
+    #
+    # Coût d'infrastructure : nul. Ces 9 paires sont déjà dans WATCHED_PAIRS,
+    # le scheduler les passe simplement de 50 à 200 bougies H1 — plus de
+    # données par requête, pas de requête supplémentaire (cf. limite Twelve
+    # Data 55 req/min).
+    **{
+        pair: {
+            "tf": "4h",
+            "patterns": FOREX_MEASURE_PATTERNS,
+            "system_id": f"V2_MEASURE_{pair.replace('/', '')}_4H",
+            "risk_pct": 0.0025,  # ⚠️ par analogie avec ETH, NON mesuré
+        }
+        for pair in (
+            "EUR/JPY", "GBP/JPY", "EUR/GBP", "USD/JPY", "AUD/USD",
+            "USD/CAD", "GBP/USD", "EUR/USD", "USD/CHF",
+        )
     },
     "XLI": {
         "tf": "1d",
