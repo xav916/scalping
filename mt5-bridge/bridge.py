@@ -60,6 +60,21 @@ BREAKEVEN_TRIGGER_PCT = float(os.getenv("BREAKEVEN_TRIGGER_PCT", "50"))
 MONITOR_INTERVAL_SEC = int(os.getenv("MONITOR_INTERVAL_SEC", "5"))
 # Rails LIVE
 MAX_DAILY_LOSS_PCT = float(os.getenv("MAX_DAILY_LOSS_PCT", "3.0"))
+# Tickets dont le flottant NE COMPTE PAS dans le drawdown journalier
+# (2026-08-07). Une position tenue volontairement hors du système — sans stop,
+# conservée jusqu'à son objectif — confisque sinon le garde-fou de TOUTES les
+# autres : le drawdown mesure la perte LATENTE, donc un flottant de -179 EUR
+# sur un compte de 531 EUR bloquait le compte entier, et relever le plafond ne
+# faisait que déplacer le seuil (il aurait fallu dépasser 34 %).
+#
+# ⚠️ Nominatif, jamais global : chaque ticket listé est une protection en
+# moins. Vide par défaut. L'exclusion s'éteint d'elle-même à la fermeture de
+# la position — un ticket fermé n'est plus rendu par `positions_get()`.
+DAILY_LOSS_EXCLUDED_TICKETS = frozenset(
+    int(t.strip())
+    for t in os.getenv("DAILY_LOSS_EXCLUDED_TICKETS", "").split(",")
+    if t.strip().isdigit()
+)
 MAX_OPEN_POSITIONS = int(os.getenv("MAX_OPEN_POSITIONS", "3"))
 DEDUP_WINDOW_SEC = int(os.getenv("DEDUP_WINDOW_SEC", "300"))
 DEVIATION_POINTS = int(os.getenv("DEVIATION_POINTS", "20"))
@@ -376,6 +391,29 @@ def _refresh_start_of_day() -> None:
             _start_of_day_balance = info.balance
 
 
+def _flottant_exclu(positions) -> tuple[float, list[int]]:
+    """Flottant cumulé des positions explicitement exclues du drawdown.
+
+    Rendu séparément de l'``equity`` pour que le garde-fou puisse mesurer ce
+    que font les trades du système SANS le flottant d'une position tenue à
+    part. Pur et testable : reçoit les positions, n'interroge pas MT5.
+
+    Signe : on rend la somme des ``profit`` telle quelle. L'appelant fait
+    ``equity - exclu``, ce qui neutralise aussi bien une perte latente
+    (l'equity remonte) qu'un gain latent (elle redescend) — sans quoi une
+    position exclue en profit masquerait les pertes des autres.
+    """
+    if not DAILY_LOSS_EXCLUDED_TICKETS:
+        return 0.0, []
+    total = 0.0
+    vus: list[int] = []
+    for p in positions or []:
+        if getattr(p, "ticket", None) in DAILY_LOSS_EXCLUDED_TICKETS:
+            total += float(getattr(p, "profit", 0.0) or 0.0)
+            vus.append(p.ticket)
+    return total, vus
+
+
 def _parse_trading_hours(window: str) -> list[tuple[int, int]]:
     """Parse 'HH:MM-HH:MM,HH:MM-HH:MM' en [(minutes_from_midnight_start, end)]."""
     ranges = []
@@ -420,11 +458,24 @@ def _check_safety_gates(mt5_symbol: str, direction: str) -> tuple[bool, str]:
     if info is None:
         return False, "Cannot read account_info"
 
+    # Lu une seule fois : sert au drawdown (exclusions) puis au plafond.
+    positions = mt5.positions_get() or []
+
     # Drawdown journalier
     _refresh_start_of_day()
     if _start_of_day_balance is not None:
         loss_limit = _start_of_day_balance * MAX_DAILY_LOSS_PCT / 100.0
-        current_loss = _start_of_day_balance - info.equity
+        exclu, tickets_exclus = _flottant_exclu(positions)
+        equity_retenue = info.equity - exclu
+        current_loss = _start_of_day_balance - equity_retenue
+        if tickets_exclus:
+            # Tracé à chaque passage : une protection affaiblie qui ne se voit
+            # pas dans les logs est une protection qu'on oublie d'avoir levée.
+            logger.info(
+                f"Drawdown: flottant exclu {exclu:+.2f} "
+                f"(tickets {sorted(tickets_exclus)}) — equity retenue "
+                f"{equity_retenue:.2f} au lieu de {info.equity:.2f}"
+            )
         if current_loss >= loss_limit:
             return False, (
                 f"Daily drawdown reached: loss={current_loss:.2f} "
@@ -433,7 +484,6 @@ def _check_safety_gates(mt5_symbol: str, direction: str) -> tuple[bool, str]:
             )
 
     # Max positions ouvertes
-    positions = mt5.positions_get() or []
     if len(positions) >= MAX_OPEN_POSITIONS:
         return False, (
             f"Max open positions reached: {len(positions)} >= {MAX_OPEN_POSITIONS}"
@@ -2042,6 +2092,11 @@ def main():
     logger.info(f"  MAX_LOT             : {MAX_LOT}")
     logger.info(f"  Listen              : http://{LISTEN_HOST}:{LISTEN_PORT}")
     logger.info(f"  MAX_DAILY_LOSS_PCT  : {MAX_DAILY_LOSS_PCT}%")
+    if DAILY_LOSS_EXCLUDED_TICKETS:
+        logger.warning(
+            f"  DRAWDOWN — tickets EXCLUS : {sorted(DAILY_LOSS_EXCLUDED_TICKETS)} "
+            f"(leur flottant ne compte pas ; retirer a la fermeture)"
+        )
     logger.info(f"  MAX_OPEN_POSITIONS  : {MAX_OPEN_POSITIONS}")
     logger.info(f"  DEDUP_WINDOW_SEC    : {DEDUP_WINDOW_SEC}")
     logger.info(f"  TRADING_HOURS_UTC   : {TRADING_HOURS_UTC or '(toujours)'}")
