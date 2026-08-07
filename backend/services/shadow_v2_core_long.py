@@ -315,6 +315,17 @@ def ensure_schema() -> None:
         # contrefactuels historiques ininterprétables.
         if "funding_features_json" not in cols:
             c.execute("ALTER TABLE shadow_setups ADD COLUMN funding_features_json TEXT")
+        # Migration 2026-08-07 : excursions favorable et adverse maximales,
+        # en % du prix d'entrée. Sans elles, on constate qu'un take-profit
+        # n'est jamais atteint sans pouvoir dire de combien il manque — donc
+        # aucune calibration de cible n'est fondée. Mesuré sur ETH journalier :
+        # 0 TP sur 11, `R:R` figé à 1,80, cibles jusqu'à 24 % du prix.
+        # Idempotent : PRAGMA relu à chaque appel. Les lignes existantes
+        # restent NULL — « non mesuré », à ne pas confondre avec « nul ».
+        if "mfe_pct" not in cols:
+            c.execute("ALTER TABLE shadow_setups ADD COLUMN mfe_pct REAL")
+        if "mae_pct" not in cols:
+            c.execute("ALTER TABLE shadow_setups ADD COLUMN mae_pct REAL")
         c.execute(
             "CREATE INDEX IF NOT EXISTS idx_shadow_setups_pair_time "
             "ON shadow_setups (pair, bar_timestamp DESC)"

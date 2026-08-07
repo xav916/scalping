@@ -310,6 +310,74 @@ def simulate_trade_forward(
     return ("TIMEOUT", entry_time, setup.entry_price)
 
 
+def excursions_pct(
+    setup: TradeSetup,
+    candles_5min: list[Candle],
+    entry_time: datetime,
+    exit_time: datetime,
+) -> tuple[float | None, float | None]:
+    """Excursions favorable et adverse maximales, en % du prix d'entrée.
+
+    Ajouté le 2026-08-07 pour répondre à une question qu'aucune donnée
+    existante ne permettait de trancher : **une cible plus proche aurait-elle
+    été touchée ?** `shadow_setups` n'enregistrait que le prix de SORTIE, si
+    bien qu'on savait qu'un take-profit n'était jamais atteint sans pouvoir
+    dire de combien il manquait. Sur ETH journalier : 0 TP sur 11, `R:R` figé
+    à 1,80, et des cibles jusqu'à 24 % du prix.
+
+    Rendues **positives** dans les deux cas et **toujours dans le sens du
+    trade** : la favorable est le meilleur mouvement en faveur, l'adverse le
+    pire contre, quel que soit le sens. Comparer directement `mfe_pct` à la
+    distance du TP et `mae_pct` à celle du stop est donc toujours valide.
+
+    ⚠️ La fenêtre s'arrête au **prix de sortie réel**, pas au timeout : une
+    excursion postérieure à la clôture décrirait un trade qui n'existait plus.
+
+    ⚠️ Fonction **pure et séparée** de `simulate_trade_forward` — elle ne
+    change ni sa signature ni son verdict, alors que le backtest en dépend.
+
+    Retourne ``(None, None)`` quand aucune bougie ne couvre la fenêtre :
+    « inconnu » et « nul » sont deux états distincts, et les confondre ferait
+    passer un trade non mesuré pour un trade sans excursion.
+    """
+    entry = setup.entry_price
+    if not entry:
+        return (None, None)
+    is_buy = setup.direction == TradeDirection.BUY
+
+    meilleur = pire = None
+    for c in candles_5min:
+        if c.timestamp <= entry_time:
+            continue
+        if c.timestamp > exit_time:
+            break
+        # En faveur : le haut pour un achat, le bas pour une vente.
+        favorable = c.high if is_buy else c.low
+        adverse = c.low if is_buy else c.high
+        if meilleur is None:
+            meilleur, pire = favorable, adverse
+        elif is_buy:
+            meilleur = max(meilleur, favorable)
+            pire = min(pire, adverse)
+        else:
+            meilleur = min(meilleur, favorable)
+            pire = max(pire, adverse)
+
+    if meilleur is None:
+        return (None, None)
+
+    if is_buy:
+        mfe = (meilleur - entry) / entry * 100.0
+        mae = (entry - pire) / entry * 100.0
+    else:
+        mfe = (entry - meilleur) / entry * 100.0
+        mae = (pire - entry) / entry * 100.0
+
+    # Une bougie qui n'est jamais allée dans le sens du trade donne une
+    # favorable negative : on la ramene a 0, « pas d'excursion favorable ».
+    return (max(mfe, 0.0), max(mae, 0.0))
+
+
 def compute_pnl(
     setup: TradeSetup, exit_price: float, spread_slippage_pct: float = SPREAD_SLIPPAGE_PCT
 ) -> tuple[float, float]:

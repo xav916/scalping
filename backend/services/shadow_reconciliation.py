@@ -40,7 +40,11 @@ from typing import Any
 from dataclasses import dataclass
 
 from backend.models.schemas import Candle, TradeDirection
-from backend.services.backtest_engine import simulate_trade_forward, compute_pnl
+from backend.services.backtest_engine import (
+    compute_pnl,
+    excursions_pct,
+    simulate_trade_forward,
+)
 from backend.services.shadow_v2_core_long import DB_PATH, ensure_schema
 
 
@@ -293,16 +297,31 @@ async def reconcile_pending_setups(
             position_eur = setup_dict["sizing_position_eur"]
             pnl_eur = position_eur * (pct_net / 100.0)
 
+            # Excursions maximales sur la fenêtre RÉELLEMENT tenue (2026-08-07).
+            # Calculées sur les mêmes bougies, donc sans requête ni coût
+            # supplémentaire. Sans elles on savait qu'un take-profit n'était
+            # jamais atteint, sans pouvoir dire de combien il manquait — donc
+            # sans pouvoir le calibrer. Ne peuvent pas faire échouer la
+            # réconciliation : en cas d'anomalie on enregistre NULL, qui veut
+            # dire « non mesuré », pas « nul ».
+            try:
+                mfe_pct, mae_pct = excursions_pct(
+                    setup, candles_5min, bar_ts, exit_time)
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"reconcile: excursions {setup_dict['pair']}: {e}")
+                mfe_pct = mae_pct = None
+
             with sqlite3.connect(DB_PATH) as c:
                 c.execute(
                     """
                     UPDATE shadow_setups
                        SET outcome = ?, exit_at = ?, exit_price = ?,
-                           pnl_pct_net = ?, pnl_eur = ?
+                           pnl_pct_net = ?, pnl_eur = ?,
+                           mfe_pct = ?, mae_pct = ?
                      WHERE id = ?
                     """,
                     (outcome, exit_time.isoformat(), exit_price,
-                     pct_net, pnl_eur, setup_dict["id"]),
+                     pct_net, pnl_eur, mfe_pct, mae_pct, setup_dict["id"]),
                 )
             stats["resolved"] += 1
             logger.info(
