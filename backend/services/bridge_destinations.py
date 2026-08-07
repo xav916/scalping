@@ -215,6 +215,47 @@ def _mt5_scalping_horizons() -> frozenset[str] | None:
     return frozenset({h}) if h else None
 
 
+def _mt5_long_horizon_routes() -> frozenset[str]:
+    """Destinations MT5 autorisées à recevoir les horizons longs (4h, 1d).
+
+    Vide par défaut : sans réglage, le comportement est celui d'avant le
+    2026-08-07 (MT5 = scalping seul). Renseigner ``admin_legacy`` ouvre la
+    route 4h/1d sur le compte de démonstration, ``admin_live`` sur le réel.
+
+    **Pourquoi cette route existe** (mesuré le 2026-08-07) : à 5 minutes, la
+    porte de coût refuse 28 setups XAU par jour parce que les frais dépassent
+    30 % de l'espérance. Sur les 118 setups ``XAU/USD 4h`` des 90 derniers
+    jours, **aucun** n'a un stop sous le seuil de viabilité de 0,33 % —
+    distance médiane 1,81 %. L'horizon long ne rend pas le système rentable,
+    il déplace seulement les frais d'un poste dominant à un poste marginal.
+
+    **Pourquoi elle est fermée par défaut, et surtout sur le réel** : le lot
+    minimum ne suit pas. À 0,01 lot, un stop médian de 1,81 % sur XAU coûte
+    77,87 USD — soit 20 % de l'``equity`` réelle constatée le 2026-08-07
+    (350,68 EUR), et 50 % dans le pire cas mesuré. Il faudrait de l'ordre de
+    3 600 EUR pour porter ce risque à 2 % par trade. Ouvrir ``admin_live``
+    avant d'avoir ce capital, c'est jouer le compte sur cinq trades.
+    """
+    raw = os.getenv("MT5_LONG_HORIZON_ROUTES", "").strip()
+    return frozenset(d.strip() for d in raw.split(",") if d.strip())
+
+
+def _mt5_horizons(destination_id: str) -> frozenset[str] | None:
+    """Horizons servis par une route MT5, scalping plus horizons longs opt-in.
+
+    ``None`` (aucun filtre) est préservé tel quel : si ``CANDLE_INTERVAL`` est
+    hors vocabulaire, on ne sait pas ce qu'on filtrerait — élargir un ensemble
+    qu'on ne sait pas lire créerait une porte à moitié ouverte, pire que pas
+    de porte du tout.
+    """
+    base = _mt5_scalping_horizons()
+    if base is None or destination_id not in _mt5_long_horizon_routes():
+        return base
+    from backend.services.horizon import LONG_HORIZONS
+
+    return frozenset(base | LONG_HORIZONS)
+
+
 def _admin_legacy_destination() -> BridgeConfig | None:
     """Retourne la config admin legacy depuis l'env, ou ``None`` si absente.
 
@@ -267,7 +308,7 @@ def _admin_legacy_destination() -> BridgeConfig | None:
         # dixièmes de pourcent, frais absorbés dans le spread (0,022 R mesuré).
         # Dérivé de CANDLE_INTERVAL, pas codé en dur — cf. docstring de
         # `_mt5_scalping_horizons`.
-        allowed_horizons=_mt5_scalping_horizons(),
+        allowed_horizons=_mt5_horizons("admin_legacy"),
         # Porte de coût activée sur MT5 le 2026-08-06 — elle n'était jusque-là
         # active que sur Kraken, donc le seul mécanisme fondé sur des grandeurs
         # mesurées ne protégeait PAS l'argent réel. Cf. `_mt5_cost_model` et
@@ -319,7 +360,7 @@ def _admin_live_destination() -> BridgeConfig | None:
         # dixièmes de pourcent, frais absorbés dans le spread (0,022 R mesuré).
         # Dérivé de CANDLE_INTERVAL, pas codé en dur — cf. docstring de
         # `_mt5_scalping_horizons`.
-        allowed_horizons=_mt5_scalping_horizons(),
+        allowed_horizons=_mt5_horizons("admin_live"),
         # Porte de coût activée sur MT5 le 2026-08-06 — elle n'était jusque-là
         # active que sur Kraken, donc le seul mécanisme fondé sur des grandeurs
         # mesurées ne protégeait PAS l'argent réel. Cf. `_mt5_cost_model` et

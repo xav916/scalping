@@ -887,6 +887,34 @@ async def _mirror_fill_to_live(setup, sz: dict, fill: dict, source_id: str) -> N
     if cible is None:
         return
 
+    # La copie ne rejoue PAS les portes de décision (cf. docstring). La porte
+    # d'HORIZON n'en est pas une : elle ne dit pas si le trade est bon, elle dit
+    # quels horizons cette route *sert*. Copier un setup 4h vers une route qui
+    # ne sert que le scalping n'est donc pas la divergence de décision qu'on
+    # cherche à supprimer — c'est une erreur d'aiguillage.
+    #
+    # Ce que ça coûterait sans ce garde-fou, mesuré le 2026-08-07 : un stop
+    # médian de 1,81 % sur `XAU/USD 4h` fait perdre 77,87 USD au lot minimum,
+    # soit 20 % de l'``equity`` réelle du jour (350,68 EUR) — et 50 % au pire
+    # stop observé. Le bridge ne peut pas rattraper ça : il sait réduire un
+    # volume à la marge disponible, pas descendre sous 0,01 lot.
+    #
+    # Conséquence voulue : `MT5_LONG_HORIZON_ROUTES` reste le seul
+    # interrupteur. Y ajouter `admin_live` ouvrira la copie des horizons longs
+    # vers le réel sans qu'une ligne de ce fichier ne bouge.
+    motif_horizon = _horizon_rejection(setup, cible)
+    if motif_horizon:
+        record_rejection(
+            pair=setup.pair,
+            direction=_direction_value(setup),
+            confidence=getattr(setup, "confidence_score", None),
+            reason_code=motif_horizon,
+            details={"horizon": getattr(setup, "horizon", None), "miroir": True},
+            user_id=None,
+            destination_id=cible.destination_id,
+        )
+        return
+
     # Même découpage que `_dedup_key` : (date, pair, direction, entry, dest).
     push_date, _, direction, entry_5dp, _ = _dedup_key(setup, cible.destination_id)
     # Dedup par la base, comme un push normal : un fill démo rejoué ne doit
