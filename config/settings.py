@@ -1048,6 +1048,25 @@ POLYMARKET_REFRESH_INTERVAL_SEC = int(os.getenv("POLYMARKET_REFRESH_INTERVAL_SEC
 # Voir backend/services/geopolitical_veto.py pour les règles.
 GEOPOLITICAL_VETO_ENABLED = os.getenv("GEOPOLITICAL_VETO_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 
+# Paires pour lesquelles le veto geopolitique est CONSULTATIF (2026-08-08) :
+# il se prononce et reste enregistre, mais ne bloque pas. Vide par defaut.
+#
+# Pose apres constat : la regle `gdelt_stress` est documentee pour les indices
+# europeens, son seuil a ete assoupli de `high` a `{high, elevated}` parce
+# qu'elle ne matchait jamais, puis son perimetre etendu a BTC/ETH. Les deux
+# seules fois ou elle s'est declenchee en 30 jours (2 refus sur 72 081), elle
+# a bloque 100 % du flux crypto journalier. Aucune preuve mesuree ne la
+# soutient -- le controle aleatoire du 2026-08-05 couvre toute la pile de
+# vetos sans lui trouver d'apport.
+#
+# Le verdict contrefactuel continue d'etre calcule et logue par le shadow :
+# on garde de quoi juger la regle plus tard, on retire seulement le blocage.
+GEOPOLITICAL_VETO_ADVISORY_PAIRS = frozenset(
+    p.strip().upper()
+    for p in os.getenv("GEOPOLITICAL_VETO_ADVISORY_PAIRS", "").split(",")
+    if p.strip()
+)
+
 # Règle 1 : Iran peace deal prob ≥ X% à <Y jours → veto longs XAU/XAG/WTI.
 GEOPOLITICAL_VETO_IRAN_HORMUZ_ENABLED = os.getenv("GEOPOLITICAL_VETO_IRAN_HORMUZ_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 GEOPOLITICAL_VETO_IRAN_HORMUZ_PROB = float(os.getenv("GEOPOLITICAL_VETO_IRAN_HORMUZ_PROB", "0.30"))

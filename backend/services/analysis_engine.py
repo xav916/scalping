@@ -24,6 +24,7 @@ from backend.services import macro_context_service, macro_scoring
 from config.settings import (
     CANDLE_INTERVAL,
     EARNINGS_VETO_ENABLED,
+    GEOPOLITICAL_VETO_ADVISORY_PAIRS,
     GEOPOLITICAL_VETO_ENABLED,
     MACRO_SCORING_ENABLED,
     MACRO_VETO_ENABLED,
@@ -35,6 +36,23 @@ from config.settings import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def veto_geopolitique_consultatif(pair: str) -> bool:
+    """``True`` si le veto géopolitique ne doit PAS bloquer cette paire.
+
+    Extraite en fonction pure pour être testable sans rejouer tout le moteur
+    d'analyse — un test qui recopierait la condition testerait sa propre copie,
+    pas le code livré.
+
+    Lit `GEOPOLITICAL_VETO_ADVISORY_PAIRS` à chaque appel plutôt que de la
+    capturer : les tests peuvent ainsi la patcher sur le module, comme le
+    reste du moteur.
+    """
+    from config.settings import GEOPOLITICAL_VETO_ADVISORY_PAIRS as _defaut
+
+    liste = globals().get("GEOPOLITICAL_VETO_ADVISORY_PAIRS", _defaut)
+    return bool(pair) and pair.upper() in liste
 
 
 def analyze_trend(pair: str, volatility: VolatilityData, events: list[EconomicEvent]) -> MarketTrend:
@@ -1231,6 +1249,35 @@ def enrich_trade_setup(
             vetoed, reasons, meta = geopolitical_veto.apply(
                 setup.pair, setup.direction.value
             )
+            # Mode consultatif (2026-08-08) : le veto se prononce et reste
+            # enregistré, mais ne bloque plus sur les paires nommées.
+            #
+            # Motif : la règle `gdelt_stress` est documentée pour les **indices
+            # européens**, et son seuil a été assoupli de `high` à
+            # `{high, elevated}` parce qu'elle « ne matchait jamais ». Son
+            # périmètre a ensuite été étendu à BTC/ETH. Les deux seules fois où
+            # elle s'est déclenchée en 30 jours (2 refus sur 72 081, soit
+            # 0,00 %), elle a bloqué **100 % du flux crypto journalier** — les
+            # deux seuls setups exécutables du 2026-08-07.
+            #
+            # Aucune preuve mesurée ne la soutient : le contrôle aléatoire du
+            # 2026-08-05 couvre l'ensemble de la pile de vetos et ne lui trouve
+            # aucun apport. Et sur une route dont la raison d'être actuelle est
+            # d'**accumuler des observations**, un veto rare retire justement
+            # les jours de stress — il ralentit la mesure ET en biaise
+            # l'échantillon.
+            #
+            # ⚠️ Filtré ICI, au point de consommation, et **jamais dans
+            # `geopolitical_veto.apply`** : le shadow appelle la même fonction
+            # pour son verdict contrefactuel (`geopolitical_features_json`).
+            # Restreindre la règle détruirait la donnée qui permettra un jour
+            # de la juger. On garde la mesure, on retire seulement le blocage.
+            if vetoed and veto_geopolitique_consultatif(setup.pair):
+                logger.info(
+                    f"geopolitical_veto CONSULTATIF (non bloquant) pair={setup.pair} "
+                    f"dir={setup.direction.value} reasons={reasons}"
+                )
+                vetoed = False
             if vetoed:
                 setup.verdict_action = "SKIP"
                 blockers = list(setup.verdict_blockers or [])
