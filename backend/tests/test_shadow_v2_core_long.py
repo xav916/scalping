@@ -864,7 +864,7 @@ def test_existing_pairs_config_unchanged_after_us_equities_addition():
     # Crypto journalier élargi de 2 à 4 le 2026-08-08 : à 2 instruments,
     # Kraken produisait 1,15 setup/semaine, soit ~7 mois pour atteindre les
     # ~30 trades nécessaires. SOL et XRP retenus sur la liquidité.
-    CRYPTO_1D = {"ETH/USD", "BTC/USD", "SOL/USD", "XRP/USD"}
+    CRYPTO_1D = {"ETH/USD", "BTC/USD", "SOL/USD", "XRP/USD", "ADA/USD"}
     assert set(shadow.SHADOW_PAIRS) == {
         "XAU/USD", "XAG/USD", "WTI/USD", "XLI", "XLK",
         "AAPL", "TSLA", "NVDA", "MSFT",

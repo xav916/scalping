@@ -18,7 +18,7 @@ from backend.services.shadow_v2_core_long import (
     SHADOW_CONFIG,
 )
 
-CRYPTO_1D = ("BTC/USD", "ETH/USD", "SOL/USD", "XRP/USD")
+CRYPTO_1D = ("BTC/USD", "ETH/USD", "SOL/USD", "XRP/USD", "ADA/USD")
 
 
 def test_les_4_cryptos_utilisent_le_jeu_elargi():
@@ -54,3 +54,22 @@ def test_le_4h_n_est_PAS_ouvert_au_crypto():
         assert SHADOW_CONFIG[pair]["tf"] != "4h", (
             f"{pair} passe en 4h : les frais Kraken y consomment plus que l'edge"
         )
+
+
+def test_ada_ajoutee_sur_mesure_pas_par_analogie():
+    """ADA est l'un des 3 seuls instruments de tout Kraken Futures a passer
+    liquidite ET porte de cout (screening des 274 contrats le 2026-08-08 :
+    7 liquides, 3 passants). Elle n'est pas la par analogie."""
+    assert "ADA/USD" in SHADOW_CONFIG
+    assert SHADOW_CONFIG["ADA/USD"]["tf"] == "1d"
+    assert SHADOW_CONFIG["ADA/USD"]["patterns"] == CRYPTO_LONG_PATTERNS
+
+
+def test_HYPE_n_est_PAS_ajoutee():
+    """HYPE passait la porte de cout (21,0 %, 12 M$) mais Twelve Data ne
+    connait pas le symbole : aucune bougie, donc aucun setup, jamais.
+    Un instrument sans source de prix ne se configure pas."""
+    assert "HYPE/USD" not in SHADOW_CONFIG, (
+        "HYPE ajoutee sans source de prix — elle ne produira aucun setup et "
+        "son absence de signal serait indiscernable d'un marche calme"
+    )

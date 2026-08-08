@@ -220,7 +220,16 @@ SHADOW_CONFIG: dict[str, dict[str, Any]] = {
             "system_id": f"V2_CORE_LONG_{pair.replace('/', '')}_1D",
             "risk_pct": 0.0025,  # ⚠️ par analogie avec ETH, NON mesuré
         }
-        for pair in ("SOL/USD", "XRP/USD")
+        # ADA ajoutee le 2026-08-08 : c'est, avec BTC, l'un des SEULS
+        # instruments de tout Kraken Futures a passer simultanement le filtre
+        # de liquidite (7,4 M$ sur 24 h) et la porte de cout (28,9 % de
+        # l'edge). Screening des 274 contrats : 7 sont liquides, 3 passent.
+        #
+        # ⚠️ HYPE passait aussi la porte (21,0 %, 12 M$) mais a ete ECARTE :
+        # Twelve Data ne connait pas le symbole, donc aucune bougie, donc
+        # aucun setup. Un instrument sans source de prix ne se configure pas,
+        # il s'abandonne.
+        for pair in ("SOL/USD", "XRP/USD", "ADA/USD")
     },
     "XLI": {
         "tf": "1d",
