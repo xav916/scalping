@@ -229,7 +229,17 @@ SHADOW_CONFIG: dict[str, dict[str, Any]] = {
         # Twelve Data ne connait pas le symbole, donc aucune bougie, donc
         # aucun setup. Un instrument sans source de prix ne se configure pas,
         # il s'abandonne.
-        for pair in ("SOL/USD", "XRP/USD", "ADA/USD")
+        # DOT et LTC ajoutees le 2026-08-08. Elles sont DEJA dans
+        # `WATCHED_PAIRS` : leur ajout ne coute aucune requete Twelve Data
+        # supplementaire, alors que la production consomme deja 26 req/min
+        # sur une limite de 55.
+        #
+        # Et elles sont les DEUX MEILLEURES apres BTC une fois le spread
+        # compte a la taille reelle de position (14 USD) :
+        #   DOT 17,2 %  ·  LTC 17,7 %  ·  BTC 17,2 %  ·  ADA 29,6 %
+        # Le volume ne les departage pas — a 14 USD l'impact de marche est
+        # nul. C'est le SPREAD qui compte, et le portage.
+        for pair in ("SOL/USD", "XRP/USD", "ADA/USD", "DOT/USD", "LTC/USD")
     },
     "XLI": {
         "tf": "1d",
