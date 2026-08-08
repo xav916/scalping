@@ -249,7 +249,13 @@ SHADOW_CONFIG: dict[str, dict[str, Any]] = {
         # 3 sur 244 — seuil calibré pour une taille institutionnelle, sans
         # rapport avec ce compte.
         for pair in ("SOL/USD", "XRP/USD", "ADA/USD", "DOT/USD", "LTC/USD",
-                     "BNB/USD", "XLM/USD", "SEI/USD", "ENS/USD", "HBAR/USD")
+                     "BNB/USD", "XLM/USD", "SEI/USD", "ENS/USD", "HBAR/USD",
+                     # Vague 2 du 2026-08-08 : ARB, CRV, LDO, PAXG, ALGO —
+                     # 27,5 % a 29,3 % de l'edge, sous le plafond de 30 %.
+                     # Lancee APRES avoir libere du quota Twelve Data via
+                     # `CANDLE_5MIN_SKIP_PAIRS` : le pic etait a 40 req/min
+                     # sur 55, l'ajout brut l'aurait porte a ~47.
+                     "ARB/USD", "CRV/USD", "LDO/USD", "PAXG/USD", "ALGO/USD")
     },
     "XLI": {
         "tf": "1d",

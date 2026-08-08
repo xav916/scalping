@@ -838,6 +838,24 @@ EMAIL_RECIPIENTS = [e.strip() for e in os.getenv("EMAIL_RECIPIENTS", "").split("
 CANDLE_INTERVAL = os.getenv("CANDLE_INTERVAL", "5min")
 CANDLE_COUNT = int(os.getenv("CANDLE_COUNT", "50"))
 
+# Paires pour lesquelles on NE recupere PAS les bougies 5 min (2026-08-08).
+#
+# Une paire servie uniquement par un systeme JOURNALIER n'a aucun usage du
+# 5 min : ses signaux V1 seraient de toute facon refuses faute de whitelist.
+# Chaque paire epargnee libere une requete Twelve Data par cycle.
+#
+# ⚠️ Pose apres mesure : le pic de consommation atteignait 40 requetes sur la
+# minute la plus chargee, pour une limite de 55. Ajouter 5 paires l'aurait
+# porte a ~47, soit 85 % — la marge exacte qui a fait echouer un rattrapage
+# le matin meme. Liberer avant d'ajouter, plutot que l'inverse.
+#
+# Vide par defaut : sans reglage, comportement inchange.
+CANDLE_5MIN_SKIP_PAIRS = frozenset(
+    p.strip().upper()
+    for p in os.getenv("CANDLE_5MIN_SKIP_PAIRS", "").split(",")
+    if p.strip()
+)
+
 # Mataf URL
 MATAF_VOLATILITY_URL = "https://www.mataf.net/en/forex/tools/volatility"
 

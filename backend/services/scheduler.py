@@ -34,6 +34,7 @@ from backend.services.pattern_detector import calculate_trade_setup, detect_patt
 from backend.services.price_service import fetch_candles
 from backend.services.shadow_v2_core_long import SHADOW_PAIRS as _SHADOW_PAIRS
 from config.settings import (
+    CANDLE_5MIN_SKIP_PAIRS,
     CANDLE_COUNT,
     CANDLE_INTERVAL,
     GEOPOLITICAL_NEWS_ENABLED,
@@ -108,9 +109,22 @@ async def run_analysis_cycle() -> None:
         fetch_tasks = [
             fetch_economic_events(),
         ]
-        # Bougies CANDLE_INTERVAL (5min) pour analyse principale
+        # Bougies CANDLE_INTERVAL (5min) pour analyse principale.
+        #
+        # ⚠️ `CANDLE_5MIN_SKIP_PAIRS` epargne la requete aux paires servies
+        # uniquement en journalier. On enfile quand meme une coroutine, qui
+        # rend un resultat VIDE sans appel reseau : les resultats sont indexes
+        # par POSITION plus bas (`results[1 + i]`), et sauter une entree
+        # decalerait silencieusement toutes les paires suivantes.
+        async def _pas_de_bougies():
+            return ([], False)
+
         for pair in WATCHED_PAIRS:
-            fetch_tasks.append(fetch_candles(pair, interval=CANDLE_INTERVAL, outputsize=CANDLE_COUNT))
+            if pair.upper() in CANDLE_5MIN_SKIP_PAIRS:
+                fetch_tasks.append(_pas_de_bougies())
+            else:
+                fetch_tasks.append(
+                    fetch_candles(pair, interval=CANDLE_INTERVAL, outputsize=CANDLE_COUNT))
         # Bougies 1h pour confirmation MTF + calcul volatilité ATR
         # (cap a 50 bougies = 50h d'historique, suffisant pour ATR 14 + baseline 35).
         # Exception SHADOW_PAIRS (XAU/XAG/WTI) : 200 H1 pour aggréger ≥30 H4 fermés
