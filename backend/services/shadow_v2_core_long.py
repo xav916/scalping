@@ -255,7 +255,19 @@ SHADOW_CONFIG: dict[str, dict[str, Any]] = {
                      # Lancee APRES avoir libere du quota Twelve Data via
                      # `CANDLE_5MIN_SKIP_PAIRS` : le pic etait a 40 req/min
                      # sur 55, l'ajout brut l'aurait porte a ~47.
-                     "ARB/USD", "CRV/USD", "LDO/USD", "PAXG/USD", "ALGO/USD")
+                     "ARB/USD", "CRV/USD", "LDO/USD", "PAXG/USD", "ALGO/USD",
+                     # Vague 3 du 2026-08-08 : TOUS les instruments restants
+                     # qui passent la porte de cout, spread compris.
+                     # Xavier : « autant que possible si les criteres sont
+                     # reunis » — la cible n'est pas un quota mais le maximum
+                     # de ce qui est legitimement admissible.
+                     #
+                     # ⚠️ USDC ecarte malgre 26,2 % : un stablecoin ne bouge
+                     # pas, tous ses setups expireraient au timeout.
+                     # ⚠️ XBT ecarte : c'est le nom Kraken de BTC, deja en place.
+                     # ⚠️ HYPE ecarte : Twelve Data ne connait pas le symbole.
+                     "AAVE/USD", "MANA/USD", "UNI/USD", "ETHFI/USD",
+                     "DOGE/USD", "LINK/USD")
     },
     "XLI": {
         "tf": "1d",
