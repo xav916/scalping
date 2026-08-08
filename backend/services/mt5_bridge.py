@@ -496,7 +496,22 @@ def _check_rejection(setup, dest=None) -> str | None:
             return "_not_a_star"  # privé : filtre auto-exec stars-only legacy
     # Blocklist surgical : retire un pair sans toucher au scoring/Telegram.
     # Cf. MT5_BRIDGE_BLOCKED_PAIRS dans config/settings.py.
-    if setup.pair.upper() in MT5_BRIDGE_BLOCKED_PAIRS:
+    #
+    # ⚠️ Restreinte aux bridges MT5 depuis le 2026-08-08. Elle bloquait TOUTES
+    # les destinations, Kraken compris — alors que son motif est purement
+    # Pepperstone : `INVALID_VOLUME` (retcode 10014) sur SOL/ADA dont le
+    # `volume_step` vaut 0,1 chez ce courtier, contre 0,01 pour BTC/ETH.
+    #
+    # Chez Kraken les specs n'ont rien à voir : `contractValueTradePrecision`
+    # vaut 2 pour PF_SOLUSD et 0 pour PF_XRPUSD, et le dimensionnement a été
+    # vérifié valide le 2026-08-08. **Un garde-fou d'un courtier interdisait
+    # un autre courtier** — 61 refus XRP et 48 SOL le seul 2026-08-08, dont
+    # l'unique setup journalier produit ce jour-là.
+    #
+    # Le correctif était déjà annoncé dans la fiche de juin : « pause par
+    # bridge plutôt que globale ». Le nom même de la variable le disait.
+    if (getattr(dest, "bridge_type", "mt5") == "mt5"
+            and setup.pair.upper() in MT5_BRIDGE_BLOCKED_PAIRS):
         return "pair_blocked"
     # Whitelist par destination (2026-06-30 admin_live, 2026-07-29 admin_legacy).
     # Opt-in strict : si WHITELIST_PAIRS non-vide pour la destination, seules ces
