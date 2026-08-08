@@ -238,7 +238,24 @@ def get_funding_rate_for_pair(pair: str) -> float | None:
     try:
         symbol = _PAIR_TO_SYMBOL.get(pair)
         if not symbol:
-            return None
+            # Repli derive (2026-08-08). `_fetch_all_rates` recupere DEJA tous
+            # les taux publies par Kraken ; seule la traduction paire->symbole
+            # manquait, et elle rendait `None` pour toute paire absente de la
+            # carte codee en dur. Consequence mesuree : BNB, XLM, SEI, ENS et
+            # HBAR voyaient leur cout de portage devenir incalculable, donc
+            # `exceeds_edge` bloquait l'argent reel -- un refus fonde sur une
+            # donnee manquante, pas sur un cout.
+            #
+            # La derivation n'est acceptee que si le symbole existe dans les
+            # taux reellement recuperes : une derivation non validee
+            # rendrait un taux d'une autre paire ou masquerait une absence.
+            if "/" not in pair:
+                return None
+            base, quote = pair.split("/", 1)
+            if quote.upper() != "USD":
+                return None
+            derive = f"PF_{base.upper()}USD"
+            return _fetch_all_rates().get(derive)
         return _get_funding_rate(symbol)
     except Exception:
         return None
