@@ -66,6 +66,28 @@ US_EQUITY_TECH_PATTERNS: set[str] = WTI_OPTIMAL_PATTERNS
 # sens, c'est suffisant pour répondre à la question posée.
 FOREX_MEASURE_PATTERNS: set[str] = WTI_OPTIMAL_PATTERNS
 
+# Motifs du crypto JOURNALIER (élargi le 2026-08-08) : `CORE_LONG_PATTERNS`
+# plus `range_bounce_up`.
+#
+# Motif : à 3 motifs, les 4 instruments crypto ne produisent que **1,31 setup
+# par semaine** (15 setups en 80 jours), et seuls BTC/ETH passent la porte de
+# coût — SOL et XRP sont refusés sur le portage. La route ne trade donc
+# quasiment jamais.
+#
+# `range_bounce_up` est retenu parce que c'est le motif à la **meilleure
+# espérance mesurée** du système (+0,133 R sur 16 996 trades, seul avec
+# `range_bounce_down` à survivre à la validation hors échantillon du
+# 2026-08-04). Répartition observée en journalier : engulfing 9, momentum 5,
+# breakout 1 — l'ajout devrait augmenter la cadence d'environ moitié.
+#
+# ⚠️ Le 4h a été écarté APRÈS MESURE : les frais Kraken (0,05 %/jambe) exigent
+# un stop large. Sur un stop 4h de 0,76 % le coût atteint **129 % de l'edge**,
+# contre 12 % en journalier à 7,59 %. **Seul le journalier est
+# économiquement viable sur cette route.**
+#
+# ⚠️ LONG ONLY comme tous les jeux longs — ce système n'ouvrira jamais de vente.
+CRYPTO_LONG_PATTERNS: set[str] = CORE_LONG_PATTERNS | {"range_bounce_up"}
+
 # Configuration unifiée par paire : timeframe, patterns, system_id, sizing.
 # Ajouté ETH/USD Daily V2_CORE_LONG (exp #34) en 4e candidat.
 DEFAULT_CAPITAL_EUR: float = 10_000.0
@@ -92,7 +114,7 @@ SHADOW_CONFIG: dict[str, dict[str, Any]] = {
     },
     "ETH/USD": {
         "tf": "1d",
-        "patterns": CORE_LONG_PATTERNS,
+        "patterns": CRYPTO_LONG_PATTERNS,
         "system_id": "V2_CORE_LONG_ETHUSD_1D",
         "risk_pct": 0.0025,  # maxDD 3y très élevé 158%, sample 144 trades
     },
@@ -117,7 +139,7 @@ SHADOW_CONFIG: dict[str, dict[str, Any]] = {
     # achats, quel que soit l'état d'admission du côté vente.
     "BTC/USD": {
         "tf": "1d",
-        "patterns": CORE_LONG_PATTERNS,
+        "patterns": CRYPTO_LONG_PATTERNS,
         "system_id": "V2_CORE_LONG_BTCUSD_1D",
         "risk_pct": 0.0025,  # ⚠️ par analogie avec ETH, NON mesuré
     },
@@ -194,7 +216,7 @@ SHADOW_CONFIG: dict[str, dict[str, Any]] = {
     **{
         pair: {
             "tf": "1d",
-            "patterns": CORE_LONG_PATTERNS,
+            "patterns": CRYPTO_LONG_PATTERNS,
             "system_id": f"V2_CORE_LONG_{pair.replace('/', '')}_1D",
             "risk_pct": 0.0025,  # ⚠️ par analogie avec ETH, NON mesuré
         }

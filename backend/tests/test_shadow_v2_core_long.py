@@ -830,7 +830,9 @@ def test_existing_pairs_config_unchanged_after_us_equities_addition():
     }
     assert shadow.SHADOW_CONFIG["ETH/USD"] == {
         "tf": "1d",
-        "patterns": shadow.CORE_LONG_PATTERNS,
+        # Élargi le 2026-08-08 : + range_bounce_up, pour sortir des
+        # 1,31 setup/semaine qui rendaient la route Kraken inerte.
+        "patterns": shadow.CRYPTO_LONG_PATTERNS,
         "system_id": "V2_CORE_LONG_ETHUSD_1D",
         "risk_pct": 0.0025,
     }
@@ -900,7 +902,7 @@ def test_btc_usd_daily_config():
     eth = shadow.SHADOW_CONFIG["ETH/USD"]
     assert cfg == {
         "tf": "1d",
-        "patterns": shadow.CORE_LONG_PATTERNS,
+        "patterns": shadow.CRYPTO_LONG_PATTERNS,
         "system_id": "V2_CORE_LONG_BTCUSD_1D",
         "risk_pct": 0.0025,
     }
