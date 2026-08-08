@@ -44,6 +44,30 @@ def _disable_star_filter(monkeypatch):
     )
 
 
+@pytest.fixture(autouse=True)
+def _marche_ouvert(monkeypatch):
+    """Force le marché ouvert : ces tests portent sur le ROUTAGE, pas les horaires.
+
+    ⚠️ Corrigé le 2026-08-08. Sans ça, les 6 tests de ce fichier échouaient
+    **tous les week-ends** : `_check_rejection` rend `market_closed` sur
+    EUR/USD hors séance, donc aucun push ne partait et `last_url` restait
+    `None`. Le message d'échec (« assert None == 'http://admin-bridge:8787/order' »)
+    ne disait rien de l'heure — on lisait un routage cassé là où il n'y avait
+    qu'un samedi.
+
+    Un test de routage qui dépend du jour de la semaine ne teste pas ce qu'il
+    prétend : il est vert ou rouge selon quand on le lance, et c'est
+    exactement le genre de rouge permanent qu'on finit par ignorer.
+
+    ⚠️ Le comportement horaire lui-même reste couvert, explicitement, par
+    `test_marche_ferme_bloque_le_dispatch` plus bas — stuber une porte sans
+    la tester ailleurs, c'est la supprimer.
+    """
+    monkeypatch.setattr(
+        mt5_bridge, "is_market_open_for_destination", lambda *a, **k: True
+    )
+
+
 def _mk_setup(pair: str = "EUR/USD") -> MagicMock:
     s = MagicMock()
     s.pair = pair
@@ -272,3 +296,46 @@ async def test_two_users_get_separate_enqueues(db, reset_fake_client, monkeypatc
     assert len(bob_orders) == 1
     assert alice_orders[0]["user_id"] == 17
     assert bob_orders[0]["user_id"] == 42
+
+
+# ─── Horaires de marché : la porte que l'autouse ci-dessus neutralise ──
+
+
+@pytest.mark.asyncio
+async def test_marche_ferme_bloque_le_dispatch(db, reset_fake_client, monkeypatch):
+    """Marché fermé ⇒ aucun push, ni HTTP admin ni queue user.
+
+    ⚠️ Ce test existe parce que `_marche_ouvert` force le marché ouvert pour
+    tous les autres. Sans lui, le stub supprimerait silencieusement la
+    couverture de `market_closed` — une porte stubée partout et testée nulle
+    part est une porte qu'on a retirée sans le décider.
+
+    Il redéfinit le stub localement : `monkeypatch` applique la dernière
+    valeur posée, donc celle-ci l'emporte sur la fixture autouse.
+    """
+    monkeypatch.setattr(
+        mt5_bridge, "is_market_open_for_destination", lambda *a, **k: False
+    )
+    monkeypatch.setattr(
+        bridge_destinations,
+        "resolve_destinations",
+        lambda setup: [_admin_dest(), _user_dest(user_id=17)],
+    )
+    monkeypatch.setattr(
+        "backend.services.mt5_bridge.httpx.AsyncClient", _FakeAsyncClient
+    )
+
+    await mt5_bridge.send_setup(_mk_setup("EUR/USD"))
+
+    assert _FakeAsyncClient.last_url is None, "aucun POST ne doit partir marché fermé"
+    assert mt5_pending_orders_service.count_by_status(user_id=17) == {}, (
+        "aucun ordre ne doit être mis en queue non plus"
+    )
+
+
+@pytest.mark.asyncio
+async def test_la_fixture_marche_ouvert_est_bien_active(db):
+    """Verrouille le correctif lui-même : sans elle, tout ce fichier est
+    rouge le week-end. Si quelqu'un retire la fixture, ce test tombe le
+    premier, avec un message qui dit pourquoi."""
+    assert mt5_bridge.is_market_open_for_destination("EUR/USD", "admin_legacy") is True

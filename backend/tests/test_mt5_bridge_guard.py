@@ -31,6 +31,30 @@ def _mk_setup(pair: str) -> MagicMock:
 
 
 @pytest.fixture(autouse=True)
+def _marche_ouvert(monkeypatch):
+    """Force le marché ouvert : ce fichier teste le garde-fou de CLASSE
+    D'ACTIF, pas les horaires de séance.
+
+    ⚠️ Corrigé le 2026-08-08, même défaut que
+    `test_dispatch_user_vs_admin.py` : `_check_rejection` rend
+    `market_closed` sur EUR/USD hors séance, donc `test_forex_not_blocked_by_guard`
+    et `test_skip_verdict_without_blockers_still_pushed` échouaient **tous les
+    week-ends**, sur un `assert False` qui ne disait rien de l'heure.
+
+    Même famille que l'estampille `horizon` ajoutée dans `_mk_setup` le
+    2026-08-05 : chaque porte ajoutée en amont casse un test qui ne la
+    connaissait pas. La parade est la même — neutraliser explicitement ce
+    qu'on ne teste pas, et le dire.
+
+    ⚠️ Les tests qui vérifient un BLOCAGE (crypto, index) restent valides :
+    ils sont refusés sur la classe d'actif, en amont des horaires.
+    """
+    monkeypatch.setattr(
+        mt5_bridge, "is_market_open_for_destination", lambda *a, **k: True
+    )
+
+
+@pytest.fixture(autouse=True)
 def _reset_dedup():
     """Make sure each test starts with a clean dedup state (memory + DB).
 
