@@ -95,6 +95,16 @@ def _init_schema() -> None:
             CREATE INDEX IF NOT EXISTS idx_signals_pair_dir_emitted
                 ON signals(pair, direction, emitted_at);
         """)
+        # Migration 2026-08-08 : excursions ECHANTILLONNEES (Phase 1 du
+        # chantier ML). La cible retenue -- l'excursion favorable maximale --
+        # n'existait a volume nulle part : 23 lignes dans shadow_setups, et
+        # l'historique n'est pas recalculable faute de depot de bougies.
+        # Idempotent : PRAGMA relu a chaque appel.
+        cols = [r[1] for r in c.execute("PRAGMA table_info(trades)").fetchall()]
+        if "mfe_pct" not in cols:
+            c.execute("ALTER TABLE trades ADD COLUMN mfe_pct REAL")
+        if "mae_pct" not in cols:
+            c.execute("ALTER TABLE trades ADD COLUMN mae_pct REAL")
 
 
 @contextmanager
@@ -273,6 +283,18 @@ def record_setups(setups: list[TradeSetup]) -> None:
             )
 
 
+def _col(row, nom: str):
+    """Lit une colonne qui peut ne pas exister sur une `Row` ancienne.
+
+    `sqlite3.Row` leve `IndexError` sur une colonne absente. Rendre `None`
+    plutot que d'exploser : « pas encore mesure » est un etat legitime.
+    """
+    try:
+        return row[nom]
+    except (IndexError, KeyError):
+        return None
+
+
 async def check_open_trades() -> None:
     """Pour chaque trade OPEN, verifie si SL ou TP a ete touche. MAJ en base."""
     _init_schema()
@@ -285,14 +307,70 @@ async def check_open_trades() -> None:
         if current is None:
             continue
         outcome, rr = _evaluate(row, current)
+
+        # Excursions echantillonnees : mises a jour a CHAQUE sonde, y compris
+        # quand le trade reste ouvert -- c'est tout l'interet, on accumule le
+        # maximum courant faute de pouvoir rejouer le chemin de prix.
+        mfe, mae = excursions_echantillonnees(
+            row["direction"], row["entry_price"], current,
+            _col(row, "mfe_pct"), _col(row, "mae_pct"),
+        )
+
         if outcome == "OPEN":
+            with _conn() as c:
+                c.execute(
+                    "UPDATE trades SET mfe_pct=?, mae_pct=? WHERE id=?",
+                    (mfe, mae, row["id"]),
+                )
             continue
         with _conn() as c:
             c.execute(
-                "UPDATE trades SET outcome=?, exit_price=?, rr_realized=?, checked_at=? WHERE id=?",
-                (outcome, current, rr, datetime.now(timezone.utc).isoformat(), row["id"]),
+                "UPDATE trades SET outcome=?, exit_price=?, rr_realized=?, "
+                "checked_at=?, mfe_pct=?, mae_pct=? WHERE id=?",
+                (outcome, current, rr, datetime.now(timezone.utc).isoformat(),
+                 mfe, mae, row["id"]),
             )
         logger.info(f"Backtest: trade #{row['id']} {row['pair']} -> {outcome} (R:R {rr:.2f})")
+
+
+def excursions_echantillonnees(
+    direction: str,
+    entry: float,
+    price: float,
+    mfe_pct: float | None,
+    mae_pct: float | None,
+) -> tuple[float, float]:
+    """Met a jour les excursions favorable et adverse a partir d'UNE sonde.
+
+    Ajoutee le 2026-08-08 pour la Phase 1 du chantier ML. La cible retenue est
+    l'excursion favorable maximale, et elle n'existait nulle part a volume :
+    `shadow_setups` n'en portait que 23 lignes, et l'historique n'est pas
+    recalculable (aucun depot de bougies, Twelve Data ne rend que ~5 jours
+    d'historique en 5 min).
+
+    ⚠️ **C'est une excursion ECHANTILLONNEE, pas une vraie excursion
+    intra-bougie.** `check_open_trades` interroge le prix courant toutes les
+    ~3 minutes, il ne rejoue aucun chemin. Une pointe entre deux sondes est
+    donc invisible : la valeur produite **sous-estime** systematiquement la
+    vraie excursion. Le biais est constant et dans un seul sens, ce qui la
+    rend exploitable comme cible — a condition de ne jamais la confondre avec
+    `shadow_setups.mfe_pct`, qui est calculee sur les bougies et donc exacte.
+
+    Rendues POSITIVES et toujours dans le sens du trade, comme
+    `backtest_engine.excursions_pct` : sur une vente, la baisse est favorable.
+    """
+    if not entry:
+        return (mfe_pct or 0.0, mae_pct or 0.0)
+    if str(direction) == "buy":
+        fav = (price - entry) / entry * 100.0
+        adv = (entry - price) / entry * 100.0
+    else:
+        fav = (entry - price) / entry * 100.0
+        adv = (price - entry) / entry * 100.0
+    return (
+        max(mfe_pct or 0.0, fav, 0.0),
+        max(mae_pct or 0.0, adv, 0.0),
+    )
 
 
 def _evaluate(row: sqlite3.Row, price: float) -> tuple[str, float]:
