@@ -239,7 +239,17 @@ SHADOW_CONFIG: dict[str, dict[str, Any]] = {
         #   DOT 17,2 %  ·  LTC 17,7 %  ·  BTC 17,2 %  ·  ADA 29,6 %
         # Le volume ne les departage pas — a 14 USD l'impact de marche est
         # nul. C'est le SPREAD qui compte, et le portage.
-        for pair in ("SOL/USD", "XRP/USD", "ADA/USD", "DOT/USD", "LTC/USD")
+        # Vague 1 du 2026-08-08 : BNB, XLM, SEI, ENS, HBAR. Retenues sur le
+        # coût TOTAL une fois le spread compté à la taille réelle de position
+        # (14 USD) — 17,7 % à 23,1 % de l'edge, contre un plafond à 30 %.
+        #
+        # ⚠️ Le volume ne départage PAS à cette taille : 14 USD sur un
+        # instrument à 500 k$/jour représente 0,003 % du volume, l'impact de
+        # marché est nul. Un premier filtre à 5 M$ de volume n'en laissait que
+        # 3 sur 244 — seuil calibré pour une taille institutionnelle, sans
+        # rapport avec ce compte.
+        for pair in ("SOL/USD", "XRP/USD", "ADA/USD", "DOT/USD", "LTC/USD",
+                     "BNB/USD", "XLM/USD", "SEI/USD", "ENS/USD", "HBAR/USD")
     },
     "XLI": {
         "tf": "1d",

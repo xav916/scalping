@@ -18,7 +18,7 @@ from backend.services.shadow_v2_core_long import (
     SHADOW_CONFIG,
 )
 
-CRYPTO_1D = ("BTC/USD", "ETH/USD", "SOL/USD", "XRP/USD", "ADA/USD", "DOT/USD", "LTC/USD")
+CRYPTO_1D = ("BTC/USD", "ETH/USD", "SOL/USD", "XRP/USD", "ADA/USD", "DOT/USD", "LTC/USD", "BNB/USD", "XLM/USD", "SEI/USD", "ENS/USD", "HBAR/USD")
 
 
 def test_les_4_cryptos_utilisent_le_jeu_elargi():
