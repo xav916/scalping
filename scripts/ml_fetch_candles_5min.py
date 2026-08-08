@@ -31,6 +31,15 @@ KEY = os.environ["TWELVEDATA_API_KEY"]
 DB = os.getenv("ML_CANDLES_DB", "/app/data/candles_5min.db")
 API = "https://api.twelvedata.com/time_series"
 
+# ⚠️ La production consomme deja ~13 requetes/min en continu (scheduler toutes
+# les 3 min sur ~16 paires). A 1,2 s le rattrapage l'affamait : essai du
+# 2026-08-08 interrompu sur « You have run out of API credits ». 4 s laisse
+# largement la place au flux vivant, qui prime.
+PAUSE_SEC = float(os.getenv("ML_FETCH_PAUSE_SEC", "4.0"))
+
+# Restreindre le rattrapage aux paires qui portent une decision.
+PAIRES_UTILES = os.getenv("ML_FETCH_PAIRS", "").strip()
+
 
 def fenetres(debut: str, fin: str, jours: int = 14):
     """Découpe en fenêtres : 14 jours de 5 min ≈ 4 000 bougies, sous la limite."""
@@ -43,6 +52,8 @@ def fenetres(debut: str, fin: str, jours: int = 14):
 
 def paires_a_couvrir(backtest_db: str = "/app/data/backtest.db") -> list[str]:
     """Les paires réellement tradées, les plus fournies d'abord."""
+    if PAIRES_UTILES:
+        return [x.strip() for x in PAIRES_UTILES.split(",") if x.strip()]
     c = sqlite3.connect(backtest_db)
     return [r[0] for r in c.execute(
         "SELECT pair, COUNT(*) n FROM trades WHERE outcome IS NOT NULL "
@@ -68,8 +79,16 @@ def main(debut: str, fin: str) -> None:
                         "outputsize": 5000, "apikey": KEY})
                     j = r.json()
                     req += 1
-                    if j.get("status") == "error":
-                        print(f"  {p} {d1} : {j.get('message', '')[:70]}")
+                    msg = j.get("message", "") if j.get("status") == "error" else ""
+                    if "API credits" in msg:
+                        # ⚠️ NE PAS passer a la fenetre suivante : ce serait un
+                        # TROU SILENCIEUX dans l'historique. On attend et on
+                        # rejoue la MEME fenetre.
+                        print(f"  {p} {d1} : quota atteint, pause 65 s")
+                        time.sleep(65)
+                        continue
+                    if msg:
+                        print(f"  {p} {d1} : {msg[:70]}")
                         break
                     rows = [(p, v["datetime"], float(v["open"]), float(v["high"]),
                              float(v["low"]), float(v["close"]))
@@ -83,7 +102,7 @@ def main(debut: str, fin: str) -> None:
                     if essai == 2:
                         print(f"  {p} {d1} : {type(e).__name__}")
                     time.sleep(3)
-            time.sleep(1.2)  # 55 req/min
+            time.sleep(PAUSE_SEC)  # la PRODUCTION consomme deja ~13 req/min
         total += n_p
         print(f"  {p:10s} {n_p:7d} bougies")
     print(f"\n{total} bougies, {req} requetes -> {DB}")
