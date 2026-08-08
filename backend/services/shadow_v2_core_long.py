@@ -169,6 +169,37 @@ SHADOW_CONFIG: dict[str, dict[str, Any]] = {
             "USD/CAD", "GBP/USD", "EUR/USD", "USD/CHF",
         )
     },
+    # ── Crypto journalier : élargissement de 2 à 4 (2026-08-08) ──────────
+    #
+    # Motif : à 2 instruments, Kraken produit **1,15 setup par semaine**
+    # (mesuré sur ETH, 13 setups en 79 jours). Il faut ~30 trades propres pour
+    # que la mesure dise quelque chose ⇒ **sept mois**. Autrement dit, à ce
+    # rythme Kraken ne répond à rien dans un délai qui compte pour une
+    # décision. Le plafond est arithmétique : 2 instruments × 1 bougie/jour
+    # × ~8 % de déclenchement.
+    #
+    # SOL et XRP retenus sur la LIQUIDITÉ — les deux plus profonds du lot
+    # candidat (SOL, XRP, LTC, BCH, ADA, DOT), ce qui limite le glissement,
+    # un coût que `CostModel` ne capture pas. Tous les six passaient le
+    # dimensionnement et la porte de coût ; c'est ce critère-là qui départage.
+    #
+    # ⚠️ **Doubler le nombre de trades ne double PAS l'information.** Les
+    # cryptos majeures sont fortement corrélées : 30 trades sur 4 instruments
+    # corrélés valent statistiquement moins que 30 trades indépendants. Le
+    # verdict arrivera plus vite, il ne sera pas aussi solide qu'un n=30 vrai.
+    # XRP est le moins corrélé du lot, d'où sa préférence sur LTC/BCH.
+    #
+    # ⚠️ `risk_pct` : aucun backtest, valeur la plus prudente de la
+    # configuration, par analogie avec ETH — comme BTC et les actions US.
+    **{
+        pair: {
+            "tf": "1d",
+            "patterns": CORE_LONG_PATTERNS,
+            "system_id": f"V2_CORE_LONG_{pair.replace('/', '')}_1D",
+            "risk_pct": 0.0025,  # ⚠️ par analogie avec ETH, NON mesuré
+        }
+        for pair in ("SOL/USD", "XRP/USD")
+    },
     "XLI": {
         "tf": "1d",
         "patterns": TIGHT_LONG_PATTERNS,

@@ -859,11 +859,30 @@ def test_existing_pairs_config_unchanged_after_us_equities_addition():
         "EUR/JPY", "GBP/JPY", "EUR/GBP", "USD/JPY", "AUD/USD",
         "USD/CAD", "GBP/USD", "EUR/USD", "USD/CHF",
     }
+    # Crypto journalier élargi de 2 à 4 le 2026-08-08 : à 2 instruments,
+    # Kraken produisait 1,15 setup/semaine, soit ~7 mois pour atteindre les
+    # ~30 trades nécessaires. SOL et XRP retenus sur la liquidité.
+    CRYPTO_1D = {"ETH/USD", "BTC/USD", "SOL/USD", "XRP/USD"}
     assert set(shadow.SHADOW_PAIRS) == {
-        "XAU/USD", "XAG/USD", "WTI/USD", "ETH/USD", "XLI", "XLK",
+        "XAU/USD", "XAG/USD", "WTI/USD", "XLI", "XLK",
         "AAPL", "TSLA", "NVDA", "MSFT",
-        "BTC/USD",
-    } | FOREX_MESURE_H4
+    } | FOREX_MESURE_H4 | CRYPTO_1D
+
+
+def test_crypto_journalier_elargi_a_quatre():
+    """SOL et XRP alignés sur ETH : même horizon, mêmes motifs, même risque.
+
+    ⚠️ Aucun backtest sur ces deux-là — la configuration est une analogie avec
+    ETH, pas une validation. Ce test verrouille l'analogie pour qu'une
+    divergence future soit un acte délibéré, comme pour BTC.
+    """
+    eth = shadow.SHADOW_CONFIG["ETH/USD"]
+    for pair in ("SOL/USD", "XRP/USD"):
+        cfg = shadow.SHADOW_CONFIG[pair]
+        assert cfg["tf"] == eth["tf"] == "1d"
+        assert cfg["patterns"] == eth["patterns"]
+        assert cfg["risk_pct"] == eth["risk_pct"]
+        assert cfg["system_id"] == f"V2_CORE_LONG_{pair.replace('/', '')}_1D"
 
 
 def test_btc_usd_daily_config():
