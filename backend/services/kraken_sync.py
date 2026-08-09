@@ -56,6 +56,17 @@ TIMEOUT_SEC = 10.0
 CAUSE_SL = "SL"
 CAUSE_TP = "TP1"
 CAUSE_NET = "NET"
+# Position disparue de chez Kraken sans qu'aucun fill ne lui soit attribuable :
+# ni son ordre d'ouverture, ni son SL, ni son TP. Constate le 2026-08-09 sur
+# ETHFI, SEI et CRV, fermees HORS du systeme — le bridge n'avait vu aucun POST
+# ce jour-la hormis les deux ouvertures, et les fills de cloture portaient des
+# `order_id` neufs.
+#
+# Distincte de `NET` a dessein : `NET` couvrait deux situations opposees — un
+# ordre qui reduit une position, avec un P&L connu, et une position disparue,
+# avec un P&L inconnu. Le meme libelle pour les deux rendait le second
+# indetectable.
+CAUSE_EXTERNE = "EXTERNE"
 
 
 def _db_path() -> str:
@@ -268,7 +279,9 @@ def clotures_par_nettage(pushes, fills, positions, deja_closes) -> list[dict[str
         if sym and abs(positions.get(sym, 0.0)) > 0:
             continue  # encore de l'exposition sur ce symbole : rien à conclure
         sortie.append({
-            "push": p, "cause": CAUSE_NET, "taille": p["volume"],
+            "push": p, "cause": CAUSE_EXTERNE, "taille": p["volume"],
+            # ⚠️ Le montant est INCONNU, pas nul. `enregistrer_cloture` en tire
+            # un `pnl = NULL` plutot que de laisser le 0.0 pose a l'ouverture.
             "pnl_usd": None, "exit_price": None, "complete": True,
             "closed_at": datetime.now(timezone.utc).isoformat(),
         })
@@ -440,18 +453,31 @@ def enregistrer_cloture(cloture: dict[str, Any], eur_usd: float) -> dict | None:
         "created_at": p["pushed_at"], "closed_at": closed_at,
         "signal_pattern": None, "signal_confidence": None,
     }
+    # ⚠️ Un P&L INCONNU doit s'ecrire NULL, pas rester au 0.0 pose a
+    # l'ouverture. Le `COALESCE` ci-dessous protege les autres chemins d'un
+    # ecrasement, mais il transformait ici une absence en trade a plat — alors
+    # que `recent_pnl_multiplier`, `pair_admission_controller`,
+    # `pair_pnl_regulator` et `promotion_engine` somment tous cette colonne.
+    # La convention « NULL = inconnu » existe deja : `insights_service` agrege
+    # explicitement sur `pnl NOT NULL`.
+    # Derive de `pnl_eur`, sans drapeau a poser : un drapeau serait une chose
+    # de plus a ne pas oublier, et `pnl_eur is None` EST deja l'enonce
+    # « montant inconnu ».
+    inconnu = pnl_eur is None
     with sqlite3.connect(_db_path()) as c:
         if existe:
-            c.execute("""
+            c.execute(f"""
                 UPDATE personal_trades
                    SET status = 'CLOSED',
                        exit_price = COALESCE(?, exit_price),
-                       pnl = COALESCE(?, pnl),
+                       pnl = {'NULL' if inconnu else 'COALESCE(?, pnl)'},
                        closed_at = COALESCE(closed_at, ?),
                        close_reason = COALESCE(close_reason, ?)
                  WHERE mt5_ticket = ?
-            """, (cloture.get("exit_price"), pnl_eur, closed_at,
-                  cloture["cause"], order_id))
+            """, ((cloture.get("exit_price"), closed_at, cloture["cause"],
+                   order_id) if inconnu else
+                  (cloture.get("exit_price"), pnl_eur, closed_at,
+                   cloture["cause"], order_id)))
         else:
             # `stop_loss` et `take_profit` sont NOT NULL. Le bridge ne
             # renvoyait que les identifiants des ordres SL/TP, pas leurs

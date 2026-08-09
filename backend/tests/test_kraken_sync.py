@@ -144,7 +144,10 @@ def test_sans_exposition_restante_le_trade_est_ferme_par_nettage():
     """Un ordre opposé absorbe la position : ni SL ni TP n'a été exécuté."""
     r = ks.clotures_par_nettage(PUSHES, FILLS, {"PF_ETHUSD": 0.0}, deja_closes=set())
     assert {c["push"]["push_id"] for c in r} == {12963, 12966}
-    assert all(c["cause"] == ks.CAUSE_NET for c in r)
+    # `EXTERNE` depuis le 2026-08-09 : `NET` couvrait deux situations opposées
+    # — un ordre qui RÉDUIT une position (P&L connu) et une position DISPARUE
+    # (P&L inconnu). Le même libellé rendait la seconde indétectable.
+    assert all(c["cause"] == ks.CAUSE_EXTERNE for c in r)
 
 
 def test_un_pnl_non_attribuable_reste_absent():
@@ -235,7 +238,9 @@ def test_sans_pnl_attribuable_la_ligne_est_ecrite_sans_montant(base):
     c = ks.clotures_par_nettage(PUSHES, FILLS, {"PF_ETHUSD": 0.0}, set())[0]
     trade = ks.enregistrer_cloture(c, 1.1525)
     assert trade["pnl"] is None
-    assert _lignes(base)[0]["close_reason"] == ks.CAUSE_NET
+    assert _lignes(base)[0]["close_reason"] == ks.CAUSE_EXTERNE
+    # ⚠️ Et la colonne doit valoir NULL, pas le 0.0 posé à l'ouverture.
+    assert _lignes(base)[0]["pnl"] is None
 
 
 # --- les hypothèses sur les autres modules --------------------------------
