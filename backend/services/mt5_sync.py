@@ -373,13 +373,46 @@ async def _notify_close_telegram(ticket: int) -> None:
 
 
 def _select_open_auto_tickets() -> set[int]:
-    """Retourne les mt5_tickets des personal_trades auto encore OPEN."""
+    """Tickets **MT5** des personal_trades auto encore OPEN.
+
+    ⚠️ Les identifiants non MT5 sont ecartes, et ce n'est pas defensif : ces
+    tickets servent a interroger le ``/positions`` du bridge **MT5**. Un ordre
+    Kraken y est etranger — il a sa propre reconciliation, toutes les 2 min.
+
+    Incident du 2026-08-09. Le premier trade de l'univers Kraken elargi
+    (ETHFI, 08-08 a 23:58) a ete materialise dans ``personal_trades`` avec un
+    UUID pour ``mt5_ticket``. Le ``int()`` qui suivait levait, et comme
+    ``_reconcile_open_trades`` est le DERNIER appel de ``sync_from_bridge``,
+    la reconciliation des cloturees naturelles MT5 est morte pendant dix
+    heures : 59 echecs par heure, zero succes, avec une position or ouverte.
+
+    ``mt5_ticket`` est declare ``INTEGER``, mais SQLite est type
+    dynamiquement : la colonne a accepte le texte sans broncher. Le filtre
+    porte donc sur la FORME de la valeur, pas sur son type de stockage — un
+    ticket MT5 arrive parfois en TEXT et doit rester lu.
+    """
     with sqlite3.connect(_db_path()) as c:
         rows = c.execute(
             "SELECT mt5_ticket FROM personal_trades "
             "WHERE status='OPEN' AND is_auto=1 AND mt5_ticket IS NOT NULL"
         ).fetchall()
-    return {int(r[0]) for r in rows}
+    tickets: set[int] = set()
+    ecartes = 0
+    for (valeur,) in rows:
+        try:
+            tickets.add(int(valeur))
+        except (TypeError, ValueError):
+            ecartes += 1
+    if ecartes:
+        # Journalise : ecarter en silence rejouerait le defaut sous une autre
+        # forme — on saurait que la reconciliation ne trouve rien, jamais
+        # pourquoi.
+        logger.debug(
+            "mt5_sync: %d ticket(s) non MT5 ecarte(s) de la reconciliation "
+            "(identifiants d'une autre destination), %d conserve(s)",
+            ecartes, len(tickets),
+        )
+    return tickets
 
 
 def _mark_ticket_closed_no_deal(ticket: int) -> None:
