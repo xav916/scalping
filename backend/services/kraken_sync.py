@@ -261,13 +261,91 @@ def attribuer_clotures(pushes, fills, ouverts=None, positions=None) -> list[dict
     return list(clotures.values())
 
 
+def _attribution_par_unicite(p, pushes, fills, deja_closes) -> dict | None:
+    """P&L d'une cloture quand une SEULE affectation est possible, sinon ``None``.
+
+    Xavier ferme des positions **a la main** sur Kraken (confirme le
+    2026-08-09). Ce n'est donc pas un accident isole mais une pratique — et
+    c'est exactement le cas ou aucun `order_id` connu ne correspond. Le trou de
+    mesure ne frappait pas au hasard : il frappait **precisement les trades
+    qu'il cloture lui-meme**.
+
+    ⚠️ Pourquoi cela ne contredit pas le refus d'`attribuer_clotures`. Ce
+    refus vise « tout rapprochement par prix ou par horodatage » — deux
+    criteres APPROXIMATIFS, qui designent le fill *le plus probable*.
+    L'unicite est d'une autre nature : s'il n'existe qu'un seul push ouvert sur
+    le symbole et que des fills de sens oppose en soldent EXACTEMENT la taille,
+    il n'existe aucune autre position a laquelle les attribuer. Ce n'est pas
+    une estimation, c'est la seule affectation possible.
+
+    Trois verrous, et le moindre doute rend ``None`` :
+
+    1. **un seul** push ouvert sur ce symbole ;
+    2. les fills soldent la taille **exactement** (tolerance 0,1 %) ;
+    3. ils sont **posterieurs** a l'ouverture — un fill anterieur ne peut pas
+       clore un ordre qui n'existait pas encore. C'est de la CAUSALITE, pas une
+       proximite temporelle : on n'elit pas le fill le plus proche, on ecarte
+       ceux qui sont impossibles.
+    """
+    sym = p.get("symbol")
+    if not sym:
+        return None
+
+    # Verrou 1 : unicite.
+    concurrents = [q for q in pushes
+                   if q["push_id"] not in deja_closes and q.get("symbol") == sym]
+    if len(concurrents) != 1 or concurrents[0]["push_id"] != p["push_id"]:
+        return None
+
+    sens_cloture = "sell" if str(p.get("direction", "")).lower() == "buy" else "buy"
+    # Les ordres deja connus du push sont traites en amont par l'attribution
+    # exacte : les reprendre ici compterait le meme P&L deux fois.
+    connus = {p.get("order_id"), p.get("sl_order_id"), p.get("tp_order_id")}
+    ouverture = str(p.get("pushed_at") or "")
+
+    candidats = [
+        f for f in (fills or [])
+        if f.get("symbol") == sym
+        and str(f.get("side", "")).lower() == sens_cloture
+        and f.get("order_id") not in connus
+        # Verrou 3 : causalite. Comparaison de chaines ISO-8601 en UTC, donc
+        # ordonnee ; un horodatage absent est ecarte plutot que suppose valide.
+        and str(f.get("fill_time") or "") > ouverture
+    ]
+    if not candidats:
+        return None
+
+    # Verrou 2 : la taille doit solder le push, pas une partie.
+    taille = sum(float(f.get("size") or 0) for f in candidats)
+    volume = float(p.get("volume") or 0)
+    if volume <= 0 or abs(taille - volume) > volume * 0.001:
+        return None
+
+    notionnel = sum(float(f.get("size") or 0) * float(f.get("price") or 0)
+                    for f in candidats)
+    return {
+        "pnl_usd": sum(float(f.get("realized_pnl") or 0) for f in candidats),
+        "exit_price": (notionnel / taille) if taille else None,
+        "taille": taille,
+        "closed_at": max(str(f.get("fill_time")) for f in candidats),
+    }
+
+
 def clotures_par_nettage(pushes, fills, positions, deja_closes) -> list[dict[str, Any]]:
     """Ordres dont la position a disparu sans exécution de leur SL/TP.
 
     Kraken nette par symbole : un ordre opposé peut absorber la position. Le
-    P&L réalisé apparaît alors sur l'ordre opposé, pas sur le SL/TP — d'où
-    une attribution qui ne peut pas être exacte. On enregistre la clôture,
-    et le montant reste ``None`` plutôt que d'être deviné.
+    P&L réalisé apparaît alors sur l'ordre opposé, pas sur le SL/TP.
+
+    Deux issues, dans cet ordre :
+
+    - **une seule affectation possible** ⇒ on attribue, cf.
+      ``_attribution_par_unicite``. Sans quoi toute clôture manuelle — la
+      pratique de Xavier — perdrait son P&L ;
+    - **le moindre doute** ⇒ le montant reste ``None`` plutôt que d'être
+      deviné, et ``enregistrer_cloture`` en tire un ``pnl = NULL`` au lieu de
+      laisser le ``0.0`` posé à l'ouverture. Un P&L inconnu ne doit pas se lire
+      comme un trade à plat.
     """
     if positions is None:
         return []  # exposition inconnue : ne rien affirmer
@@ -278,12 +356,14 @@ def clotures_par_nettage(pushes, fills, positions, deja_closes) -> list[dict[str
         sym = p.get("symbol")
         if sym and abs(positions.get(sym, 0.0)) > 0:
             continue  # encore de l'exposition sur ce symbole : rien à conclure
+        attribue = _attribution_par_unicite(p, pushes, fills, deja_closes)
         sortie.append({
-            "push": p, "cause": CAUSE_EXTERNE, "taille": p["volume"],
-            # ⚠️ Le montant est INCONNU, pas nul. `enregistrer_cloture` en tire
-            # un `pnl = NULL` plutot que de laisser le 0.0 pose a l'ouverture.
-            "pnl_usd": None, "exit_price": None, "complete": True,
-            "closed_at": datetime.now(timezone.utc).isoformat(),
+            "push": p, "cause": CAUSE_EXTERNE, "complete": True,
+            "taille": attribue["taille"] if attribue else p["volume"],
+            "pnl_usd": attribue["pnl_usd"] if attribue else None,
+            "exit_price": attribue["exit_price"] if attribue else None,
+            "closed_at": (attribue["closed_at"] if attribue
+                          else datetime.now(timezone.utc).isoformat()),
         })
     return sortie
 
