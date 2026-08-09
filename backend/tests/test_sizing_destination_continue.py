@@ -142,7 +142,10 @@ def test_compute_risk_money_lit_la_destination(tmp_path, monkeypatch):
         res = sizing.compute_risk_money(setup, _dest("admin_kraken"))
 
     assert res["session_mult"] == 1.0
-    assert res["risk_money"] == pytest.approx(0.78, abs=0.01)
+    # Fraction du pourcentage effectif, pas une valeur absolue : le risque est
+    # déclaré par destination depuis le 2026-08-09.
+    assert res["risk_money"] / res["capital"] == pytest.approx(
+        res["risk_pct"] / 100.0 * 0.7857, abs=0.0002)
 
 
 def test_compute_risk_money_garde_la_grille_sur_mt5(tmp_path, monkeypatch):

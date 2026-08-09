@@ -34,6 +34,7 @@ impossible sans qu'un test l'annonce.
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -108,6 +109,25 @@ class Destination:
         comparent pas : le forex MT5 à 0,1 lot atteint naturellement 3,8× et
         ce n'est pas anormal, tandis que 3,9× sur un perpétuel crypto engage
         un actif dont la volatilité est d'un tout autre ordre.
+    risk_per_trade_pct
+        Pourcentage du capital risqué par trade sur CETTE destination.
+        ``None`` ⇒ ``RISK_PER_TRADE_PCT`` global.
+
+        Déclaré par destination depuis le 2026-08-09. Le pourcentage global
+        est partagé par des comptes que rien ne rend comparables : le compte
+        réel MT5 n'avait que 143,93 € de marge libre — la position or en
+        immobilisant 177,68 — et son lot minimum sur-dimensionne déjà l'or à
+        2-5 % par trade. Monter le global pour élargir Kraken aurait donc
+        aggravé précisément le compte le plus contraint.
+
+        ⚠️ Cette surcharge est cantonnée au **sizing**. Elle ne doit jamais
+        atteindre ``pair_admission_controller._r_unit_eur``, qui utilise
+        ``TRADING_CAPITAL × RISK_PER_TRADE_PCT`` comme **unité de
+        normalisation** — c'est ce qui rend ``pnl_pct`` indépendant du capital
+        configuré. L'y propager déplacerait **rétroactivement** les seuils
+        d'admission de toutes les paires déjà mesurées. Une constante utilisée
+        comme unité ne suit pas un changement de politique, même quand les
+        deux portent le même nom.
     """
 
     id: str
@@ -124,6 +144,7 @@ class Destination:
     max_notional_leverage: float | None = None
     order_cooldown_sec: int = 0
     max_correlated_positions: int = 0
+    risk_per_trade_pct: float | None = None
 
 
 DESTINATIONS: dict[str, Destination] = {
@@ -166,6 +187,12 @@ DESTINATIONS: dict[str, Destination] = {
             max_notional_leverage=2.0,
             order_cooldown_sec=900,
             max_correlated_positions=1,
+            # Réglable sans redéploiement : `KRAKEN_RISK_PER_TRADE_PCT` dans
+            # le `.env` prod. 2 % contre 1 % ailleurs — demandé le 2026-08-09,
+            # les positions valant 5,40 USD de notionnel pour un plafond de
+            # 198. ⚠️ Le bridge coupe la journée à 3 % de perte : à 2 % par
+            # trade, DEUX pertes suffisent là où il en fallait trois.
+            risk_per_trade_pct=float(os.getenv("KRAKEN_RISK_PER_TRADE_PCT", "2.0")),
             plateforme="Kraken Futures",
         ),
         Destination(
@@ -288,6 +315,17 @@ def cote_en_continu(destination_id: str | None) -> bool:
     if d is None or not d.asset_classes:
         return False
     return d.asset_classes <= CLASSES_CONTINUES
+
+
+def risque_par_trade_pct(destination_id: str | None) -> float | None:
+    """Pourcentage de risque propre a cette destination, ou ``None``.
+
+    ``None`` signifie « pas de politique propre » et laisse l'appelant retomber
+    sur ``RISK_PER_TRADE_PCT``. Une destination inconnue rend ``None`` comme
+    partout ailleurs ici : on ne suppose jamais sur l'argent.
+    """
+    d = get(destination_id)
+    return d.risk_per_trade_pct if d else None
 
 
 def bridge_types_with_live_balance() -> frozenset[str]:

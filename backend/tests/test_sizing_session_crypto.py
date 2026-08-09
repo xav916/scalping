@@ -88,9 +88,13 @@ def test_une_paire_inconnue_reste_traitee_en_forex():
 def test_le_trade_ethfi_rejoue_atteint_la_cible(tmp_path, monkeypatch):
     """Rejoue le sizing du trade ETHFI du 2026-08-08 23:58 UTC.
 
-    Score 70/100 ⇒ conf_mult 0,786. Sans la taxe de séance, le risque visé
-    passe de 0,54 USD (0,55 % du capital) à 0,78 USD (0,79 %), la seule
-    modulation restante étant celle de la confiance — ce qui est l'intention.
+    Score 70/100 ⇒ conf_mult 0,786. Sans la taxe de séance, la seule
+    modulation restante est celle de la confiance — ce qui est l'intention.
+
+    ⚠️ Exprimé en **fraction de `risk_pct`**, jamais en valeur absolue : le
+    pourcentage est déclaré par destination depuis le 2026-08-09 et Kraken
+    n'est plus à 1 %. Figer 0,78 USD ici aurait fait échouer ce test à chaque
+    réglage du risque, alors qu'il porte sur la SÉANCE.
     """
     from backend.services import macro_alignment, sizing, trade_log_service
 
@@ -113,6 +117,7 @@ def test_le_trade_ethfi_rejoue_atteint_la_cible(tmp_path, monkeypatch):
 
     assert res["session_mult"] == 1.0
     assert res["conf_mult"] == 0.79
-    assert res["risk_money"] == pytest.approx(0.78, abs=0.01)
-    # Le rapport au capital est bien celui de la confiance seule.
-    assert res["risk_money"] / res["capital"] == pytest.approx(0.0079, abs=0.0002)
+    # Le rapport au capital est celui de la confiance seule, appliqué au
+    # pourcentage effectif de la destination.
+    attendu = res["risk_pct"] / 100.0 * 0.7857
+    assert res["risk_money"] / res["capital"] == pytest.approx(attendu, abs=0.0002)

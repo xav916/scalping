@@ -1019,7 +1019,11 @@ def _build_order_payload(setup, sz: dict, dest=None) -> dict:
         "tp2_dist": abs(entry - tp2) if tp2 is not None else None,
         "risk_money": sz["risk_money"],
         "comment": f"scalping-radar-{date.today().isoformat()}",
-        "risk_pct": RISK_PER_TRADE_PCT,
+        # Le pourcentage EFFECTIF de la destination, pas le global : depuis le
+        # 2026-08-09 il se declare par destination, et annoncer 1 % pour un
+        # ordre calcule a 2 % ferait mentir le payload et les logs du bridge.
+        # Informatif — le bridge dimensionne sur `risk_money`.
+        "risk_pct": sz.get("risk_pct", RISK_PER_TRADE_PCT),
         "confidence": getattr(setup, "confidence_score", None),
         "sizing_detail": sz,
     }

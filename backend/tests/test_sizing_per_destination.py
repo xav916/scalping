@@ -82,8 +82,12 @@ def test_le_risque_suit_le_capital_de_la_destination():
     sz = sizing.compute_risk_money(_setup(), _dest())
     assert sz["capital"] == 103.60
     assert sz["capital_source"] == "live"
-    # base = 1 % de 103,60, puis multiplicateurs
-    assert sz["base"] == pytest.approx(1.04, abs=0.01)
+    # base = risk_pct de 103,60, puis multiplicateurs. Exprimée via
+    # `risk_pct` et non en dur : depuis le 2026-08-09 le pourcentage est
+    # déclaré PAR DESTINATION, et Kraken est à 2 % quand le global est à 1 %.
+    # Ce test porte sur « le risque suit le CAPITAL », pas sur la valeur du
+    # pourcentage.
+    assert sz["base"] == pytest.approx(103.60 * sz["risk_pct"] / 100.0, abs=0.01)
 
 
 def test_capital_indisponible_donne_un_risque_nul():

@@ -150,8 +150,22 @@ def compute_risk_money(setup, dest=None) -> dict:
     reproduirait le défaut qui envoyait des ordres de 10 000 USD sur un
     compte de 103 USD.
     """
+    from backend.services import destinations_registry as _registre
     from backend.services import macro_alignment, session_service
     from config.settings import RISK_PER_TRADE_PCT
+
+    # Pourcentage propre a la destination, sinon global (2026-08-09). Kraken
+    # est declare a 2 % : ses positions valaient 5,40 USD de notionnel pour un
+    # plafond de 198, la ou monter le GLOBAL aurait aussi gonfle admin_live —
+    # compte le plus contraint en marge, et deja sur-dimensionne sur l'or par
+    # le lot minimum du courtier.
+    #
+    # ⚠️ Cantonne au sizing : `pair_admission_controller._r_unit_eur` garde le
+    # global, car il s'en sert comme UNITE de normalisation et non comme
+    # politique. L'y propager deplacerait retroactivement les seuils
+    # d'admission de toutes les paires deja mesurees.
+    propre = _registre.risque_par_trade_pct(getattr(dest, "destination_id", None))
+    risk_pct = propre if propre is not None else RISK_PER_TRADE_PCT
 
     capital, capital_source = destination_capital(dest)
     if capital is None:
@@ -163,9 +177,9 @@ def compute_risk_money(setup, dest=None) -> dict:
             "session": session_service.label(), "macro_mult": 0.0,
             "macro_reasons": [], "final_mult": 0.0,
             "capital": None, "capital_source": capital_source,
-            "risk_pct": RISK_PER_TRADE_PCT,
+            "risk_pct": risk_pct,
         }
-    base = capital * (RISK_PER_TRADE_PCT / 100.0)
+    base = capital * (risk_pct / 100.0)
     conf_mult = confidence_multiplier(getattr(setup, "confidence_score", None))
     pnl_mult = recent_pnl_multiplier()
     # La destination prime sur le symbole pour savoir si le marche cote 24/7 :
@@ -211,7 +225,7 @@ def compute_risk_money(setup, dest=None) -> dict:
         "final_mult": round(final_mult, 2),
         "capital": capital,
         "capital_source": capital_source,
-        "risk_pct": RISK_PER_TRADE_PCT,
+        "risk_pct": risk_pct,
     }
 
 
