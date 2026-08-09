@@ -767,46 +767,6 @@ def test_ensure_schema_idempotent_with_funding_column(temp_db):
 _US_EQUITY_TECH_PAIRS = ("AAPL", "TSLA", "NVDA", "MSFT")
 
 
-def test_shadow_config_includes_us_equities_at_4h():
-    """Les 4 actions US sont dans SHADOW_CONFIG, à l'horizon 4h (pas 1d)."""
-    for pair in _US_EQUITY_TECH_PAIRS:
-        assert pair in shadow.SHADOW_CONFIG, f"{pair} absent de SHADOW_CONFIG"
-        assert shadow.SHADOW_CONFIG[pair]["tf"] == "4h", (
-            f"{pair} doit être à l'horizon 4h (aggrégation H1 scheduler), "
-            "pas 1d (qui déclencherait un fetch Daily direct non voulu)"
-        )
-        assert pair in shadow.SHADOW_PAIRS
-
-
-def test_us_equities_use_xlk_analogy_patterns_not_core_long():
-    """Patterns par analogie avec XLK (WTI_OPTIMAL_PATTERNS), PAS
-    CORE_LONG_PATTERNS ni TIGHT_LONG_PATTERNS — le choix documenté dans le
-    code doit se retrouver dans la config réellement chargée."""
-    for pair in _US_EQUITY_TECH_PAIRS:
-        cfg_patterns = shadow.SHADOW_CONFIG[pair]["patterns"]
-        assert cfg_patterns == shadow.WTI_OPTIMAL_PATTERNS
-        assert cfg_patterns == shadow.SHADOW_CONFIG["XLK"]["patterns"]
-        assert cfg_patterns != shadow.CORE_LONG_PATTERNS
-        assert "breakout_up" not in cfg_patterns
-
-
-def test_us_equities_derived_mappings_consistent():
-    """PATTERNS_BY_PAIR / SYSTEM_ID_BY_PAIR / RISK_PCT_BY_PAIR /
-    TIMEFRAME_BY_PAIR restent dérivés fidèlement de SHADOW_CONFIG pour les 4
-    nouveaux titres (pas de valeur codée en dur qui diverge)."""
-    for pair in _US_EQUITY_TECH_PAIRS:
-        cfg = shadow.SHADOW_CONFIG[pair]
-        assert shadow.PATTERNS_BY_PAIR[pair] == cfg["patterns"]
-        assert shadow.SYSTEM_ID_BY_PAIR[pair] == cfg["system_id"]
-        assert shadow.RISK_PCT_BY_PAIR[pair] == cfg["risk_pct"]
-        assert shadow.TIMEFRAME_BY_PAIR[pair] == cfg["tf"]
-        # system_id suit la convention V2_WTI_OPTIMAL_<PAIR>_4H
-        assert cfg["system_id"] == f"V2_WTI_OPTIMAL_{pair}_4H"
-        # risk_pct non nul, non mesuré mais explicitement choisi (pas 0.0)
-        assert cfg["risk_pct"] is not None
-        assert cfg["risk_pct"] > 0
-
-
 def test_existing_pairs_config_unchanged_after_us_equities_addition():
     """Régression : XAU/XAG/WTI/ETH/XLI/XLK gardent EXACTEMENT leur config
     d'avant l'ajout des actions US (patterns, system_id, risk_pct, tf)."""
@@ -866,8 +826,10 @@ def test_existing_pairs_config_unchanged_after_us_equities_addition():
     # ~30 trades nécessaires. SOL et XRP retenus sur la liquidité.
     CRYPTO_1D = {"ETH/USD", "BTC/USD", "SOL/USD", "XRP/USD", "ADA/USD", "DOT/USD", "LTC/USD", "BNB/USD", "XLM/USD", "SEI/USD", "ENS/USD", "HBAR/USD", "ARB/USD", "CRV/USD", "LDO/USD", "PAXG/USD", "ALGO/USD", "AAVE/USD", "MANA/USD", "UNI/USD", "ETHFI/USD", "DOGE/USD", "LINK/USD"}
     assert set(shadow.SHADOW_PAIRS) == {
+        # ⛔ AAPL/TSLA/NVDA/MSFT retirés le 2026-08-09 : patterns démontrés
+        # contre-productifs sur ces titres (Δ = −0,182 R contre le hasard,
+        # p < 0,001). Cf. test_shadow_actions_us_retirees.
         "XAU/USD", "XAG/USD", "WTI/USD", "XLI", "XLK",
-        "AAPL", "TSLA", "NVDA", "MSFT",
     } | FOREX_MESURE_H4 | CRYPTO_1D
 
 
@@ -914,11 +876,11 @@ def test_btc_usd_daily_config():
     assert cfg["risk_pct"] == min(c["risk_pct"] for c in shadow.SHADOW_CONFIG.values())
 
 
-def test_run_shadow_log_persists_us_equity_setup_with_correct_horizon(
+def test_run_shadow_log_persists_setup_h4_avec_le_bon_horizon(
     temp_db, monkeypatch,
 ):
-    """Un setup détecté sur AAPL (H4, patterns XLK-analogie) doit produire
-    une ligne persistée avec system_id `V2_WTI_OPTIMAL_AAPL_4H` et
+    """Un setup détecté en H4 doit produire une ligne persistée avec le bon
+    `system_id` et
     timeframe `4h` — preuve bout-en-bout que la config se traduit
     correctement dans la table `shadow_setups`, pas seulement dans le dict
     Python.
@@ -926,7 +888,11 @@ def test_run_shadow_log_persists_us_equity_setup_with_correct_horizon(
     Stub `price_service.fetch_candles` (jamais de réseau en test) : les
     autres paires de SHADOW_CONFIG à horizon 1d (ETH/XLI/XLK) déclenchent
     un fetch Daily direct dans `run_shadow_log` même si on ne fournit que
-    des H1 pour AAPL — ce stub coupe court avant toute tentative réseau.
+    des H1 pour XAU/USD — ce stub coupe court avant toute tentative réseau.
+
+    ⚠️ Portait sur AAPL jusqu'au 2026-08-09 ; les 4 actions US ont été
+    retirées du shadow (patterns réfutés). Repointé sur XAU/USD, le H4
+    de référence — la preuve bout-en-bout reste la même.
     """
     import config.settings as _settings
     monkeypatch.setattr(_settings, "SHADOW_FILTERED_TWIN_ENABLED", False)
@@ -940,19 +906,19 @@ def test_run_shadow_log_persists_us_equity_setup_with_correct_horizon(
     start = datetime(2026, 4, 1, 0, 0, tzinfo=timezone.utc)
     h1 = _make_h1_sequence(start, 200)  # même séquence montante que XAU/XAG
 
-    result = asyncio.run(shadow.run_shadow_log({"AAPL": h1}))
-    assert result["AAPL"] > 0, "aucun setup détecté sur AAPL — le test ne prouve rien"
+    result = asyncio.run(shadow.run_shadow_log({"XAU/USD": h1}))
+    assert result["XAU/USD"] > 0, "aucun setup détecté — le test ne prouve rien"
 
     with sqlite3.connect(temp_db) as c:
         c.row_factory = sqlite3.Row
         rows = c.execute(
             "SELECT system_id, pair, timeframe, direction FROM shadow_setups "
-            "WHERE pair = 'AAPL'"
+            "WHERE pair = 'XAU/USD'"
         ).fetchall()
 
-    assert rows, "aucune ligne persistée pour AAPL"
+    assert rows, "aucune ligne persistée"
     for r in rows:
-        assert r["system_id"] == "V2_WTI_OPTIMAL_AAPL_4H"
+        assert r["system_id"] == "V2_CORE_LONG_XAUUSD_4H"
         assert r["timeframe"] == "4h"
         assert r["direction"] == "buy"
 

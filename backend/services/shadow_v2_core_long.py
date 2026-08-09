@@ -285,49 +285,34 @@ SHADOW_CONFIG: dict[str, dict[str, Any]] = {
     # Objectif : ouvrir la mesure d'edge pour la route DMA "actions US à
     # coût fixe" (voir CLAUDE.md Phase 3b / Voie C), qui ne peut pas
     # s'ouvrir tant que l'edge mesuré vaut `None`. AUCUN backtest n'existe
-    # sur ces 4 titres : patterns ET risk_pct sont des hypothèses PAR
-    # ANALOGIE avec XLK (ETF techno déjà couvert), pas des valeurs
-    # validées. Déjà dans WATCHED_PAIRS de prod (config/settings.py) → le
-    # scheduler fournit les H1 nécessaires à l'aggrégation H4 (même
-    # mécanisme que XAU/XAG/WTI, cf. `_SHADOW_PAIRS` dans scheduler.py).
-    # H4 choisi (pas 1d) : le fetch Daily direct de `run_shadow_log`
-    # (branche `tf == "1d"`) n'est pas voulu ici — le H1 scheduler suffit.
-    "AAPL": {
-        "tf": "4h",
-        "patterns": US_EQUITY_TECH_PATTERNS,
-        "system_id": "V2_WTI_OPTIMAL_AAPL_4H",
-        # Non mesuré : aucun backtest sur AAPL. Valeur alignée sur le
-        # palier "instrument sans validation propre" (XAG/WTI 0.003) plutôt
-        # que sur XLK (0.004, ETF diversifié) — une action individuelle
-        # porte un risque idiosyncratique (gaps résultats, actu titre)
-        # qu'un ETF n'a pas. N'affecte que le sizing fictif du shadow, pas
-        # l'edge mesuré en unités de risque (R).
-        "risk_pct": 0.003,
-    },
-    "TSLA": {
-        "tf": "4h",
-        "patterns": US_EQUITY_TECH_PATTERNS,
-        "system_id": "V2_WTI_OPTIMAL_TSLA_4H",
-        # Non mesuré, même raisonnement que AAPL ci-dessus. TSLA est
-        # notoirement plus volatile qu'AAPL/MSFT (bêta élevé, gaps
-        # fréquents) — on ne descend pas plus bas que 0.003 faute de
-        # mesure justifiant un écart chiffré ; à réviser après backtest.
-        "risk_pct": 0.003,
-    },
-    "NVDA": {
-        "tf": "4h",
-        "patterns": US_EQUITY_TECH_PATTERNS,
-        "system_id": "V2_WTI_OPTIMAL_NVDA_4H",
-        # Non mesuré, même raisonnement que AAPL ci-dessus.
-        "risk_pct": 0.003,
-    },
-    "MSFT": {
-        "tf": "4h",
-        "patterns": US_EQUITY_TECH_PATTERNS,
-        "system_id": "V2_WTI_OPTIMAL_MSFT_4H",
-        # Non mesuré, même raisonnement que AAPL ci-dessus.
-        "risk_pct": 0.003,
-    },
+    # ⛔ AAPL / TSLA / NVDA / MSFT RETIRES le 2026-08-09.
+    #
+    # Ils tournaient depuis le 2026-08-05 (`3c45a32`) sur
+    # `US_EQUITY_TECH_PATTERNS` — c'est-a-dire le jeu de patterns DEMONTRE
+    # contre-productif sur ces titres exacts :
+    #
+    #     Δ = −0,182 R par trade contre une entree AU HASARD
+    #     IC 95 % [−0,235 ; −0,123]   p < 0,001   n = 994
+    #
+    # Seule cellule significative sur 17, survivant a Bonferroni ET
+    # Benjamini-Hochberg (cf. project_edge_actions_us_h4_2026_08_05).
+    #
+    # Pourquoi retirer plutot que laisser « au cas ou » :
+    #  1. la question est tranchee avec 2 175 trades de backtest, quand le
+    #     shadow produit 0,8 setup/semaine/titre — 6 a 9 mois pour 107
+    #     observations. Il corrobore, il ne decouvre pas ;
+    #  2. en H4 sur une action US (marche 13:30-20:30 UTC), un seul creneau
+    #     sur trois se referme en seance : UNE bougie exploitable par jour de
+    #     cotation, contre six pour l'or ;
+    #  3. il consomme du quota Twelve Data que l'univers crypto emploie mieux.
+    #
+    # ⚠️ Ce retrait ne dit RIEN de l'economie de la voie. Mesure du 2026-08-09
+    # sur les distances reelles de ce meme shadow : le cout IBKR vaut 14,7 % a
+    # 28,6 % du TP vise, donc SOUS la porte de 30 %. C'est l'edge qui manque,
+    # pas la marge — la voie rouvrira si un edge est un jour demontre.
+    #
+    # ⚠️ XLI et XLK RESTENT : « non tranches » (p = 0,243 et 0,239 sur vingt
+    # ans) n'est pas « negatif », et ils sont en journalier.
 }
 
 # Liste des paires à observer (dérivé de SHADOW_CONFIG)
