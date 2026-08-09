@@ -9,9 +9,10 @@
 #   DRY_RUN=1 notify-position-fermee.sh  -> affiche sans notifier
 set -uo pipefail
 
-# TICKETS_ACTION_EN_ATTENTE se règle dans la ligne de crontab plutôt que dans
-# le .env : il est ainsi visible d'un `crontab -l`, et le rappel qu'il déclenche
-# demande lui-même de le vider — donc il ne rouille pas en silence.
+# TICKETS_ACTION_EN_ATTENTE se règle dans /etc/cron.d/scalping-notify-trades
+# plutôt que dans le .env : il est ainsi à côté de la tâche qui le consomme et
+# lisible sans entrer dans le conteneur. Le rappel qu'il déclenche demande
+# lui-même de le vider — donc il ne rouille pas en silence.
 docker exec -i \
   -e PYTHONPATH=/app \
   -e "DRY_RUN=${DRY_RUN:-0}" \
