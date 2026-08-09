@@ -66,6 +66,7 @@ async def push_to_kraken(setup, sz: dict, dest) -> None:
     sans laisser la moindre trace, et se rejouait au cycle suivant. Voir
     ``bridge_push_ledger``.
     """
+    from backend.services import sizing as _sizing
     from backend.services.bridge_push_ledger import PushLedger
     from backend.services.rejection_service import record_rejection
 
@@ -96,7 +97,7 @@ async def push_to_kraken(setup, sz: dict, dest) -> None:
         record_rejection(
             pair=setup.pair, direction=direction, confidence=score,
             reason_code="kraken_bad_sizing",
-            details={"reason": "qty<=0, likely sl==entry", "payload": payload},
+            details={"reason": _sizing.raison_du_refus(sz, setup), "payload": payload},
             destination_id=dest.destination_id,
         )
         return

@@ -256,6 +256,40 @@ def ids() -> frozenset[str]:
     return frozenset(DESTINATIONS)
 
 
+# Classes d'actifs qui cotent en continu. La grille de séance de
+# ``session_service`` décrit les fenêtres de volume du FOREX (Sydney, Tokyo,
+# London, New York) : elle ne dit rien d'un marché sans séance.
+CLASSES_CONTINUES = frozenset({"crypto"})
+
+
+def cote_en_continu(destination_id: str | None) -> bool:
+    """La destination ne liste que des instruments cotant 24/7.
+
+    **Dérivé d'``asset_classes``, jamais déclaré à part.** C'est le point :
+    fermer cette porte ne devait rien ajouter à la liste des choses à ne pas
+    oublier en branchant un instrument.
+
+    Pourquoi la destination et non le symbole. Jusqu'au 2026-08-09, savoir
+    si un instrument cotait 24/7 passait par ``asset_class_for``, donc par
+    une liste de préfixes codée en dur **plus** ``ASSET_CLASS_OVERRIDES`` du
+    ``.env``. Un instrument Kraken ajouté sans cette déclaration retombait en
+    « forex », recevait un multiplicateur de séance de 0,0 le week-end, et
+    son risque tombait à zéro : ordre jamais envoyé, motif de rejet faux, et
+    échec visible **uniquement** le week-end.
+
+    Or coter en continu est une propriété du **lieu de cotation**. Un
+    perpétuel listé sur Kraken Futures cote 24/7 quel que soit son nom, et
+    le registre le sait déjà.
+
+    Inconnue, multi-classe ou sans déclaration ⇒ ``False`` : le défaut sûr
+    reste de garder la grille.
+    """
+    d = get(destination_id)
+    if d is None or not d.asset_classes:
+        return False
+    return d.asset_classes <= CLASSES_CONTINUES
+
+
 def bridge_types_with_live_balance() -> frozenset[str]:
     """Types de bridge dont le sizing doit lire le solde réel."""
     return frozenset(d.bridge_type for d in DESTINATIONS.values()

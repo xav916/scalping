@@ -20,7 +20,10 @@ Le score `activity_multiplier` est utilise par `sizing.py` :
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
+
+logger = logging.getLogger(__name__)
 
 
 def _in_window(hour_utc: int, start: int, end: int) -> bool:
@@ -84,7 +87,11 @@ def label(dt: datetime | None = None) -> str:
     return "off_hours"
 
 
-def activity_multiplier(dt: datetime | None = None, pair: str | None = None) -> float:
+def activity_multiplier(
+    dt: datetime | None = None,
+    pair: str | None = None,
+    marche_continu: bool = False,
+) -> float:
     """Multiplicateur d'activite a appliquer au risk_money.
 
     La grille est volontairement modeste (0.7x-1.2x) : on n'a pas encore
@@ -106,23 +113,43 @@ def activity_multiplier(dt: datetime | None = None, pair: str | None = None) -> 
     Kraken — qui ne trade QUE du crypto, sur des setups journaliers tombant
     a n'importe quelle heure.
 
-    ⚠️ La reconnaissance passe par `asset_class_for`, qui repose sur une
-    liste de prefixes codee en dur PLUS `ASSET_CLASS_OVERRIDES` du .env. Un
-    instrument crypto non declare retombe en "forex" et recupere donc 0.0 le
-    weekend, soit `risk_money = 0`. Le repli reste volontairement strict :
-    elargir ici masquerait l'oubli de declaration au lieu de le reveler.
+    `marche_continu` (2026-08-09) : la destination declare qu'elle ne liste
+    que des instruments cotant 24/7, cf. `destinations_registry.cote_en_continu`.
+    Cela prime sur `pair`, et pour une bonne raison. La reconnaissance par le
+    symbole passe par `asset_class_for`, donc par une liste de prefixes codee
+    en dur PLUS `ASSET_CLASS_OVERRIDES` du .env : un instrument Kraken ajoute
+    sans cette declaration retombait en "forex", recevait 0.0 le weekend, et
+    son `risk_money` tombait a zero — ordre jamais envoye, echec visible
+    uniquement le weekend. Coter en continu est une propriete du LIEU de
+    cotation, que le registre connait deja.
 
-    Sans `pair`, comportement historique inchange (les appelants qui n'en
-    fournissent pas gardent la grille telle quelle).
+    L'oubli de declaration est neanmoins JOURNALISE : la porte est fermee ici,
+    mais `asset_class_for` a d'autres consommateurs (heures de marche, coaching,
+    modele de cout, filtres d'UI) qui, eux, resteraient trompes.
+
+    Sans `pair` ni `marche_continu`, comportement historique inchange (les
+    appelants qui n'en fournissent pas gardent la grille telle quelle).
     """
     lbl = label(dt)
+    classe = None
     if pair:
         try:
             from backend.services.market_hours import asset_class_for
-            if asset_class_for(pair) == "crypto":
-                return 1.0
+            classe = asset_class_for(pair)
         except Exception:
-            pass
+            classe = None
+    if marche_continu:
+        if pair and classe is not None and classe != "crypto":
+            logger.warning(
+                "session: %s est route vers une destination cotant en continu "
+                "mais asset_class_for le classe '%s' — declaration manquante "
+                "dans ASSET_CLASS_OVERRIDES. Le sizing est correct, mais les "
+                "autres consommateurs de la classe d'actif sont trompes.",
+                pair, classe,
+            )
+        return 1.0
+    if classe == "crypto":
+        return 1.0
     grid = {
         "london_ny_overlap": 1.2,
         "new_york": 1.0,

@@ -168,7 +168,14 @@ def compute_risk_money(setup, dest=None) -> dict:
     base = capital * (RISK_PER_TRADE_PCT / 100.0)
     conf_mult = confidence_multiplier(getattr(setup, "confidence_score", None))
     pnl_mult = recent_pnl_multiplier()
-    session_mult = session_service.activity_multiplier(pair=getattr(setup, "pair", None))
+    # La destination prime sur le symbole pour savoir si le marche cote 24/7 :
+    # un instrument ajoute sans declaration dans ASSET_CLASS_OVERRIDES ne doit
+    # pas voir son risque tombe a zero le weekend. Cf. `cote_en_continu`.
+    from backend.services import destinations_registry as _reg
+    session_mult = session_service.activity_multiplier(
+        pair=getattr(setup, "pair", None),
+        marche_continu=_reg.cote_en_continu(getattr(dest, "destination_id", None)),
+    )
     session_label = session_service.label()
     direction = (
         setup.direction.value
@@ -206,6 +213,37 @@ def compute_risk_money(setup, dest=None) -> dict:
         "capital_source": capital_source,
         "risk_pct": RISK_PER_TRADE_PCT,
     }
+
+
+def raison_du_refus(sz: dict, setup) -> str:
+    """Pourquoi la quantite envoyee serait nulle — nomme, jamais devine.
+
+    Les clients crypto rejetaient sur ``qty <= 0`` avec un motif ecrit en
+    dur : « qty<=0, likely sl==entry ». C'etait une conjecture, et elle etait
+    fausse chaque fois que la cause venait du sizing — capital indisponible,
+    ou multiplicateur de seance a zero.
+
+    Un motif faux coute plus cher qu'un motif absent : il envoie chercher
+    ailleurs. C'est exactement ce qui serait arrive a un instrument Kraken
+    ajoute sans declaration dans ``ASSET_CLASS_OVERRIDES`` — on aurait cherche
+    un stop colle a l'entree pendant que la cause etait la grille de seance.
+
+    Les causes sont testees de la plus en amont a la plus en aval : sans
+    capital il n'y a pas de base, sans base le multiplicateur n'explique rien.
+    """
+    if sz.get("capital") is None:
+        return (f"capital indisponible pour la destination "
+                f"({sz.get('capital_source', 'source inconnue')})")
+    if not sz.get("session_mult"):
+        return ("multiplicateur de séance nul — marché considéré fermé pour "
+                "cette classe d'actif")
+    entry = float(getattr(setup, "entry_price", 0) or 0)
+    sl = float(getattr(setup, "stop_loss", 0) or 0)
+    if entry <= 0 or sl <= 0 or abs(entry - sl) <= 0:
+        return f"stop confondu avec l'entrée (entrée {entry}, stop {sl})"
+    if not sz.get("risk_money"):
+        return f"risque calculé nul (multiplicateur final {sz.get('final_mult')})"
+    return "quantité nulle après arrondi du bridge"
 
 
 # ─── Capital par destination (2026-08-04) ──────────────────────────────
