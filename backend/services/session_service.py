@@ -91,14 +91,38 @@ def activity_multiplier(dt: datetime | None = None, pair: str | None = None) -> 
     les 500+ trades necessaires pour calibrer un edge session fort, mais
     on introduit deja le biais dans le bon sens.
 
-    Cas crypto en weekend : depuis 2026-06-14, on respecte le fait que
-    crypto = 24/7. Sans pair fourni, on garde l'ancien comportement
-    (weekend = 0). Avec pair crypto, on retourne 0.7 (équiv. Asian) au
-    lieu de 0 pour ne pas tuer risk_money et permettre l'auto-exec.
-    Même pattern que le fix coaching.py du matin (cf. memo
-    feedback_crypto_weekend_market_closed_bug).
+    Cas crypto (2026-08-09) : la grille ne s'applique pas du tout. Sydney,
+    Tokyo, London et NY sont des fenetres de volume du FOREX ; un perpetuel
+    crypto cote 24/7 et n'a pas de seance. On retourne 1.0 a toute heure —
+    donc ni penalite de weekend, ni bonus d'overlap : sans calibration, la
+    neutralite est la seule valeur defendable, et elle doit valoir dans les
+    deux sens.
+
+    Ce que cela remplace : depuis 2026-06-14 le crypto en weekend recevait
+    0.7 ("equiv. Asian"). Ce 0.7 n'etait pas une mesure, c'etait un pis-aller
+    pour eviter qu'un multiplicateur de 0.0 ne tue risk_money et ne bloque
+    l'auto-exec (cf. memo feedback_crypto_weekend_market_closed_bug). Il a
+    coute 30% de taille sur les trois premiers trades reels de la route
+    Kraken — qui ne trade QUE du crypto, sur des setups journaliers tombant
+    a n'importe quelle heure.
+
+    ⚠️ La reconnaissance passe par `asset_class_for`, qui repose sur une
+    liste de prefixes codee en dur PLUS `ASSET_CLASS_OVERRIDES` du .env. Un
+    instrument crypto non declare retombe en "forex" et recupere donc 0.0 le
+    weekend, soit `risk_money = 0`. Le repli reste volontairement strict :
+    elargir ici masquerait l'oubli de declaration au lieu de le reveler.
+
+    Sans `pair`, comportement historique inchange (les appelants qui n'en
+    fournissent pas gardent la grille telle quelle).
     """
     lbl = label(dt)
+    if pair:
+        try:
+            from backend.services.market_hours import asset_class_for
+            if asset_class_for(pair) == "crypto":
+                return 1.0
+        except Exception:
+            pass
     grid = {
         "london_ny_overlap": 1.2,
         "new_york": 1.0,
@@ -108,12 +132,4 @@ def activity_multiplier(dt: datetime | None = None, pair: str | None = None) -> 
         "off_hours": 0.5,
         "weekend": 0.0,
     }
-    mult = grid.get(lbl, 1.0)
-    if lbl == "weekend" and pair:
-        try:
-            from backend.services.market_hours import asset_class_for
-            if asset_class_for(pair) == "crypto":
-                return 0.7
-        except Exception:
-            pass
-    return mult
+    return grid.get(lbl, 1.0)
