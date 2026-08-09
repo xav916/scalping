@@ -28,12 +28,23 @@ def _dest(dest_id="admin_kraken"):
 # --- LE point : le signe de la corrélation --------------------------------
 
 def test_deux_shorts_crypto_sont_le_meme_pari():
-    """Le cas du 2026-08-04 : BTC et ETH corrèlent à 0,81."""
-    assert cg.exposition("BTC/USD", "sell", "ETH/USD", "sell") == pytest.approx(0.81)
+    """Le cas du 2026-08-04 : BTC et ETH corrèlent fortement.
+
+    ⚠️ Exprimé via ``correlation()`` et non en dur : la valeur est passée de
+    0,81 (prix d'entrée de signaux, 2026-08-04) à 0,889 (bougies horaires
+    continues, 2026-08-09). Ce test porte sur le **signe** et le franchissement
+    du seuil, pas sur la magnitude — figer celle-ci le ferait échouer à chaque
+    nouvelle mesure.
+    """
+    expo = cg.exposition("BTC/USD", "sell", "ETH/USD", "sell")
+    assert expo == pytest.approx(cg.correlation("BTC/USD", "ETH/USD"))
+    assert expo >= cg.SEUIL_CORRELATION
 
 
 def test_deux_sens_opposes_sur_paires_correlees_se_compensent():
-    assert cg.exposition("BTC/USD", "buy", "ETH/USD", "sell") == pytest.approx(-0.81)
+    expo = cg.exposition("BTC/USD", "buy", "ETH/USD", "sell")
+    assert expo == pytest.approx(-cg.correlation("BTC/USD", "ETH/USD"))
+    assert expo < cg.SEUIL_CORRELATION
 
 
 def test_une_correlation_negative_inverse_la_lecture():

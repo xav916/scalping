@@ -13,14 +13,19 @@ BTC + short ETH du 2026-08-04, un seul pari pris deux fois.
 
 ⚠️ Le repli permissif reste **délibéré** : « non mesuré » et « décorrélé » sont
 deux choses différentes, et fabriquer une corrélation serait pire que de ne pas
-en avoir. Passer en fail-closed ramènerait Kraken à une seule position ouverte
-à la fois — un changement de comportement de trading, pas un correctif. Décision
-reportée à quand il y aura de quoi mesurer.
+en avoir.
 
-Ce que ces tests verrouillent en attendant : **le trou est journalisé**. Un
-garde qui laisse passer sans le dire est indiscernable d'un garde qui a
-vérifié. C'est la seule chose qui rendrait la décision future impossible à
-prendre — on ne saurait même pas à quelle fréquence le cas se produit.
+Ce que ces tests verrouillent : **le trou est journalisé**. Un garde qui laisse
+passer sans le dire est indiscernable d'un garde qui a vérifié.
+
+## ✅ Le trou du jour a été comblé le jour même
+
+Les 23 instruments crypto ont été mesurés quelques heures plus tard
+(``test_correlations_mesurees_kraken``), donc ETHFI, SEI et CRV ne sont plus
+des couples inconnus. Ces tests portent désormais sur des symboles
+**volontairement absents de toute mesure** : le mécanisme garde tout son sens
+pour le prochain instrument ajouté, puisque la mesure couvre un univers figé au
+2026-08-09 et qu'un ajout ultérieur y sera de nouveau muet.
 """
 import logging
 from types import SimpleNamespace
@@ -42,30 +47,30 @@ def _ouvertes(monkeypatch, positions):
 
 
 def test_un_couple_non_mesure_est_journalise(monkeypatch, caplog, limite_a_un):
-    """L'état réel du 2026-08-09 : trois positions, zéro corrélation connue."""
-    _ouvertes(monkeypatch, [("ETHFI/USD", "buy"), ("SEI/USD", "buy")])
+    """Deux positions ouvertes sur des symboles hors de toute mesure."""
+    _ouvertes(monkeypatch, [("ZZZ/USD", "buy"), ("YYY/USD", "buy")])
 
     with caplog.at_level(logging.WARNING, logger="backend.services.correlation_guard"):
-        bloque, en_cause = cg.pari_deja_pris(DEST, "CRV/USD", "buy")
+        bloque, en_cause = cg.pari_deja_pris(DEST, "XXX/USD", "buy")
 
     assert bloque is False          # comportement inchange : on ne bloque pas
     assert en_cause == []
     message = " ".join(r.message for r in caplog.records)
-    assert "CRV/USD" in message
-    assert "ETHFI/USD" in message and "SEI/USD" in message
+    assert "XXX/USD" in message
+    assert "ZZZ/USD" in message and "YYY/USD" in message
 
 
 def test_le_journal_dit_combien_ont_ete_comptees_et_combien_non(
     monkeypatch, caplog, limite_a_un
 ):
     """Sans les deux nombres, on ne peut pas juger de la portée du trou."""
-    _ouvertes(monkeypatch, [("ETH/USD", "buy"), ("SEI/USD", "buy")])
+    _ouvertes(monkeypatch, [("ETH/USD", "buy"), ("ZZZ/USD", "buy")])
 
     with caplog.at_level(logging.WARNING, logger="backend.services.correlation_guard"):
         cg.pari_deja_pris(DEST, "BTC/USD", "buy")
 
     message = " ".join(r.message for r in caplog.records)
-    # BTC/ETH est mesuree (0,81) et compte ; BTC/SEI ne l'est pas.
+    # BTC/ETH est mesuree (0,889) et compte ; BTC/ZZZ ne l'est pas.
     assert "1" in message
 
 
@@ -82,10 +87,10 @@ def test_aucun_journal_quand_tout_est_mesure(monkeypatch, caplog, limite_a_un):
 def test_aucun_journal_quand_le_garde_est_desactive(monkeypatch, caplog):
     """Limite à 0 ⇒ illimité : rien n'est vérifié, il n'y a donc pas de trou."""
     monkeypatch.setattr(cg, "limite", lambda d: 0)
-    _ouvertes(monkeypatch, [("ETHFI/USD", "buy")])
+    _ouvertes(monkeypatch, [("ZZZ/USD", "buy")])
 
     with caplog.at_level(logging.WARNING, logger="backend.services.correlation_guard"):
-        cg.pari_deja_pris(DEST, "CRV/USD", "buy")
+        cg.pari_deja_pris(DEST, "XXX/USD", "buy")
 
     assert not caplog.records
 
@@ -94,7 +99,7 @@ def test_aucun_journal_sans_position_ouverte(monkeypatch, caplog, limite_a_un):
     _ouvertes(monkeypatch, [])
 
     with caplog.at_level(logging.WARNING, logger="backend.services.correlation_guard"):
-        cg.pari_deja_pris(DEST, "CRV/USD", "buy")
+        cg.pari_deja_pris(DEST, "XXX/USD", "buy")
 
     assert not caplog.records
 
@@ -128,8 +133,8 @@ def test_un_couple_mesure_de_sens_oppose_ne_bloque_pas_et_ne_journalise_pas(
 
 def test_couples_non_mesures_est_exposable(monkeypatch, limite_a_un):
     """Accessible sans lire les logs, pour un futur comptage de fréquence."""
-    _ouvertes(monkeypatch, [("ETHFI/USD", "buy"), ("ETH/USD", "buy")])
+    _ouvertes(monkeypatch, [("ZZZ/USD", "buy"), ("ETH/USD", "buy")])
 
     manquants = cg.couples_non_mesures(DEST, "BTC/USD", "buy")
 
-    assert manquants == ["ETHFI/USD buy"]
+    assert manquants == ["ZZZ/USD buy"]

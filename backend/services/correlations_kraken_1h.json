@@ -1,0 +1,1551 @@
+{
+ "source": "futures.kraken.com/api/charts/v1/trade/<SYM>/1h",
+ "methode": "rendements log horaires, Pearson sur l'intersection",
+ "heures_demandees": 2000,
+ "min_obs": 500,
+ "instruments": [
+  "AAVE/USD",
+  "ADA/USD",
+  "ALGO/USD",
+  "ARB/USD",
+  "BNB/USD",
+  "BTC/USD",
+  "CRV/USD",
+  "DOGE/USD",
+  "DOT/USD",
+  "ENS/USD",
+  "ETH/USD",
+  "ETHFI/USD",
+  "HBAR/USD",
+  "LDO/USD",
+  "LINK/USD",
+  "LTC/USD",
+  "MANA/USD",
+  "PAXG/USD",
+  "SEI/USD",
+  "SOL/USD",
+  "UNI/USD",
+  "XLM/USD",
+  "XRP/USD"
+ ],
+ "couples": [
+  {
+   "a": "ETH/USD",
+   "b": "LINK/USD",
+   "r": 0.907,
+   "n": 1999
+  },
+  {
+   "a": "BTC/USD",
+   "b": "ETH/USD",
+   "r": 0.889,
+   "n": 1999
+  },
+  {
+   "a": "LINK/USD",
+   "b": "SOL/USD",
+   "r": 0.876,
+   "n": 1999
+  },
+  {
+   "a": "DOGE/USD",
+   "b": "LINK/USD",
+   "r": 0.873,
+   "n": 1999
+  },
+  {
+   "a": "ETH/USD",
+   "b": "SOL/USD",
+   "r": 0.873,
+   "n": 1999
+  },
+  {
+   "a": "DOGE/USD",
+   "b": "SOL/USD",
+   "r": 0.866,
+   "n": 1999
+  },
+  {
+   "a": "SOL/USD",
+   "b": "XRP/USD",
+   "r": 0.866,
+   "n": 1999
+  },
+  {
+   "a": "LINK/USD",
+   "b": "XRP/USD",
+   "r": 0.861,
+   "n": 1999
+  },
+  {
+   "a": "BTC/USD",
+   "b": "SOL/USD",
+   "r": 0.86,
+   "n": 1999
+  },
+  {
+   "a": "BTC/USD",
+   "b": "LINK/USD",
+   "r": 0.857,
+   "n": 1999
+  },
+  {
+   "a": "DOGE/USD",
+   "b": "ETH/USD",
+   "r": 0.856,
+   "n": 1999
+  },
+  {
+   "a": "DOGE/USD",
+   "b": "XRP/USD",
+   "r": 0.855,
+   "n": 1999
+  },
+  {
+   "a": "ETH/USD",
+   "b": "XRP/USD",
+   "r": 0.85,
+   "n": 1999
+  },
+  {
+   "a": "BTC/USD",
+   "b": "XRP/USD",
+   "r": 0.848,
+   "n": 1999
+  },
+  {
+   "a": "BTC/USD",
+   "b": "DOGE/USD",
+   "r": 0.838,
+   "n": 1999
+  },
+  {
+   "a": "DOT/USD",
+   "b": "LINK/USD",
+   "r": 0.835,
+   "n": 1999
+  },
+  {
+   "a": "DOGE/USD",
+   "b": "DOT/USD",
+   "r": 0.823,
+   "n": 1999
+  },
+  {
+   "a": "DOT/USD",
+   "b": "SOL/USD",
+   "r": 0.813,
+   "n": 1999
+  },
+  {
+   "a": "DOT/USD",
+   "b": "ETH/USD",
+   "r": 0.805,
+   "n": 1999
+  },
+  {
+   "a": "DOT/USD",
+   "b": "XRP/USD",
+   "r": 0.799,
+   "n": 1999
+  },
+  {
+   "a": "LINK/USD",
+   "b": "LTC/USD",
+   "r": 0.794,
+   "n": 1999
+  },
+  {
+   "a": "BNB/USD",
+   "b": "BTC/USD",
+   "r": 0.789,
+   "n": 1999
+  },
+  {
+   "a": "ARB/USD",
+   "b": "LINK/USD",
+   "r": 0.785,
+   "n": 1999
+  },
+  {
+   "a": "BNB/USD",
+   "b": "LINK/USD",
+   "r": 0.781,
+   "n": 1999
+  },
+  {
+   "a": "BTC/USD",
+   "b": "DOT/USD",
+   "r": 0.778,
+   "n": 1999
+  },
+  {
+   "a": "LTC/USD",
+   "b": "SOL/USD",
+   "r": 0.777,
+   "n": 1999
+  },
+  {
+   "a": "DOGE/USD",
+   "b": "LTC/USD",
+   "r": 0.776,
+   "n": 1999
+  },
+  {
+   "a": "ETH/USD",
+   "b": "LTC/USD",
+   "r": 0.773,
+   "n": 1999
+  },
+  {
+   "a": "BNB/USD",
+   "b": "ETH/USD",
+   "r": 0.772,
+   "n": 1999
+  },
+  {
+   "a": "BNB/USD",
+   "b": "SOL/USD",
+   "r": 0.772,
+   "n": 1999
+  },
+  {
+   "a": "LTC/USD",
+   "b": "XRP/USD",
+   "r": 0.765,
+   "n": 1999
+  },
+  {
+   "a": "ADA/USD",
+   "b": "XRP/USD",
+   "r": 0.764,
+   "n": 1999
+  },
+  {
+   "a": "ARB/USD",
+   "b": "DOT/USD",
+   "r": 0.764,
+   "n": 1999
+  },
+  {
+   "a": "BTC/USD",
+   "b": "LTC/USD",
+   "r": 0.764,
+   "n": 1999
+  },
+  {
+   "a": "BNB/USD",
+   "b": "DOGE/USD",
+   "r": 0.763,
+   "n": 1999
+  },
+  {
+   "a": "ADA/USD",
+   "b": "LINK/USD",
+   "r": 0.761,
+   "n": 1999
+  },
+  {
+   "a": "ARB/USD",
+   "b": "DOGE/USD",
+   "r": 0.759,
+   "n": 1999
+  },
+  {
+   "a": "ARB/USD",
+   "b": "SOL/USD",
+   "r": 0.757,
+   "n": 1999
+  },
+  {
+   "a": "ADA/USD",
+   "b": "DOGE/USD",
+   "r": 0.755,
+   "n": 1999
+  },
+  {
+   "a": "ARB/USD",
+   "b": "ETH/USD",
+   "r": 0.755,
+   "n": 1999
+  },
+  {
+   "a": "BNB/USD",
+   "b": "XRP/USD",
+   "r": 0.75,
+   "n": 1999
+  },
+  {
+   "a": "DOT/USD",
+   "b": "LTC/USD",
+   "r": 0.75,
+   "n": 1999
+  },
+  {
+   "a": "ADA/USD",
+   "b": "SOL/USD",
+   "r": 0.743,
+   "n": 1999
+  },
+  {
+   "a": "ADA/USD",
+   "b": "DOT/USD",
+   "r": 0.738,
+   "n": 1999
+  },
+  {
+   "a": "ARB/USD",
+   "b": "XRP/USD",
+   "r": 0.732,
+   "n": 1999
+  },
+  {
+   "a": "ARB/USD",
+   "b": "BTC/USD",
+   "r": 0.73,
+   "n": 1999
+  },
+  {
+   "a": "BNB/USD",
+   "b": "DOT/USD",
+   "r": 0.718,
+   "n": 1999
+  },
+  {
+   "a": "ADA/USD",
+   "b": "ETH/USD",
+   "r": 0.716,
+   "n": 1999
+  },
+  {
+   "a": "AAVE/USD",
+   "b": "SOL/USD",
+   "r": 0.71,
+   "n": 1999
+  },
+  {
+   "a": "BNB/USD",
+   "b": "LTC/USD",
+   "r": 0.709,
+   "n": 1999
+  },
+  {
+   "a": "ADA/USD",
+   "b": "BTC/USD",
+   "r": 0.704,
+   "n": 1999
+  },
+  {
+   "a": "AAVE/USD",
+   "b": "LINK/USD",
+   "r": 0.7,
+   "n": 1999
+  },
+  {
+   "a": "ARB/USD",
+   "b": "LTC/USD",
+   "r": 0.689,
+   "n": 1999
+  },
+  {
+   "a": "AAVE/USD",
+   "b": "ETH/USD",
+   "r": 0.686,
+   "n": 1999
+  },
+  {
+   "a": "AAVE/USD",
+   "b": "DOGE/USD",
+   "r": 0.679,
+   "n": 1999
+  },
+  {
+   "a": "LINK/USD",
+   "b": "SEI/USD",
+   "r": 0.679,
+   "n": 1999
+  },
+  {
+   "a": "LINK/USD",
+   "b": "UNI/USD",
+   "r": 0.672,
+   "n": 1999
+  },
+  {
+   "a": "DOT/USD",
+   "b": "SEI/USD",
+   "r": 0.671,
+   "n": 1999
+  },
+  {
+   "a": "AAVE/USD",
+   "b": "DOT/USD",
+   "r": 0.67,
+   "n": 1999
+  },
+  {
+   "a": "ADA/USD",
+   "b": "LTC/USD",
+   "r": 0.67,
+   "n": 1999
+  },
+  {
+   "a": "CRV/USD",
+   "b": "LINK/USD",
+   "r": 0.67,
+   "n": 1999
+  },
+  {
+   "a": "AAVE/USD",
+   "b": "BTC/USD",
+   "r": 0.667,
+   "n": 1999
+  },
+  {
+   "a": "ADA/USD",
+   "b": "ARB/USD",
+   "r": 0.666,
+   "n": 1999
+  },
+  {
+   "a": "AAVE/USD",
+   "b": "XRP/USD",
+   "r": 0.665,
+   "n": 1999
+  },
+  {
+   "a": "ARB/USD",
+   "b": "BNB/USD",
+   "r": 0.665,
+   "n": 1999
+  },
+  {
+   "a": "ENS/USD",
+   "b": "LINK/USD",
+   "r": 0.664,
+   "n": 1999
+  },
+  {
+   "a": "DOGE/USD",
+   "b": "SEI/USD",
+   "r": 0.663,
+   "n": 1999
+  },
+  {
+   "a": "CRV/USD",
+   "b": "DOT/USD",
+   "r": 0.656,
+   "n": 1999
+  },
+  {
+   "a": "SEI/USD",
+   "b": "SOL/USD",
+   "r": 0.655,
+   "n": 1999
+  },
+  {
+   "a": "ETH/USD",
+   "b": "SEI/USD",
+   "r": 0.654,
+   "n": 1999
+  },
+  {
+   "a": "CRV/USD",
+   "b": "DOGE/USD",
+   "r": 0.652,
+   "n": 1999
+  },
+  {
+   "a": "SEI/USD",
+   "b": "XRP/USD",
+   "r": 0.652,
+   "n": 1999
+  },
+  {
+   "a": "ETH/USD",
+   "b": "UNI/USD",
+   "r": 0.65,
+   "n": 1999
+  },
+  {
+   "a": "CRV/USD",
+   "b": "SOL/USD",
+   "r": 0.648,
+   "n": 1999
+  },
+  {
+   "a": "ENS/USD",
+   "b": "XRP/USD",
+   "r": 0.647,
+   "n": 1999
+  },
+  {
+   "a": "CRV/USD",
+   "b": "ETH/USD",
+   "r": 0.646,
+   "n": 1999
+  },
+  {
+   "a": "ENS/USD",
+   "b": "ETH/USD",
+   "r": 0.645,
+   "n": 1999
+  },
+  {
+   "a": "DOGE/USD",
+   "b": "ENS/USD",
+   "r": 0.641,
+   "n": 1999
+  },
+  {
+   "a": "ADA/USD",
+   "b": "BNB/USD",
+   "r": 0.64,
+   "n": 1999
+  },
+  {
+   "a": "BTC/USD",
+   "b": "SEI/USD",
+   "r": 0.64,
+   "n": 1999
+  },
+  {
+   "a": "ENS/USD",
+   "b": "SOL/USD",
+   "r": 0.64,
+   "n": 1999
+  },
+  {
+   "a": "DOT/USD",
+   "b": "UNI/USD",
+   "r": 0.639,
+   "n": 1999
+  },
+  {
+   "a": "SOL/USD",
+   "b": "UNI/USD",
+   "r": 0.637,
+   "n": 1999
+  },
+  {
+   "a": "BTC/USD",
+   "b": "CRV/USD",
+   "r": 0.636,
+   "n": 1999
+  },
+  {
+   "a": "ARB/USD",
+   "b": "SEI/USD",
+   "r": 0.632,
+   "n": 1999
+  },
+  {
+   "a": "DOGE/USD",
+   "b": "UNI/USD",
+   "r": 0.632,
+   "n": 1999
+  },
+  {
+   "a": "BTC/USD",
+   "b": "ENS/USD",
+   "r": 0.631,
+   "n": 1999
+  },
+  {
+   "a": "BTC/USD",
+   "b": "UNI/USD",
+   "r": 0.631,
+   "n": 1999
+  },
+  {
+   "a": "AAVE/USD",
+   "b": "LTC/USD",
+   "r": 0.63,
+   "n": 1999
+  },
+  {
+   "a": "HBAR/USD",
+   "b": "XRP/USD",
+   "r": 0.627,
+   "n": 1999
+  },
+  {
+   "a": "CRV/USD",
+   "b": "XRP/USD",
+   "r": 0.624,
+   "n": 1999
+  },
+  {
+   "a": "ALGO/USD",
+   "b": "LINK/USD",
+   "r": 0.623,
+   "n": 1999
+  },
+  {
+   "a": "DOT/USD",
+   "b": "ENS/USD",
+   "r": 0.622,
+   "n": 1999
+  },
+  {
+   "a": "ALGO/USD",
+   "b": "DOT/USD",
+   "r": 0.62,
+   "n": 1999
+  },
+  {
+   "a": "LTC/USD",
+   "b": "SEI/USD",
+   "r": 0.62,
+   "n": 1999
+  },
+  {
+   "a": "ARB/USD",
+   "b": "CRV/USD",
+   "r": 0.619,
+   "n": 1999
+  },
+  {
+   "a": "AAVE/USD",
+   "b": "ARB/USD",
+   "r": 0.617,
+   "n": 1999
+  },
+  {
+   "a": "UNI/USD",
+   "b": "XRP/USD",
+   "r": 0.615,
+   "n": 1999
+  },
+  {
+   "a": "BNB/USD",
+   "b": "SEI/USD",
+   "r": 0.613,
+   "n": 1999
+  },
+  {
+   "a": "ETH/USD",
+   "b": "LDO/USD",
+   "r": 0.61,
+   "n": 1999
+  },
+  {
+   "a": "LDO/USD",
+   "b": "LINK/USD",
+   "r": 0.61,
+   "n": 1999
+  },
+  {
+   "a": "HBAR/USD",
+   "b": "LINK/USD",
+   "r": 0.607,
+   "n": 1999
+  },
+  {
+   "a": "AAVE/USD",
+   "b": "BNB/USD",
+   "r": 0.606,
+   "n": 1999
+  },
+  {
+   "a": "ARB/USD",
+   "b": "ENS/USD",
+   "r": 0.606,
+   "n": 1999
+  },
+  {
+   "a": "AAVE/USD",
+   "b": "UNI/USD",
+   "r": 0.601,
+   "n": 1999
+  },
+  {
+   "a": "ALGO/USD",
+   "b": "SOL/USD",
+   "r": 0.598,
+   "n": 1999
+  },
+  {
+   "a": "CRV/USD",
+   "b": "LTC/USD",
+   "r": 0.598,
+   "n": 1999
+  },
+  {
+   "a": "LDO/USD",
+   "b": "SOL/USD",
+   "r": 0.596,
+   "n": 1999
+  },
+  {
+   "a": "ALGO/USD",
+   "b": "XRP/USD",
+   "r": 0.593,
+   "n": 1999
+  },
+  {
+   "a": "ALGO/USD",
+   "b": "DOGE/USD",
+   "r": 0.591,
+   "n": 1999
+  },
+  {
+   "a": "DOT/USD",
+   "b": "LDO/USD",
+   "r": 0.591,
+   "n": 1999
+  },
+  {
+   "a": "DOT/USD",
+   "b": "MANA/USD",
+   "r": 0.588,
+   "n": 1999
+  },
+  {
+   "a": "LTC/USD",
+   "b": "UNI/USD",
+   "r": 0.587,
+   "n": 1999
+  },
+  {
+   "a": "ARB/USD",
+   "b": "UNI/USD",
+   "r": 0.586,
+   "n": 1999
+  },
+  {
+   "a": "ENS/USD",
+   "b": "LTC/USD",
+   "r": 0.586,
+   "n": 1999
+  },
+  {
+   "a": "DOGE/USD",
+   "b": "HBAR/USD",
+   "r": 0.585,
+   "n": 1999
+  },
+  {
+   "a": "DOGE/USD",
+   "b": "LDO/USD",
+   "r": 0.584,
+   "n": 1999
+  },
+  {
+   "a": "ADA/USD",
+   "b": "SEI/USD",
+   "r": 0.583,
+   "n": 1999
+  },
+  {
+   "a": "ALGO/USD",
+   "b": "BTC/USD",
+   "r": 0.58,
+   "n": 1999
+  },
+  {
+   "a": "LINK/USD",
+   "b": "MANA/USD",
+   "r": 0.58,
+   "n": 1999
+  },
+  {
+   "a": "ALGO/USD",
+   "b": "ETH/USD",
+   "r": 0.577,
+   "n": 1999
+  },
+  {
+   "a": "BTC/USD",
+   "b": "LDO/USD",
+   "r": 0.577,
+   "n": 1999
+  },
+  {
+   "a": "BNB/USD",
+   "b": "ENS/USD",
+   "r": 0.576,
+   "n": 1999
+  },
+  {
+   "a": "ALGO/USD",
+   "b": "ARB/USD",
+   "r": 0.574,
+   "n": 1999
+  },
+  {
+   "a": "BNB/USD",
+   "b": "UNI/USD",
+   "r": 0.574,
+   "n": 1999
+  },
+  {
+   "a": "LDO/USD",
+   "b": "XRP/USD",
+   "r": 0.574,
+   "n": 1999
+  },
+  {
+   "a": "ADA/USD",
+   "b": "CRV/USD",
+   "r": 0.573,
+   "n": 1999
+  },
+  {
+   "a": "ARB/USD",
+   "b": "LDO/USD",
+   "r": 0.573,
+   "n": 1999
+  },
+  {
+   "a": "ENS/USD",
+   "b": "SEI/USD",
+   "r": 0.573,
+   "n": 1999
+  },
+  {
+   "a": "DOGE/USD",
+   "b": "MANA/USD",
+   "r": 0.572,
+   "n": 1999
+  },
+  {
+   "a": "HBAR/USD",
+   "b": "SOL/USD",
+   "r": 0.572,
+   "n": 1999
+  },
+  {
+   "a": "AAVE/USD",
+   "b": "ADA/USD",
+   "r": 0.571,
+   "n": 1999
+  },
+  {
+   "a": "BTC/USD",
+   "b": "HBAR/USD",
+   "r": 0.571,
+   "n": 1999
+  },
+  {
+   "a": "DOT/USD",
+   "b": "HBAR/USD",
+   "r": 0.57,
+   "n": 1999
+  },
+  {
+   "a": "ETH/USD",
+   "b": "HBAR/USD",
+   "r": 0.57,
+   "n": 1999
+  },
+  {
+   "a": "BNB/USD",
+   "b": "CRV/USD",
+   "r": 0.569,
+   "n": 1999
+  },
+  {
+   "a": "ETH/USD",
+   "b": "MANA/USD",
+   "r": 0.565,
+   "n": 1999
+  },
+  {
+   "a": "MANA/USD",
+   "b": "XRP/USD",
+   "r": 0.565,
+   "n": 1999
+  },
+  {
+   "a": "MANA/USD",
+   "b": "SOL/USD",
+   "r": 0.563,
+   "n": 1999
+  },
+  {
+   "a": "ADA/USD",
+   "b": "ENS/USD",
+   "r": 0.56,
+   "n": 1999
+  },
+  {
+   "a": "BTC/USD",
+   "b": "MANA/USD",
+   "r": 0.559,
+   "n": 1999
+  },
+  {
+   "a": "AAVE/USD",
+   "b": "SEI/USD",
+   "r": 0.552,
+   "n": 1999
+  },
+  {
+   "a": "ALGO/USD",
+   "b": "LTC/USD",
+   "r": 0.549,
+   "n": 1999
+  },
+  {
+   "a": "ADA/USD",
+   "b": "ALGO/USD",
+   "r": 0.547,
+   "n": 1999
+  },
+  {
+   "a": "XLM/USD",
+   "b": "XRP/USD",
+   "r": 0.547,
+   "n": 1999
+  },
+  {
+   "a": "ARB/USD",
+   "b": "MANA/USD",
+   "r": 0.542,
+   "n": 1999
+  },
+  {
+   "a": "HBAR/USD",
+   "b": "LTC/USD",
+   "r": 0.54,
+   "n": 1999
+  },
+  {
+   "a": "AAVE/USD",
+   "b": "ENS/USD",
+   "r": 0.537,
+   "n": 1999
+  },
+  {
+   "a": "ALGO/USD",
+   "b": "BNB/USD",
+   "r": 0.537,
+   "n": 1999
+  },
+  {
+   "a": "LDO/USD",
+   "b": "LTC/USD",
+   "r": 0.537,
+   "n": 1999
+  },
+  {
+   "a": "ADA/USD",
+   "b": "HBAR/USD",
+   "r": 0.535,
+   "n": 1999
+  },
+  {
+   "a": "ADA/USD",
+   "b": "UNI/USD",
+   "r": 0.533,
+   "n": 1999
+  },
+  {
+   "a": "LTC/USD",
+   "b": "MANA/USD",
+   "r": 0.533,
+   "n": 1999
+  },
+  {
+   "a": "AAVE/USD",
+   "b": "CRV/USD",
+   "r": 0.532,
+   "n": 1999
+  },
+  {
+   "a": "CRV/USD",
+   "b": "UNI/USD",
+   "r": 0.532,
+   "n": 1999
+  },
+  {
+   "a": "ALGO/USD",
+   "b": "HBAR/USD",
+   "r": 0.53,
+   "n": 1999
+  },
+  {
+   "a": "ALGO/USD",
+   "b": "SEI/USD",
+   "r": 0.53,
+   "n": 1999
+  },
+  {
+   "a": "BNB/USD",
+   "b": "LDO/USD",
+   "r": 0.53,
+   "n": 1999
+  },
+  {
+   "a": "LINK/USD",
+   "b": "XLM/USD",
+   "r": 0.529,
+   "n": 1999
+  },
+  {
+   "a": "ARB/USD",
+   "b": "HBAR/USD",
+   "r": 0.528,
+   "n": 1999
+  },
+  {
+   "a": "HBAR/USD",
+   "b": "SEI/USD",
+   "r": 0.526,
+   "n": 1999
+  },
+  {
+   "a": "CRV/USD",
+   "b": "SEI/USD",
+   "r": 0.525,
+   "n": 1999
+  },
+  {
+   "a": "BNB/USD",
+   "b": "HBAR/USD",
+   "r": 0.523,
+   "n": 1999
+  },
+  {
+   "a": "HBAR/USD",
+   "b": "XLM/USD",
+   "r": 0.521,
+   "n": 1999
+  },
+  {
+   "a": "DOGE/USD",
+   "b": "XLM/USD",
+   "r": 0.518,
+   "n": 1999
+  },
+  {
+   "a": "CRV/USD",
+   "b": "ENS/USD",
+   "r": 0.517,
+   "n": 1999
+  },
+  {
+   "a": "SOL/USD",
+   "b": "XLM/USD",
+   "r": 0.516,
+   "n": 1999
+  },
+  {
+   "a": "ADA/USD",
+   "b": "LDO/USD",
+   "r": 0.515,
+   "n": 1999
+  },
+  {
+   "a": "SEI/USD",
+   "b": "UNI/USD",
+   "r": 0.513,
+   "n": 1999
+  },
+  {
+   "a": "ADA/USD",
+   "b": "MANA/USD",
+   "r": 0.512,
+   "n": 1999
+  },
+  {
+   "a": "ENS/USD",
+   "b": "HBAR/USD",
+   "r": 0.512,
+   "n": 1999
+  },
+  {
+   "a": "ENS/USD",
+   "b": "UNI/USD",
+   "r": 0.511,
+   "n": 1999
+  },
+  {
+   "a": "AAVE/USD",
+   "b": "LDO/USD",
+   "r": 0.51,
+   "n": 1999
+  },
+  {
+   "a": "LDO/USD",
+   "b": "UNI/USD",
+   "r": 0.508,
+   "n": 1999
+  },
+  {
+   "a": "CRV/USD",
+   "b": "LDO/USD",
+   "r": 0.506,
+   "n": 1999
+  },
+  {
+   "a": "ENS/USD",
+   "b": "LDO/USD",
+   "r": 0.505,
+   "n": 1999
+  },
+  {
+   "a": "ETH/USD",
+   "b": "XLM/USD",
+   "r": 0.497,
+   "n": 1999
+  },
+  {
+   "a": "ALGO/USD",
+   "b": "ENS/USD",
+   "r": 0.496,
+   "n": 1999
+  },
+  {
+   "a": "MANA/USD",
+   "b": "SEI/USD",
+   "r": 0.496,
+   "n": 1999
+  },
+  {
+   "a": "BNB/USD",
+   "b": "MANA/USD",
+   "r": 0.494,
+   "n": 1999
+  },
+  {
+   "a": "LDO/USD",
+   "b": "SEI/USD",
+   "r": 0.493,
+   "n": 1999
+  },
+  {
+   "a": "AAVE/USD",
+   "b": "ALGO/USD",
+   "r": 0.492,
+   "n": 1999
+  },
+  {
+   "a": "DOT/USD",
+   "b": "XLM/USD",
+   "r": 0.489,
+   "n": 1999
+  },
+  {
+   "a": "ENS/USD",
+   "b": "MANA/USD",
+   "r": 0.489,
+   "n": 1999
+  },
+  {
+   "a": "ALGO/USD",
+   "b": "CRV/USD",
+   "r": 0.485,
+   "n": 1999
+  },
+  {
+   "a": "ARB/USD",
+   "b": "XLM/USD",
+   "r": 0.481,
+   "n": 1999
+  },
+  {
+   "a": "BTC/USD",
+   "b": "XLM/USD",
+   "r": 0.478,
+   "n": 1999
+  },
+  {
+   "a": "AAVE/USD",
+   "b": "MANA/USD",
+   "r": 0.472,
+   "n": 1999
+  },
+  {
+   "a": "CRV/USD",
+   "b": "MANA/USD",
+   "r": 0.472,
+   "n": 1999
+  },
+  {
+   "a": "AAVE/USD",
+   "b": "HBAR/USD",
+   "r": 0.463,
+   "n": 1999
+  },
+  {
+   "a": "LDO/USD",
+   "b": "MANA/USD",
+   "r": 0.462,
+   "n": 1999
+  },
+  {
+   "a": "ADA/USD",
+   "b": "XLM/USD",
+   "r": 0.46,
+   "n": 1999
+  },
+  {
+   "a": "ALGO/USD",
+   "b": "XLM/USD",
+   "r": 0.459,
+   "n": 1999
+  },
+  {
+   "a": "LTC/USD",
+   "b": "XLM/USD",
+   "r": 0.458,
+   "n": 1999
+  },
+  {
+   "a": "ALGO/USD",
+   "b": "LDO/USD",
+   "r": 0.454,
+   "n": 1999
+  },
+  {
+   "a": "ALGO/USD",
+   "b": "UNI/USD",
+   "r": 0.447,
+   "n": 1999
+  },
+  {
+   "a": "CRV/USD",
+   "b": "HBAR/USD",
+   "r": 0.447,
+   "n": 1999
+  },
+  {
+   "a": "HBAR/USD",
+   "b": "UNI/USD",
+   "r": 0.445,
+   "n": 1999
+  },
+  {
+   "a": "MANA/USD",
+   "b": "UNI/USD",
+   "r": 0.44,
+   "n": 1999
+  },
+  {
+   "a": "ALGO/USD",
+   "b": "MANA/USD",
+   "r": 0.438,
+   "n": 1999
+  },
+  {
+   "a": "SEI/USD",
+   "b": "XLM/USD",
+   "r": 0.433,
+   "n": 1999
+  },
+  {
+   "a": "HBAR/USD",
+   "b": "LDO/USD",
+   "r": 0.429,
+   "n": 1999
+  },
+  {
+   "a": "BNB/USD",
+   "b": "XLM/USD",
+   "r": 0.428,
+   "n": 1999
+  },
+  {
+   "a": "AAVE/USD",
+   "b": "XLM/USD",
+   "r": 0.419,
+   "n": 1999
+  },
+  {
+   "a": "HBAR/USD",
+   "b": "MANA/USD",
+   "r": 0.41,
+   "n": 1999
+  },
+  {
+   "a": "ENS/USD",
+   "b": "XLM/USD",
+   "r": 0.394,
+   "n": 1999
+  },
+  {
+   "a": "CRV/USD",
+   "b": "XLM/USD",
+   "r": 0.38,
+   "n": 1999
+  },
+  {
+   "a": "UNI/USD",
+   "b": "XLM/USD",
+   "r": 0.374,
+   "n": 1999
+  },
+  {
+   "a": "ETH/USD",
+   "b": "PAXG/USD",
+   "r": 0.346,
+   "n": 1999
+  },
+  {
+   "a": "LDO/USD",
+   "b": "XLM/USD",
+   "r": 0.346,
+   "n": 1999
+  },
+  {
+   "a": "LINK/USD",
+   "b": "PAXG/USD",
+   "r": 0.328,
+   "n": 1999
+  },
+  {
+   "a": "ETH/USD",
+   "b": "ETHFI/USD",
+   "r": 0.327,
+   "n": 1999
+  },
+  {
+   "a": "MANA/USD",
+   "b": "XLM/USD",
+   "r": 0.327,
+   "n": 1999
+  },
+  {
+   "a": "ETHFI/USD",
+   "b": "LINK/USD",
+   "r": 0.325,
+   "n": 1999
+  },
+  {
+   "a": "ARB/USD",
+   "b": "ETHFI/USD",
+   "r": 0.315,
+   "n": 1999
+  },
+  {
+   "a": "PAXG/USD",
+   "b": "XRP/USD",
+   "r": 0.314,
+   "n": 1999
+  },
+  {
+   "a": "PAXG/USD",
+   "b": "SOL/USD",
+   "r": 0.312,
+   "n": 1999
+  },
+  {
+   "a": "ETHFI/USD",
+   "b": "LDO/USD",
+   "r": 0.302,
+   "n": 1999
+  },
+  {
+   "a": "DOGE/USD",
+   "b": "PAXG/USD",
+   "r": 0.301,
+   "n": 1999
+  },
+  {
+   "a": "DOGE/USD",
+   "b": "ETHFI/USD",
+   "r": 0.3,
+   "n": 1999
+  },
+  {
+   "a": "BTC/USD",
+   "b": "PAXG/USD",
+   "r": 0.298,
+   "n": 1999
+  },
+  {
+   "a": "DOT/USD",
+   "b": "ETHFI/USD",
+   "r": 0.293,
+   "n": 1999
+  },
+  {
+   "a": "ETHFI/USD",
+   "b": "LTC/USD",
+   "r": 0.292,
+   "n": 1999
+  },
+  {
+   "a": "ETHFI/USD",
+   "b": "SOL/USD",
+   "r": 0.291,
+   "n": 1999
+  },
+  {
+   "a": "DOT/USD",
+   "b": "PAXG/USD",
+   "r": 0.285,
+   "n": 1999
+  },
+  {
+   "a": "BTC/USD",
+   "b": "ETHFI/USD",
+   "r": 0.284,
+   "n": 1999
+  },
+  {
+   "a": "ADA/USD",
+   "b": "ETHFI/USD",
+   "r": 0.273,
+   "n": 1999
+  },
+  {
+   "a": "ARB/USD",
+   "b": "PAXG/USD",
+   "r": 0.272,
+   "n": 1999
+  },
+  {
+   "a": "ETHFI/USD",
+   "b": "XRP/USD",
+   "r": 0.271,
+   "n": 1999
+  },
+  {
+   "a": "ADA/USD",
+   "b": "PAXG/USD",
+   "r": 0.268,
+   "n": 1999
+  },
+  {
+   "a": "AAVE/USD",
+   "b": "ETHFI/USD",
+   "r": 0.261,
+   "n": 1999
+  },
+  {
+   "a": "ENS/USD",
+   "b": "ETHFI/USD",
+   "r": 0.258,
+   "n": 1999
+  },
+  {
+   "a": "BNB/USD",
+   "b": "PAXG/USD",
+   "r": 0.257,
+   "n": 1999
+  },
+  {
+   "a": "CRV/USD",
+   "b": "ETHFI/USD",
+   "r": 0.254,
+   "n": 1999
+  },
+  {
+   "a": "BNB/USD",
+   "b": "ETHFI/USD",
+   "r": 0.253,
+   "n": 1999
+  },
+  {
+   "a": "ENS/USD",
+   "b": "PAXG/USD",
+   "r": 0.247,
+   "n": 1999
+  },
+  {
+   "a": "LDO/USD",
+   "b": "PAXG/USD",
+   "r": 0.246,
+   "n": 1999
+  },
+  {
+   "a": "AAVE/USD",
+   "b": "PAXG/USD",
+   "r": 0.243,
+   "n": 1999
+  },
+  {
+   "a": "ETHFI/USD",
+   "b": "UNI/USD",
+   "r": 0.238,
+   "n": 1999
+  },
+  {
+   "a": "PAXG/USD",
+   "b": "UNI/USD",
+   "r": 0.238,
+   "n": 1999
+  },
+  {
+   "a": "ETHFI/USD",
+   "b": "SEI/USD",
+   "r": 0.233,
+   "n": 1999
+  },
+  {
+   "a": "LTC/USD",
+   "b": "PAXG/USD",
+   "r": 0.232,
+   "n": 1999
+  },
+  {
+   "a": "PAXG/USD",
+   "b": "SEI/USD",
+   "r": 0.231,
+   "n": 1999
+  },
+  {
+   "a": "ETHFI/USD",
+   "b": "MANA/USD",
+   "r": 0.221,
+   "n": 1999
+  },
+  {
+   "a": "CRV/USD",
+   "b": "PAXG/USD",
+   "r": 0.213,
+   "n": 1999
+  },
+  {
+   "a": "MANA/USD",
+   "b": "PAXG/USD",
+   "r": 0.211,
+   "n": 1999
+  },
+  {
+   "a": "ALGO/USD",
+   "b": "ETHFI/USD",
+   "r": 0.21,
+   "n": 1999
+  },
+  {
+   "a": "HBAR/USD",
+   "b": "PAXG/USD",
+   "r": 0.202,
+   "n": 1999
+  },
+  {
+   "a": "ETHFI/USD",
+   "b": "HBAR/USD",
+   "r": 0.199,
+   "n": 1999
+  },
+  {
+   "a": "ALGO/USD",
+   "b": "PAXG/USD",
+   "r": 0.183,
+   "n": 1999
+  },
+  {
+   "a": "PAXG/USD",
+   "b": "XLM/USD",
+   "r": 0.161,
+   "n": 1999
+  },
+  {
+   "a": "ETHFI/USD",
+   "b": "PAXG/USD",
+   "r": 0.136,
+   "n": 1999
+  },
+  {
+   "a": "ETHFI/USD",
+   "b": "XLM/USD",
+   "r": 0.135,
+   "n": 1999
+  }
+ ]
+}

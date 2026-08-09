@@ -74,16 +74,71 @@ CORRELATIONS: dict[tuple[str, str], tuple[float, int]] = {
 }
 
 
+# ─── Mesure continue Kraken Futures (2026-08-09) ───────────────────────
+#
+# La table ci-dessus ne couvrait que SIX paires crypto sur les vingt-trois
+# surveillees : pour les autres, `correlation()` rendait None, donc le garde
+# ne comptait rien. `max_correlated_positions=1` etait declare sur
+# admin_kraken sans jamais pouvoir mordre au-dela de la meme paire.
+#
+# ⚠️ L'erreur de raisonnement qui avait retarde la mesure : j'avais annonce
+# qu'il faudrait attendre plusieurs semaines, en confondant NOTRE historique
+# avec celui du MARCHE. La correlation des rendements est une propriete du
+# marche — ETHFI, SEI ou CRV cotent chez Kraken depuis des mois, meme si le
+# systeme ne les surveille que depuis le 2026-08-08. La donnee existait deja.
+#
+# Source : endpoint PUBLIC des graphiques Kraken Futures, donc hors quota
+# Twelve Data, et sur les perpetuels REELLEMENT trades (PF_*), pas un proxy.
+# 1999 rendements log horaires par instrument, 253 couples, aucun
+# sous-echantillonne. Regenerable : `scripts/mesurer_correlations_kraken.py`.
+_FICHIER_MESURE = "correlations_kraken_1h.json"
+
+
+def _charger_mesure() -> dict[tuple[str, str], tuple[float, int]]:
+    """Couples mesures, ou dict vide si le fichier manque ou est illisible.
+
+    Silencieux a dessein : l'absence de mesure est exactement l'etat d'avant,
+    et une table de correlations ne doit pas empecher le service de demarrer.
+    """
+    import json
+    import os
+    chemin = os.path.join(os.path.dirname(__file__), _FICHIER_MESURE)
+    try:
+        with open(chemin, encoding="utf-8") as f:
+            data = json.load(f)
+        return {(c["a"], c["b"]): (float(c["r"]), int(c["n"]))
+                for c in data.get("couples", [])}
+    except Exception as e:
+        logger.warning(f"correlation_guard: mesure Kraken illisible ({e})")
+        return {}
+
+
+CORRELATIONS_MESUREES: dict[tuple[str, str], tuple[float, int]] = _charger_mesure()
+
+
 def correlation(a: str, b: str) -> float | None:
     """Corrélation mesurée entre deux paires. ``None`` si jamais mesurée.
 
     ``None`` plutôt que ``0.0`` : « non mesuré » et « décorrélé » sont deux
     états différents, et les confondre reviendrait à affirmer une
     indépendance qu'on n'a pas vérifiée.
+
+    La **mesure continue prime** sur la table historique quand les deux
+    couvrent le couple : échantillon plus large (1 999 contre 1 468 au mieux)
+    et surtout continu. Échantillonner des prix d'entrée de signaux, irréguliers
+    par construction, **atténue** une corrélation — c'est ce qui explique que
+    les onze couples communs ressortent tous plus hauts, jamais plus bas.
+
+    La table historique reste seule à couvrir le forex et les métaux : Kraken
+    Futures ne les cote pas, et les laisser à ``None`` retirerait une
+    protection existante.
     """
     if a == b:
         return 1.0
-    hit = CORRELATIONS.get((a, b)) or CORRELATIONS.get((b, a))
+    hit = (CORRELATIONS_MESUREES.get((a, b))
+           or CORRELATIONS_MESUREES.get((b, a))
+           or CORRELATIONS.get((a, b))
+           or CORRELATIONS.get((b, a)))
     return hit[0] if hit else None
 
 
