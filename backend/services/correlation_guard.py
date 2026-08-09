@@ -148,21 +148,65 @@ def limite(dest) -> int:
     return int(d.max_correlated_positions) if d else 0
 
 
+def _trier(ouvertes, pair: str, direction: str) -> tuple[list[str], list[str]]:
+    """``(memes paris, couples non mesures)`` face aux positions ouvertes."""
+    en_cause: list[str] = []
+    non_mesures: list[str] = []
+    for p, s in ouvertes:
+        e = exposition(pair, direction, p, s)
+        if e is None:
+            non_mesures.append(f"{p} {s}")
+        elif e >= SEUIL_CORRELATION:
+            en_cause.append(f"{p} {s}")
+    return en_cause, non_mesures
+
+
+def couples_non_mesures(dest, pair: str, direction: str) -> list[str]:
+    """Positions ouvertes dont la correlation a ce nouvel ordre est INCONNUE.
+
+    Expose le trou sans passer par les logs, pour pouvoir en compter la
+    frequence le jour ou l'on tranchera.
+    """
+    if dest is None or limite(dest) <= 0:
+        return []
+    ouvertes = positions_ouvertes(getattr(dest, "destination_id", ""))
+    return _trier(ouvertes, pair, direction)[1]
+
+
 def pari_deja_pris(dest, pair: str, direction: str) -> tuple[bool, list[str]]:
     """``(bloqué, positions en cause)`` pour ce nouvel ordre.
 
     Best-effort : sans destination, sans limite déclarée ou en cas d'erreur
     de lecture, l'ordre passe. Ce garde-fou réduit la concentration ; il ne
     protège pas contre une panne et ne doit pas bloquer sur une panne.
+
+    ⚠️ **Le trou de mesure est journalisé** (2026-08-09). ``CORRELATIONS`` est
+    une table de seize couples mesurés le 2026-08-04 : elle couvre six paires
+    crypto sur les vingt-quatre surveillées. Pour les autres, ``exposition``
+    rend ``None`` et la position n'est pas comptée — ``max_correlated_positions``
+    vaut 1 sur ``admin_kraken``, et trois positions crypto y étaient pourtant
+    ouvertes en même temps, corrélations croisées toutes inconnues.
+
+    Le repli permissif reste **délibéré** : « non mesuré » et « décorrélé » sont
+    deux choses différentes, et fabriquer une corrélation serait pire que de ne
+    pas en avoir. Mais un garde qui laisse passer sans le dire est indiscernable
+    d'un garde qui a vérifié — et c'est précisément ce qui rendrait la décision
+    future impossible à prendre, faute de savoir à quelle fréquence le cas
+    survient. On trace donc, on ne bloque pas.
     """
     maxi = limite(dest)
     if maxi <= 0 or dest is None:
         return False, []
 
     ouvertes = positions_ouvertes(getattr(dest, "destination_id", ""))
-    en_cause = [
-        f"{p} {s}" for p, s in ouvertes
-        if (e := exposition(pair, direction, p, s)) is not None
-        and e >= SEUIL_CORRELATION
-    ]
+    en_cause, non_mesures = _trier(ouvertes, pair, direction)
+    if non_mesures:
+        logger.warning(
+            "correlation_guard[%s]: %s %s — %d position(s) ouverte(s) de "
+            "corrélation INCONNUE, non comptées : %s. %d comptée(s) sur une "
+            "limite de %d. Le garde laisse passer faute de mesure, pas faute "
+            "de risque.",
+            getattr(dest, "destination_id", "?"), pair, direction,
+            len(non_mesures), ", ".join(non_mesures), len(en_cause), maxi,
+        )
     return (len(en_cause) >= maxi), en_cause
