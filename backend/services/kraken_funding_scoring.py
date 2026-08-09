@@ -163,9 +163,38 @@ _LAST_FETCH_AT: float = 0.0
 _LAST_FETCH_DATA: dict[str, float] = {}  # {symbol -> fundingRate}
 
 
+def symbole_pour(pair: str) -> str | None:
+    """Symbole Kraken Futures d'une paire interne, ou ``None``.
+
+    **Point de resolution unique** — le cout de portage et le veto de score
+    doivent couvrir le meme univers. Le 2026-08-08, le repli derive n'avait ete
+    pose que sur `get_funding_rate_for_pair` (le cout) ; `apply_kraken_funding`
+    (le score) sortait toujours en amont sur l'appartenance a la carte codee en
+    dur. Mesure le 2026-08-09 : 9 paires couvertes sur 24 surveillees, et le
+    veto ne s'etait jamais declenche que sur les six de la carte.
+
+    Deux univers pour une meme donnee, c'est la derive que cette fonction
+    supprime.
+
+    La derivation n'est acceptee QUE si Kraken publie reellement le symbole :
+    une derivation non validee rendrait le taux d'une autre paire, ou
+    masquerait une absence.
+    """
+    explicite = _PAIR_TO_SYMBOL.get(pair)
+    if explicite:
+        return explicite
+    if "/" not in pair:
+        return None
+    base, quote = pair.split("/", 1)
+    if quote.upper() != "USD":
+        return None
+    derive = f"PF_{base.upper()}USD"
+    return derive if derive in _fetch_all_rates() else None
+
+
 def is_crypto_pair(pair: str) -> bool:
-    """Retourne True si la paire est dans la liste crypto Kraken Futures."""
-    return pair in _PAIR_TO_SYMBOL
+    """Retourne True si Kraken Futures cote un perpetuel pour cette paire."""
+    return symbole_pour(pair) is not None
 
 
 def _fetch_all_rates() -> dict[str, float]:
@@ -236,26 +265,16 @@ def get_funding_rate_for_pair(pair: str) -> float | None:
     Best-effort : toute erreur rend ``None``, jamais ``0.0``.
     """
     try:
-        symbol = _PAIR_TO_SYMBOL.get(pair)
+        # Repli derive (2026-08-08), factorise dans `symbole_pour` (2026-08-09).
+        # `_fetch_all_rates` recupere DEJA tous les taux publies par Kraken ;
+        # seule la traduction paire->symbole manquait, et elle rendait `None`
+        # pour toute paire absente de la carte codee en dur. Consequence
+        # mesuree : BNB, XLM, SEI, ENS et HBAR voyaient leur cout de portage
+        # devenir incalculable, donc `exceeds_edge` bloquait l'argent reel --
+        # un refus fonde sur une donnee manquante, pas sur un cout.
+        symbol = symbole_pour(pair)
         if not symbol:
-            # Repli derive (2026-08-08). `_fetch_all_rates` recupere DEJA tous
-            # les taux publies par Kraken ; seule la traduction paire->symbole
-            # manquait, et elle rendait `None` pour toute paire absente de la
-            # carte codee en dur. Consequence mesuree : BNB, XLM, SEI, ENS et
-            # HBAR voyaient leur cout de portage devenir incalculable, donc
-            # `exceeds_edge` bloquait l'argent reel -- un refus fonde sur une
-            # donnee manquante, pas sur un cout.
-            #
-            # La derivation n'est acceptee que si le symbole existe dans les
-            # taux reellement recuperes : une derivation non validee
-            # rendrait un taux d'une autre paire ou masquerait une absence.
-            if "/" not in pair:
-                return None
-            base, quote = pair.split("/", 1)
-            if quote.upper() != "USD":
-                return None
-            derive = f"PF_{base.upper()}USD"
-            return _fetch_all_rates().get(derive)
+            return None
         return _get_funding_rate(symbol)
     except Exception:
         return None
@@ -286,9 +305,13 @@ def apply_kraken_funding(
     Best-effort : retourne (base_score, {multiplier: 1.0, reason: None}) sur
     toute erreur — comportement neutre safe par défaut.
     """
-    if not is_crypto_pair(pair):
-        return base_score, {"multiplier": 1.0, "reason": None, "symbol": None, "rate": None}
-    symbol = _PAIR_TO_SYMBOL.get(pair)
+    # ⚠️ Meme resolution que le cout de portage, cf. `symbole_pour`. Passer par
+    # `_PAIR_TO_SYMBOL` directement rouvrirait l'ecart des deux univers.
+    try:
+        symbol = symbole_pour(pair)
+    except Exception as e:
+        logger.debug(f"kraken_funding_scoring {pair}: {e}")
+        symbol = None
     if not symbol:
         return base_score, {"multiplier": 1.0, "reason": None, "symbol": None, "rate": None}
     try:
