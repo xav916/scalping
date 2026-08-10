@@ -81,6 +81,14 @@ GATEWAY_PORT = int(os.getenv("IBKR_GATEWAY_PORT", "4001"))
 CLIENT_ID = int(os.getenv("IBKR_CLIENT_ID", "17"))
 BRIDGE_API_KEY = os.getenv("IBKR_BRIDGE_API_KEY", "")
 BRIDGE_PORT = int(os.getenv("IBKR_BRIDGE_PORT", "8792"))
+# Interface d'ecoute. Defaut 127.0.0.1 : un bridge qui ecoute large par defaut
+# est un bridge qu'on expose sans l'avoir decide.
+#
+# Le radar tourne sur l'EC2 et n'atteindrait jamais une boucle locale : la
+# machine hote doit donc ouvrir explicitement. Preferer l'IP Tailscale de la
+# machine (ex. 100.122.188.8) a 0.0.0.0 — l'ecoute reste alors bornee au
+# reseau prive, meme si le pare-feu local venait a tomber.
+BRIDGE_HOST = os.getenv("IBKR_BRIDGE_HOST", "127.0.0.1")
 ALLOW_ORDERS = os.getenv("IBKR_ALLOW_ORDERS", "false").lower() in ("1", "true", "yes", "on")
 MARKET_DATA_TYPE = int(os.getenv("IBKR_MARKET_DATA_TYPE", "3"))
 
@@ -681,7 +689,7 @@ def kill():
 
 if __name__ == "__main__":
     logger.info(
-        f"IBKR bridge démarrage port={BRIDGE_PORT} "
+        f"IBKR bridge démarrage {BRIDGE_HOST}:{BRIDGE_PORT} "
         f"gateway={GATEWAY_HOST}:{GATEWAY_PORT} "
         f"orders_allowed={ALLOW_ORDERS} read_only={IB_READONLY}"
     )
@@ -693,4 +701,4 @@ if __name__ == "__main__":
     # threaded=False : les handlers Flask délèguent déjà tout au worker,
     # mais on évite d'empiler des requêtes concurrentes sur une socket IB
     # qui ne gère qu'une conversation à la fois.
-    app.run(host="127.0.0.1", port=BRIDGE_PORT, threaded=False)
+    app.run(host=BRIDGE_HOST, port=BRIDGE_PORT, threaded=False)
