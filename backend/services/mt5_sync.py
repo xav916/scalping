@@ -299,11 +299,13 @@ def _derive_close_reason_from_exit(
     #    ⚠️ Garde : si le stop est plus proche de l'entrée que la tolérance,
     #    ce test déclarerait « stop touché » y compris pour une sortie AU PRIX
     #    D'ENTRÉE. Il ne discrimine plus rien — il doit se taire.
-    if (
-        sl is not None
-        and abs(exit_price - sl) <= tol
-        and (not entry or abs(entry - sl) > tol)
-    ):
+    if sl is not None and abs(exit_price - sl) <= tol:
+        if entry and abs(entry - sl) <= tol:
+            # Stop indiscernable du prix d'entrée à la tolérance près : ce test
+            # dirait « stop touché » y compris pour une sortie au prix d'entrée.
+            # ⛔ Ne PAS laisser glisser vers BREAKEVEN — ce serait remplacer une
+            # affirmation douteuse par une autre. On nomme l'ambiguïté.
+            return "INDETERMINE"
         return "SL"
 
     # Sens du trade : +1 à l'achat, -1 à la vente. Sans lui on ne peut pas
