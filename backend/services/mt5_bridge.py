@@ -1149,6 +1149,17 @@ async def _push_to_destination(setup, dest) -> None:
         await kraken_bridge_client.push_to_kraken(setup, sz, dest)
         return
 
+    # ─── Dispatch IBKR actions US (2026-08-10) ────────────────────────
+    # Compte CASH, achat seul, quantite en nombre ENTIER d'actions. Le
+    # sizing lit `NetLiquidation` (troisieme dialecte de solde du systeme).
+    if getattr(dest, "bridge_type", "mt5") == "ibkr":
+        _sent_setups_today.add(key)
+        from backend.services import ibkr_bridge_client, sizing
+        await sizing.refresh_destination_capital(dest)
+        sz = sizing.compute_risk_money(setup, dest)
+        await ibkr_bridge_client.push_to_ibkr(setup, sz, dest)
+        return
+
     # ─── Dispatch Kraken Spot bridge (2026-08-02) ─────────────────────
     # Long-only, pas de levier, achat réel BTC/ETH. Watcher SL/TP émulé
     # côté bridge (pas d'OCO natif Kraken Spot). Paires: BTC/USD, ETH/USD.

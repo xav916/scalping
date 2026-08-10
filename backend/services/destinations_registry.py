@@ -228,6 +228,28 @@ DESTINATIONS: dict[str, Destination] = {
             plateforme="Kraken xStocks",
         ),
         Destination(
+            id="admin_ibkr_us",
+            badge="💼 IBKR actions",
+            mode="Interactive Brokers · LIVE (argent réel)",
+            reel=True,
+            bridge_type="ibkr",
+            url_env="IBKR_BRIDGE_URL",
+            key_env="IBKR_BRIDGE_API_KEY",
+            key_header="X-Bridge-Key",
+            # Le bridge expose `/account` (NetLiquidation) : le sizing lit le
+            # solde reel, comme Kraken. Indispensable ici — le compte vaut
+            # ~115 USD et une seule action AAPL en vaut 306.
+            sizing="live_balance",
+            asset_classes=frozenset({"equity"}),
+            # Compte CASH : l'achat d'action ne prend pas de levier, et la
+            # vente a decouvert exige un compte Margin qu'on n'a pas. Le
+            # notionnel ne peut donc pas depasser le capital.
+            max_notional_leverage=1.0,
+            order_cooldown_sec=900,
+            max_correlated_positions=1,
+            plateforme="IBKR actions",
+        ),
+        Destination(
             id="admin_binance",
             badge="🅑 Binance Testnet",
             mode="Binance · Testnet (R&D)",

@@ -370,6 +370,19 @@ async def refresh_destination_capital(dest) -> float | None:
             value = corps.get("equity")
             if value is None:
                 value = corps.get("balance")
+        elif getattr(dest, "bridge_type", "") == "ibkr":
+            # ⚠️ Troisieme dialecte (2026-08-10). IBKR nomme le solde
+            # `NetLiquidation` — ni `equity` (MT5), ni `portfolio_value_usd`
+            # (Kraken/Binance). Lire la mauvaise cle rendrait `None`, donc un
+            # refus de sizing SILENCIEUX : la route serait branchee et ne
+            # traderait jamais, sans qu'aucune erreur ne le dise.
+            #
+            # `TotalCashValue` en repli : sur un compte cash sans position,
+            # les deux coincident, mais `NetLiquidation` reste le bon concept
+            # (positions ouvertes incluses).
+            value = corps.get("NetLiquidation")
+            if value is None:
+                value = corps.get("TotalCashValue")
         else:
             # `portfolio_value_usd` est la clé commune aux bridges Kraken
             # Futures, Kraken Spot et Binance. On ne devine pas au-delà.

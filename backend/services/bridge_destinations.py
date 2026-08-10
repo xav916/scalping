@@ -551,6 +551,54 @@ def _admin_kraken_destination() -> BridgeConfig | None:
     )
 
 
+def _admin_ibkr_destination() -> BridgeConfig | None:
+    """Config IBKR actions US, ou ``None`` si désactivé.
+
+    Ouverte le 2026-08-10. Le bridge existait depuis le 2026-08-04 en lecture
+    seule ; la permission Actions US est approuvée et la mécanique de bracket
+    validée en réel sur AAPL.
+
+    ⚠️ **Le coût est FIXE, pas proportionnel.** IBKR facture 0,35 USD par
+    ordre au palier Tiered (plancher), soit 0,70 USD l'aller-retour tant qu'on
+    reste sous 100 actions. Déclaré via ``min_per_order`` : sans lui,
+    ``cost_in_r`` verrait une route gratuite. Mesuré le 2026-08-09 sur les
+    distances réelles du shadow : **14,7 % (MSFT) à 28,6 % (NVDA) du TP visé**,
+    donc sous la porte de 30 % — l'inverse du forex IBKR, à 383 %.
+
+    ``funding_interval_hours=0.0`` : compte cash, aucun portage.
+
+    ⚠️ ``expected_edge_r`` vaut ``None`` par défaut, et la porte de coût refuse
+    alors la route **quel que soit le capital**. Ce n'est pas un oubli : sur
+    cet univers l'edge est mesuré NÉGATIF (−0,182 R contre le hasard,
+    p < 0,001). Renseigner ``IBKR_BRIDGE_EXPECTED_EDGE_R`` est l'acte
+    délibéré qui ouvre le flux, et il déclare un edge que la mesure ne
+    soutient pas — d'où une variable nommée plutôt qu'une constante enfouie.
+    """
+    from config import settings as st
+
+    if not (
+        getattr(st, "IBKR_BRIDGE_ENABLED", False)
+        and getattr(st, "IBKR_BRIDGE_URL", "")
+    ):
+        return None
+    return BridgeConfig(
+        destination_id="admin_ibkr_us",
+        user_id=None,
+        bridge_url=st.IBKR_BRIDGE_URL.rstrip("/"),
+        bridge_api_key=getattr(st, "IBKR_BRIDGE_API_KEY", "") or "",
+        min_confidence=float(getattr(st, "IBKR_BRIDGE_MIN_CONFIDENCE", 60)),
+        allowed_asset_classes=frozenset({"equity"}),
+        auto_exec_enabled=True,
+        bridge_type="ibkr",
+        cost_model=CostModel(min_per_order=0.35, funding_interval_hours=0.0),
+        expected_edge_r=getattr(st, "IBKR_BRIDGE_EXPECTED_EDGE_R", None),
+        # Une action US ne donne qu'UNE bougie H4 exploitable par jour de
+        # cotation (marché 13:30-20:30 UTC) : le journalier est le seul
+        # horizon qui produise assez d'observations.
+        allowed_horizons=frozenset({"1d"}),
+    )
+
+
 def _user_destinations(setup: Any) -> list[BridgeConfig]:
     """Retourne les destinations users (Premium tier) pour ce setup.
 
@@ -634,6 +682,7 @@ def admin_destinations() -> list[BridgeConfig]:
         _admin_legacy_destination, _admin_live_destination,
         _admin_binance_destination, _admin_kraken_destination,
         _admin_kraken_spot_destination, _admin_kraken_stocks_destination,
+        _admin_ibkr_destination,
     )
     return [d for d in (c() for c in constructeurs) if d is not None]
 
@@ -670,5 +719,13 @@ def resolve_destinations(setup: Any) -> list[BridgeConfig]:
     admin_kraken_stocks = _admin_kraken_stocks_destination()
     if admin_kraken_stocks is not None:
         destinations.append(admin_kraken_stocks)
+    # IBKR actions US (2026-08-10). Compte CASH : l'achat d'action passe, la
+    # vente a decouvert exige un compte Margin qu'on n'a pas. Filtrer ici
+    # plutot que laisser IBKR rejeter — meme raisonnement que Kraken Spot.
+    admin_ibkr = _admin_ibkr_destination()
+    if admin_ibkr is not None:
+        direction = getattr(getattr(setup, "direction", None), "value", "")
+        if str(direction).lower() == "buy":
+            destinations.append(admin_ibkr)
     destinations.extend(_user_destinations(setup))
     return destinations

@@ -290,6 +290,37 @@ KRAKEN_BRIDGE_URL = os.getenv("KRAKEN_BRIDGE_URL", "")
 KRAKEN_BRIDGE_API_KEY = os.getenv("KRAKEN_BRIDGE_API_KEY", "")
 KRAKEN_BRIDGE_MIN_CONFIDENCE = float(os.getenv("KRAKEN_BRIDGE_MIN_CONFIDENCE", "60"))
 KRAKEN_BRIDGE_LEVERAGE = int(os.getenv("KRAKEN_BRIDGE_LEVERAGE", "5"))
+
+# ─── IBKR actions (voie C, dispatch ouvert le 2026-08-10) ──────────────
+#
+# Le bridge (`ibkr-bridge/bridge.py`, port 8792) existait depuis le
+# 2026-08-04 en lecture seule ; ce bloc ouvre le chemin de dispatch.
+#
+# ⚠️ DEUX interrupteurs, et ils sont indépendants :
+#   - `IBKR_BRIDGE_ENABLED` côté radar — le setup est-il routé ici ?
+#   - `IBKR_ALLOW_ORDERS` côté BRIDGE — le Gateway accepte-t-il d'écrire ?
+#     Tant qu'il est faux, la session IB est ouverte en `readonly=True` et
+#     c'est le Gateway LUI-MÊME qui refuse : un bug applicatif ne peut pas
+#     passer d'ordre. Ne jamais confondre les deux.
+IBKR_BRIDGE_ENABLED = os.getenv("IBKR_BRIDGE_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+IBKR_BRIDGE_URL = os.getenv("IBKR_BRIDGE_URL", "")
+IBKR_BRIDGE_API_KEY = os.getenv("IBKR_BRIDGE_API_KEY", "")
+IBKR_BRIDGE_MIN_CONFIDENCE = float(os.getenv("IBKR_BRIDGE_MIN_CONFIDENCE", "60"))
+
+# ⚠️ L'edge attendu, en R. `None` par défaut, et ce n'est PAS un oubli : la
+# porte de coût refuse une route dont l'edge n'est pas mesuré, ce qui est la
+# bonne réponse tant qu'il ne l'est pas.
+#
+# Sur les 4 actions US individuelles, il est mesuré NÉGATIF — Δ = −0,182 R
+# contre une entrée au hasard, p < 0,001 (project_edge_actions_us_h4_2026_08_05).
+# Sur XLI/XLK il est « non tranché » après vingt ans : estimation ponctuelle
+# négative, IC contenant zéro.
+#
+# Renseigner cette variable est donc un acte DÉLIBÉRÉ, qui déclare un edge que
+# la mesure ne soutient pas aujourd'hui. Elle existe pour que cet acte soit
+# nommé et tracé, jamais implicite.
+_edge = os.getenv("IBKR_BRIDGE_EXPECTED_EDGE_R", "").strip()
+IBKR_BRIDGE_EXPECTED_EDGE_R = float(_edge) if _edge else None
 # Kraken Spot bridge (2026-08-02) — trading Spot BTC/ETH sur marché réel
 # Long-only, sans levier, watcher SL/TP émulé. Port 8791 par défaut.
 KRAKEN_SPOT_BRIDGE_ENABLED = os.getenv("KRAKEN_SPOT_BRIDGE_ENABLED", "false").lower() in ("1", "true", "yes", "on")
