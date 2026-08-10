@@ -281,6 +281,67 @@ SHADOW_CONFIG: dict[str, dict[str, Any]] = {
         "system_id": "V2_WTI_OPTIMAL_XLK_1D",
         "risk_pct": 0.004,  # exp #35 : mean PF 1.69, Sharpe 12M 1.01, maxDD 0.4%
     },
+    # ── SPDR sectoriels bon marche, journalier (ajout 2026-08-10) ────────
+    #
+    # Demande de Xavier : pouvoir acheter des ETF sur IBKR. XLI et XLK EN
+    # SONT deja — ce lot elargit l'univers, et surtout le rend ATTEIGNABLE.
+    #
+    # Le prix par part commande tout sur un compte cash : une part de XLK
+    # vaut 184 USD et demande ~1 130 USD de capital pour un risque de 1 %,
+    # quand une part de XLU en vaut 44 et n'en demande que ~220. Retenus sur
+    # ce seul critere, tous sous 60 USD :
+    #
+    #     XLU 43,60 · XLRE 44,99 · XLB 52,86 · XLE 57,48 · XLF 57,62
+    #
+    # (SPY 773 et QQQ 723 sont hors d'atteinte et volontairement ecartes.)
+    #
+    # ⚠️ ANALOGIE ASSUMEE, pas une validation. Aucun backtest n'existe sur
+    # ces cinq-la : patterns et `risk_pct` sont repris de XLI, le systeme ETF
+    # le mieux mesure (exp #35, mean PF 2.14). C'est exactement le mecanisme
+    # qui avait fait entrer les 4 actions US individuelles — retirees le
+    # 2026-08-09 apres refutation. La difference tient en deux points, et
+    # c'est ce qui rend l'analogie defendable ici :
+    #
+    #  1. le test direct N'A PAS pu etablir que les patterns nuisent sur ETF
+    #     (XLI p = 0,243, XLK p = 0,239 sur vingt ans), alors qu'il l'a
+    #     etabli sur les actions individuelles (p < 0,001) ;
+    #  2. l'analogue est de MEME NATURE — un SPDR sectoriel compare a un
+    #     SPDR sectoriel, journalier compare a journalier — la ou les 4
+    #     actions empruntaient a un ETF diversifie un jeu de patterns et un
+    #     horizon H4 qui n'avaient aucun analogue valide.
+    #
+    # ⚠️ A REVISER des que le shadow aura de quoi trancher. Le journalier
+    # donne six bougies utiles par jour de cotation, contre une en H4.
+    "XLU": {
+        "tf": "1d",
+        "patterns": TIGHT_LONG_PATTERNS,
+        "system_id": "V2_TIGHT_LONG_XLU_1D",
+        "risk_pct": 0.003,  # palier "sans validation propre", sous les 0.004 de XLI
+    },
+    "XLRE": {
+        "tf": "1d",
+        "patterns": TIGHT_LONG_PATTERNS,
+        "system_id": "V2_TIGHT_LONG_XLRE_1D",
+        "risk_pct": 0.003,
+    },
+    "XLB": {
+        "tf": "1d",
+        "patterns": TIGHT_LONG_PATTERNS,
+        "system_id": "V2_TIGHT_LONG_XLB_1D",
+        "risk_pct": 0.003,
+    },
+    "XLE": {
+        "tf": "1d",
+        "patterns": TIGHT_LONG_PATTERNS,
+        "system_id": "V2_TIGHT_LONG_XLE_1D",
+        "risk_pct": 0.003,
+    },
+    "XLF": {
+        "tf": "1d",
+        "patterns": TIGHT_LONG_PATTERNS,
+        "system_id": "V2_TIGHT_LONG_XLF_1D",
+        "risk_pct": 0.003,
+    },
     # ── Actions US individuelles, H4 (ajout 2026-08-05) ──────────────────
     # Objectif : ouvrir la mesure d'edge pour la route DMA "actions US à
     # coût fixe" (voir CLAUDE.md Phase 3b / Voie C), qui ne peut pas

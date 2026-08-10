@@ -829,7 +829,13 @@ def test_existing_pairs_config_unchanged_after_us_equities_addition():
         # ⛔ AAPL/TSLA/NVDA/MSFT retirés le 2026-08-09 : patterns démontrés
         # contre-productifs sur ces titres (Δ = −0,182 R contre le hasard,
         # p < 0,001). Cf. test_shadow_actions_us_retirees.
+        #
+        # ✅ Cinq SPDR sectoriels ajoutés le 2026-08-10 — critère de sélection
+        # unique : le PRIX PAR PART. Sur un compte cash, une part de XLK à
+        # 184 $ demande ~1 130 $ de capital pour 1 % de risque, une part de
+        # XLU à 44 $ n'en demande que ~220. Cf. test_etf_sectoriels_ibkr.
         "XAU/USD", "XAG/USD", "WTI/USD", "XLI", "XLK",
+        "XLU", "XLRE", "XLB", "XLE", "XLF",
     } | FOREX_MESURE_H4 | CRYPTO_1D
 
 
