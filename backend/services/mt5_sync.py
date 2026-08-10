@@ -226,22 +226,39 @@ def _upsert_open_trade(row: dict[str, Any], user: str) -> None:
 def _derive_close_reason_from_exit(
     ticket: int, exit_price: float | None
 ) -> str | None:
-    """Heuristique : le bridge ne remonte pas `close_reason` dans /deals.
-    On compare `exit_price` aux SL/TP stockés en DB :
-    - exit ≈ SL → SL
-    - exit ≈ TP1 → TP1
-    - exit ≈ TP2 (si présent) → TP2
-    - sinon → MANUAL
+    """Heuristique : le bridge ne remonte pas `reason` dans /deals, donc on
+    situe `exit_price` par rapport à l'entrée, au SL et au TP stockés en DB.
 
-    Tolérance par asset class pour absorber le slippage (~2 pips forex,
-    0.3$ sur XAU, etc.).
+    ⚠️ Chaque branche est une DÉTERMINATION POSITIVE. La branche par défaut
+    renvoie "INDETERMINE", jamais "MANUAL" : affirmer « fermé à la main » parce
+    qu'on n'a pas su conclure, c'est inventer une mesure.
+
+    Mesuré le 2026-08-10 : 215 trades portaient "MANUAL", dont 215 (100 %) avec
+    `post_entry_sl=1` — aucun n'avait été fermé à la main. C'étaient les sorties
+    du stop suiveur (TRAIL_DISTANCE_POINTS=150) et de la mise à zéro du risque
+    (BREAKEVEN_TRIGGER_PCT=50), que la comparaison au SL *d'origine* ne pouvait
+    pas reconnaître puisque le stop avait bougé.
+
+    - exit ≈ SL d'origine            → SL
+    - exit atteint ou dépasse le TP  → TP1   (le prix l'a traversé)
+    - exit ≈ prix d'entrée           → BREAKEVEN
+    - gain < TP, et le SL a bougé    → TRAILING_SL
+    - tout le reste                  → INDETERMINE
+
+    "MANUAL" ne peut venir que du courtier, via `_normalize_close_reason`
+    (DEAL_REASON_CLIENT). Cf. [[project_cloture_externe_pnl_inconnu_2026_08_09]]
+    pour la même maladie sur `pnl`.
+
+    Tolérance par classe d'actif pour absorber le glissement (~2 pips forex,
+    0,30 $ sur XAU, etc.).
     """
     if exit_price is None:
         return None
     with sqlite3.connect(_db_path()) as c:
         row = c.execute(
             """
-            SELECT stop_loss, take_profit, pair
+            SELECT stop_loss, take_profit, pair, direction, entry_price,
+                   COALESCE(post_entry_sl, 0)
               FROM personal_trades
              WHERE mt5_ticket = ?
             """,
@@ -249,7 +266,7 @@ def _derive_close_reason_from_exit(
         ).fetchone()
     if not row:
         return None
-    sl, tp, pair = row
+    sl, tp, pair, direction, entry, post_entry_sl = row
     if sl is None and tp is None:
         return None
 
@@ -278,11 +295,53 @@ def _derive_close_reason_from_exit(
     else:
         tol = 0.0002  # 2 pips sur 5-dp forex
 
+    # 1. Le stop d'origine a été touché.
     if sl is not None and abs(exit_price - sl) <= tol:
         return "SL"
-    if tp is not None and abs(exit_price - tp) <= tol:
-        return "TP1"
-    return "MANUAL"
+
+    # Sens du trade : +1 à l'achat, -1 à la vente. Sans lui on ne peut pas
+    # distinguer un gain d'une perte, donc on ne conclut rien de plus.
+    sens = None
+    if direction:
+        sens = 1 if str(direction).strip().lower().startswith("b") else -1
+
+    if sens is None or entry is None:
+        if tp is not None and abs(exit_price - tp) <= tol:
+            return "TP1"
+        return "INDETERMINE"
+
+    gain = (exit_price - entry) * sens
+
+    # 2. Le stop a été traversé (gap). Symétrique du TP ci-dessous : sortir
+    #    AU-DELÀ du stop implique que le prix est passé par lui. L'étiqueter
+    #    "indéterminé" masquerait précisément les gaps, qu'on veut voir.
+    if sl is not None:
+        perte_stop = (entry - sl) * sens
+        if perte_stop > 0 and -gain >= perte_stop - tol:
+            return "SL"
+
+    # 3. Le TP a été atteint — ou traversé. Sortir au-delà du TP implique que
+    #    le prix est passé par lui : l'ordre a bien été touché, avec un
+    #    glissement favorable. C'est une conséquence de l'ordre des prix, pas
+    #    une conjecture.
+    if tp is not None:
+        gain_vise = (tp - entry) * sens
+        if gain_vise > 0 and gain >= gain_vise - tol:
+            return "TP1"
+
+    # 4. Sortie au prix d'entrée : mise à zéro du risque.
+    if abs(gain) <= tol:
+        return "BREAKEVEN"
+
+    # 5. Gain positif mais sous la cible, ET le stop a bougé après l'entrée :
+    #    c'est le stop suiveur qui a fermé.
+    if gain > tol and post_entry_sl:
+        return "TRAILING_SL"
+
+    # 6. Sortie défavorable sans avoir touché le stop d'origine : /kill,
+    #    fermeture partielle, stop-out courtier ou vraie main humaine. On ne
+    #    peut pas trancher — on le dit.
+    return "INDETERMINE"
 
 
 def _normalize_close_reason(raw: str | None) -> str | None:
@@ -292,6 +351,12 @@ def _normalize_close_reason(raw: str | None) -> str | None:
     if not raw:
         return None
     r = str(raw).strip().lower()
+    # ⚠️ AVANT la règle "stop" : DEAL_REASON_SO est la LIQUIDATION par le
+    # courtier (stop out), pas un stop-loss. Les confondre effacerait la
+    # distinction entre une sortie choisie et une sortie subie — exactement ce
+    # qui menace la position or ouverte.
+    if r.endswith("_so") or r == "so" or "stop_out" in r or "stopout" in r:
+        return "STOP_OUT"
     if "tp2" in r or "take_profit_2" in r:
         return "TP2"
     if "tp" in r or "take_profit" in r:

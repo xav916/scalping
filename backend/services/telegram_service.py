@@ -973,16 +973,47 @@ def _format_close(trade: dict, destination_id: str | None = None) -> str:
         outcome_word = "Trade clos au temps"
         impact = "ni gain ni perte significatifs"
         explain = "Le marché n'a pas bougé assez. Position libérée pour faire place à d'autres signaux."
+    elif close_reason == "TRAILING_SL":
+        outcome_icon = "📈"
+        outcome_word = "Gain sécurisé par le stop suiveur"
+        impact = "ton solde a augmenté"
+        explain = (
+            "Le marché est allé dans ton sens sans atteindre l'objectif. Le stop "
+            "a suivi le prix pour verrouiller le gain, puis le marché s'est "
+            "retourné : le stop a fermé en bénéfice."
+        )
+    elif close_reason == "BREAKEVEN":
+        outcome_icon = "⚖️"
+        outcome_word = "Trade clos à zéro"
+        impact = "ni gain ni perte"
+        explain = (
+            "Le trade avait assez progressé pour ramener le stop au prix d'entrée. "
+            "Le marché est revenu le chercher : sortie sans perte."
+        )
+    elif close_reason == "STOP_OUT":
+        # ⚠️ Ce n'est PAS un stop-loss : c'est le courtier qui a liquidé faute
+        # de marge. La sortie n'a pas été choisie. Cf. position or 08-10.
+        outcome_icon = "🚨"
+        outcome_word = "Position LIQUIDÉE par le courtier"
+        impact = "ton solde a baissé"
+        explain = (
+            "Le compte n'avait plus assez de marge : le courtier a fermé la "
+            "position de force, à son prix, pas au tien. Ce n'est pas ton stop "
+            "qui a agi — il faut recharger le compte ou réduire l'exposition."
+        )
     elif close_reason == "MANUAL":
         outcome_icon = "👋"
         outcome_word = "Trade fermé à la main"
         impact = "fermé manuellement"
-        explain = "Tu as clôturé la position toi-même depuis MT5 — le radar n'a pas pris la décision."
+        explain = "La position a été clôturée depuis MT5 — le radar n'a pas pris la décision."
     else:
+        # ⚠️ Ne JAMAIS inventer une cause ici. Jusqu'au 2026-08-10, une sortie
+        # non reconnue était annoncée comme « fermée à la main » : 215 sorties
+        # du stop suiveur ont ainsi été attribuées à Xavier.
         outcome_icon = "🔚"
         outcome_word = "Trade fermé"
         impact = ""
-        explain = "Sortie de cause inconnue — vérifier l'historique MT5."
+        explain = "Cause de sortie non établie — à vérifier dans l'historique MT5."
 
     # Durée
     duration_str = "—"
@@ -1014,6 +1045,8 @@ def _format_close(trade: dict, destination_id: str | None = None) -> str:
     # Pas de .capitalize() : il transformerait « TP1 » en « Tp1 ».
     sortie = {"TP1": "Objectif TP1 atteint", "TP2": "Objectif TP2 atteint",
               "SL": "Stop de sécurité touché", "TIMEOUT": "Clôturé au temps",
+              "TRAILING_SL": "Stop suiveur déclenché", "BREAKEVEN": "Ramené à zéro",
+              "STOP_OUT": "Liquidé par le courtier", "INDETERMINE": "Cause non établie",
               "MANUAL": "Fermé à la main"}.get(close_reason, "Sortie inconnue")
     broker = destination_label(destination_id, "mode") if destination_id else None
     pnl_fr = f"{abs(pnl):.2f}".replace(".", ",")

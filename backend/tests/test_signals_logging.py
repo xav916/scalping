@@ -260,11 +260,16 @@ def test_derive_close_reason_from_exit_tp_hit(tmp_path: Path):
 
 
 def test_derive_close_reason_from_exit_manual(tmp_path: Path):
-    """Exit entre SL et TP loin des deux → MANUAL."""
+    """Exit entre SL et TP loin des deux → INDETERMINE, jamais MANUAL.
+
+    ⚠️ Ce test exigeait "MANUAL" jusqu'au 2026-08-10 : il figeait le bug. La
+    branche par défaut affirmait « fermé à la main » sans preuve, et 215
+    sorties du stop suiveur ont été comptées comme des interventions
+    humaines. Ne pas savoir doit se dire."""
     db = _setup_db_with_trade(tmp_path, 125, "EUR/USD", sl=1.1050, tp=1.0900)
     with patch.object(trade_log_service, "_DB_PATH", db):
         # Exit à 1.0980 — ni SL ni TP dans tolerance 2 pips
-        assert mt5_sync._derive_close_reason_from_exit(125, 1.0980) == "MANUAL"
+        assert mt5_sync._derive_close_reason_from_exit(125, 1.0980) == "INDETERMINE"
 
 
 def test_derive_close_reason_from_exit_xau_tolerance(tmp_path: Path):
@@ -273,7 +278,10 @@ def test_derive_close_reason_from_exit_xau_tolerance(tmp_path: Path):
                               sl=2590.0, tp=2620.0, direction="buy")
     with patch.object(trade_log_service, "_DB_PATH", db):
         assert mt5_sync._derive_close_reason_from_exit(126, 2589.8) == "SL"
-        assert mt5_sync._derive_close_reason_from_exit(126, 2589.5) == "MANUAL"
+        # 2589,5 est SOUS un stop à 2590 sur un achat : le prix l'a traversé.
+        # C'est un stop touché avec glissement (gap), pas une sortie
+        # inexpliquée — et surtout pas une fermeture à la main.
+        assert mt5_sync._derive_close_reason_from_exit(126, 2589.5) == "SL"
 
 
 def test_derive_close_reason_from_exit_unknown_ticket(tmp_path: Path):
