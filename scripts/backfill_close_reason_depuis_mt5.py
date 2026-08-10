@@ -75,6 +75,8 @@ def main() -> int:
     lignes = conn.execute(
         "SELECT mt5_ticket, close_reason, pnl FROM personal_trades "
         " WHERE status = 'CLOSED' AND mt5_ticket IS NOT NULL"
+        " ORDER BY id DESC"  # les plus recents d'abord : les anciens tickets
+                             # viennent d'un autre courtier et n'existent plus
     ).fetchall()
 
     transitions: Counter = Counter()
