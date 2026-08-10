@@ -1001,6 +1001,17 @@ def _format_close(trade: dict, destination_id: str | None = None) -> str:
             "position de force, à son prix, pas au tien. Ce n'est pas ton stop "
             "qui a agi — il faut recharger le compte ou réduire l'exposition."
         )
+    elif close_reason == "EXPERT":
+        # Fermé par notre propre automatisation : /kill, prise partielle,
+        # coupe-circuit. La cause EST établie — ne pas la ranger avec les
+        # sorties inexpliquées.
+        outcome_icon = "🤖"
+        outcome_word = "Trade fermé par le radar"
+        impact = ""
+        explain = (
+            "Ce n'est ni le stop ni l'objectif : c'est le système qui a décidé "
+            "de sortir (prise partielle, mise en pause ou coupe-circuit)."
+        )
     elif close_reason == "MANUAL":
         outcome_icon = "👋"
         outcome_word = "Trade fermé à la main"
@@ -1047,6 +1058,7 @@ def _format_close(trade: dict, destination_id: str | None = None) -> str:
               "SL": "Stop de sécurité touché", "TIMEOUT": "Clôturé au temps",
               "TRAILING_SL": "Stop suiveur déclenché", "BREAKEVEN": "Ramené à zéro",
               "STOP_OUT": "Liquidé par le courtier", "INDETERMINE": "Cause non établie",
+              "EXPERT": "Fermé par le radar",
               "MANUAL": "Fermé à la main"}.get(close_reason, "Sortie inconnue")
     broker = destination_label(destination_id, "mode") if destination_id else None
     pnl_fr = f"{abs(pnl):.2f}".replace(".", ",")
