@@ -108,6 +108,18 @@ FILL_WAIT_SEC = float(os.getenv("IBKR_FILL_WAIT_SEC", "20"))
 # suffixe .NAS, et avec la Voie A où Kraken utilise PF_AAPLXUSD.
 _EQUITY_SYMBOLS = (
     "AAPL", "TSLA", "NVDA", "MSFT", "GOOGL", "AMZN", "META", "AMD", "NFLX",
+    # ── ETF sectoriels SPDR (2026-08-10) ────────────────────────────────
+    #
+    # ⚠️ SEPTIEME carte codee en dur du systeme, et elle a failli passer
+    # inapercue : le bridge repondait `ok:true`, le Gateway etait connecte,
+    # tout semblait pret — mais `contract_for("XLU")` rendait None et l'ordre
+    # aurait ete refuse au dernier instant.
+    #
+    # Ce sont des `Stock` comme les actions : un ETF se traite en SMART
+    # routing exactement pareil. Seul le prix par part change, et c'est lui
+    # qui rend la route atteignable — une part de XLU vaut 44 USD quand une
+    # part de XLK en vaut 184.
+    "XLI", "XLK", "XLU", "XLRE", "XLB", "XLE", "XLF",
 )
 
 _FOREX_PAIRS: dict[str, str] = {
