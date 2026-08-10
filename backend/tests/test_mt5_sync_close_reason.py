@@ -132,3 +132,42 @@ def test_la_liquidation_par_le_courtier_a_son_propre_nom():
     ouverte ; le confondre avec un SL effacerait la distinction entre une sortie
     choisie et une liquidation subie."""
     assert mt5_sync._normalize_close_reason("DEAL_REASON_SO") == "STOP_OUT"
+
+
+# --- donnees abimees : ne pas raisonner dessus -----------------------------
+
+def test_entree_a_zero_ne_sert_pas_de_prix(db):
+    """⚠️ Le zéro qui se fait passer pour une mesure — troisième fois.
+
+    Les anciens fills du bridge écrivaient `entry_price = 0.0` faute de mieux.
+    Calculer un gain à partir de ce zéro donne −1790 sur un ETH à 1790, ce qui
+    ne veut rien dire. On retombe alors sur la seule comparaison qui garde un
+    sens : la proximité au TP.
+    """
+    _trade(db, 20, pair="ETH/USD", direction="sell", entry=0.0, sl=1810.0, tp=1790.6)
+    assert mt5_sync._derive_close_reason_from_exit(20, 1790.0) == "TP1"
+
+
+def test_entree_a_zero_et_sortie_loin_reste_indeterminee(db):
+    _trade(db, 21, pair="ETH/USD", direction="sell", entry=0.0, sl=1810.0, tp=1790.6)
+    assert mt5_sync._derive_close_reason_from_exit(21, 1850.0) == "INDETERMINE"
+
+
+def test_objectif_du_mauvais_cote_de_l_entree_ne_conclut_rien(db):
+    """TP au-dessus de l'entrée sur une VENTE : la ligne est incohérente. Ni le
+    gain visé ni la mise à zéro du risque ne s'y calculent honnêtement."""
+    _trade(db, 22, pair="XAU/USD", direction="sell", entry=4358.81, sl=4376.68, tp=4370.00)
+    assert mt5_sync._derive_close_reason_from_exit(22, 4365.00) == "INDETERMINE"
+
+
+def test_distance_plus_courte_que_la_tolerance_ne_discrimine_rien(db):
+    """Si le stop est plus proche que la tolérance de glissement, le test
+    « le prix a-t-il traversé le stop ? » déclarerait n'importe quelle perte
+    comme un stop touché. Il doit se taire.
+
+    ⚠️ Cas réel : la tolérance ETH vaut 15,0 — calibrée pour un BTC à 100 000 $,
+    elle représente 0,74 % sur un ETH à 2 025. Défaut de calibrage préexistant,
+    signalé le 2026-08-10.
+    """
+    _trade(db, 23, pair="ETH/USD", direction="sell", entry=2025.65, sl=2033.0, tp=2010.0)
+    assert mt5_sync._derive_close_reason_from_exit(23, 2028.0) != "SL"

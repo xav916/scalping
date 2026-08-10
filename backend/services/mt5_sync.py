@@ -296,7 +296,14 @@ def _derive_close_reason_from_exit(
         tol = 0.0002  # 2 pips sur 5-dp forex
 
     # 1. Le stop d'origine a été touché.
-    if sl is not None and abs(exit_price - sl) <= tol:
+    #    ⚠️ Garde : si le stop est plus proche de l'entrée que la tolérance,
+    #    ce test déclarerait « stop touché » y compris pour une sortie AU PRIX
+    #    D'ENTRÉE. Il ne discrimine plus rien — il doit se taire.
+    if (
+        sl is not None
+        and abs(exit_price - sl) <= tol
+        and (not entry or abs(entry - sl) > tol)
+    ):
         return "SL"
 
     # Sens du trade : +1 à l'achat, -1 à la vente. Sans lui on ne peut pas
@@ -305,19 +312,36 @@ def _derive_close_reason_from_exit(
     if direction:
         sens = 1 if str(direction).strip().lower().startswith("b") else -1
 
-    if sens is None or entry is None:
+    # ⚠️ `entry` peut valoir 0.0 : les anciens fills du bridge écrivaient un
+    # zéro faute de mieux. Tester `is None` laisserait passer ce zéro, et le
+    # gain calculé vaudrait alors le prix de sortie tout entier (−1790 sur un
+    # ETH à 1790) — un nombre qui ne veut rien dire, sur lequel les branches
+    # suivantes trancheraient quand même. Encore un zéro qui se fait passer
+    # pour une mesure, cf. `pnl=0.0` des clôtures Kraken (08-09).
+    if sens is None or not entry:
         if tp is not None and abs(exit_price - tp) <= tol:
             return "TP1"
         return "INDETERMINE"
 
     gain = (exit_price - entry) * sens
 
+    # ⚠️ Objectif du mauvais côté de l'entrée (TP au-dessus sur une vente) :
+    # la ligne est incohérente. Ni le gain visé ni la mise à zéro du risque ne
+    # s'y calculent honnêtement — on ne conclut rien plutôt que de conclure
+    # depuis des nombres qui se contredisent.
+    if tp is not None and (tp - entry) * sens <= 0:
+        return "INDETERMINE"
+
     # 2. Le stop a été traversé (gap). Symétrique du TP ci-dessous : sortir
     #    AU-DELÀ du stop implique que le prix est passé par lui. L'étiqueter
     #    "indéterminé" masquerait précisément les gaps, qu'on veut voir.
     if sl is not None:
         perte_stop = (entry - sl) * sens
-        if perte_stop > 0 and -gain >= perte_stop - tol:
+        # ⚠️ `perte_stop > tol` et non `> 0` : si la distance au stop est plus
+        # petite que la tolérance, le seuil `perte_stop - tol` devient négatif
+        # et N'IMPORTE QUELLE perte serait déclarée « stop touché ». Le test
+        # doit se taire quand il ne discrimine plus rien.
+        if perte_stop > tol and -gain >= perte_stop - tol:
             return "SL"
 
     # 3. Le TP a été atteint — ou traversé. Sortir au-delà du TP implique que
@@ -326,7 +350,9 @@ def _derive_close_reason_from_exit(
     #    une conjecture.
     if tp is not None:
         gain_vise = (tp - entry) * sens
-        if gain_vise > 0 and gain >= gain_vise - tol:
+        # Même garde que pour le stop : une cible plus proche que la tolérance
+        # ne discrimine rien.
+        if gain_vise > tol and gain >= gain_vise - tol:
             return "TP1"
 
     # 4. Sortie au prix d'entrée : mise à zéro du risque.
