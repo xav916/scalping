@@ -43,16 +43,71 @@ def test_les_sectoriels_sont_shadowes_en_journalier(etf):
 
 
 @pytest.mark.parametrize("etf", NOUVEAUX)
-def test_l_analogie_est_celle_de_XLI_le_mieux_mesure(etf):
-    """XLI : exp #35, mean PF 2,14 — le meilleur système ETF mesuré.
+def test_l_analogie_est_celle_de_XLK_qui_porte_range_bounce(etf):
+    """⚠️ RÉVISION du choix pris le matin même — XLI → XLK.
 
-    Verrouillé pour qu'une divergence future soit un acte délibéré, comme
-    l'analogie ETH → BTC/SOL/XRP côté crypto.
+    L'analogie initiale visait XLI (exp #35, mean PF 2,14, le meilleur système
+    ETF mesuré). Elle rendait ces ETF **intradables** : la whitelist globale de
+    patterns n'admet que `range_bounce_up/down`, et `TIGHT_LONG` ne contient
+    ni l'un ni l'autre. Chaque setup serait mort en `pattern_not_allowed`.
+
+    Le passage à `WTI_OPTIMAL` (celui de XLK) **ajoute** `range_bounce_up` sans
+    rien retirer. Ce n'est pas un contournement de la porte :
+
+        range_bounce_up = +0,133 R sur 16 996 trades
+        seuil de confiance seul = +0,030 R
+
+    C'est la meilleure espérance mesurée du système, et c'est précisément
+    pourquoi la whitelist n'admet que lui. Aligner les ETF dessus les met sur le
+    pattern le mieux soutenu, pas sur un pattern de complaisance.
+
+    ⚠️ XLI garde `TIGHT_LONG` : sa configuration est MESURÉE, on n'y touche pas.
     """
     cfg = shadow.SHADOW_CONFIG[etf]
-    assert cfg["patterns"] == shadow.TIGHT_LONG_PATTERNS
-    assert cfg["patterns"] == shadow.SHADOW_CONFIG["XLI"]["patterns"]
-    assert cfg["system_id"] == f"V2_TIGHT_LONG_{etf}_1D"
+    assert cfg["patterns"] == shadow.WTI_OPTIMAL_PATTERNS
+    assert cfg["patterns"] == shadow.SHADOW_CONFIG["XLK"]["patterns"]
+    assert "range_bounce_up" in cfg["patterns"]
+    assert cfg["system_id"] == f"V2_WTI_OPTIMAL_{etf}_1D"
+
+
+# Valeur RÉELLE de `MT5_BRIDGE_ALLOWED_PATTERNS` en production, relevée le
+# 2026-08-10. Écrite en dur À DESSEIN : un test qui lit l'environnement passe
+# en prod et saute en local, donc ne protège rien là où on développe. C'est la
+# fragilité corrigée le matin même sur le routage par classe d'actif.
+WHITELIST_PROD = {"range_bounce_up", "range_bounce_down"}
+
+
+@pytest.mark.parametrize("etf", NOUVEAUX)
+def test_les_patterns_franchissent_la_whitelist_de_dispatch(etf):
+    """LE test qui manquait, et qui aurait évité une demi-journée.
+
+    Un instrument dont aucun pattern n'est admis au dispatch ne tradera
+    **jamais**, quelle que soit sa promotion en `AUTO_EXEC`. Les cinq ETF sont
+    entrés sur `TIGHT_LONG` le matin du 2026-08-10 — sans intersection avec la
+    whitelist — et leur promotion l'après-midi était donc inopérante.
+    """
+    communs = shadow.SHADOW_CONFIG[etf]["patterns"] & WHITELIST_PROD
+    assert communs, (
+        f"{etf} : aucun de ses patterns n'est admis au dispatch — "
+        f"tout setup mourrait en pattern_not_allowed")
+
+
+def test_la_whitelist_de_prod_est_toujours_celle_qu_on_croit():
+    """Garde-fou du garde-fou : si la prod change, ce fichier doit suivre.
+
+    Ne s'exécute que là où la variable est renseignée.
+    """
+    from config.settings import MT5_BRIDGE_ALLOWED_PATTERNS
+
+    if not MT5_BRIDGE_ALLOWED_PATTERNS:
+        pytest.skip("whitelist non renseignée dans cet environnement")
+    assert set(MT5_BRIDGE_ALLOWED_PATTERNS) == WHITELIST_PROD
+
+
+def test_XLI_garde_sa_configuration_mesuree():
+    """Le seul ETF dont la config vient d'un backtest propre ne bouge pas."""
+    assert shadow.SHADOW_CONFIG["XLI"]["patterns"] == shadow.TIGHT_LONG_PATTERNS
+    assert shadow.SHADOW_CONFIG["XLI"]["risk_pct"] == 0.004
 
 
 @pytest.mark.parametrize("etf", NOUVEAUX)

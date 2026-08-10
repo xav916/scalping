@@ -296,8 +296,22 @@ SHADOW_CONFIG: dict[str, dict[str, Any]] = {
     # (SPY 773 et QQQ 723 sont hors d'atteinte et volontairement ecartes.)
     #
     # ⚠️ ANALOGIE ASSUMEE, pas une validation. Aucun backtest n'existe sur
-    # ces cinq-la : patterns et `risk_pct` sont repris de XLI, le systeme ETF
-    # le mieux mesure (exp #35, mean PF 2.14). C'est exactement le mecanisme
+    # ces cinq-la : `risk_pct` reste celui de XLI minore, et les patterns sont
+    # ceux de XLK.
+    #
+    # ⚠️ REVISION du meme jour : l'analogie visait d'abord XLI (exp #35, mean
+    # PF 2.14, le meilleur systeme ETF mesure). Elle rendait ces ETF
+    # INTRADABLES — la whitelist de dispatch n'admet que `range_bounce_*`, et
+    # `TIGHT_LONG` n'en contient aucun : chaque setup mourait en
+    # `pattern_not_allowed`, promotion ou pas.
+    #
+    # `WTI_OPTIMAL` (celui de XLK) AJOUTE `range_bounce_up` sans rien retirer.
+    # Ce n'est pas un contournement de la porte : `range_bounce_up` vaut
+    # +0,133 R sur 16 996 trades contre +0,030 pour le seuil de confiance seul.
+    # C'est la meilleure esperance mesuree du systeme, et la raison meme pour
+    # laquelle la whitelist n'admet que lui.
+    #
+    # ⚠️ XLI garde `TIGHT_LONG` : sa configuration vient d'un backtest propre. C'est exactement le mecanisme
     # qui avait fait entrer les 4 actions US individuelles — retirees le
     # 2026-08-09 apres refutation. La difference tient en deux points, et
     # c'est ce qui rend l'analogie defendable ici :
@@ -314,32 +328,32 @@ SHADOW_CONFIG: dict[str, dict[str, Any]] = {
     # donne six bougies utiles par jour de cotation, contre une en H4.
     "XLU": {
         "tf": "1d",
-        "patterns": TIGHT_LONG_PATTERNS,
-        "system_id": "V2_TIGHT_LONG_XLU_1D",
+        "patterns": WTI_OPTIMAL_PATTERNS,
+        "system_id": "V2_WTI_OPTIMAL_XLU_1D",
         "risk_pct": 0.003,  # palier "sans validation propre", sous les 0.004 de XLI
     },
     "XLRE": {
         "tf": "1d",
-        "patterns": TIGHT_LONG_PATTERNS,
-        "system_id": "V2_TIGHT_LONG_XLRE_1D",
+        "patterns": WTI_OPTIMAL_PATTERNS,
+        "system_id": "V2_WTI_OPTIMAL_XLRE_1D",
         "risk_pct": 0.003,
     },
     "XLB": {
         "tf": "1d",
-        "patterns": TIGHT_LONG_PATTERNS,
-        "system_id": "V2_TIGHT_LONG_XLB_1D",
+        "patterns": WTI_OPTIMAL_PATTERNS,
+        "system_id": "V2_WTI_OPTIMAL_XLB_1D",
         "risk_pct": 0.003,
     },
     "XLE": {
         "tf": "1d",
-        "patterns": TIGHT_LONG_PATTERNS,
-        "system_id": "V2_TIGHT_LONG_XLE_1D",
+        "patterns": WTI_OPTIMAL_PATTERNS,
+        "system_id": "V2_WTI_OPTIMAL_XLE_1D",
         "risk_pct": 0.003,
     },
     "XLF": {
         "tf": "1d",
-        "patterns": TIGHT_LONG_PATTERNS,
-        "system_id": "V2_TIGHT_LONG_XLF_1D",
+        "patterns": WTI_OPTIMAL_PATTERNS,
+        "system_id": "V2_WTI_OPTIMAL_XLF_1D",
         "risk_pct": 0.003,
     },
     # ── Actions US individuelles, H4 (ajout 2026-08-05) ──────────────────
