@@ -1487,6 +1487,45 @@ def positions():
     })
 
 
+def _deal_reason_label(deal) -> str:
+    """Traduit `deal.reason` (MT5) en une etiquette stable pour le backend.
+
+    MT5 SAIT pourquoi une position s'est fermee. Le bridge ne le remontait pas,
+    obligeant le backend a deviner en comparant le prix de sortie aux SL/TP
+    stockes en base. Cette heuristique ne pouvait pas reconnaitre le stop
+    suiveur (le stop avait bouge, la base gardait celui d'origine) et declarait
+    "fermee a la main" tout ce qu'elle ne savait pas classer : 215 trades au
+    2026-08-10, dont zero reellement ferme a la main.
+
+    ⚠️ STOP_OUT (DEAL_REASON_SO) est une LIQUIDATION par le courtier faute de
+    marge, pas un stop-loss. Les confondre effacerait la difference entre une
+    sortie choisie et une sortie subie.
+
+    ⚠️ Le stop suiveur ferme via un SL deplace : MT5 rapporte donc SL. C'est
+    au backend de distinguer, en regardant si le stop avait bouge.
+    """
+    codes = {
+        "DEAL_REASON_CLIENT": "MANUAL",
+        "DEAL_REASON_MOBILE": "MANUAL",
+        "DEAL_REASON_WEB": "MANUAL",
+        "DEAL_REASON_EXPERT": "EXPERT",
+        "DEAL_REASON_SL": "SL",
+        "DEAL_REASON_TP": "TP",
+        "DEAL_REASON_SO": "STOP_OUT",
+        "DEAL_REASON_ROLLOVER": "ROLLOVER",
+        "DEAL_REASON_VMARGIN": "VMARGIN",
+        "DEAL_REASON_SPLIT": "SPLIT",
+    }
+    brut = getattr(deal, "reason", None)
+    if brut is None:
+        return "INCONNU"
+    for nom, etiquette in codes.items():
+        valeur = getattr(mt5, nom, None)
+        if valeur is not None and brut == valeur:
+            return etiquette
+    return f"MT5_{brut}"
+
+
 @app.route("/deals", methods=["GET"])
 @require_api_key
 def deals():
@@ -1523,7 +1562,10 @@ def deals():
         return jsonify({
             "ticket": ticket,
             "closed": None,
-            "reason": "no deals found",
+            # ⚠️ PAS "reason" : le backend lit `reason` comme la CAUSE DE
+            # CLÔTURE (mt5_sync._update_closed_trade). Y mettre un message
+            # d'erreur ferait enregistrer "no deals found" comme cause.
+            "message": "no deals found",
         })
 
     return jsonify({
@@ -1531,6 +1573,17 @@ def deals():
         "closed": True,
         "exit_price": float(out_deal.price),
         "pnl": float(out_deal.profit),
+        # La cause vient de MT5 lui-même. Sans elle, le backend en était réduit
+        # à comparer le prix de sortie aux SL/TP stockés — ce qui a fait
+        # étiqueter « fermé à la main » 215 sorties du stop suiveur (08-10),
+        # parce que le stop avait bougé et que la base gardait celui d'origine.
+        "reason": _deal_reason_label(out_deal),
+        # ⚠️ `deal.time` est l'heure SERVEUR du courtier, pas un instant UTC.
+        # L'habiller de tz=utc décale la valeur (mesuré : 3 h sur ICMarketsEU,
+        # base 01:05:21 contre 04:05:19 annoncé UTC). Sans effet sur les
+        # montants, mais fausse toute analyse par heure de séance. À corriger
+        # en mesurant le décalage serveur ; laissé tel quel pour ne pas
+        # déplacer en silence toutes les dates déjà enregistrées.
         "closed_at": datetime.fromtimestamp(out_deal.time, tz=timezone.utc).isoformat(),
     })
 

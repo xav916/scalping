@@ -372,6 +372,39 @@ def _derive_close_reason_from_exit(
     return "INDETERMINE"
 
 
+def _affiner_cause_du_courtier(
+    ticket: int, cause: str | None, pnl: float | None
+) -> str | None:
+    """Distingue le stop SUIVEUR du stop de sécurité.
+
+    Le suiveur ferme en DÉPLAÇANT le stop : MT5 rapporte donc `DEAL_REASON_SL`,
+    exactement comme une perte sur stop initial. Sans cet affinage, les 104
+    sorties du suiveur mesurées le 2026-08-10 (+15,90 € en moyenne) seraient
+    rangées parmi les stops touchés, donc parmi les pertes.
+
+    Deux conditions, toutes deux nécessaires : le stop a bougé après l'entrée,
+    et le trade sort en gain. Un stop non déplacé ne peut pas avoir suivi.
+
+    ⛔ Ne touche QUE la cause "SL". Une liquidation courtier (STOP_OUT) reste
+    une sortie subie même si elle sort en gain.
+    """
+    if cause != "SL" or pnl is None or pnl <= 0:
+        return cause
+    try:
+        with sqlite3.connect(_db_path()) as c:
+            row = c.execute(
+                "SELECT COALESCE(post_entry_sl, 0) FROM personal_trades "
+                " WHERE mt5_ticket = ?",
+                (ticket,),
+            ).fetchone()
+    except Exception as e:
+        logger.debug(f"mt5_sync: affinage cause ticket={ticket} impossible: {e}")
+        return cause
+    if row and row[0]:
+        return "TRAILING_SL"
+    return cause
+
+
 def _normalize_close_reason(raw: str | None) -> str | None:
     """Le bridge peut remonter des libelles variables selon la version MT5
     (deal.reason, position.close_reason, etc.). On normalise en un set
@@ -415,7 +448,14 @@ def _update_closed_trade(row: dict[str, Any]) -> None:
     )
     # Fallback : bridge `/deals` ne remonte pas le reason → heuristique
     # par proximité de l'exit price aux SL/TP stockés en DB.
-    if not close_reason:
+    if close_reason:
+        # La cause vient du courtier : elle fait autorité, mais "SL" ne
+        # distingue pas le stop de sécurité du stop suiveur (les deux ferment
+        # sur un SL, l'un déplacé, l'autre non).
+        close_reason = _affiner_cause_du_courtier(
+            ticket, close_reason, row.get("pnl")
+        )
+    else:
         close_reason = _derive_close_reason_from_exit(ticket, row.get("exit_price"))
     with sqlite3.connect(_db_path()) as c:
         c.execute("""

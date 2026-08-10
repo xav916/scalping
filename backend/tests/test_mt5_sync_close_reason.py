@@ -171,3 +171,41 @@ def test_distance_plus_courte_que_la_tolerance_ne_discrimine_rien(db):
     """
     _trade(db, 23, pair="ETH/USD", direction="sell", entry=2025.65, sl=2033.0, tp=2010.0)
     assert mt5_sync._derive_close_reason_from_exit(23, 2028.0) != "SL"
+
+
+# --- affiner la cause venue du courtier ------------------------------------
+
+def test_un_SL_gagnant_avec_stop_deplace_est_le_stop_suiveur(db):
+    """Le stop suiveur ferme en DÉPLAÇANT le stop : MT5 rapporte donc "SL".
+    Sans affinage, les 104 sorties du suiveur redeviendraient des stops
+    touchés — et un gain serait rangé parmi les pertes."""
+    _trade(db, 30, pair="XAU/USD", direction="sell", entry=4358.81, sl=4376.68,
+           tp=4322.05, post_entry_sl=1)
+    assert mt5_sync._affiner_cause_du_courtier(30, "SL", pnl=30.39) == "TRAILING_SL"
+
+
+def test_un_SL_perdant_reste_un_SL(db):
+    _trade(db, 31, pair="XAU/USD", direction="sell", entry=4358.81, sl=4376.68,
+           tp=4322.05, post_entry_sl=1)
+    assert mt5_sync._affiner_cause_du_courtier(31, "SL", pnl=-12.0) == "SL"
+
+
+def test_sans_stop_deplace_un_SL_gagnant_reste_un_SL(db):
+    _trade(db, 32, pair="XAU/USD", direction="sell", entry=4358.81, sl=4376.68,
+           tp=4322.05, post_entry_sl=0)
+    assert mt5_sync._affiner_cause_du_courtier(32, "SL", pnl=30.39) == "SL"
+
+
+def test_l_affinage_ne_touche_pas_les_autres_causes(db):
+    _trade(db, 33, pair="XAU/USD", direction="sell", entry=4358.81, sl=4376.68,
+           tp=4322.05, post_entry_sl=1)
+    for cause in ("TP1", "MANUAL", "STOP_OUT", "EXPERT", "INDETERMINE"):
+        assert mt5_sync._affiner_cause_du_courtier(33, cause, pnl=30.39) == cause
+
+
+def test_une_liquidation_n_est_jamais_requalifiee_en_gain(db):
+    """⛔ STOP_OUT doit survivre à l'affinage même avec un pnl positif :
+    une liquidation par le courtier reste une sortie subie."""
+    _trade(db, 34, pair="XAU/USD", direction="sell", entry=4358.81, sl=4376.68,
+           tp=4322.05, post_entry_sl=1)
+    assert mt5_sync._affiner_cause_du_courtier(34, "STOP_OUT", pnl=5.0) == "STOP_OUT"
