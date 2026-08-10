@@ -169,3 +169,32 @@ def test_seuls_les_ACHATS_sont_routes(monkeypatch, sens, attendu):
     )
     ids = [d.destination_id for d in bd.resolve_destinations(setup)]
     assert ("admin_ibkr_us" in ids) is attendu
+
+
+@pytest.mark.parametrize(
+    "pair,classe,attendu",
+    [("XLU", "equity", True), ("XLK", "equity", True),
+     ("GBP/USD", "forex", False), ("BTC/USD", "crypto", False),
+     ("XAU/USD", "metal", False)],
+)
+def test_seules_les_ACTIONS_sont_routees(monkeypatch, pair, classe, attendu):
+    """⚠️ Le garde `asset_class_blocked` ne suffit PAS : il s'exécute après
+    `_check_rejection`, donc après la validation de tick qui interroge le
+    bridge en HTTP.
+
+    Mesuré le 2026-08-10 : chaque achat forex allait chercher `/tick/GBP/USD`
+    sur le bridge IBKR, qui n'a aucune raison de connaître cette paire. Filtrer
+    au routage épargne l'appel réseau — et le bruit dans les journaux.
+    """
+    from config import settings as st
+    monkeypatch.setattr(st, "IBKR_BRIDGE_ENABLED", True, raising=False)
+    monkeypatch.setattr(st, "IBKR_BRIDGE_URL", "http://x:8792", raising=False)
+    from backend.services import bridge_destinations as bd
+
+    setup = SimpleNamespace(
+        pair=pair, asset_class=classe,
+        direction=SimpleNamespace(value="buy"),
+        confidence_score=70.0, verdict_action="TAKE",
+    )
+    ids = [d.destination_id for d in bd.resolve_destinations(setup)]
+    assert ("admin_ibkr_us" in ids) is attendu

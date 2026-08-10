@@ -719,13 +719,27 @@ def resolve_destinations(setup: Any) -> list[BridgeConfig]:
     admin_kraken_stocks = _admin_kraken_stocks_destination()
     if admin_kraken_stocks is not None:
         destinations.append(admin_kraken_stocks)
-    # IBKR actions US (2026-08-10). Compte CASH : l'achat d'action passe, la
-    # vente a decouvert exige un compte Margin qu'on n'a pas. Filtrer ici
-    # plutot que laisser IBKR rejeter — meme raisonnement que Kraken Spot.
+    # IBKR actions US (2026-08-10). Deux filtres AU ROUTAGE, pas plus loin :
+    #
+    #  - compte CASH : l'achat d'action passe, la vente a decouvert exige un
+    #    compte Margin qu'on n'a pas ;
+    #  - classe d'actif : le garde `asset_class_blocked` existe, mais il
+    #    s'execute APRES `_check_rejection` — donc apres la validation de tick,
+    #    qui interroge le bridge en HTTP. Mesure du 2026-08-10 : chaque achat
+    #    FOREX allait chercher `/tick/GBP/USD` sur le bridge IBKR, qui n'a
+    #    aucune raison de le connaitre. Filtrer ici epargne l'appel.
     admin_ibkr = _admin_ibkr_destination()
     if admin_ibkr is not None:
+        # ⚠️ On lit `setup.asset_class`, pose par `analysis_engine`, plutot que
+        # de recalculer : `asset_class_for` depend d'ASSET_CLASS_OVERRIDES, donc
+        # de l'environnement. Un routage qui change avec le `.env` est un
+        # routage qu'on ne peut pas tester — le meme piege que la 6e porte du
+        # 2026-08-09. Repli sur le calcul si l'attribut manque.
+        from config.settings import asset_class_for as _acf
+        classe = getattr(setup, "asset_class", None) or _acf(getattr(setup, "pair", ""))
         direction = getattr(getattr(setup, "direction", None), "value", "")
-        if str(direction).lower() == "buy":
+        if (str(direction).lower() == "buy"
+                and classe in admin_ibkr.allowed_asset_classes):
             destinations.append(admin_ibkr)
     destinations.extend(_user_destinations(setup))
     return destinations
