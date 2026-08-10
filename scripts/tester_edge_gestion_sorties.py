@@ -15,12 +15,21 @@ prise partielle, stop suiveur. Le contrôle aléatoire ne simulait pas ça.
 Pour chaque trade réel, on retrouve son jumeau simulé dans `backtest.trades`,
 qui suit la MÊME entrée avec un SL/TP FIXE, sans aucune gestion. On compare :
 
-    R_reel  = (sortie - entree) * sens / |entree - SL|      <- avec gestion
-    R_fixe  = backtest.trades.rr_realized                   <- sans gestion
+    R_reel  = pnl_eur / risk_money_eur      <- avec gestion
+    R_fixe  = backtest.trades.rr_realized   <- sans gestion
 
-⚠️ Tout est en multiples de R calculés SUR LES PRIX, jamais en euros : les
-   deux mondes n'ont ni le même capital ni la même taille de lot, et le piège
-   d'unité R a déjà coûté une conclusion fausse dans ce projet.
+⚠️ R_reel se calcule sur le RÉSULTAT EN EUROS rapporté au risque engagé, PAS
+   sur le prix de sortie. Une première version comparait `exit_price` à
+   l'entrée : elle donnait −0,12 R alors que le compte gagne réellement +742 €.
+   La cause : le système fait des PRISES PARTIELLES. La moitié encaissée au TP1
+   n'apparaît pas dans le prix de sortie final, qui ne décrit que le reliquat.
+   Mesurer sur ce prix sous-estime systématiquement les trades où la gestion a
+   justement fait son travail.
+
+⚠️ `risk_money` est lu dans `notes` (écrit par le bridge à l'exécution),
+   présent sur les 609 trades. Le pnl inclut swap et commission, que le
+   contrefactuel ignore : l'écart est donc LÉGÈREMENT défavorable à la
+   gestion, jamais l'inverse.
 
 ⚠️ Le système réémet le même signal plusieurs fois. Un trade réel a donc
    souvent plusieurs jumeaux candidats. On ne garde le rattachement que si
@@ -30,6 +39,7 @@ qui suit la MÊME entrée avec un SL/TP FIXE, sans aucune gestion. On compare :
 Usage :
     python3 scripts/tester_edge_gestion_sorties.py
 """
+import re
 import sqlite3
 import statistics
 import sys
@@ -64,7 +74,7 @@ def main() -> int:
     b.row_factory = sqlite3.Row
 
     lignes = t.execute(
-        "SELECT mt5_ticket, pnl, pair, direction, entry_price, stop_loss, "
+        "SELECT mt5_ticket, pnl, notes, pair, direction, entry_price, stop_loss, "
         "       take_profit, exit_price, close_reason, created_at "
         "  FROM personal_trades "
         " WHERE status = 'CLOSED' AND exit_price IS NOT NULL"
@@ -89,6 +99,11 @@ def main() -> int:
         if risque <= 0:
             ecartes["stop colle a l'entree"] += 1
             continue
+        m = re.search(r"risk_money=([0-9.]+)", r["notes"] or "")
+        if not m or float(m.group(1)) <= 0:
+            ecartes["risk_money absent"] += 1
+            continue
+        risk_money = float(m.group(1))
 
         cands = b.execute(
             "SELECT outcome, rr_realized, mfe_pct, mae_pct, entry_price "
@@ -108,13 +123,15 @@ def main() -> int:
             ecartes["jumeaux en desaccord"] += 1
             continue
 
-        r_reel = (x - e) * _sens(r["direction"]) / risque
+        r_reel = r["pnl"] / risk_money
+        r_prix = (x - e) * _sens(r["direction"]) / risque
         r_fixe = statistics.median([c["rr_realized"] for c in proches])
         apparies.append({
             "pair": r["pair"],
             "cause": r["close_reason"],
             "issue_fixe": proches[0]["outcome"],
             "r_reel": r_reel,
+            "r_prix": r_prix,
             "r_fixe": r_fixe,
             "mfe": statistics.median([c["mfe_pct"] for c in proches]),
         })
@@ -134,6 +151,9 @@ def main() -> int:
 
     print()
     print("=== R moyen sur les MEMES trades ===")
+    print(f"  (rappel) R calcule sur le seul prix de sortie : "
+          f"{statistics.mean([a['r_prix'] for a in apparies]):+.4f} R "
+          f"— BIAISE par les prises partielles, ne pas utiliser")
     print(f"  avec gestion de sortie : {statistics.mean(reels):+.4f} R")
     print(f"  SL/TP fixe, sans rien  : {statistics.mean(fixes):+.4f} R")
     print(f"  ecart                  : {statistics.mean(delta):+.4f} R par trade")
