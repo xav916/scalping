@@ -59,6 +59,53 @@ def _pip(pair: str) -> float:
     return 0.0001
 
 
+def _cout_total_par_trade(t):
+    """Cout total par trade, SANS interroger le courtier.
+
+    `risk_money` est par construction la valeur en euros de la distance au
+    stop. Donc :
+
+        R sur les prix  = (sortie - entree) * sens / |entree - stop|
+        R encaisse      = pnl / risk_money
+
+    Sans frais les deux seraient egaux. **Leur ecart EST le cout total** —
+    spread, commission, swap et glissement de sortie confondus — et il se
+    mesure sur TOUS les trades, y compris ceux dont MT5 a purge l'historique.
+
+    ⚠️ Suppose que `risk_money` a ete calcule sur la meme distance au stop que
+    celle stockee. Vrai depuis que le sizing lit le solde par destination
+    (2026-08-06) ; les trades anterieurs peuvent etre bruites.
+    """
+    lignes = t.execute(
+        "SELECT mt5_ticket, pair, entry_price, stop_loss, exit_price, direction, "
+        "       pnl, notes, created_at, closed_at "
+        "  FROM personal_trades "
+        " WHERE status='CLOSED' AND pnl IS NOT NULL AND exit_price IS NOT NULL"
+    ).fetchall()
+    out = []
+    for r in lignes:
+        if not str(r["mt5_ticket"]).isdigit():
+            continue
+        dest = destination_for_ticket(int(r["mt5_ticket"]))
+        if dest not in ("admin_legacy", "admin_live"):
+            continue
+        m = re.search(r"risk_money=([0-9.]+)", r["notes"] or "")
+        if not m or float(m.group(1)) <= 0:
+            continue
+        e, sl, x = r["entry_price"], r["stop_loss"], r["exit_price"]
+        if not e or not sl or x is None or abs(e - sl) <= 0:
+            continue
+        sens = 1 if str(r["direction"]).lower().startswith("b") else -1
+        r_prix = (x - e) * sens / abs(e - sl)
+        r_net = r["pnl"] / float(m.group(1))
+        out.append({
+            "dest": dest, "pair": r["pair"],
+            "cout": r_prix - r_net,
+            "ouvert": r["created_at"], "ferme": r["closed_at"],
+        })
+    return out
+
+
 def main() -> int:
     t = sqlite3.connect("/app/data/trades.db")
     t.row_factory = sqlite3.Row
@@ -138,6 +185,32 @@ def main() -> int:
         g = statistics.mean(glissements)
         print("  %-26s %+9.4f   (mediane %+.4f, n=%d)" % (
             "glissement a l'entree", g, statistics.median(glissements), len(glissements)))
+    print()
+    print("=" * 64)
+    print("COUT TOTAL PAR TRADE, mesure sans dependre de l'historique MT5")
+    print("=" * 64)
+    tous = _cout_total_par_trade(t)
+    print(f"trades mesurables : {len(tous)}")
+    if tous:
+        c = [x["cout"] for x in tous]
+        print("  cout total moyen  : %+.4f R" % statistics.mean(c))
+        print("  cout total median : %+.4f R" % statistics.median(c))
+        print()
+        print("  %-11s %6s %11s %11s" % ("paire", "n", "cout moyen", "cout median"))
+        par = defaultdict(list)
+        for x in tous:
+            par[x["pair"]].append(x["cout"])
+        for pr, v in sorted(par.items(), key=lambda kv: -statistics.mean(kv[1])):
+            if len(v) < 5:
+                continue
+            print("  %-11s %6d %+10.4f %+11.4f" % (pr, len(v), statistics.mean(v), statistics.median(v)))
+        print()
+        print("  %-14s %6s %11s" % ("destination", "n", "cout moyen"))
+        pd_ = defaultdict(list)
+        for x in tous:
+            pd_[x["dest"]].append(x["cout"])
+        for d, v in sorted(pd_.items()):
+            print("  %-14s %6d %+10.4f" % (d, len(v), statistics.mean(v)))
     print()
     print("⚠️ Le glissement d'entree n'est PAS soustrait du brut : il est deja")
     print("   dans le prix d'execution, donc deja dans `profit_brut`. Il est")
