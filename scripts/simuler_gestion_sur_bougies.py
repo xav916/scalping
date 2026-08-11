@@ -117,7 +117,14 @@ def _rejouer(bougies, entree, sl, tp, sens, seuil, trail, point):
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--limite", type=int, default=0)
+    ap.add_argument("--paires", default="",
+                    help="restreindre a ces paires, ex: XAU/USD,WTI/USD")
     args = ap.parse_args()
+    # ⚠️ Sans filtre, l'echantillon est a 75 % de positions PLACEBO (cryptos
+    # dimensionnees a 1/1000 du voulu, cf. mesure du 2026-08-11). Leur chemin
+    # de prix reste valide pour un calcul en R sur les PRIX, mais rien ne dit
+    # qu'un ETH a 0,08 EUR de risque se comporte comme l'or ou le petrole.
+    paires = {x.strip() for x in args.paires.split(",") if x.strip()}
     if not URL or not CLE:
         print("bridge demo non configure")
         return 1
@@ -141,6 +148,8 @@ def main() -> int:
             if not str(r["mt5_ticket"]).isdigit():
                 continue
             if destination_for_ticket(int(r["mt5_ticket"])) != "admin_legacy":
+                continue
+            if paires and r["pair"] not in paires:
                 continue
             e, sl, tp = r["entry_price"], r["stop_loss"], r["take_profit"]
             if not e or not sl or not tp:
@@ -181,6 +190,7 @@ def main() -> int:
                 print(f"  ... {traites} trades rejoues")
 
     print()
+    print(f"paires retenues : {sorted(paires) if paires else 'TOUTES (75 % placebo)'}")
     print(f"trades rejoues sur bougies M1 : {traites}")
     print(f"  sans bougies disponibles    : {sans_bougies}")
     if not traites:
