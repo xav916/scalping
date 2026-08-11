@@ -103,6 +103,22 @@ def _collecter():
         if not proches or len({c["outcome"] for c in proches}) > 1:
             continue
 
+        # ⛔ Un zero d'excursion n'est PAS une mesure. Preuve logique : 9 055
+        # trades etiquetes WIN_TP1 portent mfe_pct = 0, alors qu'atteindre son
+        # objectif impose une avancee au moins egale a la distance du TP. Ces
+        # zeros veulent dire << non mesure >>. 31 % des mfe_pct et 25 % des
+        # mae_pct sont dans ce cas.
+        #
+        # Les garder faisait conclure qu'un seuil de 0 % dominait : ses
+        # << gagnants sans recul >> etaient des mae_pct non mesures.
+        #
+        # ⚠️ Ce filtre ecarte aussi de vrais zeros (un trade qui n'est
+        # effectivement jamais parti a contresens). On ne sait pas les
+        # distinguer — on prefere un echantillon plus petit a un resultat faux.
+        proches = [c for c in proches if c["mfe_pct"] and c["mae_pct"]]
+        if not proches:
+            continue
+
         out.append({
             "issue": proches[0]["outcome"],
             "r_fixe": statistics.median([c["rr_realized"] for c in proches]),
@@ -146,6 +162,7 @@ def _simuler(trades, seuil):
 def main() -> int:
     trades = _collecter()
     print(f"trades exploitables : {len(trades)}")
+    print("  (excursions NON mesurees ecartees : voir le commentaire du code)")
     if not trades:
         return 1
     perdants = sum(1 for t in trades if t["issue"] == "LOSS")
