@@ -1341,6 +1341,104 @@ def _position_monitor_loop():
 
 # ─── Endpoints ──────────────────────────────────────────────────────
 
+_TIMEFRAMES = {
+    "M1": "TIMEFRAME_M1", "M5": "TIMEFRAME_M5", "M15": "TIMEFRAME_M15",
+    "M30": "TIMEFRAME_M30", "H1": "TIMEFRAME_H1", "H4": "TIMEFRAME_H4",
+    "D1": "TIMEFRAME_D1",
+}
+MAX_BOUGIES = 5000
+
+
+def _decalage_serveur_sec() -> float | None:
+    """Ecart entre l'heure SERVEUR du courtier et l'heure UTC reelle.
+
+    MT5 exprime `deal.time` et `rates['time']` en heure serveur, pas en UTC,
+    et ne le signale nulle part. Mesure le 2026-08-10 : 3 h sur ICMarketsEU.
+    Sans cette correction, toute fenetre demandee en UTC recupere les mauvaises
+    bougies — decalage silencieux, resultat faux mais plausible.
+
+    On le mesure au lieu de le supposer : le dernier tick porte l'heure serveur,
+    et il vient d'arriver.
+    """
+    try:
+        for sym in (mt5.symbols_get() or [])[:1]:
+            tick = mt5.symbol_info_tick(sym.name)
+            if tick and tick.time:
+                return round(tick.time - datetime.now(timezone.utc).timestamp())
+    except Exception as e:
+        logger.debug(f"_decalage_serveur_sec: {e}")
+    return None
+
+
+@app.route("/rates", methods=["GET"])
+@require_api_key
+def rates():
+    """Bougies OHLC entre deux instants, pour rejouer le CHEMIN d'un trade.
+
+    Ajoute le 2026-08-11. Sans le chemin du prix pendant le trade, on ne peut
+    pas savoir si le recul a precede ou suivi l'avancee — et toute simulation
+    de gestion de sortie (mise a zero du risque, stop suiveur) reste bornee au
+    lieu d'etre exacte. `mfe_pct` / `mae_pct` sont des maxima sans ordre : ils
+    ne suffisent pas.
+
+    Parametres : pair, timeframe (M1 par defaut), from, to (ISO 8601, UTC).
+
+    ATTENTION : les bornes envoyees sont en UTC et converties en heure SERVEUR ici.
+    Le decalage mesure est renvoye dans la reponse pour que l'appelant puisse
+    verifier plutot que croire.
+    """
+    pair = request.args.get("pair", "")
+    tf_nom = request.args.get("timeframe", "M1").upper()
+    if not pair:
+        return jsonify({"error": "pair requis"}), 400
+    if tf_nom not in _TIMEFRAMES:
+        return jsonify({"error": f"timeframe inconnu, attendu {sorted(_TIMEFRAMES)}"}), 400
+    try:
+        debut = datetime.fromisoformat(request.args["from"].replace("Z", "+00:00"))
+        fin = datetime.fromisoformat(request.args["to"].replace("Z", "+00:00"))
+    except (KeyError, ValueError):
+        return jsonify({"error": "from et to requis, en ISO 8601"}), 400
+    if fin <= debut:
+        return jsonify({"error": "to doit suivre from"}), 400
+
+    if not ensure_mt5_connected():
+        return jsonify({"error": "MT5 not connected"}), 503
+
+    symbole = resolve_symbol(pair)
+    if not symbole:
+        return jsonify({"error": f"symbole introuvable pour {pair}"}), 404
+
+    decalage = _decalage_serveur_sec() or 0
+    tf = getattr(mt5, _TIMEFRAMES[tf_nom])
+    # copy_rates_range attend des datetime interpretes en heure serveur.
+    d_srv = datetime.fromtimestamp(debut.timestamp() + decalage, tz=timezone.utc)
+    f_srv = datetime.fromtimestamp(fin.timestamp() + decalage, tz=timezone.utc)
+    brut = mt5.copy_rates_range(symbole, tf, d_srv, f_srv)
+    if brut is None:
+        return jsonify({"error": f"copy_rates_range a echoue: {mt5.last_error()}"}), 502
+
+    bougies = []
+    for b in brut[:MAX_BOUGIES]:
+        bougies.append({
+            # Reconverti en UTC reel : l'appelant recoit des instants comparables
+            # a ses propres horodatages.
+            "t": datetime.fromtimestamp(
+                float(b["time"]) - decalage, tz=timezone.utc).isoformat(),
+            "o": float(b["open"]), "h": float(b["high"]),
+            "l": float(b["low"]), "c": float(b["close"]),
+        })
+
+    return jsonify({
+        "pair": pair,
+        "symbole": symbole,
+        "timeframe": tf_nom,
+        "decalage_serveur_sec": decalage,
+        "tronque": len(brut) > MAX_BOUGIES,
+        "n": len(bougies),
+        "bougies": bougies,
+    })
+
+
 @app.route("/limits", methods=["GET"])
 @require_api_key
 def limits():
