@@ -1802,6 +1802,61 @@ def _max_lot_for_symbol(symbol: str) -> float:
     return min(MAX_LOT, float(class_cap))
 
 
+RISK_RATIO_MIN = float(os.getenv("RISK_RATIO_MIN", "0.5"))
+RISK_RATIO_MAX = float(os.getenv("RISK_RATIO_MAX", "0"))   # 0 = desarme
+
+
+def _risque_realise(entry: float, sl: float, lots: float,
+                    point: float, tick_value: float) -> float | None:
+    """Combien ce lot risque VRAIMENT, en devise du compte.
+
+    Meme formule que `_compute_lots_from_symbol`, prise a l'envers : on part du
+    lot reellement obtenu au lieu du lot souhaite.
+
+    Rend **None** si une donnee manque. Surtout pas 0.0 : c'est ce zero-qui-
+    passe-pour-une-mesure qui a laisse 455 ordres partir a 1/1000 du risque
+    voulu sans que rien ne bronche.
+    """
+    distance = abs(entry - sl)
+    if distance <= 0 or lots <= 0 or point <= 0 or tick_value <= 0:
+        return None
+    return (distance / point) * tick_value * lots
+
+
+def _controle_risque(risque_reel: float | None, risk_money: float | None,
+                     mini: float, maxi: float):
+    """Compare le risque obtenu au risque voulu. Rend (rapport, cause_du_refus).
+
+    Mesure du 2026-08-11 sur 610 trades du demo : **455 risquaient un millieme
+    de ce qui etait prevu** (cryptos ecrasees par MAX_LOT). Ils ont paye le
+    spread sans prendre de position, pour −11 EUR au total, et **rien ne l'a
+    signale**.
+
+    ⚠️ Asymetrie assumee dans les valeurs par defaut :
+
+    - **Sous-dimensionnement refuse** (`RISK_RATIO_MIN=0.5`). Une position qui
+      risque moins de la moitie du voulu ne peut rien rapporter : refuser est
+      strictement benefique.
+    - **Sur-dimensionnement seulement MESURE** (`RISK_RATIO_MAX=0`, desarme).
+      L'or au lot minimum risque 2 a 5x le voulu sur un petit compte ; le
+      refuser par defaut arreterait tout le trading. C'est un probleme de
+      CAPITAL, pas une erreur d'execution — a Xavier de trancher, pas a un
+      defaut de code.
+
+    ⚠️ Un risque incalculable ne bloque JAMAIS : une panne de calcul ne doit
+    pas arreter le trading, le courtier reste l'arbitre. Meme principe que
+    l'ajustement a la marge.
+    """
+    if risque_reel is None or not risk_money or risk_money <= 0:
+        return None, None
+    rapport = risque_reel / risk_money
+    if mini and rapport < mini:
+        return rapport, "risque_realise_trop_faible"
+    if maxi and rapport > maxi:
+        return rapport, "risque_realise_trop_eleve"
+    return rapport, None
+
+
 def _compute_lots_from_symbol(symbol: str, entry: float, sl: float, risk_money: float) -> float:
     """Sizing précis basé sur les specs RÉELLES du broker pour ce symbole.
 
@@ -1950,6 +2005,39 @@ def place_order():
                      f"(class={_asset_class_for_symbol(mt5_symbol)}, "
                      f"MAX_LOT global={MAX_LOT})"
         }), 400
+
+    # ─── Le lot obtenu correspond-il au risque demande ? ──────────
+    #
+    # Pose le 2026-08-11. Sur 610 trades du demo, 455 (75 %) risquaient un
+    # MILLIEME du voulu : le lot calcule pour risquer ~17 EUR sur les cryptos
+    # etait ecrase par MAX_LOT, la position partait quand meme, et rien ne le
+    # signalait. Ces 455 ordres ont paye le spread sans prendre de position.
+    #
+    # Le controle vient APRES les plafonds : c'est le lot reellement retenu
+    # qu'il faut juger, pas celui qu'on souhaitait.
+    rapport_risque = None
+    _info_ctrl = mt5.symbol_info(mt5_symbol)
+    if _info_ctrl is not None:
+        rapport_risque, _cause = _controle_risque(
+            _risque_realise(entry, sl, lots, _info_ctrl.point,
+                            _info_ctrl.trade_tick_value),
+            data.get("risk_money"),
+            RISK_RATIO_MIN, RISK_RATIO_MAX,
+        )
+        if _cause:
+            logger.warning(
+                f"[RISQUE] {mt5_symbol} {lots} lot : risque realise = "
+                f"{rapport_risque:.3f}x le voulu ({data.get('risk_money')} EUR) "
+                f"-> {_cause}"
+            )
+            return jsonify({
+                "ok": False,
+                "blocked": True,
+                "reason": _cause,
+                "rapport_risque": round(rapport_risque, 4),
+                "risk_money": data.get("risk_money"),
+                "lots": lots,
+            }), 422
 
     log_prefix = "[PAPER]" if PAPER_MODE else "[LIVE]"
     logger.info(

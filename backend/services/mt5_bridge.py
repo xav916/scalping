@@ -1351,7 +1351,13 @@ async def _push_to_destination(setup, dest) -> None:
                 )
                 # Catégorise la rejection bridge pour la viz dédiée
                 body_text = r.text or ""
-                if r.status_code == 429 or "Max open positions" in body_text:
+                # ⚠️ Le risque mal dimensionne AVANT le fourre-tout : sans code
+                # dedie il disparaitrait dans `bridge_error`. C'est ce melange
+                # qui a fait passer trois causes distinctes pour un plafond de
+                # positions pendant des mois (cf. audit du 2026-08-11).
+                if r.status_code == 422 or "risque_realise" in body_text:
+                    reason = "bridge_risque_incoherent"
+                elif r.status_code == 429 or "Max open positions" in body_text:
                     reason = "bridge_max_positions"
                 elif "10016" in body_text or "INVALID_STOPS" in body_text:
                     reason = "bridge_invalid_stops"
