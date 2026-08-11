@@ -1730,11 +1730,36 @@ def deals():
             "message": "no deals found",
         })
 
+    # Decomposition des couts. `profit` seul cache la commission et le swap :
+    # le courtier les porte sur des deals distincts (souvent l'entree), donc on
+    # somme sur TOUS les deals de la position, pas seulement celui de sortie.
+    # Ajoute le 2026-08-11 : l'ecart entre la simulation sans frais (+0,278 R)
+    # et le reel (+0,115 R) vaut 0,163 R sans qu'on sache de quoi il est fait.
+    profit = swap = commission = fee = 0.0
+    in_deal = None
+    for d in deals_list:
+        profit += float(getattr(d, "profit", 0) or 0)
+        swap += float(getattr(d, "swap", 0) or 0)
+        commission += float(getattr(d, "commission", 0) or 0)
+        fee += float(getattr(d, "fee", 0) or 0)
+        if getattr(d, "entry", None) == mt5.DEAL_ENTRY_IN and in_deal is None:
+            in_deal = d
+
     return jsonify({
         "ticket": ticket,
         "closed": True,
         "exit_price": float(out_deal.price),
+        "entry_price": float(in_deal.price) if in_deal is not None else None,
+        "volume": float(getattr(out_deal, "volume", 0) or 0),
+        # `pnl` reste le profit BRUT du deal de sortie, comme avant : ne pas
+        # changer le sens d'un champ que le backend consomme deja.
         "pnl": float(out_deal.profit),
+        "profit_brut": round(profit, 4),
+        "swap": round(swap, 4),
+        "commission": round(commission, 4),
+        "fee": round(fee, 4),
+        "pnl_net": round(profit + swap + commission + fee, 4),
+        "n_deals": len(deals_list),
         # La cause vient de MT5 lui-même. Sans elle, le backend en était réduit
         # à comparer le prix de sortie aux SL/TP stockés — ce qui a fait
         # étiqueter « fermé à la main » 215 sorties du stop suiveur (08-10),
