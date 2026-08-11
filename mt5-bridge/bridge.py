@@ -1426,6 +1426,11 @@ def rates():
                 float(b["time"]) - decalage, tz=timezone.utc).isoformat(),
             "o": float(b["open"]), "h": float(b["high"]),
             "l": float(b["low"]), "c": float(b["close"]),
+            # Spread en POINTS, tel que MT5 le stocke par bougie. Ajoute le
+            # 2026-08-11 : la commission est nulle sur ces comptes et le swap
+            # negligeable (mesure sur 191 trades), donc le spread est le cout
+            # d'execution — et rien ne l'exposait.
+            "s": int(b["spread"]) if "spread" in b.dtype.names else None,
         })
 
     return jsonify({
@@ -1433,6 +1438,8 @@ def rates():
         "symbole": symbole,
         "timeframe": tf_nom,
         "decalage_serveur_sec": decalage,
+        # Necessaire pour convertir le spread (en points) en unites de prix.
+        "point": float(getattr(mt5.symbol_info(symbole), "point", 0) or 0),
         "tronque": len(brut) > MAX_BOUGIES,
         "n": len(bougies),
         "bougies": bougies,
