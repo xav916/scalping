@@ -186,15 +186,29 @@ def main() -> int:
     if not traites:
         return 1
     print()
-    print("  %-22s %10s %10s %9s" % ("politique", "R moyen", "R median", "gagnants"))
-    ref = statistics.mean(resultats["fixe"]) if resultats["fixe"] else 0
+    print("  %-22s %9s %9s %8s %11s %8s" % (
+        "politique", "R moyen", "R median", "gagnants", "ecart/fixe", "t"))
+    base = resultats["fixe"]
+    ref = statistics.mean(base) if base else 0
     for nom, vals in resultats.items():
         if not vals:
             continue
         m = statistics.mean(vals)
-        ecart = "" if nom == "fixe" else "  (%+.4f)" % (m - ref)
         gag = 100 * sum(1 for v in vals if v > 0) / len(vals)
-        print("  %-22s %+9.4f %+10.4f %8.1f%%%s" % (nom, m, statistics.median(vals), gag, ecart))
+        if nom == "fixe" or len(vals) != len(base):
+            print("  %-22s %+8.4f %+9.4f %7.1f%% %11s %8s" % (
+                nom, m, statistics.median(vals), gag, "-", "-"))
+            continue
+        # Difference APPARIEE : meme trade, deux politiques. La variance des
+        # trades disparait, seul l'effet de la politique reste.
+        d = [a - b for a, b in zip(vals, base)]
+        err = statistics.stdev(d) / (len(d) ** 0.5) if len(d) > 1 else float("inf")
+        t = statistics.mean(d) / err if err else 0
+        print("  %-22s %+8.4f %+9.4f %7.1f%% %+11.4f %8.2f" % (
+            nom, m, statistics.median(vals), gag, statistics.mean(d), t))
+    print()
+    print("La colonne t est un test APPARIE contre la politique fixe : |t| > 2")
+    print("signale un ecart qui sort du bruit. En dessous, on ne conclut pas.")
     print()
     print("⚠️ Ordre intra-minute inconnu : le stop est toujours teste AVANT")
     print("   l'objectif. Tout resultat positif est donc un plancher.")
