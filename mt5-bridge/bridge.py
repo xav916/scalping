@@ -1847,9 +1847,18 @@ def _controle_risque(risque_reel: float | None, risk_money: float | None,
     pas arreter le trading, le courtier reste l'arbitre. Meme principe que
     l'ajustement a la marge.
     """
-    if risque_reel is None or not risk_money or risk_money <= 0:
+    # ⚠️ `risk_money` arrive du JSON : il peut etre une chaine, ou illisible.
+    # Comparer directement leverait TypeError et ferait echouer TOUS les
+    # ordres — un garde-fou qui casse le trading est pire que pas de garde-fou.
+    # Et une valeur illisible n'est PAS un << risque trop faible >> : on ne
+    # refuse jamais sur un chiffre qu'on n'a pas su lire.
+    try:
+        voulu = float(risk_money)
+    except (TypeError, ValueError):
         return None, None
-    rapport = risque_reel / risk_money
+    if risque_reel is None or voulu <= 0:
+        return None, None
+    rapport = risque_reel / voulu
     if mini and rapport < mini:
         return rapport, "risque_realise_trop_faible"
     if maxi and rapport > maxi:
@@ -1979,6 +1988,7 @@ def place_order():
             }), 404
 
     # ─── Sizing : lots explicites OU calcul depuis risk_money ────
+    risk_money = None      # reste None en sizing explicite : rien a comparer
     if "risk_money" in data:
         try:
             risk_money = float(data["risk_money"])
@@ -2021,7 +2031,7 @@ def place_order():
         rapport_risque, _cause = _controle_risque(
             _risque_realise(entry, sl, lots, _info_ctrl.point,
                             _info_ctrl.trade_tick_value),
-            data.get("risk_money"),
+            risk_money if sizing_mode == "risk-based" else None,
             RISK_RATIO_MIN, RISK_RATIO_MAX,
         )
         if _cause:

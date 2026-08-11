@@ -181,3 +181,23 @@ def test_le_controle_precede_l_envoi_de_l_ordre():
         f"le controle (ligne {ligne_controle}) doit preceder l'envoi "
         f"(ligne {ligne_envoi}, via {sorted(envoyeurs)})"
     )
+
+
+# --- robustesse d'entree ---------------------------------------------------
+
+@pytest.mark.parametrize("valeur", ["15.0", "0.08", " 15 "])
+def test_risk_money_en_chaine_ne_fait_pas_tomber_l_ordre(valeur):
+    """⚠️ Le JSON peut livrer `risk_money` en chaine. Une comparaison directe
+    `risk_money <= 0` leve alors TypeError — ce qui ferait echouer TOUS les
+    ordres, pas seulement celui-la. Un garde-fou qui casse le trading est pire
+    que pas de garde-fou.
+    """
+    rapport, cause = bridge._controle_risque(12.0, valeur, mini=0.5, maxi=0.0)
+    assert rapport is not None
+
+
+@pytest.mark.parametrize("valeur", ["", "abc", None, [], {}])
+def test_risk_money_illisible_ne_controle_rien(valeur):
+    """Illisible n'est pas << trop faible >> : on ne refuse pas sur une valeur
+    qu'on n'a pas su lire."""
+    assert bridge._controle_risque(12.0, valeur, mini=0.5, maxi=0.0) == (None, None)
