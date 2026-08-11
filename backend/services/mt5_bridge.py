@@ -71,6 +71,7 @@ from backend.services.market_hours import is_market_open_for_destination
 from backend.services.shadow_v2_core_long import SHADOW_PAIRS as _STAR_PAIRS
 from config.settings import (
     PAIR_TRADING_HOURS_UTC,
+    MT5_BRIDGE_PATTERN_OVERRIDES,
     MT5_BRIDGE_ENABLED,
     MT5_BRIDGE_URL,
     MT5_BRIDGE_API_KEY,
@@ -495,6 +496,30 @@ def _heure_defavorable(pair: str, quand) -> str | None:
     return None if dedans else "heure_spread_defavorable"
 
 
+def _patterns_autorises(setup, dest):
+    """Quels patterns cette (paire, horizon) admet-elle ?
+
+    Cascade, du plus specifique au plus general — meme idiome que la
+    resolution d'admission :
+
+        (paire, horizon)  ->  destination  ->  regle globale
+
+    ⚠️ Une surcharge illisible ou VIDE retombe sur la regle existante, jamais
+    sur un ensemble vide : un ensemble vide bloquerait tout sur cette paire,
+    soit exactement l'inverse de l'intention.
+    """
+    horizon = getattr(setup, "horizon", None)
+    if horizon and isinstance(MT5_BRIDGE_PATTERN_OVERRIDES, dict):
+        par_paire = MT5_BRIDGE_PATTERN_OVERRIDES.get(getattr(setup, "pair", None))
+        if isinstance(par_paire, dict):
+            liste = par_paire.get(horizon)
+            if isinstance(liste, (list, tuple, set, frozenset)) and liste:
+                return set(liste)
+    if dest is not None and getattr(dest, "allowed_patterns", None) is not None:
+        return dest.allowed_patterns
+    return MT5_BRIDGE_ALLOWED_PATTERNS
+
+
 def _check_rejection(setup, dest=None) -> str | None:
     """Retourne None si le setup peut être pushé, sinon un reason_code parmi
     ceux définis dans `rejection_service.REASON_LABELS_FR`. Seuls les cas qui
@@ -717,9 +742,7 @@ def _check_rejection(setup, dest=None) -> str | None:
     # hérite du global, à frozenset() désactive le filtre pour cette seule
     # destination. Permet de garder `range_bounce` sur l'argent réel MT5 tout
     # en ouvrant une destination d'observation.
-    allowed_patterns = MT5_BRIDGE_ALLOWED_PATTERNS
-    if dest is not None and getattr(dest, "allowed_patterns", None) is not None:
-        allowed_patterns = dest.allowed_patterns
+    allowed_patterns = _patterns_autorises(setup, dest)
     if allowed_patterns and not _jeton_derogation_restant():
         if _pattern_value(setup) not in allowed_patterns:
             return "pattern_not_allowed"

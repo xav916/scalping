@@ -669,6 +669,30 @@ try:
 except (ValueError, _json_min_sl.JSONDecodeError):
     PAIR_TRADING_HOURS_UTC = {}
 
+# Whitelist de patterns SURCHARGEE par (paire, horizon).
+# Format : {"XAU/USD": {"4h": ["momentum_up", ...]}}
+#
+# Mesure du 2026-08-11 : l'or produit 76 setups 4h en 30 jours, dont ZERO
+# dispatchable — son jeu de patterns au 4h ne contient aucun `range_bounce`,
+# seul motif que la whitelist globale accepte. L'instrument qui porte 87,6 %
+# du resultat etait absent du seul horizon qui paie ses frais.
+#
+# ⚠️ La whitelist globale vient d'un edge valide hors echantillon sur le flux
+# 5 MINUTES. Le controle aleatoire a montre depuis que cet edge etait du beta
+# de marche, pas de la selection. La regle survit a sa justification, et elle
+# n'a jamais ete testee a 4h.
+#
+# ⚠️ Vide par defaut. Le petrole 4h reste ferme : mesure a -0,128 R, negatif
+# ETABLI. Seul l'or est ouvert, en sachant que les metaux 4h sont a -0,045 R,
+# intervalle [-0,100 ; +0,012] — non tranche.
+try:
+    _raw_pat = os.getenv("MT5_BRIDGE_PATTERN_OVERRIDES", "")
+    MT5_BRIDGE_PATTERN_OVERRIDES = _json_min_sl.loads(_raw_pat) if _raw_pat else {}
+    if not isinstance(MT5_BRIDGE_PATTERN_OVERRIDES, dict):
+        MT5_BRIDGE_PATTERN_OVERRIDES = {}
+except (ValueError, _json_min_sl.JSONDecodeError):
+    MT5_BRIDGE_PATTERN_OVERRIDES = {}
+
 # Filtres diagnostiques anti-saigne (ajoutés 2026-04-24 après diagnostic
 # des 124 trades CLOSED post-fix pipeline). Basés sur buckets qui
 # perdent systématiquement — override env si le dataset change.
