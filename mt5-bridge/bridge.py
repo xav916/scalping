@@ -1341,6 +1341,70 @@ def _position_monitor_loop():
 
 # ─── Endpoints ──────────────────────────────────────────────────────
 
+@app.route("/limits", methods=["GET"])
+@require_api_key
+def limits():
+    """Ce que le COURTIER autorise, par opposition a ce que NOUS nous imposons.
+
+    Ajoute le 2026-08-11 : la question << y a-t-il une limitation en nombre de
+    trades ? >> ne se deduit pas de la documentation, elle se mesure sur le
+    compte. Aucun de nos plafonds (MAX_OPEN_POSITIONS, anti-doublon,
+    coupe-circuit) ne renseigne sur ceux du courtier.
+
+    - limit_orders : nombre maximal d'ordres EN ATTENTE simultanes (0 = illimite)
+    - fifo_close   : le courtier impose-t-il de fermer dans l'ordre d'ouverture
+    - volume_limit : volume cumule maximal par symbole et par sens (0 = illimite)
+    - trade_mode   : le symbole est-il pleinement negociable
+
+    ATTENTION : MT5 ne publie AUCUN plafond sur le nombre de POSITIONS ouvertes ni sur
+    le nombre d'ordres par jour : ces notions n'existent pas dans son API. Une
+    limite de ce genre serait une regle interne du courtier, invisible ici, et
+    se manifesterait par un rejet a l'execution.
+    """
+    if not ensure_mt5_connected():
+        return jsonify({"error": "MT5 not connected"}), 503
+
+    a = mt5.account_info()
+    compte = {}
+    if a is not None:
+        for champ in ("login", "limit_orders", "fifo_close", "trade_allowed",
+                      "trade_expert", "margin_mode", "leverage", "currency"):
+            compte[champ] = getattr(a, champ, None)
+
+    # Paires a inspecter : celles passees en parametre, sinon les overrides
+    # connus. Le bridge n'a pas la liste surveillee par le radar — la lui
+    # demander serait deviner ; on la recoit.
+    demandees = request.args.get("pairs", "")
+    paires = [x.strip() for x in demandees.split(",") if x.strip()]
+    if not paires:
+        paires = sorted(MT5_SYMBOL_MAP.keys())
+
+    symboles = {}
+    for pair in paires:
+        sym = resolve_symbol(pair)
+        info = mt5.symbol_info(sym) if sym else None
+        if info is None:
+            symboles[pair] = {"symbole": sym, "erreur": "inconnu du courtier"}
+            continue
+        symboles[pair] = {
+            "symbole": sym,
+            "volume_min": info.volume_min,
+            "volume_max": info.volume_max,
+            "volume_limit": info.volume_limit,
+            "volume_step": info.volume_step,
+            "trade_mode": info.trade_mode,
+        }
+
+    return jsonify({
+        "compte": compte,
+        "nos_plafonds": {
+            "max_open_positions": MAX_OPEN_POSITIONS,
+            "max_lot": MAX_LOT,
+        },
+        "symboles": symboles,
+    })
+
+
 @app.route("/health", methods=["GET"])
 def health():
     """Ping public (pas d'auth). Utile pour vérifier que le bridge tourne."""
