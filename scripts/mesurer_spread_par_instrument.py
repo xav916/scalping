@@ -109,7 +109,17 @@ def main() -> int:
                 print(f"  {pair} : pas de spread remonte")
                 continue
 
+            # ⚠️ MT5 stocke le spread en nombre ENTIER de points. Sur les
+            # majors forex il est souvent inferieur a 1 point et se retrouve
+            # tronque a zero : 96 % des bougies EUR/USD, 88 % GBP/USD, 61 %
+            # USD/CAD — mais avec des valeurs 1-2 qui apparaissent par
+            # centaines, donc ce ne sont PAS des mesures manquantes, c'est une
+            # RESOLUTION insuffisante. On borne au lieu d'affirmer.
+            part_zeros = sum(1 for x in sp if x[0] == 0) / len(sp)
+            tronque = part_zeros > 0.25
             pts = statistics.median([x[0] for x in sp])
+            if tronque:
+                pts = 1.0   # borne HAUTE : le vrai spread est dans [0 ; 1[
             prix = statistics.median([x[1] for x in sp])
             spread_prix = pts * point
             spread_pct = spread_prix / prix * 100
@@ -118,23 +128,27 @@ def main() -> int:
             med = stops.get(pair)
             cout_med = (spread_pct / med) if med else None
             lignes.append((pair, pts, spread_prix, spread_pct, mini,
-                           cout_mini, med, cout_med, len(sp)))
+                           cout_mini, med, cout_med, len(sp), tronque))
             for s_, _, ts in sp:
                 par_heure[pair][int(ts[11:13])].append(s_ * point / prix * 100)
 
     print("  %-9s %7s %11s %9s %10s %11s %10s %11s" % (
         "paire", "points", "spread", "% prix", "stop min", "cout au min",
         "stop med", "cout med"))
-    for (p, pts, sprix, spct, mini, cmini, med, cmed, n) in sorted(
+    for (p, pts, sprix, spct, mini, cmini, med, cmed, n, tronque) in sorted(
             lignes, key=lambda x: -x[5]):
         cm = f"{cmed:9.1%}" if cmed is not None else "        -"
         sm = f"{med:8.3f}%" if med is not None else "       -"
-        print("  %-9s %7.0f %11.5f %8.4f%% %9.2f%% %10.1f%% %s %s" % (
-            p, pts, sprix, spct, mini, cmini * 100, sm, cm))
+        marque = " <1pt" if tronque else "     "
+        print("  %-9s %7.0f%s %10.5f %8.4f%% %9.2f%% %10.1f%% %s %s" % (
+            p, pts, marque, sprix, spct, mini, cmini * 100, sm, cm))
 
     print()
     print("  « cout au min » = fraction de R mangee par le spread si le stop est")
     print("  place a la distance MINIMALE que le systeme autorise.")
+    print("  « <1pt » = spread sous la resolution de stockage de MT5 (entier de")
+    print("  points). Les chiffres affiches sont alors une BORNE HAUTE, pas une")
+    print("  mesure : le vrai spread est quelque part dans [0 ; 1[ point.")
     print()
     print("=== variation par heure UTC (spread en % du prix, or et EUR/USD) ===")
     for pair in ("XAU/USD", "EUR/USD"):
