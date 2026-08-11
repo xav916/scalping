@@ -37,6 +37,7 @@ REASON_LABELS_FR = {
     "verdict_blocker": "Verdict bloqué",
     "market_closed": "Marché fermé",
     "sl_too_close": "SL trop serré",
+    "heure_spread_defavorable": "Heure où le spread coûte le double",
     "below_confidence": "Confiance < seuil",
     "pattern_not_allowed": "Pattern hors whitelist",
     "asset_class_blocked": "Classe d'actif bloquée",

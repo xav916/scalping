@@ -652,6 +652,23 @@ try:
 except (ValueError, _json_min_sl.JSONDecodeError):
     MT5_BRIDGE_MIN_SL_DISTANCE_PCT_PER_CLASS = _DEFAULT_MIN_SL_DISTANCE_PCT_PER_CLASS
 
+# Fenetre horaire autorisee PAR INSTRUMENT, en heures UTC, bornes incluses.
+# Format : {"XAU/USD": "06-19"}. Une fenetre peut enjamber minuit ("22-05").
+#
+# Mesure du 2026-08-11 sur 15 150 bougies M1 / 14 jours : le spread de l'or est
+# a un plateau de 06h a 19h UTC puis DOUBLE (x2,13) a 20h et 22h.
+#
+# ⚠️ Vide par defaut. Un profil de spread appartient au couple (courtier,
+# instrument) : le figer dans le code le rendrait faux au premier changement de
+# courtier, et silencieusement.
+try:
+    _raw_heures = os.getenv("PAIR_TRADING_HOURS_UTC", "")
+    PAIR_TRADING_HOURS_UTC = _json_min_sl.loads(_raw_heures) if _raw_heures else {}
+    if not isinstance(PAIR_TRADING_HOURS_UTC, dict):
+        PAIR_TRADING_HOURS_UTC = {}
+except (ValueError, _json_min_sl.JSONDecodeError):
+    PAIR_TRADING_HOURS_UTC = {}
+
 # Filtres diagnostiques anti-saigne (ajoutés 2026-04-24 après diagnostic
 # des 124 trades CLOSED post-fix pipeline). Basés sur buckets qui
 # perdent systématiquement — override env si le dataset change.

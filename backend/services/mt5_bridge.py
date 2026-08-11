@@ -70,6 +70,7 @@ LEGACY_WHITELIST_PAIRS = frozenset(
 from backend.services.market_hours import is_market_open_for_destination
 from backend.services.shadow_v2_core_long import SHADOW_PAIRS as _STAR_PAIRS
 from config.settings import (
+    PAIR_TRADING_HOURS_UTC,
     MT5_BRIDGE_ENABLED,
     MT5_BRIDGE_URL,
     MT5_BRIDGE_API_KEY,
@@ -446,6 +447,54 @@ def _event_rejection(setup, dest) -> str | None:
     return None
 
 
+def _parser_fenetre_horaire(brut):
+    """Rend (debut, fin) en heures UTC, ou None si illisible.
+
+    ⚠️ Illisible doit rendre None, jamais une fenetre vide : une porte qui se
+    ferme sur une config mal ecrite arreterait le trading sans que personne ne
+    comprenne pourquoi. Meme principe que l'ajustement a la marge et le
+    controle du risque realise.
+    """
+    if not isinstance(brut, str):
+        return None
+    morceaux = brut.split("-")
+    if len(morceaux) != 2:
+        return None
+    try:
+        debut, fin = int(morceaux[0]), int(morceaux[1])
+    except ValueError:
+        return None
+    if not (0 <= debut <= 23 and 0 <= fin <= 23):
+        return None
+    return debut, fin
+
+
+def _heure_defavorable(pair: str, quand) -> str | None:
+    """Refuse les heures ou le spread coute anormalement cher, par instrument.
+
+    Mesure du 2026-08-11 sur 15 150 bougies M1 / 14 jours (or) : plateau a
+    x1,00 de 06h a 19h UTC, puis **x2,13 a 20h et 22h**. Le spread double.
+
+    ⚠️ L'effet est PETIT en valeur absolue : rapporte a la distance au stop
+    reellement utilisee, il passe de 1,28 % a 2,73 % de R, soit ~0,015 R sur
+    les trades concernes — deux ordres de grandeur sous les 0,329 R recuperes
+    en desarmant le stop suiveur. Pose parce que c'est gratuit, et parce que le
+    glissement nocturne (non mesurable ici) joue dans le meme sens.
+
+    ⚠️ Les heures viennent de la CONFIGURATION, jamais du code : un profil de
+    spread appartient au couple (courtier, instrument) et changera.
+
+    Les bornes sont INCLUSES, et une fenetre peut enjamber minuit ("22-05").
+    """
+    fenetre = _parser_fenetre_horaire((PAIR_TRADING_HOURS_UTC or {}).get(pair))
+    if fenetre is None:
+        return None
+    debut, fin = fenetre
+    h = quand.hour
+    dedans = (debut <= h <= fin) if debut <= fin else (h >= debut or h <= fin)
+    return None if dedans else "heure_spread_defavorable"
+
+
 def _check_rejection(setup, dest=None) -> str | None:
     """Retourne None si le setup peut être pushé, sinon un reason_code parmi
     ceux définis dans `rejection_service.REASON_LABELS_FR`. Seuls les cas qui
@@ -644,6 +693,11 @@ def _check_rejection(setup, dest=None) -> str | None:
     horizon_reason = _horizon_rejection(setup, dest)
     if horizon_reason:
         return horizon_reason
+    # Porte d'heure (2026-08-11). Comme l'horizon : une comparaison d'entiers,
+    # donc placee tot, bien avant la porte de cout qui interroge le sizing.
+    heure_reason = _heure_defavorable(setup.pair, datetime.now(timezone.utc))
+    if heure_reason:
+        return heure_reason
     # Portes événementielles (2026-08-05). Après l'horizon — inutile
     # d'interroger le calendrier earnings pour un setup que la route ne sert
     # pas — et avant la porte de coût, qui est la plus chère.
