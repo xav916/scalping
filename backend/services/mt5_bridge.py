@@ -17,6 +17,7 @@ Sécurité
 """
 
 import asyncio
+import json
 import logging
 import os
 import time
@@ -942,6 +943,54 @@ def _mirror_active() -> bool:
         return False
 
 
+# Delais de reprise du miroir, en secondes. Croissants et bornes.
+#
+# Le 2026-08-12, le bridge a reessaye DEUX FOIS EN 400 ms un ordre refuse par
+# IC Markets — donc dans exactement les memes conditions de prix et de
+# latence — puis a abandonne. Quelques minutes plus tard, `order_check` rendait
+# « Done » : l'ordre serait passe.
+#
+# ⚠️ Borne a ~30 s au total : au-dela, le prix n'a plus grand-chose a voir avec
+# le signal qui l'a declenche, et ce ne serait plus une copie.
+MIROIR_DELAIS_REPRISE: tuple[int, ...] = (3, 10, 20)
+
+# Codes de retour MT5 qui peuvent changer d'avis a la tentative suivante.
+_RETCODES_TRANSITOIRES = {
+    10004,   # requote
+    10006,   # rejet generique du serveur
+    10008,   # ordre place, confirmation non recue
+    10021,   # prix hors marche
+}
+
+# Motifs de refus DEFINITIFS : insister n'y changerait rien et ne ferait
+# qu'ajouter du bruit avant de constater qu'il n'y a rien a faire.
+_MOTIFS_DEFINITIFS = (
+    "marge", "margin", "drawdown", "duplicate", "risque_realise",
+    "not enough money", "no money",
+)
+
+
+def _refus_transitoire(reponse) -> bool:
+    """Ce refus a-t-il une chance d'aboutir a la prochaine tentative ?
+
+    ⚠️ Ne pas savoir n'est PAS une raison d'insister : sans code de retour
+    reconnu, on s'arrete et on laisse la trace. Une reprise aveugle sur une
+    reponse illisible transformerait un incident en boucle.
+    """
+    if not isinstance(reponse, dict) or reponse.get("ok"):
+        return False
+    texte = " ".join(
+        str(reponse.get(k, "")) for k in ("message", "reason", "body", "comment")
+    ).lower()
+    if any(m in texte for m in _MOTIFS_DEFINITIFS):
+        return False
+    try:
+        code = int(reponse.get("retcode"))
+    except (TypeError, ValueError):
+        return False
+    return code in _RETCODES_TRANSITOIRES
+
+
 async def _mirror_fill_to_live(setup, sz: dict, fill: dict, source_id: str) -> None:
     """Réplique sur le compte RÉEL un ordre qui vient d'être rempli en démo.
 
@@ -1025,14 +1074,51 @@ async def _mirror_fill_to_live(setup, sz: dict, fill: dict, source_id: str) -> N
         payload["lots"] = float(volume)
 
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            r = await client.post(
-                cible.bridge_url + "/order",
-                json=payload,
-                headers={"X-API-Key": cible.bridge_api_key,
-                         "Content-Type": "application/json"},
-            )
-        data = r.json() if r.status_code == 200 else {}
+        # Reprise sur refus PASSAGER (2026-08-12). Le bridge reessayait deux
+        # fois en 400 ms — donc dans les memes conditions de prix et de
+        # latence — puis abandonnait. Les delais croissants laissent le marche
+        # et le serveur du courtier changer d'etat.
+        data: dict = {}
+        r = None
+        for tentative, attente in enumerate((0,) + MIROIR_DELAIS_REPRISE):
+            if attente:
+                await asyncio.sleep(attente)
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                r = await client.post(
+                    cible.bridge_url + "/order",
+                    json=payload,
+                    headers={"X-API-Key": cible.bridge_api_key,
+                             "Content-Type": "application/json"},
+                )
+            # ⚠️ Semantique d'origine conservee : c'est le CODE HTTP qui dit
+            # si le corps est exploitable. Tester `r.text` a la place casse
+            # les doublures de test, dont le corps est vide alors que la
+            # reponse est valide.
+            try:
+                data = r.json() if r.status_code == 200 else {}
+            except ValueError:
+                data = {}
+            if data.get("ok"):
+                break
+            # Le refus utile est dans le corps des reponses NON-200, souvent
+            # sous forme de chaine JSON imbriquee.
+            sonde = dict(data)
+            corps = data.get("body")
+            if corps is None and r.status_code != 200:
+                corps = r.text[:300] if r.text else None
+            if isinstance(corps, str):
+                try:
+                    sonde.update(json.loads(corps))
+                except ValueError:
+                    sonde["body"] = corps
+            if not _refus_transitoire(sonde):
+                break
+            if attente or tentative == 0:
+                logger.warning(
+                    f"MIROIR démo→réel : refus passager ({sonde.get('retcode')}), "
+                    f"nouvelle tentative dans "
+                    f"{MIROIR_DELAIS_REPRISE[min(tentative, len(MIROIR_DELAIS_REPRISE)-1)]} s"
+                )
         ok = bool(data.get("ok"))
         mt5_pushes_service.update_push_result(
             cible.destination_id, push_date, setup.pair, direction, entry_5dp,
