@@ -1446,6 +1446,78 @@ def rates():
     })
 
 
+@app.route("/order_check", methods=["POST"])
+@require_api_key
+def order_check():
+    """Valide un ordre SANS l'executer, et rend le motif exact du courtier.
+
+    Ajoute le 2026-08-12. Le compte reel a refuse un achat XAUUSD avec
+    `retcode=10006 msg=Request rejected` — un motif generique, identique dans
+    le journal MT5 (<< accepted >> puis << rejected >> a la meme milliseconde).
+    Aucun des elements visibles n'expliquait le refus : trading autorise,
+    symbole pleinement negociable, 552 EUR de marge libre, volume conforme.
+
+    `mt5.order_check()` interroge le serveur avec la MEME requete que
+    `order_send`, mais sans passer d'ordre. Il rend la marge requise, la marge
+    restante, et surtout le `comment` du courtier — la seule source qui puisse
+    dire pourquoi.
+
+    ⚠️ Ne place RIEN. C'est un diagnostic, pas une execution.
+    """
+    data = request.get_json(silent=True) or {}
+    pair = data.get("pair", "")
+    direction = str(data.get("direction", "buy")).lower()
+    try:
+        lots = float(data.get("lots", 0.01))
+    except (TypeError, ValueError):
+        return jsonify({"error": "lots must be numeric"}), 400
+    if not pair:
+        return jsonify({"error": "pair requis"}), 400
+    if not ensure_mt5_connected():
+        return jsonify({"error": "MT5 not connected"}), 503
+
+    symbole = resolve_symbol(pair)
+    if not symbole:
+        return jsonify({"error": f"symbole introuvable pour {pair}"}), 404
+    tick = mt5.symbol_info_tick(symbole)
+    if tick is None:
+        return jsonify({"error": "pas de cotation"}), 503
+
+    req = {
+        "action": mt5.TRADE_ACTION_DEAL,
+        "symbol": symbole,
+        "volume": lots,
+        "type": mt5.ORDER_TYPE_BUY if direction == "buy" else mt5.ORDER_TYPE_SELL,
+        "price": tick.ask if direction == "buy" else tick.bid,
+        "deviation": DEVIATION_POINTS,
+        "magic": MAGIC_NUMBER,
+        "comment": "order-check",
+        "type_time": mt5.ORDER_TIME_GTC,
+        "type_filling": _pick_filling_mode(symbole),
+    }
+    res = mt5.order_check(req)
+    if res is None:
+        return jsonify({"erreur_mt5": str(mt5.last_error()), "requete": {
+            k: (str(v) if not isinstance(v, (int, float, str)) else v)
+            for k, v in req.items()}}), 502
+
+    info = mt5.symbol_info(symbole)
+    return jsonify({
+        "symbole": symbole,
+        "volume": lots,
+        "retcode": res.retcode,
+        # C'est CE champ qui porte l'explication du courtier.
+        "commentaire_courtier": res.comment,
+        "marge_requise": getattr(res, "margin", None),
+        "marge_restante": getattr(res, "margin_free", None),
+        "niveau_marge": getattr(res, "margin_level", None),
+        "solde_apres": getattr(res, "balance", None),
+        "mode_remplissage_utilise": req["type_filling"],
+        "modes_autorises_par_le_courtier": getattr(info, "filling_mode", None),
+        "derniere_erreur_mt5": str(mt5.last_error()),
+    })
+
+
 @app.route("/limits", methods=["GET"])
 @require_api_key
 def limits():
