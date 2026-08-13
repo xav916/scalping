@@ -109,8 +109,16 @@ def test_unite_de_risque_suit_la_politique_de_sizing(monkeypatch):
 
 
 def test_pnl_pct_est_independant_du_capital(monkeypatch):
-    """Même série de R → même pnl_pct, quel que soit le capital configuré."""
+    """Même série de R → même pnl_pct, quel que soit le capital configuré.
+
+    ⚠️ `PAC_MIN_REAL_TRADES=0` ici : depuis le 2026-08-13 un score bâti sur des
+    signaux masque ses métriques (`backtest.db` les gonfle, cf.
+    `test_metriques_de_signaux_ne_sont_pas_affichees`). Ce test-ci porte sur la
+    FORMULE de `pnl_pct`, pas sur le masquage — on se place donc dans le régime
+    où elle est observable.
+    """
     import config.settings as st
+    monkeypatch.setattr(st, "PAC_MIN_REAL_TRADES", 0)
     for rr in (1.8, -1.0, 1.8, -1.0, 1.8):
         _emit("EUR/USD", "buy", rr, outcome="WIN_TP1" if rr > 0 else "LOSS")
 
@@ -133,7 +141,13 @@ def test_shadow_setups_corrompu_nest_plus_lu(monkeypatch):
     Avant correctif, les 30 lignes dupliquées de `shadow_setups` donnaient
     `wr 0.0` et déclenchaient la rétrogradation. Le score doit maintenant
     refléter les signaux réels.
+
+    ⚠️ `PAC_MIN_REAL_TRADES=0` : ce test verifie QUELLE SOURCE alimente le
+    score, ce qui suppose de pouvoir lire le `wr`. Le masquage des metriques de
+    signaux est couvert ailleurs.
     """
+    import config.settings as st
+    monkeypatch.setattr(st, "PAC_MIN_REAL_TRADES", 0)
     from pathlib import Path
     from backend.services import shadow_v2_core_long as shadow
     monkeypatch.setattr(shadow, "DB_PATH", Path(pac._db_path()))

@@ -580,3 +580,56 @@ def test_reason_distinguishes_no_data_from_not_enough_real_trades(_isolated_db):
     assert no_data["eligible_for"] == pac.STATE_INDETERMINATE
     assert padded["eligible_for"] == pac.STATE_INDETERMINATE
     assert no_data["reason"] != padded["reason"]
+
+
+def test_metriques_de_signaux_ne_sont_pas_affichees(_isolated_db):
+    """Un score bâti sur des signaux ne doit exposer AUCUNE métrique chiffrée.
+
+    `backtest.db` détermine ses issues par un sondage du prix courant toutes
+    les ~3 min, sans rejouer les bougies : 55 à 65 % de ses gagnants avaient
+    déjà touché leur stop (mesuré le 2026-08-13). Un `wr` de 45 % y vaut
+    ~18 % réels.
+
+    Le garde-fou `PAC_MIN_REAL_TRADES` empêche déjà ces chiffres de DÉCIDER.
+    Il ne les empêchait pas d'être LUS — `/api/admin/pair-admission` les
+    affiche, et 47 transitions de l'historique sont `admin_manual`.
+
+    ⚠️ On masque, on ne supprime pas : `sample`, `n_real` et `n_simulated`
+    restent, sinon l'écran dirait « pas de données » là où il y en a — des
+    mauvaises. Nommer la borne plutôt que laisser un trou.
+    """
+    from backend.services import pair_admission_controller as pac
+
+    for i in range(30):
+        rr = 0.2 if i % 5 < 3 else -0.1        # WR 60 %, PF > 1,3 : flatteur
+        _emit_signal("GBP/JPY", "buy", rr, idx=i)
+
+    score = pac.compute_promotion_score("GBP/JPY", direction="buy")
+
+    assert score["eligible_for"] == pac.STATE_INDETERMINATE
+    for cle in ("sum_pnl", "pnl_pct", "wr", "pf", "max_dd_pct"):
+        assert score[cle] is None, f"{cle} ne doit pas etre chiffre : {score[cle]}"
+    # Ce qui décrit la situation reste lisible.
+    assert score["sample"] == 30
+    assert score["n_real"] == 0
+    assert score["n_simulated"] == 30
+    assert score["pnl_source"] == "backtest_trades"
+
+
+def test_metriques_reelles_restent_affichees(_isolated_db):
+    """Aucune régression : sur des trades RÉELS, les chiffres restent chiffrés."""
+    from backend.services import pair_admission_controller as pac
+    import config.settings as st
+
+    st.PAC_MIN_REAL_TRADES = 3
+    try:
+        for i in range(4):
+            _insert_trade(_isolated_db, "GBP/JPY", 10.0 if i < 3 else -5.0,
+                          direction="buy")
+        score = pac.compute_promotion_score("GBP/JPY", direction="buy", window=4)
+        assert score["n_real"] == 4
+        assert score["eligible_for"] != pac.STATE_INDETERMINATE
+        for cle in ("sum_pnl", "pnl_pct", "wr", "pf", "max_dd_pct"):
+            assert score[cle] is not None, f"{cle} doit rester chiffre"
+    finally:
+        st.PAC_MIN_REAL_TRADES = 30

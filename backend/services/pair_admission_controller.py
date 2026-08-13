@@ -1053,10 +1053,30 @@ def compute_promotion_score(pair: str, window: int = 30, direction: Optional[str
             f"requis ; échantillon complété par {n_simulated} signal(aux) "
             "simulé(s) — insuffisant pour une décision auto)"
         )
+        # ⛔ Métriques MASQUÉES (2026-08-13). Elles sont calculées sur un
+        # échantillon complété par `backtest.db`, dont les issues sortent d'un
+        # sondage du prix courant toutes les ~3 min — aucun rejeu de bougies.
+        # Mesuré contre les bougies : 55 à 65 % de ses GAGNANTS avaient déjà
+        # touché leur stop. Le biais ne va que dans un sens, il gonfle. Un `wr`
+        # de 45 % y vaut environ 18 % réels.
+        #
+        # `PAC_MIN_REAL_TRADES` empêchait déjà ces chiffres de DÉCIDER ; il ne
+        # les empêchait pas d'être LUS. `/api/admin/pair-admission` les affiche,
+        # et 47 transitions de l'historique portent `admin_manual`.
+        #
+        # ⚠️ On MASQUE, on ne supprime pas : `sample`, `n_real` et
+        # `n_simulated` restent, sinon l'écran dirait « pas de données » là où
+        # il y en a — des mauvaises. Nommer la borne plutôt que laisser un trou.
+        # Cf. [[feedback_detection_par_absence]].
+        #
+        # Sûr côté lecture : le seul consommateur numérique
+        # (`evaluate_pair`, auto-pause sur `pnl_pct < -3`) est protégé par un
+        # retour anticipé sur `eligible_for == STATE_INDETERMINATE`.
         return {
-            "sample": sample, "n_real": n_real,
-            "sum_pnl": sum_pnl, "pnl_pct": pnl_pct,
-            "wr": wr, "pf": pf, "max_dd_pct": max_dd_pct,
+            "sample": sample, "n_real": n_real, "n_simulated": n_simulated,
+            "sum_pnl": None, "pnl_pct": None,
+            "wr": None, "pf": None, "max_dd_pct": None,
+            "metriques_masquees": True,
             "eligible_for": eligible, "reason": reason,
             "pnl_source": pnl_source,
         }
