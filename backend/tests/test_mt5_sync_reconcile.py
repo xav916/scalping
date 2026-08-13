@@ -276,3 +276,42 @@ async def test_sync_from_bridge_calls_reconcile_even_when_audit_empty(temp_db, m
         await mt5_sync.sync_from_bridge()
 
     assert called == [True]
+
+
+@pytest.mark.asyncio
+async def test_reconcile_forwards_broker_reason_instead_of_guessing(
+    temp_db, mock_bridge_config
+):
+    """La cause remontée par MT5 doit atteindre la base, pas l'heuristique.
+
+    Depuis la mise à jour du bridge (2026-08-10), `/deals` renvoie `reason`,
+    lu directement de `DEAL_REASON_*`. Sans ce transfert, `_update_closed_trade`
+    ne reçoit rien et retombe sur `_derive_close_reason_from_exit`, qui situe le
+    prix de sortie par rapport aux SL/TP stockés — donc ne peut JAMAIS conclure
+    "MANUAL". C'est ce qui a étiqueté `INDETERMINE` la fermeture à la main du
+    ticket 83627188 le 2026-08-13, alors que le courtier disait `MANUAL`.
+
+    Le prix de sortie choisi ici (au-delà du TP) ferait dire "TP1" à
+    l'heuristique : le test échoue tant que la cause du courtier ne prime pas.
+    """
+    _insert_trade(temp_db, 900, status="OPEN", is_auto=1)
+
+    responses = {
+        "http://bridge.test/positions": _FakeResponse(200, {"positions": []}),
+        "http://bridge.test/deals?ticket=900": _FakeResponse(200, {
+            "ticket": 900, "closed": True,
+            "exit_price": 1.13, "pnl": 30.0,
+            "reason": "MANUAL",
+            "closed_at": "2026-04-20T21:30:00+00:00",
+        }),
+    }
+    with patch("backend.services.mt5_sync.httpx.AsyncClient",
+               lambda *a, **kw: _FakeAsyncClient(responses)):
+        await mt5_sync._reconcile_open_trades()
+
+    with sqlite3.connect(temp_db) as c:
+        row = c.execute(
+            "SELECT status, close_reason FROM personal_trades WHERE mt5_ticket=?",
+            (900,),
+        ).fetchone()
+    assert row == ("CLOSED", "MANUAL")

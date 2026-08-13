@@ -226,8 +226,15 @@ def _upsert_open_trade(row: dict[str, Any], user: str) -> None:
 def _derive_close_reason_from_exit(
     ticket: int, exit_price: float | None
 ) -> str | None:
-    """Heuristique : le bridge ne remonte pas `reason` dans /deals, donc on
-    situe `exit_price` par rapport à l'entrée, au SL et au TP stockés en DB.
+    """Heuristique de DERNIER RECOURS : quand aucune cause ne vient du
+    courtier, on situe `exit_price` par rapport à l'entrée, au SL et au TP
+    stockés en DB.
+
+    ⚠️ Depuis le 2026-08-10 le bridge REMONTE `reason` dans /deals (lu de
+    `DEAL_REASON_*`), et `_reconcile_open_trades` le transmet. Cette fonction
+    ne doit donc plus servir que pour les fermetures sans cause connue —
+    principalement l'historique déjà en base. Ne pas rétablir un appel
+    inconditionnel : il ferait perdre une mesure au profit d'une déduction.
 
     ⚠️ Chaque branche est une DÉTERMINATION POSITIVE. La branche par défaut
     renvoie "INDETERMINE", jamais "MANUAL" : affirmer « fermé à la main » parce
@@ -615,6 +622,11 @@ async def _reconcile_open_trades() -> None:
                 "exit_price": data.get("exit_price"),
                 "pnl": data.get("pnl"),
                 "created_at": data.get("closed_at"),
+                # La cause vient de MT5 (`DEAL_REASON_*`), pas d'une comparaison
+                # de prix. Sans elle, `_update_closed_trade` retombe sur
+                # l'heuristique, qui ne peut structurellement jamais rendre
+                # "MANUAL" — elle ne connaît que les SL/TP stockés.
+                "reason": data.get("reason"),
             })
             n_full += 1
             await _notify_close_telegram(int(ticket))
