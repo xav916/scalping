@@ -137,6 +137,11 @@ def mock_bridge_config(monkeypatch):
     monkeypatch.setattr(mt5_sync, "MT5_SYNC_ENABLED", True)
     monkeypatch.setattr(mt5_sync, "MT5_BRIDGE_URL", "http://bridge.test")
     monkeypatch.setattr(mt5_sync, "MT5_BRIDGE_API_KEY", "key")
+    # Le bridge réel est lu dans l'environnement : le neutraliser par défaut,
+    # sinon un `.env` chargé sur la machine de test ferait interroger une URL
+    # non simulée et le résultat dépendrait du poste.
+    monkeypatch.delenv("MT5_BRIDGE_LIVE_URL", raising=False)
+    monkeypatch.delenv("MT5_BRIDGE_LIVE_API_KEY", raising=False)
 
 
 @pytest.mark.asyncio
@@ -315,3 +320,85 @@ async def test_reconcile_forwards_broker_reason_instead_of_guessing(
             (900,),
         ).fetchone()
     assert row == ("CLOSED", "MANUAL")
+
+
+@pytest.mark.asyncio
+async def test_ticket_open_on_live_bridge_is_not_declared_closed(
+    temp_db, mock_bridge_config, monkeypatch
+):
+    """Un ticket ouvert sur le bridge RÉEL ne doit pas être déclaré fermé.
+
+    `_reconcile_open_trades` n'interrogeait que `MT5_BRIDGE_URL` (le démo).
+    Un ticket du compte réel lui étant inconnu, `/positions` ne le contenait
+    pas et `/deals` répondait `closed=None` — lu comme « historique purgé »,
+    donc `status=CLOSED` avec `closed_at=maintenant`.
+
+    Mesuré le 2026-08-13 : les 16 trades réels d'août portent tous une durée
+    d'exactement 1 minute, et le ticket 1353960866 (fermé à la main le 08-11)
+    était daté du 08-05. Ne pas connaître un ticket n'est pas le voir fermé.
+    """
+    monkeypatch.setenv("MT5_BRIDGE_LIVE_URL", "http://live.test")
+    monkeypatch.setenv("MT5_BRIDGE_LIVE_API_KEY", "livekey")
+    _insert_trade(temp_db, 950, status="OPEN", is_auto=1)
+
+    responses = {
+        # le démo ne connaît pas ce ticket
+        "http://bridge.test/positions": _FakeResponse(200, {"positions": []}),
+        "http://bridge.test/deals?ticket=950": _FakeResponse(200, {
+            "ticket": 950, "closed": None, "message": "no deals found",
+        }),
+        # ... mais il est bel et bien OUVERT sur le réel
+        "http://live.test/positions": _FakeResponse(200, {
+            "positions": [{"ticket": 950}]
+        }),
+    }
+    with patch("backend.services.mt5_sync.httpx.AsyncClient",
+               lambda *a, **kw: _FakeAsyncClient(responses)):
+        await mt5_sync._reconcile_open_trades()
+
+    with sqlite3.connect(temp_db) as c:
+        row = c.execute(
+            "SELECT status, closed_at FROM personal_trades WHERE mt5_ticket=?",
+            (950,),
+        ).fetchone()
+    assert row == ("OPEN", None)
+
+
+@pytest.mark.asyncio
+async def test_closure_read_from_the_bridge_that_owns_the_ticket(
+    temp_db, mock_bridge_config, monkeypatch
+):
+    """Une clôture du compte réel se lit sur le bridge du réel.
+
+    Le démo répond `closed=None` (ticket inconnu) ; sa réponse ne doit pas
+    l'emporter sur celle du bridge qui détient réellement le deal, sinon la
+    ligne finit CLOSED sans prix, sans P&L et avec `closed_at=maintenant` —
+    ce qui datait le ticket 1353960866 six jours trop tôt.
+    """
+    monkeypatch.setenv("MT5_BRIDGE_LIVE_URL", "http://live.test")
+    monkeypatch.setenv("MT5_BRIDGE_LIVE_API_KEY", "livekey")
+    _insert_trade(temp_db, 960, status="OPEN", is_auto=1)
+
+    responses = {
+        "http://bridge.test/positions": _FakeResponse(200, {"positions": []}),
+        "http://live.test/positions": _FakeResponse(200, {"positions": []}),
+        "http://bridge.test/deals?ticket=960": _FakeResponse(200, {
+            "ticket": 960, "closed": None, "message": "no deals found",
+        }),
+        "http://live.test/deals?ticket=960": _FakeResponse(200, {
+            "ticket": 960, "closed": True,
+            "exit_price": 4363.03, "pnl": -13.64, "reason": "SL",
+            "closed_at": "2026-08-11T09:29:17+00:00",
+        }),
+    }
+    with patch("backend.services.mt5_sync.httpx.AsyncClient",
+               lambda *a, **kw: _FakeAsyncClient(responses)):
+        await mt5_sync._reconcile_open_trades()
+
+    with sqlite3.connect(temp_db) as c:
+        row = c.execute(
+            "SELECT status, exit_price, pnl, close_reason FROM personal_trades "
+            " WHERE mt5_ticket=?",
+            (960,),
+        ).fetchone()
+    assert row == ("CLOSED", 4363.03, -13.64, "SL")

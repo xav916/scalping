@@ -581,20 +581,38 @@ async def _reconcile_open_trades() -> None:
     if not open_tickets:
         return
 
-    base = MT5_BRIDGE_URL.rstrip("/")
-    headers = {"X-API-Key": MT5_BRIDGE_API_KEY}
+    # ⚠️ TOUS les bridges, pas seulement le démo. `personal_trades` ne porte
+    # pas de colonne de destination : les tickets du compte réel y côtoient
+    # ceux du démo. N'interroger que `MT5_BRIDGE_URL` faisait répondre
+    # `closed=None` au démo sur un ticket qu'il n'a jamais vu — lu comme
+    # « historique purgé », donc fermeture. Mesuré le 2026-08-13 : les 16
+    # trades réels d'août portaient tous une durée d'exactement 1 minute.
+    bridges = [(MT5_BRIDGE_URL.rstrip("/"), MT5_BRIDGE_API_KEY)]
+    live_url = os.getenv("MT5_BRIDGE_LIVE_URL", "")
+    live_key = os.getenv("MT5_BRIDGE_LIVE_API_KEY", "")
+    if live_url and live_key:
+        bridges.append((live_url.rstrip("/"), live_key))
 
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            r = await client.get(f"{base}/positions", headers=headers)
-            if r.status_code != 200:
-                logger.warning(f"mt5_sync: /positions {r.status_code}")
-                return
-            positions = r.json().get("positions", []) or []
-            live_tickets = {int(p["ticket"]) for p in positions if "ticket" in p}
-    except Exception as e:
-        logger.debug(f"mt5_sync: /positions unreachable: {e}")
-        return
+    live_tickets: set[int] = set()
+    for base, key in bridges:
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                r = await client.get(
+                    f"{base}/positions", headers={"X-API-Key": key}
+                )
+                if r.status_code != 200:
+                    logger.warning(f"mt5_sync: /positions {r.status_code} ({base})")
+                    return
+                positions = r.json().get("positions", []) or []
+                live_tickets |= {
+                    int(p["ticket"]) for p in positions if "ticket" in p
+                }
+        except Exception as e:
+            # ⛔ Un bridge muet ne prouve RIEN. Poursuivre déclarerait fermés
+            # tous les tickets qu'il est seul à porter. Cf.
+            # [[feedback_detection_par_absence]].
+            logger.debug(f"mt5_sync: /positions unreachable ({base}): {e}")
+            return
 
     closed_tickets = open_tickets - live_tickets
     if not closed_tickets:
@@ -603,17 +621,31 @@ async def _reconcile_open_trades() -> None:
     n_full = 0
     n_partial = 0
     for ticket in closed_tickets:
-        try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                r = await client.get(
-                    f"{base}/deals", headers=headers,
-                    params={"ticket": ticket},
+        # On demande à chaque bridge. Le premier qui CONNAÎT la clôture fait
+        # foi ; les autres répondent `closed=None` parce que le ticket n'est
+        # pas le leur, ce qui n'est pas une information sur sa fermeture.
+        data = None
+        for base, key in bridges:
+            try:
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    r = await client.get(
+                        f"{base}/deals", headers={"X-API-Key": key},
+                        params={"ticket": ticket},
+                    )
+                    if r.status_code != 200:
+                        continue
+                    reponse = r.json()
+            except Exception as e:
+                logger.debug(
+                    f"mt5_sync: /deals ticket={ticket} failed ({base}): {e}"
                 )
-                if r.status_code != 200:
-                    continue
-                data = r.json()
-        except Exception as e:
-            logger.debug(f"mt5_sync: /deals ticket={ticket} failed: {e}")
+                continue
+            if reponse.get("closed") is True:
+                data = reponse
+                break
+            if data is None:
+                data = reponse
+        if data is None:
             continue
 
         if data.get("closed") is True:
