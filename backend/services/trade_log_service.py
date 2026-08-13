@@ -105,6 +105,31 @@ def _init_schema() -> None:
             CREATE INDEX IF NOT EXISTS idx_pt_ticket ON personal_trades(mt5_ticket);
             CREATE INDEX IF NOT EXISTS idx_pt_signal ON personal_trades(signal_id);
         """)
+        # Unicité (mt5_ticket, direction). C'est ELLE qui donne son effet au
+        # `INSERT OR IGNORE` de `mt5_sync._upsert_open_trade` : sans contrainte
+        # à violer, `OR IGNORE` n'ignore rien et insère le doublon. Ce garde
+        # était écrit depuis le début mais sans prise — 544 doublons accumulés
+        # entre avril et juin 2026, purgés le 2026-08-13.
+        #
+        # La clé porte sur (ticket, sens) et non sur le ticket seul : une
+        # position a parfois une patte de clôture (`close-sell`, `close-buy`)
+        # qui partage son ticket. `UNIQUE(mt5_ticket)` les rendrait impossibles.
+        #
+        # ⚠️ Le repli est OBLIGATOIRE : une autre base (autre locataire, clone,
+        # sauvegarde ancienne) peut encore contenir des doublons. `_init_schema`
+        # est appelé à chaque opération — y laisser remonter l'exception
+        # arrêterait le service pour une question d'hygiène. Même principe que
+        # la porte d'heure : une contrainte qui ne peut pas se poser se tait.
+        try:
+            c.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_pt_ticket_dir "
+                "  ON personal_trades(mt5_ticket, direction)"
+            )
+        except sqlite3.IntegrityError:
+            logger.warning(
+                "personal_trades: doublons (mt5_ticket, direction) presents, "
+                "index unique NON pose. Purger avant de compter quoi que ce soit."
+            )
 
 
 def get_manual_silent(user: str) -> bool:
