@@ -333,6 +333,16 @@ def _db_init() -> None:
             conn.execute("ALTER TABLE orders ADD COLUMN fill_price REAL")
         if "fill_source" not in cols:
             conn.execute("ALTER TABLE orders ADD COLUMN fill_source TEXT")
+        # Migration 2026-08-17 — la cause de clôture à la SOURCE.
+        #
+        # MT5 sait pourquoi une position s'est fermée (`deal.reason`), et
+        # `_log_closed_position` avait cette valeur sous la main sans l'écrire.
+        # Le radar recevait donc une clôture SANS cause et la devinait par
+        # proximité de prix : trois sorties décidées à la main le 08-17 ont été
+        # créditées au stop suiveur, le mécanisme désarmé le 08-11 pour
+        # destruction de valeur.
+        if "close_reason" not in cols:
+            conn.execute("ALTER TABLE orders ADD COLUMN close_reason TEXT")
         conn.commit()
 
 
@@ -1276,6 +1286,7 @@ def _log_closed_position(ticket: int) -> None:
         exit_time = None
         symbol = None
         volume = None
+        cause = None
         for d in deals:
             total_pnl += (d.profit or 0) + (d.swap or 0) + (d.commission or 0)
             if d.entry == mt5.DEAL_ENTRY_OUT or d.entry == mt5.DEAL_ENTRY_OUT_BY:
@@ -1283,11 +1294,12 @@ def _log_closed_position(ticket: int) -> None:
                 exit_time = d.time
                 symbol = d.symbol
                 volume = d.volume
+                cause = _deal_reason_label(d)
         logger.info(
             f"[CLOSE] ticket #{ticket} {symbol} exit @ {exit_price} "
-            f"PnL={total_pnl:+.2f}"
+            f"PnL={total_pnl:+.2f} cause={cause}"
         )
-        _db_log_order(
+        champs = dict(
             mode="live",
             status="closed",
             symbol=symbol,
@@ -1297,6 +1309,13 @@ def _log_closed_position(ticket: int) -> None:
             pnl=round(total_pnl, 2),
             message=f"Closed at {exit_price}" if exit_price else "Closed",
         )
+        # ⚠️ Une cause illisible n'est PAS écrite. Le radar a une heuristique de
+        # repli sur les prix ; rien ne rattrape une cause affirmée à tort, car
+        # `close_reason` y est protégé par COALESCE — la première valeur posée
+        # est définitive. Cf. [[feedback_detection_par_absence]].
+        if cause and cause != "INCONNU":
+            champs["close_reason"] = cause
+        _db_log_order(**champs)
     except Exception as e:
         logger.warning(f"_log_closed_position({ticket}) error: {e}")
 
