@@ -189,7 +189,9 @@ async def test_closure_detected_and_full_update(temp_db, mock_bridge_config):
     assert row[0] == "CLOSED"
     assert row[1] == 1.1234
     assert row[2] == -12.5
-    assert row[3] == "2026-04-20T21:30:00+00:00"
+    # 21:30 est l'heure de l'horloge du courtier (UTC+3) que `/deals`
+    # étiquette `+00:00` ; la base doit porter l'UTC réel.
+    assert row[3] == "2026-04-20T18:30:00+00:00"
 
 
 @pytest.mark.asyncio
@@ -402,3 +404,55 @@ async def test_closure_read_from_the_bridge_that_owns_the_ticket(
             (960,),
         ).fetchone()
     assert row == ("CLOSED", 4363.03, -13.64, "SL")
+
+
+@pytest.mark.asyncio
+async def test_deals_closed_at_is_read_off_the_broker_clock(
+    temp_db, mock_bridge_config
+):
+    """`/deals` étiquette `+00:00` une heure lue sur l'horloge du COURTIER.
+
+    Le bridge construit ce champ avec
+    `datetime.fromtimestamp(deal.time, tz=timezone.utc)` : il prend un
+    horodatage exprimé en heure SERVEUR pour de l'epoch. Le serveur d'IC
+    Markets tourne à UTC+3 (établi le 2026-08-13 par trois voies
+    indépendantes), donc une clôture atterrit **3 h dans le futur**.
+
+    Jamais observé en production parce que le chemin `/audit` gagne toujours
+    la course et pose sa propre date — mais `closed_at` est protégé par
+    `COALESCE` : le jour où `/audit` se tait, la valeur fausse devient
+    définitive. Cf. [[project_close_reason_devinee_2026_08_17]].
+    """
+    _insert_trade(temp_db, 970, status="OPEN", is_auto=1)
+
+    responses = {
+        "http://bridge.test/positions": _FakeResponse(200, {"positions": []}),
+        "http://bridge.test/deals?ticket=970": _FakeResponse(200, {
+            "ticket": 970, "closed": True,
+            "exit_price": 1.13, "pnl": 12.0, "reason": "SL",
+            # heure serveur courtier, étiquetée UTC par le bridge
+            "closed_at": "2026-08-17T20:11:10+00:00",
+        }),
+    }
+    with patch("backend.services.mt5_sync.httpx.AsyncClient",
+               lambda *a, **kw: _FakeAsyncClient(responses)):
+        await mt5_sync._reconcile_open_trades()
+
+    with sqlite3.connect(temp_db) as c:
+        closed_at = c.execute(
+            "SELECT closed_at FROM personal_trades WHERE mt5_ticket=?", (970,)
+        ).fetchone()[0]
+
+    assert closed_at == "2026-08-17T17:11:10+00:00"
+
+
+def test_broker_clock_correction_leaves_a_naive_or_unreadable_value_alone():
+    """Ne pas corriger ce qu'on n'a pas su lire.
+
+    Une date illisible rendue décalée de 3 h serait pire que rendue telle
+    quelle : on inventerait une précision qu'on n'a pas.
+    Cf. [[feedback_detection_par_absence]].
+    """
+    assert mt5_sync._heure_reelle_de_cloture(None) is None
+    assert mt5_sync._heure_reelle_de_cloture("") == ""
+    assert mt5_sync._heure_reelle_de_cloture("pas une date") == "pas une date"

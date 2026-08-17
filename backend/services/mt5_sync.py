@@ -18,7 +18,7 @@ import json
 import logging
 import os
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -438,6 +438,44 @@ def _normalize_close_reason(raw: str | None) -> str | None:
     return raw.upper()[:16]
 
 
+def _decalage_courtier_h() -> float:
+    """Écart entre l'horloge du serveur du courtier et l'UTC réel, en heures.
+
+    IC Markets tourne à UTC+3 (établi le 2026-08-13 par trois voies
+    indépendantes). ⚠️ Ce n'est PAS une constante : les serveurs MT5 suivent
+    l'heure d'été américaine et repassent à UTC+2 vers fin octobre. D'où la
+    variable d'environnement, à ajuster au changement d'heure.
+    """
+    try:
+        return float(os.getenv("MT5_BROKER_UTC_OFFSET_HOURS", "3"))
+    except ValueError:
+        return 3.0
+
+
+def _heure_reelle_de_cloture(iso: str | None) -> str | None:
+    """Ramène en UTC réel une date que le bridge a étiquetée `+00:00` alors
+    qu'il l'a lue sur l'horloge du COURTIER.
+
+    Le bridge construit `closed_at` avec
+    `datetime.fromtimestamp(deal.time, tz=timezone.utc)` : `deal.time` est
+    exprimé en heure serveur, pas en epoch. Le décalage passe donc entier dans
+    la date, qui atterrit 3 h dans le futur.
+
+    ⚠️ Une valeur illisible est rendue **telle quelle**, jamais décalée :
+    corriger ce qu'on n'a pas su lire inventerait une précision qu'on n'a pas.
+    Cf. [[feedback_detection_par_absence]].
+    """
+    if not iso:
+        return iso
+    try:
+        dt = datetime.fromisoformat(iso)
+    except (TypeError, ValueError):
+        return iso
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return (dt - timedelta(hours=_decalage_courtier_h())).isoformat()
+
+
 def _update_closed_trade(row: dict[str, Any]) -> None:
     """Quand le bridge log une fermeture (status='closed'), met à jour la
     ligne personal_trades correspondante (par mt5_ticket).
@@ -653,7 +691,11 @@ async def _reconcile_open_trades() -> None:
                 "ticket": ticket,
                 "exit_price": data.get("exit_price"),
                 "pnl": data.get("pnl"),
-                "created_at": data.get("closed_at"),
+                # ⚠️ `/deals` lit l'heure sur l'horloge du COURTIER (UTC+3) et
+                # l'étiquette `+00:00`. Sans correction, la clôture est datée
+                # 3 h dans le futur — et `closed_at` étant protégé par
+                # COALESCE, la valeur fausse devient définitive.
+                "created_at": _heure_reelle_de_cloture(data.get("closed_at")),
                 # La cause vient de MT5 (`DEAL_REASON_*`), pas d'une comparaison
                 # de prix. Sans elle, `_update_closed_trade` retombe sur
                 # l'heuristique, qui ne peut structurellement jamais rendre
