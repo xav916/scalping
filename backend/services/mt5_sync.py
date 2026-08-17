@@ -676,6 +676,46 @@ async def _reconcile_open_trades() -> None:
         )
 
 
+async def _cause_du_courtier(
+    base_url: str, api_key: str, ticket: int
+) -> str | None:
+    """Demande à CE bridge la cause de clôture enregistrée par MT5.
+
+    Ajouté le 2026-08-17. Les lignes d'audit d'une fermeture ne portent AUCUNE
+    cause : `_log_closed_position` (bridge) itère les deals, a `d.reason` sous
+    la main, et ne l'écrit pas. `_update_closed_trade` retombait donc sur
+    l'heuristique de prix — qui ne peut structurellement jamais rendre
+    "MANUAL", puisqu'elle ne connaît que les SL/TP stockés.
+
+    Mesuré ce jour-là : trois XAU/USD fermés à la main par l'utilisateur,
+    enregistrés `TRAILING_SL` alors que `/deals` répondait `MANUAL` pour les
+    trois. Le réconciliateur, lui, avait la bonne cause — mais il arrive après
+    et `close_reason = COALESCE(close_reason, ?)` lui interdit d'y toucher.
+    Demander ICI fait atterrir la cause juste dès la PREMIÈRE écriture, ce qui
+    supprime la course au lieu de l'arbitrer.
+
+    ⚠️ On interroge le bridge d'où vient la ligne d'audit, pas « les bridges » :
+    à ce stade on sait exactement à qui appartient le ticket. C'est ce que le
+    réconciliateur ne peut pas savoir, lui qui doit tous les questionner.
+
+    Retourne `None` si le bridge est muet — jamais une cause inventée.
+    Cf. [[feedback_detection_par_absence]].
+    """
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(
+                f"{base_url.rstrip('/')}/deals",
+                headers={"X-API-Key": api_key} if api_key else {},
+                params={"ticket": ticket},
+            )
+        if r.status_code != 200:
+            return None
+        return r.json().get("reason")
+    except Exception as e:
+        logger.debug(f"mt5_sync: cause /deals ticket={ticket} indisponible: {e}")
+        return None
+
+
 async def _sync_one(name: str, base_url: str, api_key: str) -> tuple[int, int]:
     """Pull /audit d'un bridge MT5 + applique à personal_trades. Retourne (n_open, n_closed).
 
@@ -717,6 +757,16 @@ async def _sync_one(name: str, base_url: str, api_key: str) -> tuple[int, int]:
             _upsert_open_trade(row, user)
             new_open += 1
         elif status == "closed":
+            # La cause d'abord, l'écriture ensuite : `close_reason` est protégé
+            # par COALESCE, donc la PREMIÈRE valeur posée est définitive. Y
+            # laisser atterrir une devinette condamne la cause du courtier.
+            if not (row.get("close_reason") or row.get("reason")
+                    or row.get("deal_reason")) and row.get("ticket"):
+                cause = await _cause_du_courtier(
+                    base_url, api_key, int(row["ticket"])
+                )
+                if cause:
+                    row = {**row, "reason": cause}
             _update_closed_trade(row)
             new_closed += 1
             ticket = row.get("ticket")
