@@ -473,6 +473,104 @@ def positions():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+def _protection_par_symbole(open_orders: list) -> dict:
+    """Rend {symbole: {"stop": bool, "objectif": bool}} depuis les ordres vivants.
+
+    Un ordre ne protege une position que s'il la REDUIT. Un ordre d'entree en
+    attente sur le meme symbole n'est pas une protection — d'ou le filtre sur
+    `reduceOnly`, sans lequel on annoncerait protegee une position qui ne l'est
+    pas. C'est precisement le genre de validation muette qui laisse une
+    position nue passer pour saine.
+    """
+    par_sym: dict = {}
+    for o in open_orders:
+        if not o.get("reduceOnly"):
+            continue
+        sym = o.get("symbol")
+        if not sym:
+            continue
+        etat = par_sym.setdefault(sym, {"stop": False, "objectif": False})
+        t = (o.get("orderType") or "").lower()
+        if t in ("stp", "stop"):
+            etat["stop"] = True
+        elif t in ("take_profit", "takeprofit"):
+            etat["objectif"] = True
+    return par_sym
+
+
+@app.route("/openorders", methods=["GET"])
+@require_bridge_key
+def openorders():
+    """Ordres en attente, et l'etat de protection de chaque position ouverte.
+
+    Ajoute le 2026-08-19. Il n'existait AUCUN moyen de verifier qu'une
+    position portait encore son stop : `/positions` ne dit rien des ordres, et
+    les trois ordres d'une entree Kraken (marche, stop, objectif) sont
+    independants — un stop peut echouer a la pose sans que l'entree echoue.
+    Une position pouvait donc tourner des jours sans protection, en silence.
+    Cf. l'incident de position nue du 2026-08-05.
+
+    `positions_non_protegees` est la reponse a la question qu'on se pose
+    vraiment ; les listes brutes restent la pour diagnostiquer.
+    """
+    try:
+        data = _signed_request("GET", "/api/v3/openorders")
+        if data.get("result") != "success":
+            return jsonify({"ok": False, "error": "kraken response not success", "raw": data}), 503
+        bruts = data.get("openOrders", []) or []
+        ordres = []
+        for o in bruts:
+            ordres.append({
+                "order_id": o.get("order_id") or o.get("orderId"),
+                "symbol": o.get("symbol"),
+                "side": o.get("side"),
+                "orderType": o.get("orderType"),
+                "size": float(o.get("unfilledSize", o.get("size", 0.0)) or 0.0),
+                "stopPrice": o.get("stopPrice"),
+                "limitPrice": o.get("limitPrice"),
+                "reduceOnly": bool(o.get("reduceOnly")),
+                "receivedTime": o.get("receivedTime"),
+            })
+
+        protection = _protection_par_symbole(ordres)
+
+        # Croisement avec les positions reellement ouvertes.
+        nues = []
+        try:
+            pos_data = _signed_request("GET", "/api/v3/openpositions")
+            for p in (pos_data.get("openPositions", []) or []):
+                sym = p.get("symbol")
+                etat = protection.get(sym, {"stop": False, "objectif": False})
+                if not etat["stop"]:
+                    nues.append({
+                        "symbol": sym,
+                        "side": p.get("side"),
+                        "size": float(p.get("size", 0.0)),
+                        "price": float(p.get("price", 0.0)),
+                        "objectif_pose": etat["objectif"],
+                    })
+        except Exception as e:
+            # Ne PAS rendre une liste vide : elle se lirait « tout va bien ».
+            logger.warning(f"openorders: croisement positions impossible: {e}")
+            return jsonify({
+                "ok": False,
+                "error": f"positions unreachable: {e}",
+                "count": len(ordres),
+                "orders": ordres,
+            }), 503
+
+        return jsonify({
+            "ok": True,
+            "count": len(ordres),
+            "orders": ordres,
+            "protection": protection,
+            "positions_non_protegees": nues,
+        })
+    except Exception as e:
+        logger.exception("openorders failed")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @app.route("/fills", methods=["GET"])
 @require_bridge_key
 def fills():
