@@ -19,9 +19,9 @@
 # Kraken Futures et Spot ; ce script cesse de le doubler.
 #
 # Ce qu'il reste à faire ici, et que le hook ne peut pas faire : signaler un
-# push qui n'a jamais été confirmé. C'est un évènement d'infrastructure —
-# il part donc sur le canal infra, conformément à la répartition convenue
-# (infra → Xav Scalping Infra, trades → Scalping Radar, récap → Sales).
+# push qui n'a jamais été confirmé. Un ordre qui ne part pas est un évènement
+# de TRADING — il va donc sur le fil `trades` depuis le 2026-08-19, et non sur
+# l'infra comme l'annonçait cet en-tête jusque-là.
 #
 # Usage :
 #   notify-new-pushes.sh           → alerte sur les pushes non confirmés
@@ -31,9 +31,10 @@ set -uo pipefail
 DB=/opt/scalping/data/trades.db
 ETAT=/var/lib/scalping/last-failed-push-id.txt
 TOKEN="shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg"
-# channel=sales : un push refuse est un evenement de TRADING, pas d'infra. Le
-# bot infra est reserve au monitoring (cf. separation du 2026-08-02).
-URL="https://app.scalping-radar.online/api/admin/notify-infra-telegram?token=${TOKEN}&channel=sales"
+# channel=trades : un push refuse est un evenement de TRADING (2026-08-19).
+# Tant que le bot dedie n'est pas gree, l'endpoint retombe sur `sales` en le
+# journalisant — basculer ici ne perd rien.
+URL="https://app.scalping-radar.online/api/admin/notify-infra-telegram?token=${TOKEN}&channel=trades"
 
 # Un push est inséré à `ok=0` AVANT l'envoi, puis passé à `ok=1` s'il aboutit.
 # Un `ok=0` récent est donc peut-être simplement en vol : on laisse une marge

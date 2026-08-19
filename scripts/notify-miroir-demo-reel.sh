@@ -20,9 +20,10 @@
 set -uo pipefail
 
 TOKEN="shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg"
-# channel=sales : c'est un evenement de TRADING, pas d'infrastructure. Le bot
-# infra est reserve au monitoring (cf. separation du 2026-08-02).
-NOTIFY_URL="https://app.scalping-radar.online/api/admin/notify-infra-telegram?token=${TOKEN}&channel=sales"
+# channel=trades : fil dedie aux ordres (2026-08-19). Tant que le bot dedie
+# n'est pas gree, l'endpoint retombe sur `sales` en le journalisant — donc
+# basculer ici ne perd rien et la migration se fera sans retoucher ce script.
+NOTIFY_URL="https://app.scalping-radar.online/api/admin/notify-infra-telegram?token=${TOKEN}&channel=trades"
 
 # Fenêtre de recherche : large assez pour ne rien rater entre deux passages,
 # la déduplication côté endpoint évite les répétitions.
