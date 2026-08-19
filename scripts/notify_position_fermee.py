@@ -44,11 +44,22 @@ INSTANTANE = Path(os.environ.get(
 DELAI = 10
 
 TOKEN = os.environ.get("INFRA_NOTIFY_TOKEN", "shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg")
-# channel=sales : le fil `trades` est reserve aux OUVERTURES sur le compte
-# reel 13137475 (2026-08-19). Les clotures couvrent les trois destinations et
-# restent donc ici, en attendant qu'on tranche si elles doivent suivre.
-NOTIFY_URL = ("https://app.scalping-radar.online/api/admin/"
-              f"notify-infra-telegram?token={TOKEN}&channel=sales")
+# Routage PAR DESTINATION (2026-08-19). Le fil `trades` suit le compte reel
+# 13137475 de bout en bout : son ouverture y est deja annoncee par
+# notify-miroir-demo-reel.sh, sa cloture l'y rejoint. Les autres destinations
+# restent sur `sales`.
+#
+# ⚠️ Le routage se fait par MESSAGE, pas globalement : une cloture reelle et
+# une cloture Kraken dans le meme passage produisent DEUX envois, chacun sur
+# son fil. Grouper les deux enverrait du Kraken sur un fil cense ne porter que
+# le compte reel.
+CANAL_PAR_DESTINATION = {"admin_live": "trades"}
+CANAL_DEFAUT = "sales"
+
+
+def _url(canal: str) -> str:
+    return ("https://app.scalping-radar.online/api/admin/"
+            f"notify-infra-telegram?token={TOKEN}&channel={canal}")
 
 # Tickets ayant une action manuelle en attente à leur clôture. Vide par défaut :
 # la notification rappelle elle-même de vider la variable, donc la liste ne
@@ -155,21 +166,23 @@ def decrire(dest, pos, sortie) -> str:
     return ligne
 
 
-def notifier(corps: str, cles: list[str]) -> bool:
+def notifier(corps: str, cles: list[str], canal: str = CANAL_DEFAUT) -> bool:
+    titre = ("Position fermee — compte reel 13137475" if canal == "trades"
+             else "Position fermee")
     charge = json.dumps({
-        "title": "Position fermee",
+        "title": titre,
         "body": corps,
         "dedup_key": "cloture_" + "_".join(sorted(cles)),
         "cooldown_seconds": 3600,
     }).encode()
     rq = urllib.request.Request(
-        NOTIFY_URL, data=charge, headers={"Content-Type": "application/json"})
+        _url(canal), data=charge, headers={"Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(rq, timeout=DELAI) as r:
-            print(f"  notify HTTP {r.status}")
+            print(f"  notify [{canal}] HTTP {r.status}")
             return r.status < 300
     except Exception as e:  # noqa: BLE001
-        print(f"  notify ECHEC : {type(e).__name__}: {e}")
+        print(f"  notify [{canal}] ECHEC : {type(e).__name__}: {e}")
         return False
 
 
@@ -183,7 +196,9 @@ def main() -> int:
     except (OSError, ValueError):
         memoire = {}
 
-    lignes, cles, nouvelle_memoire = [], [], dict(memoire)
+    # {canal: (lignes, cles)} — le routage se decide par destination.
+    groupes: dict[str, tuple[list, list]] = {}
+    nouvelle_memoire = dict(memoire)
 
     for did in DESTINATIONS_SURVEILLEES:
         dest = DESTINATIONS.get(did)
@@ -195,14 +210,18 @@ def main() -> int:
         print(f"  {did:14s} {etat}, {len(courant)} ouverte(s), "
               f"{len(fermees)} fermee(s)")
 
+        canal = CANAL_PAR_DESTINATION.get(did, CANAL_DEFAUT)
+        lignes_c, cles_c = groupes.setdefault(canal, ([], []))
         for pos in fermees:
-            lignes.append(decrire(dest, pos, enrichir(dest, pos)))
-            cles.append(f"{did}:{pos.get('ticket') or pos.get('symbol')}")
+            lignes_c.append(decrire(dest, pos, enrichir(dest, pos)))
+            cles_c.append(f"{did}:{pos.get('ticket') or pos.get('symbol')}")
 
         if doit_memoriser(ok):
             nouvelle_memoire[did] = courant
 
-    if not lignes:
+    groupes = {c: v for c, v in groupes.items() if v[0]}
+
+    if not groupes:
         # ⚠️ L'instantané se met à jour même sans clôture : c'est lui qui suit
         # les OUVERTURES. Sans cela, la prochaine comparaison partirait d'un
         # relevé périmé et annoncerait des clôtures fantômes.
@@ -212,14 +231,21 @@ def main() -> int:
         print("  aucune cloture")
         return 0
 
-    corps = "\n\n".join(lignes)
-    print("--- message ---\n" + corps)
+    for canal, (lignes_c, _) in sorted(groupes.items()):
+        print(f"--- message [{canal}] ---\n" + "\n\n".join(lignes_c))
     if a_blanc:
         return 0
 
-    if not notifier(corps, cles):
-        # ⚠️ L'instantané n'avance PAS : une clôture non annoncée doit rejouer
-        # au passage suivant plutôt que d'être perdue pour toujours.
+    # ⚠️ Liste, PAS de générateur : `all()` court-circuiterait, et l'échec du
+    # premier fil empêcherait le second d'être tenté. Chaque canal part
+    # indépendamment.
+    resultats = [notifier("\n\n".join(l), c, canal)
+                 for canal, (l, c) in sorted(groupes.items())]
+
+    # ⚠️ TOUS les envois doivent aboutir pour que l'instantané avance. Sinon
+    # une clôture non annoncée serait perdue pour toujours. Le renvoi d'un
+    # groupe déjà parti est neutralisé par sa `dedup_key` côté endpoint.
+    if not all(resultats):
         print("  instantane conserve, nouvel essai dans 2 minutes")
         return 1
 
