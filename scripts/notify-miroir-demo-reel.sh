@@ -1,5 +1,11 @@
 #!/bin/bash
-# Prévient dès qu'un trade part sur LES DEUX comptes MT5 (démo puis réel).
+# Prévient dès qu'un ordre part sur le COMPTE RÉEL 13137475, et dit si le
+# démo a suivi.
+#
+# ⚠️ Ancrage inversé le 2026-08-19. Le script s'ancrait sur le démo, donc un
+# ordre parti sur le seul compte réel n'était jamais annoncé — c'est arrivé le
+# 19/08 à 17:17 avec l'EUR/GBP, que le démo avait refusé en veto géopolitique.
+# Le réel est désormais la ligne, le démo la colonne de contexte.
 #
 # Contexte : depuis le 2026-08-06 le compte de démonstration PILOTE le compte
 # réel — un fill confirmé en démo déclenche l'ouverture du même ordre sur le
@@ -39,7 +45,14 @@ fenetre = int(sys.argv[1])
 depuis = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=fenetre)).isoformat()
 c = sqlite3.connect(str(_DB_PATH))
 
-# Un "trade miroir" = même paire/sens/prix poussé aux DEUX destinations.
+# ⚠️ ANCRAGE SUR LE COMPTE REEL (2026-08-19). Le filtre etait
+# `HAVING t_demo IS NOT NULL` : un ordre parti sur le REEL sans passer par le
+# demo n'etait donc jamais annonce. Ce n'est pas theorique — l'EUR/GBP du
+# 2026-08-19 17:17 est parti sur le seul compte reel (le demo l'avait refuse
+# en veto geopolitique) et serait passe sous silence.
+#
+# On liste desormais tout ce que le compte 13137475 a recu, et le demo devient
+# une COLONNE DE CONTEXTE : « a-t-il suivi ? ». C'est la question posee.
 q = """SELECT pair, direction, entry_price_5dp,
               MAX(CASE WHEN destination_id='admin_legacy' THEN pushed_at END) t_demo,
               MAX(CASE WHEN destination_id='admin_legacy' THEN ok END)        ok_demo,
@@ -49,7 +62,7 @@ q = """SELECT pair, direction, entry_price_5dp,
        FROM mt5_pushes
        WHERE pushed_at >= ? AND destination_id IN ('admin_legacy','admin_live')
        GROUP BY pair, direction, entry_price_5dp
-       HAVING t_demo IS NOT NULL"""
+       HAVING t_reel IS NOT NULL"""
 sorties = []
 for pair, sens, prix, t_demo, ok_demo, t_reel, ok_reel, rep in c.execute(q, (depuis,)):
     sorties.append({
@@ -72,17 +85,20 @@ echo "$RAPPORT" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
 t = d.get('trades') or []
-print('fenetre=%s min  trades demo=%d' % (d.get('fenetre_min'), len(t)))
+print('fenetre=%s min  ordres compte reel=%d' % (d.get('fenetre_min'), len(t)))
 for x in t:
-    etat = 'REEL ok' if x['ok_reel'] else ('REEL REFUSE' if x['t_reel'] else 'REEL absent')
-    print('  %s %s %s  demo=%s  %s' % (x['t_demo'], x['pair'], x['sens'], x['ok_demo'], etat))
+    etat = 'REEL ok' if x['ok_reel'] else 'REEL REFUSE'
+    demo = 'demo ok' if x['ok_demo'] else ('demo refuse' if x['t_demo'] else 'demo ABSENT')
+    print('  %s %s %s  %s  %s' % (x['t_reel'], x['pair'], x['sens'], etat, demo))
 "
 
 PAYLOAD=$(echo "$RAPPORT" | python3 -c "
 import json, sys
 
 d = json.load(sys.stdin)
-suivis = [x for x in (d.get('trades') or []) if x['ok_demo']]
+# Tout ce que le compte 13137475 a recu. Le demo n'est plus un filtre mais un
+# CONTEXTE : la question posee est « le trade s'est-il ouvert aussi en demo ? ».
+suivis = d.get('trades') or []
 if not suivis:
     print('')
     raise SystemExit
@@ -90,27 +106,38 @@ if not suivis:
 ok = [x for x in suivis if x['ok_reel']]
 ko = [x for x in suivis if not x['ok_reel']]
 
+def _demo(x):
+    if x['ok_demo']:
+        return 'demo : ouvert aussi'
+    if x['t_demo']:
+        return 'demo : REFUSE'
+    return 'demo : PAS de trade — le reel a agi seul'
+
 lignes = []
 for x in ok:
-    lignes.append('OK  %s  %s %s @ %s  -> ouvert sur LES DEUX comptes'
-                  % (x['t_demo'], x['pair'], x['sens'], x['prix']))
+    lignes.append('OK  %s  %s %s @ %s' % (x['t_reel'], x['pair'], x['sens'], x['prix']))
+    lignes.append('       %s' % _demo(x))
 for x in ko:
-    motif = 'jamais pousse' if not x['t_reel'] else 'refuse par le compte reel'
-    lignes.append('KO  %s  %s %s @ %s  -> %s' % (x['t_demo'], x['pair'], x['sens'], x['prix'], motif))
+    lignes.append('KO  %s  %s %s @ %s  -> refuse par le compte reel'
+                  % (x['t_reel'], x['pair'], x['sens'], x['prix']))
+    lignes.append('       %s' % _demo(x))
     if x['reponse']:
         lignes.append('       %s' % x['reponse'])
 
-titre = ('✅ Miroir demo -> reel : %d trade(s) sur les deux comptes' % len(ok)) if ok \
-        else ('⚠️ Miroir demo -> reel : la copie N A PAS abouti')
+titre = ('✅ Compte reel 13137475 : %d ordre(s) parti(s)' % len(ok)) if ok \
+        else '⚠️ Compte reel 13137475 : ordre REFUSE'
 corps = '\n'.join(lignes)
-corps += '\n\nLe demo pilote le reel depuis le 2026-08-06.'
+if any(not x['t_demo'] for x in suivis):
+    corps += ('\n\n⚠️ Un ordre parti sur le reel SANS le demo vient du dispatch '
+              'direct, pas du miroir : les deux routes sont evaluees separement.')
 if ko:
-    corps += ' Une copie refusee vient du COMPTE, pas du miroir : marge, plafond de positions, ou perte journaliere.'
+    corps += ('\n\nUn refus vient du COMPTE : marge, plafond de positions, '
+              'ou perte journaliere.')
 
 print(json.dumps({
     'title': titre,
     'body': corps,
-    'dedup_key': 'miroir_demo_reel_' + '_'.join(sorted(x['prix'] for x in suivis)),
+    'dedup_key': 'reel_13137475_' + '_'.join(sorted(x['prix'] for x in suivis)),
     'cooldown_seconds': 21600,
 }))
 ")

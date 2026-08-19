@@ -19,9 +19,9 @@
 # Kraken Futures et Spot ; ce script cesse de le doubler.
 #
 # Ce qu'il reste à faire ici, et que le hook ne peut pas faire : signaler un
-# push qui n'a jamais été confirmé. Un ordre qui ne part pas est un évènement
-# de TRADING — il va donc sur le fil `trades` depuis le 2026-08-19, et non sur
-# l'infra comme l'annonçait cet en-tête jusque-là.
+# push qui n'a jamais été confirmé. Il couvre TOUTES les destinations et part
+# donc sur le fil `sales` — le fil `trades` est réservé au compte réel
+# 13137475, dont les refus sont déjà portés par notify-miroir-demo-reel.sh.
 #
 # Usage :
 #   notify-new-pushes.sh           → alerte sur les pushes non confirmés
@@ -31,10 +31,10 @@ set -uo pipefail
 DB=/opt/scalping/data/trades.db
 ETAT=/var/lib/scalping/last-failed-push-id.txt
 TOKEN="shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg"
-# channel=trades : un push refuse est un evenement de TRADING (2026-08-19).
-# Tant que le bot dedie n'est pas gree, l'endpoint retombe sur `sales` en le
-# journalisant — basculer ici ne perd rien.
-URL="https://app.scalping-radar.online/api/admin/notify-infra-telegram?token=${TOKEN}&channel=trades"
+# channel=sales : le fil `trades` est reserve au COMPTE REEL 13137475
+# (2026-08-19). Ce script couvre TOUTES les destinations, il reste donc ici —
+# les refus du compte reel sont deja portes par notify-miroir-demo-reel.sh.
+URL="https://app.scalping-radar.online/api/admin/notify-infra-telegram?token=${TOKEN}&channel=sales"
 
 # Un push est inséré à `ok=0` AVANT l'envoi, puis passé à `ok=1` s'il aboutit.
 # Un `ok=0` récent est donc peut-être simplement en vol : on laisse une marge

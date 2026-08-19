@@ -44,12 +44,11 @@ INSTANTANE = Path(os.environ.get(
 DELAI = 10
 
 TOKEN = os.environ.get("INFRA_NOTIFY_TOKEN", "shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg")
-# channel=trades : une cloture de position est un evenement de TRADING, et
-# depuis le 2026-08-19 elle a son fil dedie — le bot sales melangeait les
-# ordres avec les digests et le recap quotidien. Tant que TRADES_TELEGRAM_*
-# n'est pas gree, l'endpoint retombe sur `sales` en le journalisant.
+# channel=sales : le fil `trades` est reserve aux OUVERTURES sur le compte
+# reel 13137475 (2026-08-19). Les clotures couvrent les trois destinations et
+# restent donc ici, en attendant qu'on tranche si elles doivent suivre.
 NOTIFY_URL = ("https://app.scalping-radar.online/api/admin/"
-              f"notify-infra-telegram?token={TOKEN}&channel=trades")
+              f"notify-infra-telegram?token={TOKEN}&channel=sales")
 
 # Tickets ayant une action manuelle en attente à leur clôture. Vide par défaut :
 # la notification rappelle elle-même de vider la variable, donc la liste ne

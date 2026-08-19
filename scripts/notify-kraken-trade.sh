@@ -19,10 +19,9 @@
 set -uo pipefail
 
 TOKEN="shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg"
-# channel=trades : fil dedie aux ordres (2026-08-19). Tant que le bot dedie
-# n'est pas gree, l'endpoint retombe sur `sales` en le journalisant — donc
-# basculer ici ne perd rien et la migration se fera sans retoucher ce script.
-NOTIFY_URL="https://app.scalping-radar.online/api/admin/notify-infra-telegram?token=${TOKEN}&channel=trades"
+# channel=sales : le fil `trades` est reserve au COMPTE REEL 13137475
+# (2026-08-19, demande de Xavier). Kraken est une autre route, il reste ici.
+NOTIFY_URL="https://app.scalping-radar.online/api/admin/notify-infra-telegram?token=${TOKEN}&channel=sales"
 ETAT=/var/lib/scalping/last-kraken-trade-id.txt
 
 mkdir -p "$(dirname "$ETAT")"
