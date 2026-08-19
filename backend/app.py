@@ -2622,6 +2622,15 @@ async def api_admin_notify_infra_telegram(
     des trading admin (pushes réels + digests). Valeurs :
     - `infra` (défaut) → @xav_scalping_infra_bot via INFRA_TELEGRAM_*
     - `sales` → @xav_scalping_sales_bot via SALES_TELEGRAM_*
+    - `trades` (2026-08-19) → bot dédié via TRADES_TELEGRAM_*, pour que les
+      ordres ne se noient plus dans les digests et le récap quotidien.
+      **Retombe sur `sales` si TRADES_TELEGRAM_* est vide**, en le
+      journalisant : perdre la notification d'un ordre réel serait pire que
+      la poster sur le mauvais fil.
+
+    ⚠️ Le défaut est `infra` pour rétro-compatibilité : **omettre `channel`
+    route en silence vers l'infra**. C'est ce qui avait fait atterrir quatre
+    notificateurs de trading sur le mauvais bot entre le 04/08 et le 19/08.
 
     Body : `{"title": str, "body": str, "dedup_key"?: str,
     "cooldown_seconds"?: int}`. title est mis en gras HTML, body suit en
@@ -2637,6 +2646,7 @@ async def api_admin_notify_infra_telegram(
     from config.settings import (
         INFRA_TELEGRAM_BOT_TOKEN, INFRA_TELEGRAM_CHAT_ID,
         SALES_TELEGRAM_BOT_TOKEN, SALES_TELEGRAM_CHAT_ID,
+        TRADES_TELEGRAM_BOT_TOKEN, TRADES_TELEGRAM_CHAT_ID,
     )
 
     SHADOW_PUBLIC_TOKEN_HASH = "e980b1ed0b45ca6873caa3f2d6ddcf27f4d8a1d0aa87cf9072f6e3e0909b31ec"
@@ -2649,7 +2659,24 @@ async def api_admin_notify_infra_telegram(
         raise HTTPException(status_code=403, detail="invalid token")
 
     channel_norm = (channel or "infra").strip().lower()
-    if channel_norm == "sales":
+    if channel_norm == "trades":
+        # Repli volontaire sur `sales` tant que le bot dédié n'est pas gréé.
+        # Perdre la notification d'un ordre réel serait pire que la poster sur
+        # le mauvais fil — mais le repli est JOURNALISÉ : une bascule des
+        # scripts avant configuration se verrait, au lieu de se traduire par
+        # un silence qu'on prendrait pour « aucun trade ».
+        if TRADES_TELEGRAM_BOT_TOKEN and TRADES_TELEGRAM_CHAT_ID:
+            bot_token = TRADES_TELEGRAM_BOT_TOKEN
+            chat_id = TRADES_TELEGRAM_CHAT_ID
+        else:
+            logger.warning(
+                "notify-infra-telegram: channel=trades demandé mais "
+                "TRADES_TELEGRAM_* non configuré — repli sur le canal sales"
+            )
+            bot_token = SALES_TELEGRAM_BOT_TOKEN
+            chat_id = SALES_TELEGRAM_CHAT_ID
+            channel_norm = "trades→sales"
+    elif channel_norm == "sales":
         bot_token = SALES_TELEGRAM_BOT_TOKEN
         chat_id = SALES_TELEGRAM_CHAT_ID
     elif channel_norm == "infra":

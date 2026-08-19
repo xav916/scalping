@@ -129,6 +129,16 @@ INFRA_TELEGRAM_CHAT_ID = os.getenv("INFRA_TELEGRAM_CHAT_ID", "")
 # Si vide, les notifs sales sont skip silencieusement.
 SALES_TELEGRAM_BOT_TOKEN = os.getenv("SALES_TELEGRAM_BOT_TOKEN", "")
 SALES_TELEGRAM_CHAT_ID = os.getenv("SALES_TELEGRAM_CHAT_ID", "")
+
+# Canal Telegram dédié aux TRADES (2026-08-19) : ouvertures, clôtures, refus
+# de push. Le bot sales mélangeait les ordres avec les digests d'analyse,
+# l'état des marchés et le récap quotidien — un ordre parti s'y noyait.
+#
+# ⚠️ Si vide, l'endpoint retombe sur le canal `sales` plutôt que d'échouer :
+# perdre la notification d'un ordre réel serait pire que la poster sur le
+# mauvais fil. Le repli est journalisé, il ne passe pas en silence.
+TRADES_TELEGRAM_BOT_TOKEN = os.getenv("TRADES_TELEGRAM_BOT_TOKEN", "")
+TRADES_TELEGRAM_CHAT_ID = os.getenv("TRADES_TELEGRAM_CHAT_ID", "")
 # Secret du webhook Telegram sales bot. Telegram envoie ce header
 # `X-Telegram-Bot-Api-Secret-Token` sur chaque POST → l'endpoint webhook le
 # compare en compare_digest. Si vide, le webhook accepte tout (mode dev).
