@@ -1135,6 +1135,35 @@ def _format_close(trade: dict, destination_id: str | None = None) -> str:
     return "\n".join(lines)
 
 
+def _canal_trade(destination_id: str | None) -> tuple[str, list]:
+    """Rend (jeton_bot, destinataires) pour une notification de trade.
+
+    Le compte reel **13137475** (`admin_live`) part sur « Scalping Radar
+    Trades », et lui seul : c'est le fil que Xavier suit pour ce compte, et il
+    y attend le message complet — risque et objectif en euros, niveaux,
+    « pourquoi ce trade », ticket. Toute autre destination garde le bot radar
+    et ses destinataires habituels.
+
+    ⚠️ Un seul destinataire pour le fil trades, jamais `_destinataires()` :
+    ce dernier boucle sur `TELEGRAM_CHATS` pour servir les clients. Y envoyer
+    les trades du compte reel les leur ferait parvenir le jour ou ils y
+    seraient inscrits — et `TELEGRAM_CHATS` etant vide aujourd'hui, rien ne le
+    revelerait avant qu'il ne soit trop tard.
+
+    ⚠️ Repli sur le bot radar si le fil trades n'est pas gree : comportement
+    d'avant le 2026-08-19, donc aucune notification perdue.
+    """
+    from config.settings import (
+        TRADES_TELEGRAM_BOT_TOKEN as _tok,
+        TRADES_TELEGRAM_CHAT_ID as _chat,
+    )
+    if destination_id == "admin_live" and _tok and _chat:
+        # `__any__` et non un pseudo-utilisateur : evite la recherche de mode
+        # silencieux, qui n'a pas de sens pour un fil d'administration.
+        return _tok, [("__any__", _chat)]
+    return TELEGRAM_BOT_TOKEN, _destinataires()
+
+
 async def send_close(trade: dict) -> None:
     """Push une notification de fermeture sur le canal user-facing.
 
@@ -1187,10 +1216,10 @@ async def send_close(trade: dict) -> None:
     allowed_pairs = _STAR_PAIRS_SET | _live_extras
     if pair not in allowed_pairs and not destination_is_real_money(dest_close):
         return
-    destinataires = _destinataires()
+    jeton, destinataires = _canal_trade(dest_close)
     if not destinataires:
         return
-    url = TELEGRAM_API.format(token=TELEGRAM_BOT_TOKEN)
+    url = TELEGRAM_API.format(token=jeton)
     for user, chat_id in destinataires:
         if user != "__any__" and trade_log_service.silent_mode_active_for_user(user):
             continue
@@ -1470,8 +1499,8 @@ async def send_trade_opened(
             setup, ticket, fill_price, volume, mode,
             destination_id=destination_id,
         )
-        destinataires = _destinataires()
-        url = TELEGRAM_API.format(token=TELEGRAM_BOT_TOKEN)
+        jeton, destinataires = _canal_trade(destination_id)
+        url = TELEGRAM_API.format(token=jeton)
         for user, chat_id in destinataires:
             try:
                 async with httpx.AsyncClient(timeout=10.0) as client:
