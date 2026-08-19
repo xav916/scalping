@@ -31,7 +31,9 @@ set -uo pipefail
 DB=/opt/scalping/data/trades.db
 ETAT=/var/lib/scalping/last-failed-push-id.txt
 TOKEN="shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg"
-URL="https://app.scalping-radar.online/api/admin/notify-infra-telegram?token=${TOKEN}&channel=infra"
+# channel=sales : un push refuse est un evenement de TRADING, pas d'infra. Le
+# bot infra est reserve au monitoring (cf. separation du 2026-08-02).
+URL="https://app.scalping-radar.online/api/admin/notify-infra-telegram?token=${TOKEN}&channel=sales"
 
 # Un push est inséré à `ok=0` AVANT l'envoi, puis passé à `ok=1` s'il aboutit.
 # Un `ok=0` récent est donc peut-être simplement en vol : on laisse une marge

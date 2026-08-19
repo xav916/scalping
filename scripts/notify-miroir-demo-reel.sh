@@ -20,7 +20,9 @@
 set -uo pipefail
 
 TOKEN="shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg"
-NOTIFY_URL="https://app.scalping-radar.online/api/admin/notify-infra-telegram?token=${TOKEN}&channel=infra"
+# channel=sales : c'est un evenement de TRADING, pas d'infrastructure. Le bot
+# infra est reserve au monitoring (cf. separation du 2026-08-02).
+NOTIFY_URL="https://app.scalping-radar.online/api/admin/notify-infra-telegram?token=${TOKEN}&channel=sales"
 
 # Fenêtre de recherche : large assez pour ne rien rater entre deux passages,
 # la déduplication côté endpoint évite les répétitions.

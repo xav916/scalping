@@ -44,8 +44,12 @@ INSTANTANE = Path(os.environ.get(
 DELAI = 10
 
 TOKEN = os.environ.get("INFRA_NOTIFY_TOKEN", "shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg")
+# channel=sales : une cloture de position est un evenement de TRADING, pas
+# d'infrastructure. Le bot infra est reserve au monitoring (separation du
+# 2026-08-02, perdue le 08-04 quand les scripts qui la portaient ont ete
+# supprimes, puis reconstruits le 08-09 sur le canal par defaut).
 NOTIFY_URL = ("https://app.scalping-radar.online/api/admin/"
-              f"notify-infra-telegram?token={TOKEN}&channel=infra")
+              f"notify-infra-telegram?token={TOKEN}&channel=sales")
 
 # Tickets ayant une action manuelle en attente à leur clôture. Vide par défaut :
 # la notification rappelle elle-même de vider la variable, donc la liste ne
