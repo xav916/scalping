@@ -90,7 +90,7 @@ def _sans_stop_mt5(dest) -> tuple[list, bool]:
             sl = 0.0
         if sl == 0.0:
             nues.append({
-                "cle": f"{dest.destination_id}:{p.get('ticket')}",
+                "cle": f"{dest.id}:{p.get('ticket')}",
                 "symbole": p.get("symbol"),
                 "sens": p.get("type"),
                 "taille": p.get("volume"),
@@ -109,7 +109,7 @@ def _sans_stop_kraken(dest) -> tuple[list, bool]:
     if not isinstance(brutes, list):
         return [], False
     return [{
-        "cle": f"{dest.destination_id}:{p.get('symbol')}",
+        "cle": f"{dest.id}:{p.get('symbol')}",
         "symbole": p.get("symbol"),
         "sens": p.get("side"),
         "taille": p.get("size"),
