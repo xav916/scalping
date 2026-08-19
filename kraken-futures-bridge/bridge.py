@@ -560,6 +560,55 @@ def symbols():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+def stops_depuis_fill(
+    direction: str,
+    avg_price: float,
+    sl_dist,
+    tp_dist,
+    sl_signal,
+    tp_signal,
+) -> tuple:
+    """Repose SL/TP depuis le prix de remplissage. Rend (sl, tp, source).
+
+    `sl`/`tp` arrivent du radar en prix ABSOLUS, calcules sur le prix du
+    SIGNAL. Entre le signal et l'execution le marche bouge : poser les stops
+    au prix du signal deforme le rapport risque/gain reel — mesure 0,7-1,3 au
+    lieu de 1,8 sur ETH/USD le 2026-05-18. Le correctif existait cote MT5
+    depuis cette date via `sl_dist`/`tp_dist` ; il manquait ici, alors que
+    `avg_price` etait deja calcule dans `place_order` et seulement renvoye.
+
+    Repli volontaire sur les prix du signal — comportement historique — dans
+    les trois cas ou le recalage ne peut pas etre fait honnetement : aucun
+    remplissage connu, distances absentes (radar plus ancien), distances
+    illisibles. Une distance nulle ou negative n'est jamais utilisee.
+
+    Fonction pure et extraite pour etre testable : la meme logique noyee dans
+    `place_order` n'aurait pu etre verifiee qu'en recopiant sa condition, donc
+    en testant sa propre copie. Cf. feedback_source_inspection_tests_weak.
+    """
+    try:
+        avg = float(avg_price)
+    except (TypeError, ValueError):
+        return sl_signal, tp_signal, "signal"
+    if avg <= 0:
+        return sl_signal, tp_signal, "signal"
+
+    try:
+        sl_d = abs(float(sl_dist)) if sl_dist is not None else 0.0
+        tp_d = abs(float(tp_dist)) if tp_dist is not None else 0.0
+    except (TypeError, ValueError):
+        return sl_signal, tp_signal, "signal"
+
+    if sl_d <= 0 and tp_d <= 0:
+        return sl_signal, tp_signal, "signal"
+
+    # BUY : stop SOUS le fill, objectif AU-DESSUS. SELL : l'inverse.
+    sens = 1.0 if str(direction).lower() == "buy" else -1.0
+    sl = avg - sens * sl_d if sl_d > 0 else sl_signal
+    tp = avg + sens * tp_d if tp_d > 0 else tp_signal
+    return sl, tp, "fill"
+
+
 @app.route("/order", methods=["POST"])
 @require_bridge_key
 def place_order():
@@ -587,6 +636,11 @@ def place_order():
     qty_raw = payload.get("qty")
     sl_raw = payload.get("sl")
     tp_raw = payload.get("tp")
+    # Distances au prix du signal (2026-08-19). Quand elles sont fournies ET
+    # qu'un prix de remplissage est connu, les stops sont reposes depuis le
+    # fill. Absentes -> comportement historique strictement inchange.
+    sl_dist_raw = payload.get("sl_dist")
+    tp_dist_raw = payload.get("tp_dist")
 
     # Validation basique
     if direction not in ("buy", "sell") or qty_raw is None:
@@ -696,6 +750,12 @@ def place_order():
     if total_filled_qty > 0:
         avg_price = total_notional / total_filled_qty
 
+    sl_raw, tp_raw, stops_source = stops_depuis_fill(
+        direction, avg_price, sl_dist_raw, tp_dist_raw, sl_raw, tp_raw
+    )
+    if stops_source == "fill":
+        logger.info(f"{sym}: stops recales sur le fill {avg_price}")
+
     # Round SL/TP to instrument tickSize (Kraken rejects off-tick prices with invalidPrice)
     tick = float(specs.get("tickSize", 0.01))
 
@@ -771,6 +831,10 @@ def place_order():
         # pouvait pas être renseignée à la réconciliation.
         "sl": _round_to_tick(float(sl_raw)) if sl_raw is not None else None,
         "tp": _round_to_tick(float(tp_raw)) if tp_raw is not None else None,
+        # "fill" = stops reposes depuis le prix de remplissage ; "signal" =
+        # repli sur les prix du signal. Permet de verifier sans deviner que le
+        # recalage a bien eu lieu.
+        "stops_source": stops_source,
     })
 
 

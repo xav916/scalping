@@ -30,10 +30,20 @@ def _build_kraken_payload(setup, sz: dict, dest) -> dict[str, Any]:
     """Convertit un setup scalping-radar en payload kraken-bridge.
 
     Payload attendu par le bridge Kraken :
-    {pair, direction, qty (base currency), sl, tp}
+    {pair, direction, qty (base currency), sl, tp, entry, sl_dist, tp_dist}
 
     qty = risk_money / |entry - sl|  — même formule que Binance.
     Kraken PF_* sizes en base asset direct (comme Binance USDT-M).
+
+    ⚠️ `sl_dist` / `tp_dist` (2026-08-19) : les prix absolus sont calculés sur
+    le prix du SIGNAL. Entre le signal et l'exécution le marché bouge, et poser
+    les stops au prix du signal déforme le rapport risque/gain réel — mesuré
+    0,7-1,3 au lieu de 1,8 sur ETH/USD le 2026-05-18. Le correctif existe côté
+    MT5 depuis cette date (`_build_order_payload`) mais manquait ici, alors que
+    le bridge Kraken calculait déjà `avg_price` sans s'en servir.
+
+    Les prix absolus sont **conservés** : ils restent le repli du bridge quand
+    aucun remplissage n'est remonté.
     """
     entry = float(setup.entry_price)
     sl = float(setup.stop_loss)
@@ -51,6 +61,11 @@ def _build_kraken_payload(setup, sz: dict, dest) -> dict[str, Any]:
         "qty": qty,
         "sl": sl,
         "tp": tp,
+        "entry": entry,
+        # Distances positives, en unités de prix. Le bridge repose les stops
+        # depuis le prix de remplissage quand il en connaît un.
+        "sl_dist": sl_distance,
+        "tp_dist": abs(tp - entry),
     }
 
 
