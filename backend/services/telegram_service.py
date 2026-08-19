@@ -231,8 +231,53 @@ async def send_sales_text(text: str, parse_mode: str = "HTML") -> bool:
         return False
 
 
+async def send_info_text(text: str, parse_mode: str = "HTML") -> bool:
+    """Envoie sur « Scalping Radar Info » — le bot `@xav_scalping_radar_bot`.
+
+    Porte les observations qui n'ouvrent **aucune** position : aujourd'hui les
+    setups long-horizon 4h/1d. Elles partaient sur le bot sales, où elles se
+    mêlaient aux digests, à l'état des marchés et au récap quotidien.
+
+    ⚠️ **Envoi au seul `TELEGRAM_CHAT_ID`, jamais en diffusion.** Le bot radar
+    sert aussi les clients via `send_text`, qui boucle sur `TELEGRAM_CHATS` :
+    passer par là ferait partir ces observations chez Cédric et les futurs
+    Premium le jour où ils y seront inscrits. `TELEGRAM_CHATS` est vide
+    aujourd'hui, donc rien ne le révélerait avant que ce ne soit trop tard.
+
+    ⚠️ Repli sur le canal sales si le bot radar n'est pas configuré : c'est le
+    comportement d'avant le 2026-08-19, donc rien n'est perdu.
+
+    Retourne True si envoyé, False sinon.
+    """
+    from config.settings import TELEGRAM_BOT_TOKEN as _TOK
+    from config.settings import TELEGRAM_CHAT_ID as _CHAT
+    if not _TOK or not _CHAT:
+        logger.info(
+            "send_info_text: bot radar non configure — repli sur le canal sales"
+        )
+        return await send_sales_text(text, parse_mode=parse_mode)
+    url = TELEGRAM_API.format(token=_TOK)
+    payload: dict = {
+        "chat_id": _CHAT,
+        "text": text[:4000],
+        "disable_web_page_preview": True,
+    }
+    if parse_mode == "HTML":
+        payload["parse_mode"] = "HTML"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.post(url, json=payload)
+        if r.status_code != 200:
+            logger.warning(f"send_info_text: HTTP {r.status_code} {r.text[:200]}")
+            return False
+        return True
+    except Exception as e:
+        logger.warning(f"send_info_text: erreur {e}")
+        return False
+
+
 async def send_long_horizon_setup(setup) -> bool:
-    """Annonce un setup 4h / 1d sur le canal sales, hors gate global.
+    """Annonce un setup 4h / 1d sur le canal « Info », hors gate global.
 
     Ce canal est **indépendant** du réglage qui autorise les alertes setup
     temps-réel : il vaut chaîne vide en production, ce qui les éteint toutes,
@@ -270,7 +315,10 @@ async def send_long_horizon_setup(setup) -> bool:
             "",
             "Observation seule — aucune position n'est ouverte.",
         ]
-        return bool(await send_sales_text("\n".join(lignes), parse_mode="HTML"))
+        # « Scalping Radar Info » depuis le 2026-08-19 : ces annonces n'ouvrent
+        # aucune position, elles n'ont donc rien à faire au milieu des digests
+        # et du récap du bot sales.
+        return bool(await send_info_text("\n".join(lignes), parse_mode="HTML"))
     except Exception as e:
         logger.warning(f"send_long_horizon_setup a échoué: {e}")
         return False
