@@ -1079,6 +1079,7 @@ async def _mirror_fill_to_live(setup, sz: dict, fill: dict, source_id: str) -> N
         # latence — puis abandonnait. Les delais croissants laissent le marche
         # et le serveur du courtier changer d'etat.
         data: dict = {}
+        sonde: dict = {}
         r = None
         for tentative, attente in enumerate((0,) + MIROIR_DELAIS_REPRISE):
             if attente:
@@ -1130,15 +1131,23 @@ async def _mirror_fill_to_live(setup, sz: dict, fill: dict, source_id: str) -> N
                 f"lot={payload.get('lots')} ticket={data.get('ticket')}"
             )
         else:
+            # Le retcode du courtier est LE fait qui tranche : 10006 = gel de
+            # conformite du compte, 10031 = terminal deconnecte du serveur.
+            # Sans lui le refus se lit « 500 » et ne dit rien — c'est ce qui a
+            # coute cinq jours en aout 2026. `sonde` porte le corps deja
+            # deplie par la boucle de reprise ; `data` est vide hors 200.
+            motif = sonde.get("message") or data.get("message") or r.status_code
+            retcode = sonde.get("retcode")
             logger.warning(
                 f"MIROIR démo→réel REFUSÉ : {setup.pair} {direction} — "
-                f"{data.get('message') or r.status_code}"
+                f"{motif}" + (f" (retcode={retcode})" if retcode else "")
             )
             record_rejection(
                 pair=setup.pair, direction=direction,
                 confidence=getattr(setup, "confidence_score", None),
                 reason_code="bridge_error",
-                details={"miroir": True, "reponse": str(data or r.text)[:200]},
+                details={"miroir": True,
+                         "reponse": str(sonde or data or r.text)[:200]},
                 user_id=None, destination_id=cible.destination_id,
             )
     except Exception as e:
