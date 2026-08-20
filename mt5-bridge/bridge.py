@@ -76,6 +76,23 @@ DAILY_LOSS_EXCLUDED_TICKETS = frozenset(
     if t.strip().isdigit()
 )
 MAX_OPEN_POSITIONS = int(os.getenv("MAX_OPEN_POSITIONS", "3"))
+# ─── Plafond par le RISQUE, et non par le nombre (2026-08-20) ──────────────
+# Un compteur traite toutes les positions comme equivalentes alors qu'elles ne
+# le sont pas : 0,01 lot de forex immobilise ~37 EUR et risque ~5,5 EUR, 0,01
+# lot d'or immobilise ~191 EUR. « 3 positions » peut donc valoir 110 EUR ou
+# 570 EUR d'engagement. Et le chiffre ne suit pas le capital.
+#
+# On borne donc la somme des risques REELS — chaque position, sa distance a
+# son stop — plus celui de l'ordre demande. La limite s'ajuste alors seule
+# selon l'instrument et grandit avec l'equity.
+#
+# 0 = desarme (comportement d'avant, seul le compteur agit).
+MAX_RISQUE_ENGAGE_PCT = float(os.getenv("MAX_RISQUE_ENGAGE_PCT", "6.0"))
+# Plancher de marge libre, en % de l'equity. Second garde-fou, CONTRE UN AUTRE
+# DANGER : la marge protege de la liquidation, le risque protege de la perte.
+# Des stops tres serres autorisent beaucoup de positions a risque constant —
+# c'est precisement le cas ou la marge sature sans que le risque ne bouge.
+MARGE_LIBRE_MIN_PCT = float(os.getenv("MARGE_LIBRE_MIN_PCT", "30.0"))
 DEDUP_WINDOW_SEC = int(os.getenv("DEDUP_WINDOW_SEC", "300"))
 DEVIATION_POINTS = int(os.getenv("DEVIATION_POINTS", "20"))
 MAGIC_NUMBER = int(os.getenv("MAGIC_NUMBER", "20260419"))
@@ -455,11 +472,24 @@ def _in_trading_hours() -> bool:
     return False
 
 
-def _check_safety_gates(mt5_symbol: str, direction: str) -> tuple[bool, str]:
+def _check_safety_gates(mt5_symbol: str, direction: str,
+                        lots: float | None = None,
+                        entry: float | None = None,
+                        sl: float | None = None) -> tuple[bool, str]:
     """Vérifie tous les garde-fous avant d'envoyer un ordre LIVE.
 
     Retourne (ok, reason). Si ok=False, 'reason' est la raison du blocage
     (à remonter dans la réponse HTTP et loggée dans l'audit DB).
+
+    ``lots`` / ``entry`` / ``sl`` (2026-08-20) décrivent l'ordre demandé et
+    n'activent que les portes qui en dépendent — risque engagé et marge
+    libre. Absents, ces deux portes sont sautées : le reste des garde-fous
+    ne change pas.
+
+    ⚠️ Ces portes vivent **ici** et non dans `/order`. Un garde-fou pose hors
+    de la fonction qui les rassemble echappe a tout ce qui la neutralise —
+    les tests qui isolent un autre sujet en stubbant `_check_safety_gates`
+    l'auraient contourne sans que personne ne le voie.
     """
     if not _in_trading_hours():
         return False, f"Outside TRADING_HOURS_UTC ({TRADING_HOURS_UTC})"
@@ -493,11 +523,45 @@ def _check_safety_gates(mt5_symbol: str, direction: str) -> tuple[bool, str]:
                 f"{_start_of_day_balance:.2f})"
             )
 
-    # Max positions ouvertes
+    # Max positions ouvertes — garde-fou d'EMBALLEMENT, pas de risque : il ne
+    # distingue pas 0,01 lot de forex (~5,5 EUR risques) de 0,01 lot d'or
+    # (~27 EUR). Le plafond qui compte est celui du risque engage, juste en
+    # dessous ; celui-ci ne reste que comme borne dure.
     if len(positions) >= MAX_OPEN_POSITIONS:
         return False, (
             f"Max open positions reached: {len(positions)} >= {MAX_OPEN_POSITIONS}"
         )
+
+    # ─── Plafond par le RISQUE ENGAGE (2026-08-20) ────────────────────────
+    # N'agit que si l'ordre demande est decrit : c'est le lot REELLEMENT
+    # retenu et son stop qu'il faut juger, pas ceux qu'on souhaitait.
+    if lots is not None and sl is not None and entry is not None:
+        specs = mt5.symbol_info(mt5_symbol)
+        ouvert, non_bornables = _risque_engage(positions, mt5.symbol_info)
+        nouveau = (_risque_realise(entry, sl, lots, specs.point,
+                                   specs.trade_tick_value)
+                   if specs is not None else None)
+
+        ok_risque, motif = _controle_risque_engage(
+            ouvert, non_bornables, nouveau, float(info.equity),
+            MAX_RISQUE_ENGAGE_PCT)
+        if not ok_risque:
+            return False, motif
+
+        try:
+            action = (mt5.ORDER_TYPE_BUY if direction == "buy"
+                      else mt5.ORDER_TYPE_SELL)
+            marge_nouvelle = mt5.order_calc_margin(
+                action, mt5_symbol, lots, entry)
+        except Exception as e:  # noqa: BLE001 — garde-fou secondaire
+            logger.info(f"marge du nouvel ordre incalculable ({e}) — porte passee")
+            marge_nouvelle = None
+
+        ok_marge, motif_marge = _controle_marge_libre(
+            float(info.margin_free), marge_nouvelle, float(info.equity),
+            MARGE_LIBRE_MIN_PCT)
+        if not ok_marge:
+            return False, motif_marge
 
     # Dedup : refuse si même symbole + même sens ouvert depuis < DEDUP_WINDOW_SEC
     now_ts = int(datetime.now(timezone.utc).timestamp())
@@ -1630,6 +1694,10 @@ def health():
         "garde_fous": {
             "max_daily_loss_pct": MAX_DAILY_LOSS_PCT,
             "max_open_positions": MAX_OPEN_POSITIONS,
+            # Plafond par le RISQUE plutot que par le nombre (2026-08-20).
+            # 0 = desarme, seul le compteur agit alors.
+            "max_risque_engage_pct": MAX_RISQUE_ENGAGE_PCT,
+            "marge_libre_min_pct": MARGE_LIBRE_MIN_PCT,
             "deviation_points": DEVIATION_POINTS,
             # 0 = desarme. Le suiveur detruisait 0,329 R/trade sur l'or ;
             # desarme le 2026-08-11, +21 % a la cle. Doit rester a 0.
@@ -1948,6 +2016,106 @@ def _risque_realise(entry: float, sl: float, lots: float,
     return (distance / point) * tick_value * lots
 
 
+def _risque_position(p, info) -> float | None:
+    """Risque en devise du compte d'une position OUVERTE, jusqu'a son stop.
+
+    ⚠️ Rend **None** quand le risque n'est pas bornable — au premier chef
+    lorsque la position n'a **pas de stop** (`sl == 0`). Ne jamais rendre
+    `0.0` : une position nue est un risque *infini*, pas un risque nul, et
+    confondre les deux est exactement ce qui laisserait passer ce qu'on veut
+    interdire. Meme raisonnement que `_risque_realise`, qui refuse deja de
+    rendre le zero-qui-passe-pour-une-mesure.
+    """
+    try:
+        sl = float(getattr(p, "sl", 0.0) or 0.0)
+        if sl <= 0:
+            return None
+        if info is None:
+            return None
+        return _risque_realise(
+            float(p.price_open), sl, float(p.volume),
+            float(info.point), float(info.trade_tick_value))
+    except (TypeError, ValueError, AttributeError):
+        return None
+
+
+def _risque_engage(positions, specs) -> tuple[float, list]:
+    """Somme des risques des positions ouvertes.
+
+    Rend `(total, tickets_non_bornables)`. `specs` est une fonction
+    `symbole -> symbol_info`, injectee pour rester testable sans MT5.
+    """
+    total = 0.0
+    non_bornables = []
+    for p in positions or []:
+        r = _risque_position(p, specs(getattr(p, "symbol", None)))
+        if r is None:
+            non_bornables.append(getattr(p, "ticket", "?"))
+        else:
+            total += r
+    return total, non_bornables
+
+
+def _controle_risque_engage(risque_ouvert: float, non_bornables: list,
+                            risque_nouveau: float | None, equity: float,
+                            plafond_pct: float) -> tuple[bool, str]:
+    """Le plafond porte sur le RISQUE TOTAL, pas sur le nombre de positions.
+
+    Rend `(ok, raison)`. `plafond_pct <= 0` desarme la porte.
+
+    ⚠️ Une position sans stop bloque toute nouvelle ouverture : son risque
+    etant non borne, aucun total n'a de sens tant qu'elle est la. C'est
+    volontaire — ca rend visible immediatement ce que la sonde de positions
+    nues ne signale qu'apres coup.
+    """
+    if plafond_pct <= 0:
+        return True, ""
+    if non_bornables:
+        return False, (
+            f"Position sans stop (tickets {sorted(map(str, non_bornables))}) : "
+            "risque non bornable, ouverture refusee"
+        )
+    if equity is None or equity <= 0:
+        return False, "Equity inconnue : risque engage incalculable"
+    if risque_nouveau is None:
+        return False, "Risque du nouvel ordre non mesurable (stop absent ?)"
+    plafond = equity * plafond_pct / 100.0
+    total = risque_ouvert + risque_nouveau
+    if total > plafond:
+        return False, (
+            f"Risque engage {total:.2f} > {plafond:.2f} "
+            f"({plafond_pct}% de {equity:.2f}) : {risque_ouvert:.2f} deja en "
+            f"jeu + {risque_nouveau:.2f} demande"
+        )
+    return True, ""
+
+
+def _controle_marge_libre(marge_libre: float | None, marge_nouvelle: float | None,
+                          equity: float, plancher_pct: float) -> tuple[bool, str]:
+    """Plancher de marge libre APRES l'ordre. Protege de la liquidation.
+
+    Rend `(ok, raison)`. `plancher_pct <= 0` desarme la porte.
+
+    ⚠️ Garde-fou SECONDAIRE : quand la marge du nouvel ordre n'est pas
+    calculable, on **laisse passer** en le signalant, plutot que de bloquer
+    sur une donnee manquante. Le plafond de risque reste la porte principale.
+    """
+    if plancher_pct <= 0:
+        return True, ""
+    if equity is None or equity <= 0 or marge_libre is None:
+        return True, ""
+    if marge_nouvelle is None:
+        return True, ""
+    plancher = equity * plancher_pct / 100.0
+    restant = marge_libre - marge_nouvelle
+    if restant < plancher:
+        return False, (
+            f"Marge libre apres ordre {restant:.2f} < {plancher:.2f} "
+            f"({plancher_pct}% de {equity:.2f})"
+        )
+    return True, ""
+
+
 def _controle_risque(risque_reel: float | None, risk_money: float | None,
                      mini: float, maxi: float):
     """Compare le risque obtenu au risque voulu. Rend (rapport, cause_du_refus).
@@ -2226,7 +2394,8 @@ def place_order():
 
 def _handle_live_order(*, data, pair, mt5_symbol, direction, lots, entry, sl, tp, sizing_mode, client_comment):
     """Extrait de place_order pour isoler les exceptions LIVE dans un try/except."""
-    ok_gate, reason = _check_safety_gates(mt5_symbol, direction)
+    ok_gate, reason = _check_safety_gates(
+        mt5_symbol, direction, lots=lots, entry=entry, sl=sl)
     if not ok_gate:
         logger.warning(f"[LIVE BLOCKED] {reason}")
         _db_log_order(

@@ -282,7 +282,7 @@ def test_order_route_live_success_exposes_protection_fields_without_breaking_leg
     monkeypatch.setattr(bridge, "PAPER_MODE", False)
     monkeypatch.setattr(bridge, "ensure_mt5_connected", lambda: True)
     monkeypatch.setattr(bridge, "resolve_symbol", lambda pair: "XAUUSD")
-    monkeypatch.setattr(bridge, "_check_safety_gates", lambda sym, direction: (True, "OK"))
+    monkeypatch.setattr(bridge, "_check_safety_gates", lambda sym, direction, **kw: (True, "OK"))
     monkeypatch.setattr(bridge.mt5, "symbol_info_tick", lambda s: _mk_tick())
     monkeypatch.setattr(bridge.mt5, "symbol_info", lambda s: _mk_symbol_info())
     monkeypatch.setattr(bridge.mt5, "order_send", lambda req: _mk_order_result(bridge.mt5.TRADE_RETCODE_DONE))
@@ -313,7 +313,7 @@ def test_order_route_live_naked_fill_reports_unprotected(bridge, monkeypatch):
     monkeypatch.setattr(bridge, "PAPER_MODE", False)
     monkeypatch.setattr(bridge, "ensure_mt5_connected", lambda: True)
     monkeypatch.setattr(bridge, "resolve_symbol", lambda pair: "XAUUSD")
-    monkeypatch.setattr(bridge, "_check_safety_gates", lambda sym, direction: (True, "OK"))
+    monkeypatch.setattr(bridge, "_check_safety_gates", lambda sym, direction, **kw: (True, "OK"))
     monkeypatch.setattr(bridge.mt5, "symbol_info_tick", lambda s: _mk_tick())
     monkeypatch.setattr(bridge.mt5, "symbol_info", lambda s: _mk_symbol_info())
 
