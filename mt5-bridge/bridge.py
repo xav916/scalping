@@ -1603,7 +1603,21 @@ def limits():
 
 @app.route("/health", methods=["GET"])
 def health():
-    """Ping public (pas d'auth). Utile pour vérifier que le bridge tourne."""
+    """Ping public (pas d'auth). Utile pour vérifier que le bridge tourne.
+
+    ⚠️ Champs existants **jamais retirés ni renommés** : le moniteur et le
+    radar les consomment. `garde_fous` (2026-08-20) s'y ajoute.
+
+    Pourquoi ce bloc : `MAX_DAILY_LOSS_PCT` valait **10.0** sur les deux
+    bridges MT5 alors que le défaut du code est 3.0 — un plafond de perte
+    journalière 3,3× trop large, resté en place des semaines. Le vérifier a
+    exigé une session RDP sur le VPS, parce que rien ne l'exposait ; le bridge
+    Kraken, lui, publie déjà le sien dans son `/health`.
+
+    > **Un garde-fou qu'on ne peut pas lire est un garde-fou dont on ne sait
+    > jamais s'il s'applique.** Ces valeurs ne sont pas des secrets : les
+    > cacher ne protège personne et empêche de les surveiller.
+    """
     connected = ensure_mt5_connected()
     return jsonify({
         "ok": connected,
@@ -1613,6 +1627,19 @@ def health():
         "mt5_version": mt5.__version__,
         "max_lot": MAX_LOT,
         "max_lot_per_class": MAX_LOT_PER_CLASS,
+        "garde_fous": {
+            "max_daily_loss_pct": MAX_DAILY_LOSS_PCT,
+            "max_open_positions": MAX_OPEN_POSITIONS,
+            "deviation_points": DEVIATION_POINTS,
+            # 0 = desarme. Le suiveur detruisait 0,329 R/trade sur l'or ;
+            # desarme le 2026-08-11, +21 % a la cle. Doit rester a 0.
+            "trail_distance_points": TRAIL_DISTANCE_POINTS,
+            "partial_close_pct": PARTIAL_CLOSE_PCT,
+            "trading_hours_utc": TRADING_HOURS_UTC or None,
+            # Un ticket ferme qui traine ici ne fait plus rien (l'exclusion ne
+            # porte que sur les positions OUVERTES), mais il ment sur l'etat.
+            "daily_loss_excluded_tickets": sorted(DAILY_LOSS_EXCLUDED_TICKETS),
+        },
     })
 
 

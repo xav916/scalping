@@ -1,0 +1,115 @@
+"""`/health` du bridge MT5 doit publier ses garde-fous (2026-08-20).
+
+`MAX_DAILY_LOSS_PCT` valait **10.0** sur les deux bridges MT5 alors que le
+défaut du code est 3.0 — un plafond de perte journalière 3,3× trop large,
+resté en place des semaines. Le vérifier a exigé une session RDP sur le VPS,
+parce que rien ne l'exposait : `/limits` ne rend que `max_lot` et
+`max_open_positions`. Le bridge Kraken, lui, publie déjà le sien.
+
+> **Un garde-fou qu'on ne peut pas lire est un garde-fou dont on ne sait
+> jamais s'il s'applique.**
+
+Ce qui est verrouillé ici : la présence des valeurs, et la non-régression des
+champs historiques que le moniteur et le radar consomment.
+
+`bridge.py` importe MetaTrader5, absent hors du VPS Windows : on extrait la
+fonction du source et on l'exécute seule, comme le fait déjà
+`test_bridge_drawdown_exclusions`.
+"""
+from __future__ import annotations
+
+import types
+from pathlib import Path
+
+import pytest
+
+_SRC = Path(__file__).resolve().parents[2] / "mt5-bridge" / "bridge.py"
+
+_REGLAGES = {
+    "PAPER_MODE": False,
+    "MT5_SERVER": "ICMarketsEU-MT5-5",
+    "MT5_LOGIN": 13137475,
+    "MAX_LOT": 0.02,
+    "MAX_LOT_PER_CLASS": {"forex": 0.02},
+    "MAX_DAILY_LOSS_PCT": 3.0,
+    "MAX_OPEN_POSITIONS": 3,
+    "DEVIATION_POINTS": 20,
+    "TRAIL_DISTANCE_POINTS": 0,
+    "PARTIAL_CLOSE_PCT": 50.0,
+    "TRADING_HOURS_UTC": "",
+    "DAILY_LOSS_EXCLUDED_TICKETS": frozenset(),
+}
+
+
+def _appeler_health(**surcharges):
+    """Exécute la seule fonction `health()`, extraite du source.
+
+    Le corps est relu à l'exécution : un renommage de constante ou la
+    suppression d'un champ fait échouer le test. Ce n'est pas une copie figée.
+    """
+    src = _SRC.read_text(encoding="utf-8")
+    debut = src.index("def health():")
+    fin = src.index('@app.route("/account"')
+    module = types.ModuleType("bridge_health")
+    module.__dict__.update(_REGLAGES)
+    module.__dict__.update(surcharges)
+    module.__dict__["jsonify"] = lambda d: d
+    module.__dict__["ensure_mt5_connected"] = lambda: True
+    module.__dict__["mt5"] = types.SimpleNamespace(__version__="5.0.5735")
+    exec(compile(src[debut:fin], str(_SRC), "exec"), module.__dict__)
+    return module.health()
+
+
+# ── Le bloc attendu ────────────────────────────────────────────────────────
+
+def test_les_garde_fous_sont_publies():
+    g = _appeler_health()["garde_fous"]
+    assert g["max_daily_loss_pct"] == 3.0
+    assert g["max_open_positions"] == 3
+    assert g["deviation_points"] == 20
+    assert g["trail_distance_points"] == 0
+    assert g["partial_close_pct"] == 50.0
+
+
+def test_un_plafond_desserre_se_VOIT():
+    """LE cas d'usage : lire 10.0 a distance au lieu d'ouvrir une session RDP."""
+    g = _appeler_health(MAX_DAILY_LOSS_PCT=10.0)["garde_fous"]
+    assert g["max_daily_loss_pct"] == 10.0
+
+
+def test_le_suiveur_rearme_se_VOIT():
+    """Le suiveur détruisait 0,329 R/trade sur l'or. Il doit rester à 0."""
+    g = _appeler_health(TRAIL_DISTANCE_POINTS=150)["garde_fous"]
+    assert g["trail_distance_points"] == 150
+
+
+def test_un_ticket_exclu_residuel_se_VOIT():
+    g = _appeler_health(
+        DAILY_LOSS_EXCLUDED_TICKETS=frozenset({1353960866}))["garde_fous"]
+    assert g["daily_loss_excluded_tickets"] == [1353960866]
+
+
+def test_heures_vides_rendues_None_et_non_chaine_vide():
+    """`""` et `None` se lisent pareil dans un tableau de bord ; `None` est
+    explicite sur « aucune restriction »."""
+    assert _appeler_health()["garde_fous"]["trading_hours_utc"] is None
+    g = _appeler_health(TRADING_HOURS_UTC="07:00-20:00")["garde_fous"]
+    assert g["trading_hours_utc"] == "07:00-20:00"
+
+
+# ── Non-regression : le moniteur et le radar consomment ces champs ─────────
+
+@pytest.mark.parametrize("champ", [
+    "ok", "paper_mode", "server", "login",
+    "mt5_version", "max_lot", "max_lot_per_class",
+])
+def test_les_champs_historiques_survivent(champ):
+    """Jamais retirés ni renommés — le moniteur lit `ok`, le radar le reste."""
+    assert champ in _appeler_health()
+
+
+def test_health_reste_lisible_sans_authentification():
+    """Aucun secret dans la charge utile : `/health` est public par dessein."""
+    charge = repr(_appeler_health()).lower()
+    for interdit in ("password", "api_key", "token", "secret"):
+        assert interdit not in charge
