@@ -263,15 +263,73 @@ def silent_mode_active_for_user(user: str) -> bool:
         return False
 
 
+def _destinations_reelles() -> frozenset[str]:
+    """Identifiants des destinations qui engagent de l'ARGENT REEL.
+
+    Lu dans le registre (`Destination.reel`) plutot que recopie ici : c'est la
+    duplication d'une table de ce genre qui avait fait afficher « Demo » sur
+    des trades Kraken engageant de l'argent reel.
+    """
+    try:
+        from backend.services.destinations_registry import DESTINATIONS
+        return frozenset(k for k, d in DESTINATIONS.items()
+                         if getattr(d, "reel", False))
+    except Exception:
+        return frozenset()
+
+
 def silent_mode_active_any_user() -> bool:
-    """True si AU MOINS UN user a atteint sa limite aujourd'hui."""
+    """True si AU MOINS UN user a atteint sa limite aujourd'hui.
+
+    ⚠️ **Ne compte que l'argent REEL** (2026-08-20). `personal_trades` ne
+    porte pas de `destination_id` : demo et reel s'additionnaient donc sous le
+    meme utilisateur, et une perte sur le demo — de l'argent qui n'existe
+    pas — coupait le trading reel.
+
+    Mesure sur 30 jours avant correction : le seuil se serait declenche le
+    12/08 sur **−101,98 EUR de DEMO**, alors que la seule journee reellement
+    mauvaise (05/08, −271,88 EUR de reel) etait noyee dans le meme total.
+
+    La destination se resout depuis `mt5_pushes` via le ticket — **exact
+    plutot qu'heuristique**, comme `destination_for_ticket` : deviner d'apres
+    le format du numero serait fragile, et c'est de l'argent reel.
+
+    ⚠️ Une destination **non resolue compte comme reelle**. Quand on ne sait
+    pas, on protege : l'inverse laisserait un trade inconnu echapper au
+    garde-fou.
+
+    ⚠️ Sous-requete correlee et non jointure : un `LEFT JOIN` sur `LIKE`
+    pourrait apparier plusieurs pushes pour un meme ticket et **gonfler la
+    somme**, donc declencher a tort.
+    """
     _init_schema()
-    today_iso = date.today().isoformat()
+    reelles = _destinations_reelles()
+    if not reelles:
+        # Registre illisible : on ne filtre pas plutot que de tout ignorer.
+        # Se taire ici reviendrait a desarmer le garde-fou en silence.
+        logger.warning(
+            "silent_mode: registre des destinations illisible — "
+            "le plafond journalier compte TOUTES les destinations")
+        clause = ""
+        params: tuple = (date.today().isoformat() + "T00:00:00",)
+    else:
+        trous = ",".join("?" * len(reelles))
+        clause = (
+            " AND COALESCE(CASE WHEN t.mt5_ticket IS NULL THEN NULL ELSE ("
+            "   SELECT p.destination_id FROM mt5_pushes p"
+            "    WHERE p.bridge_response LIKE '%' || t.mt5_ticket || '%'"
+            "    ORDER BY p.id DESC LIMIT 1) END, '?')"
+            f" IN ({trous}, '?')"
+        )
+        params = (date.today().isoformat() + "T00:00:00",
+                  *sorted(reelles))
+
     with _conn() as c:
         rows = c.execute(
-            "SELECT user, SUM(pnl) as pnl FROM personal_trades "
-            "WHERE status='CLOSED' AND created_at >= ? GROUP BY user",
-            (today_iso + "T00:00:00",),
+            "SELECT t.user AS user, SUM(t.pnl) AS pnl FROM personal_trades t "
+            "WHERE t.status='CLOSED' AND t.created_at >= ?" + clause +
+            " GROUP BY t.user",
+            params,
         ).fetchall()
     if not rows:
         return False

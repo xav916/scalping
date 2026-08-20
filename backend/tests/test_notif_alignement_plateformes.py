@@ -187,7 +187,14 @@ def test_le_script_shell_n_envoie_plus_de_trade_ouvert():
               / "scripts" / "notify-new-pushes.sh").read_text(encoding="utf-8")
     corps = script.split("set -uo pipefail", 1)[1]  # hors du commentaire d'entete
     assert "🟢" not in corps, "le script emet encore un message de trade ouvert"
-    assert "channel=infra" in corps, "les echecs de push relevent de l'infra"
+    # ⚠️ Regle CHANGEE le 2026-08-19 : un push refuse est un evenement de
+    # TRADING, pas d'infrastructure. Le bot infra est reserve au monitoring
+    # depuis la separation du 02/08 — convention perdue le 04/08 avec les
+    # scripts qui la portaient, puis retablie.
+    assert "channel=sales" in corps, (
+        "un push refuse est un evenement de TRADING, pas d'infra")
+    assert "channel=infra" not in corps, (
+        "le bot infra est reserve au monitoring")
     assert "ok = 0" in corps, "le script doit ne traiter que les pushes non confirmes"
 
 
