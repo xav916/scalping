@@ -40,7 +40,7 @@ def script():
 
 def _etat(**kw):
     base = {"dernier_appel": MAINTENANT - timedelta(minutes=5),
-            "executes": 3, "echecs": 0, "en_attente": 2,
+            "executes": 3, "echecs": 0, "jamais_recus": 2,
             "erreur_dominante": None}
     base.update(kw)
     return base
@@ -54,7 +54,7 @@ def test_cas_cedric_ea_muet_et_zero_execution(script):
     """Le cas reel du 21/08 : EA eteint depuis 6 jours, file pleine, 0 exec."""
     soucis = script.diagnostiquer(_etat(
         dernier_appel=datetime(2026, 8, 15, 0, 28, tzinfo=timezone.utc),
-        executes=0, echecs=264, en_attente=1715,
+        executes=0, echecs=264, jamais_recus=1715,
         erreur_dominante="OrderSend failed retcode=0"), MAINTENANT)
     assert len(soucis) == 2, soucis
     assert "muet depuis 156 h" in soucis[0]
@@ -76,9 +76,9 @@ def test_ea_qui_appelle_mais_dont_rien_n_aboutit(script):
     C'est le cas qu'une sonde de presence rate entierement.
     """
     soucis = script.diagnostiquer(
-        _etat(executes=0, echecs=0, en_attente=140), MAINTENANT)
+        _etat(executes=0, echecs=0, jamais_recus=140), MAINTENANT)
     assert len(soucis) == 1
-    assert "140 ordres en attente, 0 exécuté" in soucis[0]
+    assert "140 signaux jamais reçus, 0 exécuté" in soucis[0]
 
 
 def test_echecs_sans_motif_remonte(script):
@@ -91,7 +91,7 @@ def test_echecs_sans_motif_remonte(script):
 def test_ea_n_a_jamais_appele(script):
     """Client installe qui n'a jamais branche son EA : `fetched_at` NULL."""
     soucis = script.diagnostiquer(
-        _etat(dernier_appel=None, executes=0, echecs=0, en_attente=0),
+        _etat(dernier_appel=None, executes=0, echecs=0, jamais_recus=0),
         MAINTENANT)
     assert soucis == ["son EA n'a JAMAIS appelé le serveur"]
 
@@ -135,7 +135,7 @@ def test_petite_file_sans_execution_reste_silencieuse(script):
     Sans seuil, il declencherait une alerte des son premier signal.
     """
     assert script.diagnostiquer(
-        _etat(executes=0, echecs=0, en_attente=3), MAINTENANT) == []
+        _etat(executes=0, echecs=0, jamais_recus=3), MAINTENANT) == []
 
 
 # --------------------------------------------------------------------------
@@ -185,6 +185,28 @@ def test_main_alerte_sur_l_etat_reel_de_cedric(script, monkeypatch, tmp_path):
     assert "cedric@example.com" in corps
     assert "muet depuis" in corps
     assert "0 exécution pour 12 échec(s)" in corps
+
+
+def test_la_purge_horaire_n_aveugle_pas_la_sonde(script, monkeypatch, tmp_path):
+    """⚠️ Deux garde-fous qui se neutralisent l'un l'autre.
+
+    `purge-file-ea.sh` fait passer tout ordre non servi de `PENDING` a
+    `EXPIRED` en moins d'une heure. Une sonde qui ne compterait que `PENDING`
+    verrait donc un compteur eternellement a zero et **se tairait sur le cas
+    meme qu'elle surveille**.
+
+    Ici : que des `EXPIRED`, plus une seule ligne `PENDING`. La sonde doit
+    parler quand meme.
+    """
+    recent = datetime.now(timezone.utc) - timedelta(days=1)
+    envois = _brancher(
+        script, monkeypatch, tmp_path,
+        [{"id": 2, "email": "cedric@example.com"}],
+        [(2, "EXPIRED", recent.isoformat(), "2026-08-15T00:28:04", None)] * 60)
+
+    assert script.main() == 0
+    assert len(envois) == 1, "la purge a rendu la sonde aveugle"
+    assert "60 signaux jamais reçus" in envois[0][1]
 
 
 def test_main_se_tait_sur_un_client_sain(script, monkeypatch, tmp_path):

@@ -14,8 +14,13 @@ Pourquoi c'est resté invisible : chaque push répondait `ok=1`, qui signifie
 Deux signaux surveillés, qui ne disent pas la même chose :
   - **EA muet** — plus aucun appel depuis N heures : le robot du client est
     éteint ou ne joint plus le serveur ;
-  - **file qui gonfle sans exécution** — l'EA appelle, mais rien n'aboutit :
-    ses ordres échouent chez son courtier.
+  - **signaux jamais reçus sans exécution** — l'EA appelle, mais rien
+    n'aboutit : ses ordres échouent chez son courtier.
+
+⚠️ « Jamais reçus » compte `PENDING` **et `EXPIRED`**. Depuis que
+`purge-file-ea.sh` tourne toutes les heures, un ordre non servi passe en
+`EXPIRED` en moins d'une heure : ne compter que `PENDING` viderait ce
+compteur en permanence et **rendrait ce signal aveugle**.
 
 ⚠️ Seuls les clients **actuellement éligibles** à l'auto-exec sont surveillés.
 Un client en veille l'est délibérément : l'alerter en continu ferait du bruit
@@ -78,10 +83,10 @@ def diagnostiquer(etat: dict, maintenant: datetime,
             motif = etat.get("erreur_dominante") or "sans motif remonté"
             soucis.append(
                 f"0 exécution pour {etat['echecs']} échec(s) — {motif}")
-        elif etat.get("en_attente", 0) >= seuil_file:
+        elif etat.get("jamais_recus", 0) >= seuil_file:
             soucis.append(
-                f"{etat['en_attente']} ordres en attente, 0 exécuté : "
-                "la file se remplit sans que rien n'aboutisse")
+                f"{etat['jamais_recus']} signaux jamais reçus, 0 exécuté : "
+                "on lui envoie des ordres que son EA ne prend pas")
 
     return soucis
 
@@ -115,7 +120,9 @@ def _releve(c: sqlite3.Connection, user_id: int) -> dict:
         "dernier_appel": dernier,
         "executes": compte.get("EXECUTED", 0),
         "echecs": compte.get("FAILED", 0),
-        "en_attente": compte.get("PENDING", 0),
+        # PENDING + EXPIRED : la purge horaire fait passer l'un dans l'autre en
+        # moins d'une heure. Ne compter que PENDING rendrait ce signal aveugle.
+        "jamais_recus": compte.get("PENDING", 0) + compte.get("EXPIRED", 0),
         "erreur_dominante": err[0] if err else None,
     }
 
@@ -168,14 +175,15 @@ def main() -> int:
             soucis = diagnostiquer(etat, maintenant)
             print(f"  user:{uid} {cl.get('email','?')} — "
                   f"{etat['executes']} exécutés / {etat['echecs']} échecs / "
-                  f"{etat['en_attente']} en attente")
+                  f"{etat['jamais_recus']} jamais reçus")
             if not soucis:
                 continue
             corps = (
                 f"<b>{html.escape(str(cl.get('email') or f'user:{uid}'))}</b>\n\n"
                 + "\n".join(f"• {html.escape(s)}" for s in soucis)
                 + f"\n\nSur {FENETRE_J} jours : {etat['executes']} exécuté(s), "
-                  f"{etat['echecs']} échec(s), {etat['en_attente']} en attente.\n\n"
+                  f"{etat['echecs']} échec(s), "
+                  f"{etat['jamais_recus']} jamais reçu(s).\n\n"
                   "Ce client PAIE. Le radar lui envoie des signaux qui "
                   "n'aboutissent pas."
             )
