@@ -96,6 +96,34 @@ def _init_schema() -> None:
             # TP1 | TP2 | SL | MANUAL | TIMEOUT | UNKNOWN — remonte depuis
             # le bridge si disponible, sinon reste NULL.
             c.execute("ALTER TABLE personal_trades ADD COLUMN close_reason TEXT")
+        # Destination du trade (2026-08-20). Son ABSENCE melait demo et reel
+        # dans le plafond journalier : une perte fictive coupait le trading
+        # reel. On la resolvait par sous-requete sur `mt5_pushes` a chaque
+        # appel ; la colonne rend la reponse directe et durable.
+        if "destination_id" not in cols:
+            c.execute("ALTER TABLE personal_trades ADD COLUMN destination_id TEXT")
+            # Reprise de l'historique, UNE SEULE FOIS — a l'ajout de la
+            # colonne, pas a chaque demarrage. `ORDER BY id DESC LIMIT 1`
+            # comme `destination_for_ticket` : un ticket peut apparaitre dans
+            # plusieurs pushes, on retient le dernier.
+            try:
+                c.execute("""
+                    UPDATE personal_trades SET destination_id = (
+                        SELECT p.destination_id FROM mt5_pushes p
+                         WHERE p.bridge_response LIKE '%' || personal_trades.mt5_ticket || '%'
+                         ORDER BY p.id DESC LIMIT 1)
+                     WHERE mt5_ticket IS NOT NULL
+                """)
+                logger.info(
+                    "personal_trades: colonne destination_id ajoutee, "
+                    "%d ligne(s) reprises depuis mt5_pushes",
+                    c.execute("SELECT COUNT(*) FROM personal_trades "
+                              "WHERE destination_id IS NOT NULL").fetchone()[0])
+            except Exception as e:  # noqa: BLE001
+                # `mt5_pushes` peut ne pas exister sur une base neuve : la
+                # colonne reste NULL, et la sous-requete de repli prend le
+                # relais. Ne jamais faire echouer l'init du schema pour ca.
+                logger.info(f"reprise destination_id impossible ({e})")
 
         # 3) Poser les INDEX une fois toutes les colonnes présentes
         c.executescript("""
@@ -263,6 +291,24 @@ def silent_mode_active_for_user(user: str) -> bool:
         return False
 
 
+def assurer_colonne_destination(c) -> None:
+    """Garantit `personal_trades.destination_id` sur la connexion donnee.
+
+    ⚠️ **L'ecrivain garantit la colonne dont il a besoin**, il ne la suppose
+    pas. `personal_trades` est recree a la main dans **68 fichiers de test**
+    qui ne passent pas par `_init_schema` — et la meme duplication existe
+    partout ou une base est montee autrement. Supposer la colonne fait
+    echouer l'INSERT en `no such column`, ce qui, dans un `try/except` mal
+    place, deviendrait une perte de trade silencieuse.
+
+    Idempotent, et volontairement minuscule : c'est un filet, pas une
+    migration. La migration complete reste dans `_init_schema`.
+    """
+    cols = [r[1] for r in c.execute("PRAGMA table_info(personal_trades)")]
+    if cols and "destination_id" not in cols:
+        c.execute("ALTER TABLE personal_trades ADD COLUMN destination_id TEXT")
+
+
 def _destinations_reelles() -> frozenset[str]:
     """Identifiants des destinations qui engagent de l'ARGENT REEL.
 
@@ -314,11 +360,16 @@ def silent_mode_active_any_user() -> bool:
         params: tuple = (date.today().isoformat() + "T00:00:00",)
     else:
         trous = ",".join("?" * len(reelles))
+        # La COLONNE d'abord (2026-08-20), la sous-requete seulement en repli
+        # pour les lignes anterieures a la migration ou non reprises. Le jour
+        # ou toutes les lignes la portent, ce repli devient inerte — mais le
+        # retirer trop tot ferait passer d'anciens trades pour inconnus.
         clause = (
-            " AND COALESCE(CASE WHEN t.mt5_ticket IS NULL THEN NULL ELSE ("
-            "   SELECT p.destination_id FROM mt5_pushes p"
-            "    WHERE p.bridge_response LIKE '%' || t.mt5_ticket || '%'"
-            "    ORDER BY p.id DESC LIMIT 1) END, '?')"
+            " AND COALESCE(t.destination_id,"
+            "   CASE WHEN t.mt5_ticket IS NULL THEN NULL ELSE ("
+            "     SELECT p.destination_id FROM mt5_pushes p"
+            "      WHERE p.bridge_response LIKE '%' || t.mt5_ticket || '%'"
+            "      ORDER BY p.id DESC LIMIT 1) END, '?')"
             f" IN ({trous}, '?')"
         )
         params = (date.today().isoformat() + "T00:00:00",

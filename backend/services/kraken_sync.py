@@ -398,6 +398,8 @@ def materialiser_ouvertures(pushes) -> int:
     """
     ecrits = 0
     with sqlite3.connect(_db_path()) as c:
+        from backend.services.trade_log_service import assurer_colonne_destination
+        assurer_colonne_destination(c)
         for p in pushes:
             order_id = str(p["order_id"])
             deja = c.execute(
@@ -409,8 +411,9 @@ def materialiser_ouvertures(pushes) -> int:
             c.execute("""
                 INSERT INTO personal_trades
                     (user, pair, direction, entry_price, stop_loss, take_profit,
-                     size_lot, status, created_at, mt5_ticket, is_auto)
-                VALUES (?,?,?,?,?,?,?, 'OPEN', ?,?, 1)
+                     size_lot, status, created_at, mt5_ticket, is_auto,
+                     destination_id)
+                VALUES (?,?,?,?,?,?,?, 'OPEN', ?,?, 1, 'admin_kraken')
             """, ("auto", p["pair"], p["direction"], p["entry_price"],
                   p.get("sl") or 0.0, p.get("tp") or 0.0, p["volume"],
                   p["pushed_at"], order_id))
@@ -545,6 +548,8 @@ def enregistrer_cloture(cloture: dict[str, Any], eur_usd: float) -> dict | None:
     # « montant inconnu ».
     inconnu = pnl_eur is None
     with sqlite3.connect(_db_path()) as c:
+        from backend.services.trade_log_service import assurer_colonne_destination
+        assurer_colonne_destination(c)
         if existe:
             c.execute(f"""
                 UPDATE personal_trades
@@ -567,8 +572,9 @@ def enregistrer_cloture(cloture: dict[str, Any], eur_usd: float) -> dict | None:
                 INSERT INTO personal_trades
                     (user, pair, direction, entry_price, stop_loss,
                      take_profit, size_lot, status, exit_price, pnl,
-                     created_at, closed_at, close_reason, mt5_ticket, is_auto)
-                VALUES (?,?,?,?,?,?,?, 'CLOSED', ?,?,?,?,?,?, 1)
+                     created_at, closed_at, close_reason, mt5_ticket, is_auto,
+                     destination_id)
+                VALUES (?,?,?,?,?,?,?, 'CLOSED', ?,?,?,?,?,?, 1, 'admin_kraken')
             """, ("auto", p["pair"], p["direction"], p["entry_price"],
                   p.get("sl") or 0.0, p.get("tp") or 0.0, p["volume"],
                   cloture.get("exit_price"), pnl_eur, p["pushed_at"],

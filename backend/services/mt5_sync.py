@@ -108,7 +108,8 @@ def _pip_size(pair: str) -> float:
     return 0.0001
 
 
-def _upsert_open_trade(row: dict[str, Any], user: str) -> None:
+def _upsert_open_trade(row: dict[str, Any], user: str,
+                       destination_id: str | None = None) -> None:
     """INSERT un ordre auto comme personal_trade. Silencieusement ignoré si
     le mt5_ticket existe déjà (dedup rejouable)."""
     ticket = row.get("ticket")
@@ -190,14 +191,16 @@ def _upsert_open_trade(row: dict[str, Any], user: str) -> None:
         logger.debug(f"mt5_sync: find_signal_for_order failed: {e}")
 
     with sqlite3.connect(_db_path()) as c:
+        from backend.services.trade_log_service import assurer_colonne_destination
+        assurer_colonne_destination(c)
         c.execute("""
             INSERT OR IGNORE INTO personal_trades (
                 user, pair, direction, entry_price, stop_loss, take_profit,
                 size_lot, signal_pattern, signal_confidence, checklist_passed,
                 notes, status, created_at, mt5_ticket, is_auto,
                 post_entry_sl, post_entry_tp, post_entry_size, context_macro,
-                signal_id, fill_price, slippage_pips
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 'OPEN', ?, ?, 1, 1, 1, 1, ?, ?, ?, ?)
+                signal_id, fill_price, slippage_pips, destination_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 'OPEN', ?, ?, 1, 1, 1, 1, ?, ?, ?, ?, ?)
         """, (
             user,
             pair,
@@ -220,6 +223,9 @@ def _upsert_open_trade(row: dict[str, Any], user: str) -> None:
             signal_id,
             fill_price,
             slippage_pips,
+            # Destination (2026-08-20) : sans elle, demo et reel se
+            # confondaient dans le plafond journalier.
+            destination_id,
         ))
 
 
@@ -796,7 +802,7 @@ async def _sync_one(name: str, base_url: str, api_key: str) -> tuple[int, int]:
             continue
         status = row.get("status")
         if status == "filled":
-            _upsert_open_trade(row, user)
+            _upsert_open_trade(row, user, destination_id=f"admin_{name}")
             new_open += 1
         elif status == "closed":
             # La cause d'abord, l'écriture ensuite : `close_reason` est protégé

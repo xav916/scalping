@@ -148,6 +148,45 @@ def test_aucun_trade_ne_declenche_pas(base, monkeypatch):
     assert t.silent_mode_active_any_user() is False
 
 
+def test_la_colonne_destination_fait_foi(base, monkeypatch):
+    """Depuis la migration du 20/08, la colonne repond sans sous-requete."""
+    t, chemin = base
+    _seuil(monkeypatch, t)
+    c = sqlite3.connect(chemin)
+    cols = [r[1] for r in c.execute("PRAGMA table_info(personal_trades)")]
+    assert "destination_id" in cols, "la migration n'a pas ajoute la colonne"
+    c.close()
+
+    # Aucun push en base : seule la colonne peut renseigner la destination.
+    _ajouter(chemin, "xavier", -101.98, 85012345, destination=None)
+    c = sqlite3.connect(chemin)
+    c.execute("UPDATE personal_trades SET destination_id='admin_legacy'")
+    c.commit(); c.close()
+    assert t.silent_mode_active_any_user() is False
+
+
+def test_la_colonne_prime_sur_la_sous_requete(base, monkeypatch):
+    """Si les deux existent, la colonne gagne — elle est la source durable."""
+    t, chemin = base
+    _seuil(monkeypatch, t)
+    _ajouter(chemin, "xavier", -101.98, 85012345, "admin_live")  # push = reel
+    c = sqlite3.connect(chemin)
+    c.execute("UPDATE personal_trades SET destination_id='admin_legacy'")
+    c.commit(); c.close()
+    assert t.silent_mode_active_any_user() is False
+
+
+def test_colonne_vide_retombe_sur_la_sous_requete(base, monkeypatch):
+    """Les lignes anterieures a la migration restent correctement classees."""
+    t, chemin = base
+    _seuil(monkeypatch, t)
+    _ajouter(chemin, "xavier", -101.98, 85012345, "admin_legacy")
+    c = sqlite3.connect(chemin)
+    c.execute("UPDATE personal_trades SET destination_id=NULL")
+    c.commit(); c.close()
+    assert t.silent_mode_active_any_user() is False
+
+
 def test_registre_illisible_compte_TOUT_plutot_que_rien(base, monkeypatch):
     """Se taire désarmerait le garde-fou en silence : on retombe sur le
     comportement large, pas sur l'absence de contrôle."""
