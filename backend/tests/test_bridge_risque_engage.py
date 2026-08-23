@@ -262,3 +262,86 @@ def test_la_marge_bloque_quand_le_risque_passe(bridge, monkeypatch):
     ok, raison = bridge._check_safety_gates(
         "GBPUSD", "buy", lots=0.01, entry=1.36073, sl=1.36000)
     assert ok is False and "Marge libre" in raison
+
+
+# ─── Stop a l'equilibre : le risque vaut VRAIMENT zero (2026-08-23) ────────
+#
+# Question posee : « peut-on remonter le stop a l'equilibre pour liberer de la
+# place sous les 6 % ? » Mesure avant correctif — la reponse etait NON, et
+# pour une raison inverse de l'intuition :
+#
+#   stop a l'equilibre  -> abs(entry - sl) == 0
+#                       -> `_risque_realise` rend None (branche « donnee
+#                          manquante »)
+#                       -> position comptee comme NUE
+#                       -> **toute ouverture refusee**, sur un message qui
+#                          affirme faussement « Position sans stop »
+#
+# Le geste cense liberer de la place bloquait donc tout le compte.
+#
+# > **Zero mesure et zero faute de mesure ne sont pas le meme zero.**
+#
+# Un stop AU-DELA de l'equilibre comptait, lui, un risque fantome egal a la
+# distance du gain verrouille — alors que la position ne peut plus perdre.
+
+
+def test_stop_A_L_EQUILIBRE_ne_risque_plus_RIEN(m):
+    """Le cas qui bloquait tout le compte."""
+    p = _Pos(1, "EURUSD", 1.10000, 1.10000, 0.10)
+    p.type = 0
+    assert m._risque_position(p, _Info()) == 0.0
+
+
+def test_stop_a_l_equilibre_n_est_PAS_une_position_nue(m):
+    """⛔ La consequence qui comptait : elle ne doit bloquer personne."""
+    p = _Pos(1, "EURUSD", 1.10000, 1.10000, 0.10)
+    p.type = 0
+    total, non_bornables = m._risque_engage([p], lambda s: _Info())
+    assert non_bornables == [], "une position protegee passait pour nue"
+    ok, raison = m._controle_risque_engage(total, non_bornables, 5.0, 556.0, 6.0)
+    assert ok is True, raison
+
+
+def test_stop_AU_DELA_de_l_equilibre_ne_compte_pas_un_risque_fantome(m):
+    """Gain verrouille : la position ne peut plus perdre, donc zero."""
+    achat = _Pos(1, "EURUSD", 1.10000, 1.10500, 0.10)
+    achat.type = 0
+    assert m._risque_position(achat, _Info()) == 0.0
+
+    vente = _Pos(2, "EURUSD", 1.10000, 1.09500, 0.10)
+    vente.type = 1
+    assert m._risque_position(vente, _Info()) == 0.0
+
+
+def test_le_SENS_de_la_position_est_respecte(m):
+    """⚠️ Le meme stop est protecteur a l'achat et dangereux a la vente.
+
+    `abs()` les confondait : c'est la faute de fond, dont le cas a l'equilibre
+    n'etait que la manifestation la plus visible.
+    """
+    achat = _Pos(1, "EURUSD", 1.10000, 1.09500, 0.10)   # stop SOUS : risque
+    achat.type = 0
+    vente = _Pos(2, "EURUSD", 1.10000, 1.09500, 0.10)   # meme stop : protege
+    vente.type = 1
+    assert m._risque_position(achat, _Info()) == pytest.approx(50.0)
+    assert m._risque_position(vente, _Info()) == 0.0
+
+
+def test_une_position_SANS_stop_reste_non_bornable(m):
+    """⛔ Le garde-fou a ne surtout pas emporter avec le correctif.
+
+    Zero par ABSENCE de stop reste un risque infini. Seul le zero obtenu par
+    un stop effectivement place devient un vrai zero.
+    """
+    nue = _Pos(1, "EURUSD", 1.10000, 0.0, 0.10)
+    nue.type = 0
+    assert m._risque_position(nue, _Info()) is None
+    _, non_bornables = m._risque_engage([nue], lambda s: _Info())
+    assert non_bornables == [1]
+
+
+def test_sens_INCONNU_on_surestime_plutot_que_de_rendre_zero(m):
+    """Sur donnee manquante, on compte le pire — jamais le plus favorable."""
+    sans_sens = _Pos(1, "EURUSD", 1.10000, 1.10500, 0.10)
+    assert not hasattr(sans_sens, "type"), "_Pos ne doit pas porter de sens"
+    assert m._risque_position(sans_sens, _Info()) == pytest.approx(50.0)

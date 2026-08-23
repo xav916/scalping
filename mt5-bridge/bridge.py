@@ -2016,15 +2016,46 @@ def _risque_realise(entry: float, sl: float, lots: float,
     return (distance / point) * tick_value * lots
 
 
+# MT5 : POSITION_TYPE_BUY == 0, POSITION_TYPE_SELL == 1. Ecrit en clair pour
+# que ce bloc reste executable SANS le module MetaTrader5 — les tests en
+# extraient les fonctions du source et les lancent seules.
+_TYPE_ACHAT = 0
+
+
+def _distance_perdante(type_position, entry: float, sl: float) -> float:
+    """Distance jusqu'au stop **du cote ou l'on perd**. Zero au-dela.
+
+    `abs(entry - sl)` traite un stop a +50 points comme un risque de 50
+    points, alors qu'une position dont le stop verrouille un gain **ne peut
+    plus rien perdre**. Son risque est nul, pas symetrique.
+    """
+    if type_position == _TYPE_ACHAT:
+        return max(0.0, entry - sl)
+    return max(0.0, sl - entry)
+
+
 def _risque_position(p, info) -> float | None:
     """Risque en devise du compte d'une position OUVERTE, jusqu'a son stop.
 
     ⚠️ Rend **None** quand le risque n'est pas bornable — au premier chef
     lorsque la position n'a **pas de stop** (`sl == 0`). Ne jamais rendre
-    `0.0` : une position nue est un risque *infini*, pas un risque nul, et
-    confondre les deux est exactement ce qui laisserait passer ce qu'on veut
-    interdire. Meme raisonnement que `_risque_realise`, qui refuse deja de
-    rendre le zero-qui-passe-pour-une-mesure.
+    `0.0` dans ce cas : une position nue est un risque *infini*, pas un risque
+    nul, et confondre les deux est exactement ce qui laisserait passer ce
+    qu'on veut interdire.
+
+    ⛔ Mais un stop **A L'EQUILIBRE ou au-dela** est l'exact oppose : la
+    position ne peut plus perdre, son risque vaut VRAIMENT zero. Avant le
+    2026-08-23, `abs(entry - sl)` donnait `distance == 0` a l'equilibre, donc
+    `_risque_realise` rendait `None`, donc la position passait pour **nue** et
+    **bloquait toute nouvelle ouverture** — sur un message affirmant
+    faussement « Position sans stop ». Un stop au-dela, lui, comptait un
+    risque fantome egal a la distance du gain verrouille.
+
+    > **Zero mesure et zero faute de mesure ne sont pas le meme zero.** Ici
+    > les deux existent, et il fallait les distinguer par leur CAUSE.
+
+    ⚠️ La marge, elle, reste immobilisee : c'est `_controle_marge_libre` qui
+    la couvre. Les deux portes restent complementaires.
     """
     try:
         sl = float(getattr(p, "sl", 0.0) or 0.0)
@@ -2032,8 +2063,19 @@ def _risque_position(p, info) -> float | None:
             return None
         if info is None:
             return None
+        entry = float(p.price_open)
+        type_position = getattr(p, "type", None)
+        if type_position is None:
+            # Sens inconnu : on compte le PIRE des deux cotes plutot que de
+            # risquer un zero a tort. Sur donnee manquante, on surestime.
+            distance_perdante = abs(entry - sl)
+        else:
+            distance_perdante = _distance_perdante(
+                int(type_position), entry, sl)
+        if distance_perdante <= 0:
+            return 0.0
         return _risque_realise(
-            float(p.price_open), sl, float(p.volume),
+            entry, entry - distance_perdante, float(p.volume),
             float(info.point), float(info.trade_tick_value))
     except (TypeError, ValueError, AttributeError):
         return None
