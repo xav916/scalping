@@ -67,12 +67,21 @@ def test_les_paires_sont_dans_le_defaut_watched_pairs():
         cibles = [t.id for t in noeud.targets if isinstance(t, ast.Name)]
         if "WATCHED_PAIRS" not in cibles:
             continue
-        # WATCHED_PAIRS = os.getenv("WATCHED_PAIRS", "<defaut>").split(",")
+        # Deux formes acceptées, l'invariant étant le même :
+        #   WATCHED_PAIRS = os.getenv("WATCHED_PAIRS", "<defaut>").split(",")
+        #   WATCHED_PAIRS = _liste_env("WATCHED_PAIRS", "<defaut>")
+        # On reconnaît par la STRUCTURE — un appel à deux arguments dont le
+        # premier est littéralement "WATCHED_PAIRS" — et non par le nom de la
+        # fonction appelée, qui n'est qu'un détail d'écriture.
         for sous in ast.walk(noeud.value):
-            if (isinstance(sous, ast.Call)
-                    and getattr(sous.func, "attr", None) == "getenv"
-                    and len(sous.args) == 2):
-                defaut = ast.literal_eval(sous.args[1])
+            if not (isinstance(sous, ast.Call) and len(sous.args) == 2):
+                continue
+            try:
+                nom, valeur = (ast.literal_eval(a) for a in sous.args)
+            except ValueError:
+                continue
+            if nom == "WATCHED_PAIRS" and isinstance(valeur, str):
+                defaut = valeur
         break
 
     assert defaut, "défaut de WATCHED_PAIRS introuvable dans config/settings.py"

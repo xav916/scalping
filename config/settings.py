@@ -57,11 +57,25 @@ VOLATILITY_THRESHOLD_MEDIUM = float(os.getenv("VOLATILITY_THRESHOLD_MEDIUM", "1.
 TREND_STRENGTH_MIN = float(os.getenv("TREND_STRENGTH_MIN", "0.6"))  # 0-1 scale
 
 # Currency pairs to monitor
-WATCHED_PAIRS = os.getenv(
+#
+# ⚠️ `docker run --env-file` NE retire PAS les guillemets, contrairement au
+# shell : `WATCHED_PAIRS="EUR/USD,...,LINK/USD"` produit alors une premiere
+# paire `"EUR/USD` et une derniere `LINK/USD"`. Elles ne correspondent plus a
+# rien — mesure du 2026-08-23 : `LINK/USD"` tombait en classe `forex` par
+# defaut et sortait silencieusement de l'univers crypto.
+#
+# On nettoie donc a la lecture plutot que de compter sur la discipline de
+# celui qui edite le `.env`. Le meme piege guette toute variable de liste.
+def _liste_env(nom: str, defaut: str) -> list[str]:
+    brut = os.getenv(nom, defaut).strip().strip('"').strip("'")
+    return [x.strip().strip('"').strip("'") for x in brut.split(",") if x.strip()]
+
+
+WATCHED_PAIRS = _liste_env(
     "WATCHED_PAIRS",
     "XAU/USD,EUR/USD,GBP/USD,USD/JPY,EUR/GBP,USD/CHF,AUD/USD,USD/CAD,EUR/JPY,GBP/JPY,"
-    "BTC/USD,ETH/USD,XAG/USD,WTI/USD,SPX,NDX"
-).split(",")
+    "BTC/USD,ETH/USD,XAG/USD,WTI/USD,SPX,NDX",
+)
 
 # Asset class per pair (used for UI filtering, scoring mapping, bridge routing).
 # "forex" = forex majors/crosses

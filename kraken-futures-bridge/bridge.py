@@ -89,6 +89,20 @@ _PAIR_TO_SYMBOL: dict[str, str] = {
     "AVAX/USD": "PF_AVAXUSD",
     "MATIC/USD": "PF_MATICUSD",
     "LINK/USD": "PF_LINKUSD",
+    # Ouvertes le 2026-08-23. Les six autres portes etaient DEJA ouvertes pour
+    # elles (whitelist du bridge, admission, SHADOW_CONFIG en 1d, blocklist,
+    # seuil de confiance, classe d'actif) : seule cette table manquait, et
+    # elles partaient a la poubelle en HTTP 400 chaque nuit depuis l'extension
+    # de l'univers. Retenues sur leur SPREAD, mesure du 23/08 — la reference
+    # etant le pire deja accepte, DOT a 5,6 bp :
+    "PAXG/USD": "PF_PAXGUSD",   # 0,9 bp
+    "BNB/USD": "PF_BNBUSD",     # 1,6 bp
+    "UNI/USD": "PF_UNIUSD",     # 4,9 bp
+    "ALGO/USD": "PF_ALGOUSD",   # 5,6 bp
+    # ⛔ Les dix autres candidates (XLM, SEI, ENS, HBAR, ARB, CRV, LDO, AAVE,
+    # MANA, ETHFI) ont ete SORTIES de WATCHED_PAIRS le meme jour : de 6,2 a
+    # 27,9 bp de spread, quand les frais taker seuls valent deja 2,6 fois
+    # l'edge mesure. Ne pas les rajouter ici sans remesurer.
     # xStocks Backed Finance (tokens perpetuels backés par vraies actions/ETFs)
     # UI Kraken FR cache la recherche, MAIS API accepte les ordres (validé 2026-08-02).
     # Trading 24/7 avec levier ~10x auto, prix decouplé des vrais marchés NYSE.
