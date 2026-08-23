@@ -133,7 +133,24 @@ def _upsert_open_trade(row: dict[str, Any], user: str,
     # les noms habituels.
     pair = row.get("pair") or row.get("symbol") or "?"
     direction = (row.get("direction") or "").lower()
+
+    # ⛔ `or 0` est CONTRAINT par le schéma : `personal_trades.entry_price` est
+    # `REAL NOT NULL`. Écrire None ferait échouer l'INSERT et perdrait le trade
+    # entier — pire qu'un zéro. Mais un zéro silencieux est ce qui a laissé les
+    # 217 trades du compte réel sans prix d'entrée pendant deux mois, sans que
+    # rien ne le signale.
+    #
+    # ⇒ La cause a été réparée à la source (le bridge écrivait `result.price`
+    # brut, nul chez IC Markets — cf. `_prix_pour_audit`). Ici on garde le
+    # repli, mais on le rend BRUYANT : si ce log apparaît, le correctif amont
+    # ne fonctionne plus.
     entry_price = row.get("entry") or 0
+    if not entry_price:
+        logger.warning(
+            f"mt5_sync[{destination_id}]: entry ABSENT pour ticket={ticket} "
+            f"{pair} {direction} — entry_price ecrit a 0, ce trade sera "
+            f"inexploitable en R. Verifier `_prix_pour_audit` cote bridge."
+        )
     fill_price = (
         row.get("fill_price")
         or row.get("price_open")

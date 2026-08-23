@@ -891,6 +891,45 @@ def _send_market_order(
     }
 
 
+def _prix_pour_audit(result: dict) -> float | None:
+    """Le prix d'entrée à écrire dans l'audit. ``None`` si aucune source.
+
+    ⛔ **Pourquoi cette fonction existe** (mesuré le 2026-08-24). Le site
+    d'écriture faisait ``entry=result["price"]`` — le champ MT5 **brut**. Or
+    IC Markets rend ``result.price = 0.0`` sur un ordre pourtant rempli :
+
+        compte REEL, filled + live, 60 jours   57 lignes, entry>0 sur  0
+        compte DEMO, meme periode              39 lignes, entry>0 sur 39
+
+    Le repli existait déjà — ``_resolve_fill_price()``, trois sources, posé le
+    2026-06-12 — et son résultat était **dans le même dict**, juste à côté,
+    inutilisé pour ``entry``.
+
+    > **Un correctif ne se propage pas seul aux autres consommateurs de la
+    > même donnée.** Le repli avait été posé pour la pose du SL/TP ; personne
+    > n'avait rebranché l'audit dessus.
+
+    En aval, ``mt5_sync`` fait ``entry_price = row.get("entry") or 0`` : les
+    **217** trades du compte réel portent donc ``entry_price = 0``, ce qui
+    rend indécidable toute analyse en R du réel.
+
+    ⚠️ **Rend ``None``, jamais ``0.0``, quand rien n'est lisible.** Un zéro se
+    ferait passer pour une mesure et serait avalé par la première moyenne —
+    c'est précisément le défaut qu'on répare. ``None`` se lit « absent ».
+
+    ⚠️ Appelée **après** un ordre réussi : elle ne doit jamais lever, sinon on
+    perdrait la trace d'un trade réel pour un champ de journalisation.
+    """
+    for cle in ("fill_price", "price"):
+        try:
+            v = float(result.get(cle))
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if v > 0:
+            return v
+    return None
+
+
 def _resolve_fill_price(result, requested_price: float) -> tuple[float, str]:
     """Prix réellement obtenu, avec 3 sources en repli. Retourne (prix, source).
 
@@ -2689,7 +2728,12 @@ def _handle_live_order(*, data, pair, mt5_symbol, direction, lots, entry, sl, tp
         _db_log_order(
             mode="live", status="filled", pair=pair, symbol=mt5_symbol,
             direction=direction, lots=result["volume"],
-            entry=result["price"], sl=sl, tp=tp,
+            # ⛔ 2026-08-24 : c'était `result["price"]`, le champ MT5 BRUT, qui
+            # vaut 0.0 chez IC Markets sur un ordre pourtant rempli — 57 ordres
+            # réels enregistrés avec entry=0, contre 39/39 corrects sur le démo.
+            # `_prix_pour_audit` prend le prix RÉSOLU, déjà présent dans ce même
+            # dict, et rend None plutôt que zéro si rien n'est lisible.
+            entry=_prix_pour_audit(result), sl=sl, tp=tp,
             risk_money=data.get("risk_money"), confidence=data.get("confidence"),
             ticket=result["ticket"], retcode=result["retcode"],
             message=result["message"], client_comment=client_comment,
