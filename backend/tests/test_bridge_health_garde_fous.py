@@ -40,6 +40,10 @@ _REGLAGES = {
     "PARTIAL_CLOSE_PCT": 50.0,
     "EQUILIBRE_AUTO_ENABLED": True,
     "EQUILIBRE_MARGE_R": 1.0,
+    # Porte de bruit en ecarts-types journaliers, ajoutee le 2026-08-24 : le
+    # seuil en R vaut 1,07 σ sur EUR/GBP et 0,24 σ sur USD/JPY, donc aucune
+    # valeur en R ne peut etre bonne partout.
+    "EQUILIBRE_MARGE_SIGMA": 1.0,
     "TRADING_HOURS_UTC": "",
     "DAILY_LOSS_EXCLUDED_TICKETS": frozenset(),
 }
@@ -91,6 +95,25 @@ def test_la_remontee_DESARMEE_se_voit_aussi():
                         EQUILIBRE_MARGE_R=2.5)["garde_fous"]
     assert g["equilibre_auto_enabled"] is False
     assert g["equilibre_marge_r"] == 2.5
+
+
+def test_la_porte_de_BRUIT_est_lisible_a_distance():
+    """La porte en écarts-types (2026-08-24).
+
+    ⛔ Sans elle dans `/health`, on ne pourrait pas savoir à distance si le
+    seuil qui protège réellement du bruit est armé — et c'est LUI qui décide,
+    pas le seuil en R : le même 0,40 R vaut 1,07 σ sur EUR/GBP et 0,24 σ sur
+    USD/JPY. Lire `equilibre_marge_r` seul donnerait une fausse assurance.
+    """
+    g = _appeler_health()["garde_fous"]
+    assert g["equilibre_marge_sigma"] == 1.0
+
+
+def test_la_porte_de_bruit_DESARMEE_se_voit():
+    """`0` = désarmée : seul le seuil en R agit, avec l'écart de 4,5× entre
+    instruments qu'il laisse passer. Ça doit se voir."""
+    g = _appeler_health(EQUILIBRE_MARGE_SIGMA=0.0)["garde_fous"]
+    assert g["equilibre_marge_sigma"] == 0.0
 
 
 def test_un_plafond_desserre_se_VOIT():

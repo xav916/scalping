@@ -15,6 +15,7 @@ Sécurité :
 
 import logging
 import json
+import math
 import os
 import secrets
 import sqlite3
@@ -106,6 +107,27 @@ MARGE_LIBRE_MIN_PCT = float(os.getenv("MARGE_LIBRE_MIN_PCT", "30.0"))
 # deja acquis l'equivalent de son propre risque.
 EQUILIBRE_AUTO_ENABLED = os.getenv("EQUILIBRE_AUTO_ENABLED", "true").lower() == "true"
 EQUILIBRE_MARGE_R = float(os.getenv("EQUILIBRE_MARGE_R", "1.0"))
+
+# ─── Porte de BRUIT, en ecarts-types journaliers (2026-08-24) ──────────
+# ⛔ Le defaut du seuil en R n'est pas sa valeur, c'est son UNITE. Le meme
+# `0,40 R` place le stop a des distances du bruit qui varient d'un facteur
+# 4,5 selon l'instrument — mesure sur 1067 bougies H1 chez le courtier :
+#
+#     EUR/GBP 1,07 σ · GBP/USD 0,80 σ · GBP/JPY 0,48 σ · USD/JPY 0,24 σ
+#
+# A 0,24 σ on est au BE 0 %, la seule politique SANS suiveur mesuree
+# significativement destructrice (−0,099 R, t = −2,61).
+#
+# ⇒ Les deux conditions se CUMULENT : le plancher en R (politique) ET la
+# porte de bruit en σ. La plus stricte des deux mord.
+# 0 desarme la porte et rend exactement le comportement d'avant.
+EQUILIBRE_MARGE_SIGMA = float(os.getenv("EQUILIBRE_MARGE_SIGMA", "1.0"))
+# Fenetre de mesure de la volatilite, en heures. 720 h = 30 jours : assez
+# pour un ecart-type stable, assez court pour decrire le regime courant.
+EQUILIBRE_VOL_HEURES = int(os.getenv("EQUILIBRE_VOL_HEURES", "720"))
+# La volatilite ne bouge pas d'une minute a l'autre : un calcul par jour
+# suffit, et evite d'appeler MT5 sur le chemin d'un ordre.
+EQUILIBRE_VOL_TTL_SEC = int(os.getenv("EQUILIBRE_VOL_TTL_SEC", "86400"))
 DEDUP_WINDOW_SEC = int(os.getenv("DEDUP_WINDOW_SEC", "300"))
 DEVIATION_POINTS = int(os.getenv("DEVIATION_POINTS", "20"))
 MAGIC_NUMBER = int(os.getenv("MAGIC_NUMBER", "20260419"))
@@ -575,8 +597,14 @@ def _check_safety_gates(mt5_symbol: str, direction: str,
                 and nouveau is not None and float(info.equity) > 0):
             plafond = float(info.equity) * MAX_RISQUE_ENGAGE_PCT / 100.0
             manque = (ouvert + nouveau) - plafond
-            candidats = _candidats_equilibre(positions, mt5.symbol_info,
-                                             EQUILIBRE_MARGE_R)
+            candidats = _candidats_equilibre(
+                positions, mt5.symbol_info, EQUILIBRE_MARGE_R,
+                # La porte de BRUIT, en ecarts-types journaliers : le seuil en
+                # R seul vaut 1,07 σ sur EUR/GBP et 0,24 σ sur USD/JPY, donc
+                # aucune valeur ne peut etre bonne partout. Volatilite
+                # inconnue ⇒ position ECARTEE, jamais laissee passer.
+                sigmas=_sigma_journalier,
+                marge_min_sigma=EQUILIBRE_MARGE_SIGMA)
             retenus = _choisir_pour_liberer(candidats, manque)
             if not retenus:
                 logger.info(
@@ -1185,6 +1213,15 @@ _last_known_tickets: set[int] = set()  # positions ouvertes au dernier passage d
 # les positions existantes gardent leur SL/TP MT5 natifs comme filet.
 _position_meta: dict[int, dict] = {}
 _meta_lock = threading.Lock()
+
+# Volatilite par symbole, pour la porte de bruit de la soupape d'equilibre.
+# ⚠️ Declare ICI et non a cote de `_sigma_journalier` : les tests extraient la
+# plage `_risque_realise` -> `_controle_marge_libre` du source et l'executent
+# seule, sans les imports du module. Une AFFECTATION de module dans cette
+# plage y leve `NameError: threading`. Les fonctions, elles, ne resolvent
+# leurs noms qu'a l'appel — donc elles passent.
+_vol_cache: dict[str, tuple[float, float]] = {}   # symbole -> (sigma_prix, t)
+_vol_lock = threading.Lock()
 
 
 def _register_position_meta(ticket: int, tp1: float, tp2: float | None) -> None:
@@ -1795,6 +1832,9 @@ def health():
             # demanderait une session RDP.
             "equilibre_auto_enabled": EQUILIBRE_AUTO_ENABLED,
             "equilibre_marge_r": EQUILIBRE_MARGE_R,
+            # La porte de bruit. 0 = desarmee, seul le seuil en R agit alors —
+            # et il vaut 4,5 fois moins de marge sur USD/JPY que sur EUR/GBP.
+            "equilibre_marge_sigma": EQUILIBRE_MARGE_SIGMA,
             "deviation_points": DEVIATION_POINTS,
             # 0 = desarme. Le suiveur detruisait 0,329 R/trade sur l'or ;
             # desarme le 2026-08-11, +21 % a la cle. Doit rester a 0.
@@ -2251,7 +2291,74 @@ def _marge_de_profit_r(p, info) -> float | None:
         return None
 
 
-def _candidats_equilibre(positions, specs, marge_min_r: float) -> list[dict]:
+def _sigma_journalier(symbole: str) -> float | None:
+    """Écart-type journalier du symbole, en unités de PRIX. ``None`` si
+    incalculable — jamais une valeur par défaut.
+
+    Mesuré sur `EQUILIBRE_VOL_HEURES` bougies H1, en rendements log, puis
+    ramené au jour par `× √24` et converti en prix.
+
+    ⚠️ **Rend `None`, jamais 0.0 ni une valeur inventée.** L'appelant écarte
+    la position quand la volatilité est inconnue (fail-closed) : une valeur
+    de repli le ferait agir en croyant savoir.
+
+    ⚠️ Appelée sur le chemin d'un ordre : mise en cache `EQUILIBRE_VOL_TTL_SEC`
+    (un jour) pour ne pas interroger MT5 à chaque décision, et **ne lève
+    jamais** — au pire elle rend `None`.
+    """
+    if not symbole:
+        return None
+    maintenant = time.time()
+    with _vol_lock:
+        hit = _vol_cache.get(symbole)
+        if hit and (maintenant - hit[1]) < EQUILIBRE_VOL_TTL_SEC:
+            return hit[0]
+    try:
+        brut = mt5.copy_rates_from_pos(
+            symbole, mt5.TIMEFRAME_H1, 0, EQUILIBRE_VOL_HEURES)
+        if brut is None or len(brut) < 100:
+            logger.info(
+                f"equilibre/vol: {symbole} — seulement "
+                f"{0 if brut is None else len(brut)} bougies, insuffisant")
+            return None
+        clotures = [float(b["close"]) for b in brut if float(b["close"]) > 0]
+        if len(clotures) < 100:
+            return None
+        rend = [math.log(clotures[i] / clotures[i - 1])
+                for i in range(1, len(clotures))]
+        moy = sum(rend) / len(rend)
+        var = sum((r - moy) ** 2 for r in rend) / (len(rend) - 1)
+        sigma_rel = math.sqrt(var) * math.sqrt(24.0)     # relatif, par jour
+        sigma_prix = sigma_rel * clotures[-1]
+        if sigma_prix <= 0:
+            return None
+        with _vol_lock:
+            _vol_cache[symbole] = (sigma_prix, maintenant)
+        logger.info(
+            f"equilibre/vol: {symbole} sigma_jour={sigma_prix:.5f} "
+            f"({100 * sigma_rel:.3f} %) sur {len(rend)} rendements H1")
+        return sigma_prix
+    except Exception as e:
+        logger.warning(
+            f"equilibre/vol: {symbole} illisible ({type(e).__name__}: {e})")
+        return None
+
+
+def _acquis_en_prix(p) -> float | None:
+    """Profit acquis par la position, en unités de PRIX. Signé par le sens."""
+    try:
+        entree = float(p.price_open)
+        courant = float(getattr(p, "price_current", 0.0) or 0.0)
+        if courant <= 0:
+            return None
+        est_achat = int(getattr(p, "type", _TYPE_ACHAT)) == _TYPE_ACHAT
+        return (courant - entree) if est_achat else (entree - courant)
+    except (TypeError, ValueError, AttributeError):
+        return None
+
+
+def _candidats_equilibre(positions, specs, marge_min_r: float,
+                         sigmas=None, marge_min_sigma: float = 0.0) -> list[dict]:
     """Positions dont le stop peut remonter à l'équilibre SANS danger.
 
     Fonction pure. Rend `[{ticket, symbole, risque_libere, marge_r}]`, les
@@ -2260,8 +2367,32 @@ def _candidats_equilibre(positions, specs, marge_min_r: float) -> list[dict]:
     ⚠️ La condition de marge est ce qui sépare ce mécanisme d'un suiveur.
     Un stop posé à l'équilibre sur une position à peine en profit se trouve
     **collé au marché** et se fait sortir par le premier bruit — c'est
-    exactement la mécanique qui a coûté −0,329 R sur l'or. On n'y touche
-    donc qu'au-delà de `marge_min_r` déjà acquis.
+    exactement la mécanique qui a coûté −0,329 R sur l'or.
+
+    ## Deux conditions, la plus STRICTE des deux (2026-08-24)
+
+    1. `marge_min_r` — le plancher de politique, en R ;
+    2. `marge_min_sigma` — la porte de BRUIT, en écarts-types journaliers.
+
+    ⛔ **Pourquoi le R ne suffit pas.** Son unité est mauvaise : le même
+    `0,40 R` place le stop à des distances du bruit qui varient d'un facteur
+    **4,5** selon l'instrument, mesuré sur 1067 bougies H1 chez le courtier :
+
+        EUR/GBP 1,07 σ · GBP/USD 0,80 σ · GBP/JPY 0,48 σ · USD/JPY 0,24 σ
+
+    À 0,24 σ on est au BE 0 %, la seule politique sans suiveur mesurée
+    significativement destructrice (−0,099 R, t = −2,61). **Aucune valeur en
+    R ne peut être bonne partout** — le σ supprime l'arbitrage au lieu de le
+    trancher.
+
+    ⛔ **Volatilité inconnue ⇒ PAS candidat.** Retomber sur le R seul serait
+    fail-open, et précisément sur l'instrument dangereux. Le coût est que la
+    soupape ne se déclenche pas, donc l'ordre reste refusé : c'est le côté
+    sûr de l'erreur.
+
+    `sigmas` est une fonction `symbole -> écart-type journalier en PRIX`, ou
+    `None`. `marge_min_sigma <= 0` désarme la porte de bruit et rend
+    exactement le comportement d'avant.
     """
     sortie = []
     for p in positions or []:
@@ -2275,9 +2406,31 @@ def _candidats_equilibre(positions, specs, marge_min_r: float) -> list[dict]:
         # propre cas limite — un ecart qu'on relirait plus tard comme un bug.
         if marge is None or marge < marge_min_r - 1e-9:
             continue                      # pas assez de coussin : on ne touche pas
+
+        symbole = getattr(p, "symbol", None)
+        if marge_min_sigma > 0:
+            # ⚠️ Ne JAMAIS laisser une source de volatilite faire tomber un
+            # ordre : c'est une aide a la decision, pas le chemin critique.
+            try:
+                sigma = sigmas(symbole) if sigmas else None
+            except Exception as e:
+                logger.warning(
+                    f"equilibre: volatilite illisible pour {symbole} "
+                    f"({type(e).__name__}: {e}) — position ecartee")
+                sigma = None
+            if not sigma or sigma <= 0:
+                logger.info(
+                    f"equilibre: {symbole} ecarte, volatilite inconnue "
+                    f"(fail-closed : on ne pose pas un stop dans le bruit "
+                    f"en croyant le contraire)")
+                continue
+            acquis = _acquis_en_prix(p)
+            if acquis is None or acquis < marge_min_sigma * sigma - 1e-12:
+                continue
+
         sortie.append({
             "ticket": getattr(p, "ticket", None),
-            "symbole": getattr(p, "symbol", None),
+            "symbole": symbole,
             "risque_libere": risque,
             "marge_r": marge,
         })
