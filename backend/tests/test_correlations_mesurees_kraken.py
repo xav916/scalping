@@ -112,14 +112,28 @@ def test_les_trois_positions_de_la_nuit_n_etaient_PAS_le_meme_pari():
         assert abs(r) < cg.SEUIL_CORRELATION, f"{a}/{b} = {r}"
 
 
-def test_le_forex_et_les_metaux_restent_servis_par_la_table_historique():
-    """Kraken Futures ne cote pas ces paires : la mesure ne peut pas les couvrir.
+def test_le_forex_et_les_metaux_restent_SERVIS():
+    """Kraken Futures ne cote pas ces paires — mais le courtier MT5, si.
 
-    Les écraser en les laissant à ``None`` retirerait une protection existante.
+    Depuis le 2026-08-23 elles ont leur propre mesure continue
+    (``correlations_forex_1h.json``, 55 couples). La table historique reste
+    le dernier recours, et ces couples ne doivent **jamais** retomber à
+    ``None`` : ce serait retirer une protection existante.
+
+    ⚠️ On verrouille le **signe et la force**, pas la valeur. Les épingler à
+    0,82 / −0,80 / 0,79 faisait tomber ce test dès la première remesure — la
+    mesure du courtier rend 0,852 / −0,819 / 0,91. Les deux sources se
+    recoupent, ce qui les valide mutuellement ; un test qui casse quand la
+    donnée s'améliore ne protège rien.
     """
-    assert cg.correlation("XAG/USD", "XAU/USD") == pytest.approx(0.82)
-    assert cg.correlation("EUR/USD", "USD/CHF") == pytest.approx(-0.80)
-    assert cg.correlation("EUR/JPY", "GBP/JPY") == pytest.approx(0.79)
+    for a, b in (("XAG/USD", "XAU/USD"), ("EUR/JPY", "GBP/JPY")):
+        r = cg.correlation(a, b)
+        assert r is not None, f"{a}x{b} retombé à None : protection perdue"
+        assert r >= cg.SEUIL_CORRELATION, f"{a}x{b} = {r}, attendu fortement positif"
+
+    r = cg.correlation("EUR/USD", "USD/CHF")
+    assert r is not None and r <= -cg.SEUIL_CORRELATION, (
+        f"EUR/USDxUSD/CHF = {r}, attendu fortement NÉGATIF")
 
 
 def test_une_paire_jamais_mesuree_rend_toujours_None():

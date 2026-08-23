@@ -93,8 +93,34 @@ CORRELATIONS: dict[tuple[str, str], tuple[float, int]] = {
 # sous-echantillonne. Regenerable : `scripts/mesurer_correlations_kraken.py`.
 _FICHIER_MESURE = "correlations_kraken_1h.json"
 
+# ─── Mesure continue forex et metaux (2026-08-23) ──────────────────────
+#
+# La table historique ne couvre que CINQ couples forex/metaux. Pour tous les
+# autres, `correlation()` rend None et le garde ne compte rien.
+#
+# ⚠️ Le trou, mesure sur le compte reel : les quatre positions ouvertes
+# etaient GBP/USD x2, EUR/GBP et GBP/JPY. Le couple GBP/USD x GBP/JPY n'est
+# PAS dans la table — invisible au garde, alors que l'intuition dit « deux
+# fois de la livre ».
+#
+# La mesure dit le contraire : GBP/JPY correle a +0,79 avec USD/JPY et a
+# seulement **+0,19** avec GBP/USD. Le yen est 2,3x plus volatil que la livre
+# et USD/JPY est anti-correle a GBP/USD, donc le facteur livre partage
+# s'annule presque. **GBP/JPY est bien plus un pari sur le yen que sur la
+# livre.** Poser ce garde-fou a l'intuition aurait bloque ce couple pour la
+# mauvaise raison.
+#
+# ⚠️ La valeur depend de la FENETRE : -0,06 sur 30 jours, +0,19 sur 44. Les
+# deux sont loin du seuil de 0,6, donc la decision ne bouge pas — mais un
+# couple vivant PRES du seuil basculerait selon la fenetre. D'ou `n` conserve
+# en regard de chaque chiffre.
+#
+# Source : `<bridge>/rates?timeframe=H1`, donc le COURTIER et les instruments
+# reellement trades. Regenerable : `scripts/mesurer_correlations_forex.py`.
+_FICHIER_MESURE_FOREX = "correlations_forex_1h.json"
 
-def _charger_mesure() -> dict[tuple[str, str], tuple[float, int]]:
+
+def _charger_fichier(nom: str) -> dict[tuple[str, str], tuple[float, int]]:
     """Couples mesures, ou dict vide si le fichier manque ou est illisible.
 
     Silencieux a dessein : l'absence de mesure est exactement l'etat d'avant,
@@ -102,15 +128,27 @@ def _charger_mesure() -> dict[tuple[str, str], tuple[float, int]]:
     """
     import json
     import os
-    chemin = os.path.join(os.path.dirname(__file__), _FICHIER_MESURE)
+    chemin = os.path.join(os.path.dirname(__file__), nom)
     try:
         with open(chemin, encoding="utf-8") as f:
             data = json.load(f)
         return {(c["a"], c["b"]): (float(c["r"]), int(c["n"]))
                 for c in data.get("couples", [])}
     except Exception as e:
-        logger.warning(f"correlation_guard: mesure Kraken illisible ({e})")
+        logger.warning(f"correlation_guard: mesure {nom} illisible ({e})")
         return {}
+
+
+def _charger_mesure() -> dict[tuple[str, str], tuple[float, int]]:
+    """Les deux mesures continues, crypto puis forex.
+
+    Les univers sont disjoints — Kraken Futures ne cote pas EUR/USD — donc
+    l'ordre de fusion ne peut pas creer de conflit. On fusionne quand meme
+    dans un sens explicite plutot que de s'en remettre a cette disjonction.
+    """
+    fusion = _charger_fichier(_FICHIER_MESURE)
+    fusion.update(_charger_fichier(_FICHIER_MESURE_FOREX))
+    return fusion
 
 
 CORRELATIONS_MESUREES: dict[tuple[str, str], tuple[float, int]] = _charger_mesure()
@@ -129,9 +167,11 @@ def correlation(a: str, b: str) -> float | None:
     par construction, **atténue** une corrélation — c'est ce qui explique que
     les onze couples communs ressortent tous plus hauts, jamais plus bas.
 
-    La table historique reste seule à couvrir le forex et les métaux : Kraken
-    Futures ne les cote pas, et les laisser à ``None`` retirerait une
-    protection existante.
+    Depuis le 2026-08-23, le forex et les métaux ont eux aussi leur mesure
+    continue, lue chez le courtier (``correlations_forex_1h.json``). La table
+    historique reste consultée en dernier recours : elle couvre des couples
+    que la mesure aurait pu manquer, et la retirer ôterait une protection
+    existante.
     """
     if a == b:
         return 1.0

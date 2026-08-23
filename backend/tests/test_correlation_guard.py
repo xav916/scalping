@@ -48,12 +48,24 @@ def test_deux_sens_opposes_sur_paires_correlees_se_compensent():
 
 
 def test_une_correlation_negative_inverse_la_lecture():
-    """EUR/USD et USD/CHF à −0,80 : acheter l'un et VENDRE l'autre, c'est le
-    même pari. Un groupement par paniers se tromperait de sens."""
+    """EUR/USD et USD/CHF sont fortement ANTI-corrélés : acheter l'un et
+    VENDRE l'autre, c'est le même pari. Un groupement par paniers se
+    tromperait de sens.
+
+    ⚠️ On verrouille la **propriété** (le signe s'inverse, le seuil tranche
+    dans les deux sens), pas la valeur. Épingler `0,80` faisait tomber ce
+    test à chaque remesure : la mesure forex du 2026-08-23 rend −0,819 là où
+    la table historique disait −0,80. Un test qui casse quand la donnée
+    s'améliore ne protège rien.
+    """
+    r = cg.correlation("EUR/USD", "USD/CHF")
+    assert r is not None and r <= -cg.SEUIL_CORRELATION, (
+        f"couple attendu fortement anti-corrélé, mesuré {r}")
+
     meme = cg.exposition("EUR/USD", "buy", "USD/CHF", "sell")
     oppose = cg.exposition("EUR/USD", "buy", "USD/CHF", "buy")
-    assert meme == pytest.approx(0.80)
-    assert oppose == pytest.approx(-0.80)
+    assert meme == pytest.approx(-r)
+    assert oppose == pytest.approx(r)
     assert meme >= cg.SEUIL_CORRELATION
     assert oppose < cg.SEUIL_CORRELATION
 
@@ -165,18 +177,44 @@ def test_les_destinations_kraken_limitent_a_un_pari(dest_id):
     assert reg.DESTINATIONS[dest_id].max_correlated_positions == 1
 
 
-@pytest.mark.parametrize("dest_id", ["admin_live", "admin_legacy", "admin_binance"])
-def test_les_autres_destinations_restent_illimitees(dest_id):
-    """281 chevauchements sur 568 trades : activer partout changerait
-    massivement un comportement en place."""
-    assert reg.DESTINATIONS[dest_id].max_correlated_positions == 0
+@pytest.mark.parametrize("dest_id", ["admin_live", "admin_legacy"])
+def test_les_comptes_MT5_limitent_a_un_pari_depuis_le_23_08(dest_id):
+    """Posé le 2026-08-23, après avoir MESURÉ deux choses.
+
+    1. Les 55 couples forex/métaux chez le courtier : la table historique
+       n'en couvrait que cinq, donc le garde ne comptait rien sur presque
+       tout ce que ces comptes tradent.
+    2. L'impact rejoué sur 60 jours — **6 trades sur 55 refusés sur le réel
+       (11 %) et 6 sur 39 sur le démo (15 %)**, essentiellement des doublons
+       du même instrument.
+
+    ⚠️ Le « 281 chevauchements sur 568 trades » du module comptait les
+    chevauchements **deux à deux**, pas les trades refusés : un trade qui en
+    recoupe trois compte pour trois. Les deux chiffres répondent à des
+    questions différentes, et c'est le second qui décide.
+
+    Les deux comptes portent la MÊME limite : une porte posée d'un seul côté
+    n'est pas une porte.
+    """
+    assert reg.DESTINATIONS[dest_id].max_correlated_positions == 1
+
+
+def test_binance_reste_illimitee():
+    """Destination désactivée : on ne change pas ce qu'on ne mesure pas."""
+    assert reg.DESTINATIONS["admin_binance"].max_correlated_positions == 0
 
 
 def test_une_destination_sans_limite_ne_bloque_jamais(base, monkeypatch):
+    """⚠️ Prend `admin_binance` et non `admin_live` : depuis le 2026-08-23 les
+    deux comptes MT5 sont limités à 1, donc `admin_live` ne démontrerait plus
+    ce qu'il est censé démontrer. BTC/USD et ETH/USD corrèlent à 0,81 — même
+    sens, même pari — et doivent passer QUAND MÊME sur une destination sans
+    limite."""
     _ouvrir(base, "BTC/USD", "sell", "t1")
     monkeypatch.setattr("backend.services.telegram_service.destination_for_ticket",
-                        lambda t: "admin_live")
-    assert cg.pari_deja_pris(_dest("admin_live"), "ETH/USD", "sell")[0] is False
+                        lambda t: "admin_binance")
+    assert reg.DESTINATIONS["admin_binance"].max_correlated_positions == 0
+    assert cg.pari_deja_pris(_dest("admin_binance"), "ETH/USD", "sell")[0] is False
 
 
 def test_sans_destination_aucun_blocage(base):

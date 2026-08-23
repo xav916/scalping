@@ -1,0 +1,351 @@
+{
+ "source": "MT5_BRIDGE_LIVE_URL/rates?timeframe=H1 (courtier MT5)",
+ "methode": "rendements log horaires, Pearson sur l'intersection, horodatages tronqués à l'heure",
+ "heures_demandees": 1500,
+ "min_obs": 300,
+ "instruments": [
+  "AUD/USD",
+  "EUR/GBP",
+  "EUR/JPY",
+  "EUR/USD",
+  "GBP/JPY",
+  "GBP/USD",
+  "USD/CAD",
+  "USD/CHF",
+  "USD/JPY",
+  "XAG/USD",
+  "XAU/USD"
+ ],
+ "couples": [
+  {
+   "a": "EUR/JPY",
+   "b": "GBP/JPY",
+   "r": 0.912,
+   "n": 1067
+  },
+  {
+   "a": "XAG/USD",
+   "b": "XAU/USD",
+   "r": 0.852,
+   "n": 1018
+  },
+  {
+   "a": "EUR/USD",
+   "b": "GBP/USD",
+   "r": 0.819,
+   "n": 1067
+  },
+  {
+   "a": "EUR/USD",
+   "b": "USD/CHF",
+   "r": -0.819,
+   "n": 1067
+  },
+  {
+   "a": "EUR/JPY",
+   "b": "USD/JPY",
+   "r": 0.813,
+   "n": 1067
+  },
+  {
+   "a": "GBP/JPY",
+   "b": "USD/JPY",
+   "r": 0.789,
+   "n": 1067
+  },
+  {
+   "a": "AUD/USD",
+   "b": "EUR/USD",
+   "r": 0.74,
+   "n": 1067
+  },
+  {
+   "a": "AUD/USD",
+   "b": "GBP/USD",
+   "r": 0.721,
+   "n": 1067
+  },
+  {
+   "a": "GBP/USD",
+   "b": "USD/CHF",
+   "r": -0.693,
+   "n": 1067
+  },
+  {
+   "a": "EUR/USD",
+   "b": "USD/CAD",
+   "r": -0.671,
+   "n": 1067
+  },
+  {
+   "a": "AUD/USD",
+   "b": "USD/CHF",
+   "r": -0.649,
+   "n": 1067
+  },
+  {
+   "a": "AUD/USD",
+   "b": "USD/CAD",
+   "r": -0.64,
+   "n": 1067
+  },
+  {
+   "a": "USD/CAD",
+   "b": "USD/CHF",
+   "r": 0.638,
+   "n": 1067
+  },
+  {
+   "a": "GBP/USD",
+   "b": "USD/CAD",
+   "r": -0.629,
+   "n": 1067
+  },
+  {
+   "a": "AUD/USD",
+   "b": "XAU/USD",
+   "r": 0.607,
+   "n": 1018
+  },
+  {
+   "a": "AUD/USD",
+   "b": "XAG/USD",
+   "r": 0.584,
+   "n": 1018
+  },
+  {
+   "a": "USD/CHF",
+   "b": "USD/JPY",
+   "r": 0.552,
+   "n": 1067
+  },
+  {
+   "a": "EUR/USD",
+   "b": "XAU/USD",
+   "r": 0.547,
+   "n": 1018
+  },
+  {
+   "a": "USD/CHF",
+   "b": "XAU/USD",
+   "r": -0.517,
+   "n": 1018
+  },
+  {
+   "a": "GBP/USD",
+   "b": "XAU/USD",
+   "r": 0.5,
+   "n": 1018
+  },
+  {
+   "a": "EUR/USD",
+   "b": "USD/JPY",
+   "r": -0.481,
+   "n": 1067
+  },
+  {
+   "a": "EUR/USD",
+   "b": "XAG/USD",
+   "r": 0.456,
+   "n": 1018
+  },
+  {
+   "a": "GBP/USD",
+   "b": "USD/JPY",
+   "r": -0.455,
+   "n": 1067
+  },
+  {
+   "a": "GBP/USD",
+   "b": "XAG/USD",
+   "r": 0.415,
+   "n": 1018
+  },
+  {
+   "a": "USD/CHF",
+   "b": "XAG/USD",
+   "r": -0.412,
+   "n": 1018
+  },
+  {
+   "a": "AUD/USD",
+   "b": "USD/JPY",
+   "r": -0.407,
+   "n": 1067
+  },
+  {
+   "a": "USD/CAD",
+   "b": "USD/JPY",
+   "r": 0.387,
+   "n": 1067
+  },
+  {
+   "a": "USD/CAD",
+   "b": "XAU/USD",
+   "r": -0.379,
+   "n": 1018
+  },
+  {
+   "a": "EUR/GBP",
+   "b": "GBP/USD",
+   "r": -0.338,
+   "n": 1067
+  },
+  {
+   "a": "USD/CAD",
+   "b": "XAG/USD",
+   "r": -0.296,
+   "n": 1018
+  },
+  {
+   "a": "USD/JPY",
+   "b": "XAU/USD",
+   "r": -0.279,
+   "n": 1018
+  },
+  {
+   "a": "EUR/GBP",
+   "b": "EUR/USD",
+   "r": 0.202,
+   "n": 1067
+  },
+  {
+   "a": "USD/JPY",
+   "b": "XAG/USD",
+   "r": -0.199,
+   "n": 1018
+  },
+  {
+   "a": "GBP/JPY",
+   "b": "GBP/USD",
+   "r": 0.187,
+   "n": 1067
+  },
+  {
+   "a": "EUR/GBP",
+   "b": "EUR/JPY",
+   "r": 0.182,
+   "n": 1067
+  },
+  {
+   "a": "EUR/GBP",
+   "b": "GBP/JPY",
+   "r": -0.182,
+   "n": 1067
+  },
+  {
+   "a": "GBP/JPY",
+   "b": "USD/CHF",
+   "r": 0.125,
+   "n": 1067
+  },
+  {
+   "a": "EUR/JPY",
+   "b": "EUR/USD",
+   "r": 0.113,
+   "n": 1067
+  },
+  {
+   "a": "EUR/JPY",
+   "b": "USD/CHF",
+   "r": 0.085,
+   "n": 1067
+  },
+  {
+   "a": "EUR/JPY",
+   "b": "XAG/USD",
+   "r": 0.077,
+   "n": 1018
+  },
+  {
+   "a": "GBP/JPY",
+   "b": "XAG/USD",
+   "r": 0.066,
+   "n": 1018
+  },
+  {
+   "a": "EUR/GBP",
+   "b": "USD/CAD",
+   "r": 0.055,
+   "n": 1067
+  },
+  {
+   "a": "EUR/GBP",
+   "b": "USD/JPY",
+   "r": 0.053,
+   "n": 1067
+  },
+  {
+   "a": "AUD/USD",
+   "b": "GBP/JPY",
+   "r": 0.049,
+   "n": 1067
+  },
+  {
+   "a": "EUR/JPY",
+   "b": "XAU/USD",
+   "r": 0.046,
+   "n": 1018
+  },
+  {
+   "a": "EUR/USD",
+   "b": "GBP/JPY",
+   "r": 0.036,
+   "n": 1067
+  },
+  {
+   "a": "GBP/JPY",
+   "b": "XAU/USD",
+   "r": 0.035,
+   "n": 1018
+  },
+  {
+   "a": "EUR/GBP",
+   "b": "USD/CHF",
+   "r": -0.026,
+   "n": 1067
+  },
+  {
+   "a": "AUD/USD",
+   "b": "EUR/JPY",
+   "r": 0.022,
+   "n": 1067
+  },
+  {
+   "a": "EUR/GBP",
+   "b": "XAG/USD",
+   "r": 0.021,
+   "n": 1018
+  },
+  {
+   "a": "EUR/JPY",
+   "b": "GBP/USD",
+   "r": 0.019,
+   "n": 1067
+  },
+  {
+   "a": "AUD/USD",
+   "b": "EUR/GBP",
+   "r": -0.016,
+   "n": 1067
+  },
+  {
+   "a": "EUR/JPY",
+   "b": "USD/CAD",
+   "r": -0.014,
+   "n": 1067
+  },
+  {
+   "a": "EUR/GBP",
+   "b": "XAU/USD",
+   "r": 0.012,
+   "n": 1018
+  },
+  {
+   "a": "GBP/JPY",
+   "b": "USD/CAD",
+   "r": -0.012,
+   "n": 1067
+  }
+ ]
+}

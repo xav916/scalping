@@ -160,6 +160,12 @@ DESTINATIONS: dict[str, Destination] = {
             sizing="global",
             asset_classes=frozenset({"forex", "metal", "energy"}),
             plateforme="MT5 Demo Pepperstone",
+            # Pose le 2026-08-23, apres mesure des 55 couples forex/metaux
+            # chez le courtier. Impact rejoue sur 60 jours : 6 trades sur 39
+            # auraient ete refuses (15 %), essentiellement des DOUBLONS du
+            # meme instrument. Miroir de admin_live — les deux comptes
+            # doivent porter les memes portes.
+            max_correlated_positions=1,
         ),
         Destination(
             id="admin_live",
@@ -172,6 +178,10 @@ DESTINATIONS: dict[str, Destination] = {
             sizing="global",
             asset_classes=frozenset({"forex", "metal", "energy", "equity"}),
             plateforme="MT5 IC Markets",
+            # Pose le 2026-08-23. Impact rejoue sur 60 jours : 6 trades sur
+            # 55 auraient ete refuses (11 %). ⚠️ ARGENT REEL — pour desarmer,
+            # remettre a 0 (illimite), c'est une seule ligne.
+            max_correlated_positions=1,
         ),
         Destination(
             id="admin_kraken",
