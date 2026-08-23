@@ -12,7 +12,10 @@ de trader pendant ~10 min lors de la migration de son MT5.
 
 ## 📋 Pré-requis (avant de commencer)
 
-- [ ] Tes credentials RDP du VPS Cédric (`51.44.111.156`, user `Administrator`)
+- [ ] Tes credentials RDP du VPS Cédric — adresse **`100.74.160.72`** (Tailscale), user `Administrator`
+  - ⚠️ **PAS** l'IP publique `51.44.111.156` : le pare-feu Lightsail est verrouillé sur une IP maison périmée, la connexion échoue sans dire pourquoi (corrigé le 2026-08-23)
+  - ⛔ Le mot de passe rendu par `aws lightsail get-instance-access-details` est **périmé** — l'Administrator a été changé depuis la création
+  - ⚠️ **Coller** le mot de passe : le clavier distant est en QWERTY
 - [ ] Lightsail console ouverte sur l'instance `cedric-mt5-bridge` (pour snapshot avant migration)
 - [ ] Confirmer que Cédric n'a aucun trade ouvert (vérifier via MT5 ou via Telegram)
 - [ ] L'EA Cédric à proximité (api_key `Q9jP304MgQWCvrtEoGDyCDOpe3Fxi3IN`)
@@ -261,6 +264,7 @@ Le script crée la structure. **Étapes manuelles ensuite** :
    - Lightsail console → Snapshots → snapshot pre-multitenant
    - Bouton "Create new instance from snapshot"
    - Réattacher la static IP `51.44.111.156` à la nouvelle instance
+     - ✅ Ici l'IP publique est la **bonne** référence : c'est la ressource AWS qu'on rattache, pas une route d'accès. Ne pas la « corriger » en adresse Tailscale — pour se connecter, voir les pré-requis.
    - Supprimer l'instance multi-tenant qui a échoué
 
 3. Cédric revient à son état pré-migration en ~15 min.

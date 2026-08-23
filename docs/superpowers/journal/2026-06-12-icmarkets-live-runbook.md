@@ -14,7 +14,21 @@
 
 ## Étape 1 — VPS Stockholm : installer IC Markets MT5 dans dossier séparé (~15 min)
 
-RDP au VPS `13.49.70.233` (Administrator).
+RDP au VPS **`100.74.160.72`** (adresse Tailscale), utilisateur `Administrator`.
+
+> ⚠️ **Corrigé le 2026-08-23.** Ce runbook indiquait `13.49.70.233`, l'IP
+> publique de l'époque. Elle est **barrée par le pare-feu Lightsail**,
+> verrouillé sur une IP maison qui a tourné depuis — la connexion échoue sans
+> que rien n'indique que l'adresse est en cause. Passer par Tailscale, jamais
+> par l'IP publique.
+>
+> ⛔ Le mot de passe rendu par `aws lightsail get-instance-access-details`
+> (champ `accessDetails.password`) est **périmé** : l'Administrator a été
+> changé depuis la création de l'instance et l'API continue de servir
+> l'original. Testé et rejeté le 23/08.
+>
+> ⚠️ **Coller** le mot de passe, ne jamais le taper : le clavier distant est
+> en QWERTY.
 
 ### 1a — Télécharger IC Markets MT5 installer
 
