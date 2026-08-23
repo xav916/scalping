@@ -38,6 +38,8 @@ _REGLAGES = {
     "DEVIATION_POINTS": 20,
     "TRAIL_DISTANCE_POINTS": 0,
     "PARTIAL_CLOSE_PCT": 50.0,
+    "EQUILIBRE_AUTO_ENABLED": True,
+    "EQUILIBRE_MARGE_R": 1.0,
     "TRADING_HOURS_UTC": "",
     "DAILY_LOSS_EXCLUDED_TICKETS": frozenset(),
 }
@@ -71,6 +73,24 @@ def test_les_garde_fous_sont_publies():
     assert g["deviation_points"] == 20
     assert g["trail_distance_points"] == 0
     assert g["partial_close_pct"] == 50.0
+
+
+def test_la_remontee_a_l_equilibre_se_LIT_a_distance():
+    """Posée le 2026-08-23 : elle MODIFIE des positions ouvertes.
+
+    Savoir si elle est armée, et sous quel coussin de profit, ne doit pas
+    demander une session RDP — c'est tout l'objet de ce fichier.
+    """
+    g = _appeler_health()["garde_fous"]
+    assert g["equilibre_auto_enabled"] is True
+    assert g["equilibre_marge_r"] == 1.0
+
+
+def test_la_remontee_DESARMEE_se_voit_aussi():
+    g = _appeler_health(EQUILIBRE_AUTO_ENABLED=False,
+                        EQUILIBRE_MARGE_R=2.5)["garde_fous"]
+    assert g["equilibre_auto_enabled"] is False
+    assert g["equilibre_marge_r"] == 2.5
 
 
 def test_un_plafond_desserre_se_VOIT():

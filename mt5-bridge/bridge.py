@@ -93,6 +93,19 @@ MAX_RISQUE_ENGAGE_PCT = float(os.getenv("MAX_RISQUE_ENGAGE_PCT", "6.0"))
 # Des stops tres serres autorisent beaucoup de positions a risque constant —
 # c'est precisement le cas ou la marge sature sans que le risque ne bouge.
 MARGE_LIBRE_MIN_PCT = float(os.getenv("MARGE_LIBRE_MIN_PCT", "30.0"))
+
+# ─── Remontee du stop a l'EQUILIBRE pour liberer du risque (2026-08-23) ───
+# Quand la porte des 6 % refuserait un ordre, on remonte a l'entree le stop de
+# positions deja largement gagnantes : leur risque tombe a zero sans rien
+# fermer, sans payer de spread, sans tronquer leur potentiel.
+#
+# ⚠️ `EQUILIBRE_MARGE_R` est le garde-fou qui separe ce mecanisme d'un
+# SUIVEUR. Sous ce coussin de profit, un stop pose a l'equilibre est colle au
+# marche et se fait sortir par le bruit — la mecanique exacte qui a coute
+# −0,329 R par trade sur l'or. 1,0 R = on ne touche qu'une position ayant
+# deja acquis l'equivalent de son propre risque.
+EQUILIBRE_AUTO_ENABLED = os.getenv("EQUILIBRE_AUTO_ENABLED", "true").lower() == "true"
+EQUILIBRE_MARGE_R = float(os.getenv("EQUILIBRE_MARGE_R", "1.0"))
 DEDUP_WINDOW_SEC = int(os.getenv("DEDUP_WINDOW_SEC", "300"))
 DEVIATION_POINTS = int(os.getenv("DEVIATION_POINTS", "20"))
 MAGIC_NUMBER = int(os.getenv("MAGIC_NUMBER", "20260419"))
@@ -545,6 +558,47 @@ def _check_safety_gates(mt5_symbol: str, direction: str,
         ok_risque, motif = _controle_risque_engage(
             ouvert, non_bornables, nouveau, float(info.equity),
             MAX_RISQUE_ENGAGE_PCT)
+
+        # ─── Dernier recours : libérer du risque plutôt que refuser ───────
+        # Demandé explicitement le 2026-08-23. Plutôt que de renoncer au
+        # nouveau setup, on remonte à l'ÉQUILIBRE le stop de positions déjà
+        # largement gagnantes : leur risque tombe à zéro sans rien fermer,
+        # sans payer de spread, sans tronquer leur potentiel de hausse.
+        #
+        # ⚠️ Ce mécanisme reste de la GESTION DE SORTIE, la famille qui a
+        # mesuré −0,329 R sur l'or. Trois différences le rendent défendable :
+        # il ne se déclenche QUE lorsqu'un trade serait refusé (mesuré : 1
+        # fois en 30 jours), il exige un coussin de profit d'au moins
+        # `EQUILIBRE_MARGE_R`, et chaque activation est journalisée pour
+        # qu'on puisse un jour la JUGER au lieu d'y croire.
+        if (not ok_risque and EQUILIBRE_AUTO_ENABLED and not non_bornables
+                and nouveau is not None and float(info.equity) > 0):
+            plafond = float(info.equity) * MAX_RISQUE_ENGAGE_PCT / 100.0
+            manque = (ouvert + nouveau) - plafond
+            candidats = _candidats_equilibre(positions, mt5.symbol_info,
+                                             EQUILIBRE_MARGE_R)
+            retenus = _choisir_pour_liberer(candidats, manque)
+            if not retenus:
+                logger.info(
+                    f"equilibre: rien a liberer (manque {manque:.2f}, "
+                    f"{len(candidats)} candidat(s) a >= {EQUILIBRE_MARGE_R}R) "
+                    f"— refus maintenu")
+            else:
+                faits = _remonter_a_l_equilibre(retenus, positions)
+                # ⛔ On RELIT les positions chez le courtier. Le nombre de
+                # stops deplaces ne dit rien du risque reellement libere :
+                # un clamp a pu laisser du risque, un ordre a pu echouer.
+                positions = mt5.positions_get() or []
+                ouvert, non_bornables = _risque_engage(positions,
+                                                       mt5.symbol_info)
+                ok_risque, motif = _controle_risque_engage(
+                    ouvert, non_bornables, nouveau, float(info.equity),
+                    MAX_RISQUE_ENGAGE_PCT)
+                logger.info(
+                    f"equilibre: {len(faits)}/{len(retenus)} stop(s) deplace(s), "
+                    f"risque engage -> {ouvert:.2f} / plafond {plafond:.2f} — "
+                    f"ordre {'ACCEPTE' if ok_risque else 'toujours refuse'}")
+
         if not ok_risque:
             return False, motif
 
@@ -1698,6 +1752,10 @@ def health():
             # 0 = desarme, seul le compteur agit alors.
             "max_risque_engage_pct": MAX_RISQUE_ENGAGE_PCT,
             "marge_libre_min_pct": MARGE_LIBRE_MIN_PCT,
+            # Lisible a distance : sans ca, savoir si ce mecanisme est arme
+            # demanderait une session RDP.
+            "equilibre_auto_enabled": EQUILIBRE_AUTO_ENABLED,
+            "equilibre_marge_r": EQUILIBRE_MARGE_R,
             "deviation_points": DEVIATION_POINTS,
             # 0 = desarme. Le suiveur detruisait 0,329 R/trade sur l'or ;
             # desarme le 2026-08-11, +21 % a la cle. Doit rester a 0.
@@ -2130,6 +2188,137 @@ def _controle_risque_engage(risque_ouvert: float, non_bornables: list,
             f"jeu + {risque_nouveau:.2f} demande"
         )
     return True, ""
+
+
+def _marge_de_profit_r(p, info) -> float | None:
+    """Combien de « R » cette position a-t-elle déjà engrangés ?
+
+    `R` = sa propre distance d'entrée à son stop. Rend `None` si la mesure
+    n'est pas possible — jamais 0.0, qui se confondrait avec « à l'entrée ».
+    """
+    try:
+        entry = float(p.price_open)
+        sl = float(getattr(p, "sl", 0.0) or 0.0)
+        courant = float(getattr(p, "price_current", 0.0) or 0.0)
+        if sl <= 0 or courant <= 0 or info is None:
+            return None
+        est_achat = int(getattr(p, "type", _TYPE_ACHAT)) == _TYPE_ACHAT
+        risque = _distance_perdante(_TYPE_ACHAT if est_achat else 1, entry, sl)
+        if risque <= 0:
+            return None
+        acquis = (courant - entry) if est_achat else (entry - courant)
+        return acquis / risque
+    except (TypeError, ValueError, AttributeError):
+        return None
+
+
+def _candidats_equilibre(positions, specs, marge_min_r: float) -> list[dict]:
+    """Positions dont le stop peut remonter à l'équilibre SANS danger.
+
+    Fonction pure. Rend `[{ticket, symbole, risque_libere, marge_r}]`, les
+    plus généreuses d'abord.
+
+    ⚠️ La condition de marge est ce qui sépare ce mécanisme d'un suiveur.
+    Un stop posé à l'équilibre sur une position à peine en profit se trouve
+    **collé au marché** et se fait sortir par le premier bruit — c'est
+    exactement la mécanique qui a coûté −0,329 R sur l'or. On n'y touche
+    donc qu'au-delà de `marge_min_r` déjà acquis.
+    """
+    sortie = []
+    for p in positions or []:
+        info = specs(getattr(p, "symbol", None))
+        risque = _risque_position(p, info)
+        if not risque or risque <= 0:
+            continue                      # nue, ou déjà à l'équilibre
+        marge = _marge_de_profit_r(p, info)
+        # ⚠️ Tolerance : `0.005 / 0.005` ne rend pas exactement 1.0 en
+        # flottant. Sans elle, le seuil annonce comme inclusif exclut son
+        # propre cas limite — un ecart qu'on relirait plus tard comme un bug.
+        if marge is None or marge < marge_min_r - 1e-9:
+            continue                      # pas assez de coussin : on ne touche pas
+        sortie.append({
+            "ticket": getattr(p, "ticket", None),
+            "symbole": getattr(p, "symbol", None),
+            "risque_libere": risque,
+            "marge_r": marge,
+        })
+    return sorted(sortie, key=lambda c: -c["risque_libere"])
+
+
+def _choisir_pour_liberer(candidats: list[dict], manque: float) -> list[dict]:
+    """Le moins de positions possible pour couvrir `manque`. Fonction pure.
+
+    On prend les plus généreuses d'abord : libérer le déficit en touchant
+    UNE position vaut mieux qu'en toucher trois. Chaque stop déplacé est une
+    intervention sur un trade vivant, et on en veut le moins possible.
+
+    Rend `[]` si l'ensemble des candidats ne suffit pas — **on ne déplace
+    aucun stop pour un résultat qui échouera quand même**.
+    """
+    if manque <= 0:
+        return []
+    total, retenus = 0.0, []
+    for c in candidats:
+        retenus.append(c)
+        total += c["risque_libere"]
+        if total >= manque:
+            return retenus
+    return []
+
+
+def _remonter_a_l_equilibre(retenus: list[dict], positions) -> list[dict]:
+    """Pose le stop À L'ENTRÉE sur les positions retenues. Rend le détail.
+
+    ⛔ Trois refus possibles, chacun laissant la position INTACTE :
+
+    1. `_clamp_stops` repousse un stop trop proche du marché hors de la zone
+       interdite du courtier. Le stop obtenu peut donc ne PAS être à
+       l'équilibre — on le vérifie au lieu de le supposer.
+    2. Si le stop clampé est **moins protecteur** que l'actuel, on renonce :
+       ce mécanisme ne doit jamais AUGMENTER le risque d'une position.
+    3. Si `_apply_stops` échoue côté courtier, on le trace et on continue.
+
+    Chaque déplacement est journalisé : un mécanisme qui se déclenche une
+    fois par mois ne devient mesurable que si chaque activation laisse une
+    trace exploitable.
+    """
+    par_ticket = {getattr(p, "ticket", None): p for p in positions or []}
+    faits = []
+    for c in retenus:
+        p = par_ticket.get(c["ticket"])
+        if p is None:
+            continue
+        entree = float(p.price_open)
+        sl_actuel = float(getattr(p, "sl", 0.0) or 0.0)
+        est_achat = int(getattr(p, "type", _TYPE_ACHAT)) == _TYPE_ACHAT
+        tp = float(getattr(p, "tp", 0.0) or 0.0)
+
+        sl_vise, _ = _clamp_stops(c["symbole"], est_achat, entree, tp)
+
+        # (1) le clamp a-t-il rendu un stop VRAIMENT a l'equilibre ?
+        reste = _distance_perdante(_TYPE_ACHAT if est_achat else 1,
+                                   entree, sl_vise)
+        # (2) ne JAMAIS reculer le stop
+        recule = (sl_vise < sl_actuel) if est_achat else (sl_vise > sl_actuel)
+        if recule:
+            logger.warning(
+                f"equilibre[{c['ticket']}] {c['symbole']} REFUSE : le stop "
+                f"clampe {sl_vise} recule par rapport a {sl_actuel} — "
+                f"position laissee intacte")
+            continue
+
+        res = _apply_stops(symbol=c["symbole"], ticket=c["ticket"],
+                           new_sl=sl_vise, new_tp=tp)
+        ok = bool(res.get("ok"))
+        logger.info(
+            f"equilibre[{c['ticket']}] {c['symbole']} "
+            f"entree={entree} sl {sl_actuel} -> {sl_vise} "
+            f"marge={c['marge_r']:.2f}R risque_libere~{c['risque_libere']:.2f} "
+            f"reste_a_risque={reste:.5f} ok={ok} {res.get('error') or ''}")
+        if ok:
+            faits.append({**c, "sl_avant": sl_actuel, "sl_apres": sl_vise,
+                          "reste_a_risque": reste})
+    return faits
 
 
 def _controle_marge_libre(marge_libre: float | None, marge_nouvelle: float | None,
