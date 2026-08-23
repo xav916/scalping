@@ -2401,6 +2401,7 @@ async def api_shadow_counterfactual(token: str = "", days: int = 30):
         load_reconciled_setups,
         build_report,
         compute_group_stats,
+        verdict_directionnel,
         _sample_verdict,
     )
     from backend.services.trade_log_service import _DB_PATH
@@ -2416,15 +2417,11 @@ async def api_shadow_counterfactual(token: str = "", days: int = 30):
     stats_v = compute_group_stats(vetoed)
     stats_p = compute_group_stats(passed)
 
-    direction = "insufficient"
-    if n_total > 0 and stats_v["n"] > 0 and stats_p["n"] > 0:
-        delta = (stats_p.get("mean_pnl_pct") or 0) - (stats_v.get("mean_pnl_pct") or 0)
-        if abs(delta) < 0.05:
-            direction = "neutral"
-        elif delta > 0:
-            direction = "veto_would_help"
-        else:
-            direction = "veto_would_hurt"
+    # ⛔ Une SEULE source pour le verdict, partagee avec le rapport Markdown.
+    # Avant le 2026-08-23 ce bloc portait sa propre copie, sans porte sur la
+    # taille du groupe decisif : le 22/08 il a crie `veto_would_help` sur
+    # **27** setups en annoncant `n_total = 879` et « CREDIBLE ».
+    direction, _ = verdict_directionnel(stats_v, stats_p)
 
     return {
         "generated_at": generated_at.isoformat(),
@@ -2432,7 +2429,9 @@ async def api_shadow_counterfactual(token: str = "", days: int = 30):
         "n_total": n_total,
         "n_vetoed": stats_v["n"],
         "n_passed": stats_p["n"],
-        "sample_verdict": _sample_verdict(n_total),
+        # La confiance porte sur le groupe QUI DECIDE, jamais sur le total.
+        "sample_verdict": _sample_verdict(stats_v["n"]),
+        "sample_verdict_total": _sample_verdict(n_total),
         "direction_verdict": direction,
         "markdown": markdown,
     }

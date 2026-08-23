@@ -16,6 +16,22 @@ Tant que ``n_recon < 30`` le verdict reste "sample insuffisant".
 À partir de 30 outcomes, on peut commencer à observer un signal,
 au-delà de 100 le signal devient statistiquement crédible.
 
+⛔ **Corrigé le 2026-08-23 — ce seuil portait sur le MAUVAIS nombre.**
+Le rapport du 22/08 a crié ``veto_would_help`` en annonçant ``n_total = 879``
+et « CRÉDIBLE ». Or la comparaison ne repose que sur les setups que le veto
+aurait **bloqués** : ils étaient **27**. Sous les 30 du seuil — la règle du
+script, appliquée au bon nombre, disait déjà « ne pas trancher ».
+
+    Un groupe témoin de 879 ne rend pas crédible un groupe traité de 27.
+    C'est le PLUS PETIT des deux qui borne ce qu'on peut conclure.
+
+Contrôle aléatoire passé le 23/08 sur ce même rapport : écart observé
++1,297 %, mais **p = 0,087** — un tirage de 27 setups au hasard fait aussi
+bien une fois sur onze. En retirant quatre paires au taux de réussite
+impossible (100 % de gagnants sur 10 à 20 setups, dans un système qui gagne
+48 %), l'écart tombe à +0,338 %, p = 0,328. Et les deux règles de veto
+pointent en sens **opposés**. Faux positif sur toute la ligne.
+
 Usage :
     python -m scripts.research.track_a_veto_counterfactual
     python -m scripts.research.track_a_veto_counterfactual --db /custom/path/trades.db
@@ -137,15 +153,96 @@ def compute_group_stats(setups: list[dict]) -> dict:
 # ─── Sample size confidence ──────────────────────────────────────────
 
 
+#: En-deçà, on n'énonce aucun verdict directionnel. Le seuil existait déjà
+#: dans ce fichier ; il était simplement appliqué au mauvais nombre.
+N_MIN_DECISION = 30
+
+
 def _sample_verdict(n: int) -> str:
-    """Verdict qualitatif sur la taille d'échantillon."""
+    """Verdict qualitatif sur la taille d'échantillon.
+
+    ⚠️ À appeler sur le **groupe qui décide** (les setups que le veto aurait
+    bloqués), jamais sur le total. Cf. `verdict_directionnel`.
+    """
     if n < 10:
         return "DÉRISOIRE — pas d'analyse statistiquement valide possible"
-    if n < 30:
+    if n < N_MIN_DECISION:
         return "INSUFFISANT — observer mais ne pas trancher"
     if n < 100:
         return "EXPLOITABLE — signal directionnel possible, intervalles larges"
     return "CRÉDIBLE — analyse statistique fiable"
+
+
+def verdict_directionnel(stats_vetoed: dict, stats_passed: dict) -> tuple[str, str]:
+    """Rend `(code, phrase)`. **Source unique** du verdict.
+
+    Le rapport Markdown et l'endpoint HTTP portaient chacun leur copie de
+    cette décision, avec des seuils différents — c'est ainsi que le rapport a
+    pu afficher « CRÉDIBLE » pendant que le verdict se fondait sur 27 lignes.
+
+    ⛔ La porte est le **groupe qui décide** — `stats_vetoed` — et non le
+    total. Un groupe témoin abondant ne rend pas crédible un groupe traité
+    minuscule ; c'est le plus petit des deux qui borne la conclusion.
+    """
+    n_v, n_p = stats_vetoed["n"], stats_passed["n"]
+    if n_v == 0:
+        return "insufficient", (
+            "Aucun setup réconcilié n'aurait été veto'd par les règles "
+            "actuelles. Le contexte géopolitique au moment des entrées n'a "
+            "déclenché aucune règle.")
+    if n_p == 0:
+        return "insufficient", (
+            "**Tous** les setups réconciliés auraient été veto'd. "
+            "Configuration veto trop agressive ou contexte géopolitique "
+            "extrême sur la fenêtre.")
+    if n_v < N_MIN_DECISION:
+        return "insufficient", (
+            f"**ÉCHANTILLON INSUFFISANT POUR TRANCHER** : seuls **{n_v}** "
+            f"setups auraient été bloqués par le veto (seuil : "
+            f"{N_MIN_DECISION}). Les {n_p} autres ne servent que de témoin — "
+            f"c'est le plus petit groupe qui borne la conclusion.\n\n"
+            f"> Aucun verdict directionnel n'est énoncé à ce stade. "
+            f"Un écart calculé sur {n_v} observations est régulièrement "
+            f"reproduit par un tirage au hasard de même taille.")
+
+    delta = (stats_passed["mean_pnl_pct"] or 0) - (stats_vetoed["mean_pnl_pct"] or 0)
+    if abs(delta) < 0.05:
+        return "neutral", (
+            "**ÉGAL** : le veto n'aurait pas changé matériellement la "
+            "performance moyenne par trade")
+    sens = "veto_would_help" if delta > 0 else "veto_would_hurt"
+    titre = "**LE VETO AURAIT AIDÉ**" if delta > 0 else "**LE VETO AURAIT NUIT**"
+    queue = ("en faveur du veto" if delta > 0
+             else "— le veto retire des trades gagnants")
+    return sens, (
+        f"{titre} : les setups que le veto aurait skip ont une mean PnL de "
+        f"{stats_vetoed['mean_pnl_pct']:+.2f}% vs "
+        f"{stats_passed['mean_pnl_pct']:+.2f}% pour les autres "
+        f"(écart {delta:+.2f}% par trade {queue})")
+
+
+def paires_invraisemblables(setups: list[dict], mini: int = 8) -> list[tuple]:
+    """Paires dont TOUS les setups gagnent (ou tous perdent). Rend
+    `[(pair, n, moyenne)]`.
+
+    ⚠️ Signalées, **jamais retirées en silence** : écarter des données est une
+    décision de méthode qui revient à l'humain. Le 22/08, quatre paires à
+    100 % de réussite — dans un système qui en gagne 48 % — portaient à elles
+    seules les trois quarts de l'écart annoncé.
+    """
+    par: dict[str, list[float]] = defaultdict(list)
+    for s in setups:
+        p = s.get("pnl_pct_net")
+        if p is not None:
+            par[s["pair"]].append(float(p))
+    sortie = []
+    for pair, v in par.items():
+        if len(v) < mini:
+            continue
+        gagnants = sum(1 for x in v if x > 0)
+        if gagnants in (0, len(v)):
+            sortie.append((pair, len(v), sum(v) / len(v)))
+    return sorted(sortie, key=lambda x: -x[1])
 
 
 # ─── Rapport Markdown ────────────────────────────────────────────────
@@ -179,7 +276,10 @@ def build_report(setups: list[dict], generated_at: datetime) -> str:
     lines.append(f"**Généré :** {generated_at.isoformat(timespec='seconds')}")
     lines.append(f"**Source :** `shadow_setups` filtre `outcome IS NOT NULL AND geopolitical_features_json IS NOT NULL`")
     lines.append(f"**Échantillon :** {n_total} setups réconciliés")
-    lines.append(f"**Confiance échantillon :** {_sample_verdict(n_total)}")
+    # ⛔ La confiance porte sur le GROUPE QUI DECIDE, pas sur le total : un
+    # temoin abondant ne rend pas credible un groupe traite minuscule.
+    lines.append(f"**Groupe décisif (would VETO) :** {stats_vetoed['n']} setups")
+    lines.append(f"**Confiance :** {_sample_verdict(stats_vetoed['n'])}")
     lines.append("")
 
     if n_total == 0:
@@ -206,29 +306,34 @@ def build_report(setups: list[dict], generated_at: datetime) -> str:
     # ─── Verdict directionnel
     lines.append("## Verdict directionnel")
     lines.append("")
-    if stats_vetoed["n"] == 0:
-        lines.append("Aucun setup réconcilié n'aurait été veto'd par les règles actuelles. Le contexte géopolitique au moment des entrées n'a déclenché aucune règle.")
-    elif stats_passed["n"] == 0:
-        lines.append("**Tous** les setups réconciliés auraient été veto'd. Configuration veto trop agressive ou contexte géopolitique extrême sur la fenêtre.")
-    else:
-        # Comparaison directe mean_pnl
-        delta = (stats_passed["mean_pnl_pct"] or 0) - (stats_vetoed["mean_pnl_pct"] or 0)
-        if abs(delta) < 0.05:
-            verdict = "**ÉGAL** : le veto n'aurait pas changé matériellement la performance moyenne par trade"
-        elif delta > 0:
-            verdict = (
-                f"**LE VETO AURAIT AIDÉ** : les setups que le veto aurait skip ont une mean PnL "
-                f"de {stats_vetoed['mean_pnl_pct']:+.2f}% vs {stats_passed['mean_pnl_pct']:+.2f}% pour les autres "
-                f"(écart {delta:+.2f}% par trade en faveur du veto)"
-            )
-        else:
-            verdict = (
-                f"**LE VETO AURAIT NUIT** : les setups que le veto aurait skip ont une mean PnL "
-                f"de {stats_vetoed['mean_pnl_pct']:+.2f}% vs {stats_passed['mean_pnl_pct']:+.2f}% pour les autres "
-                f"(écart {delta:+.2f}% par trade — le veto retire des trades gagnants)"
-            )
-        lines.append(verdict)
+    _, phrase = verdict_directionnel(stats_vetoed, stats_passed)
+    lines.append(phrase)
     lines.append("")
+
+    # ─── Paires invraisemblables : signalées, jamais retirées en silence
+    louches = paires_invraisemblables(setups)
+    if louches:
+        gagnants = sum(1 for s in setups
+                       if (s.get("pnl_pct_net") or 0) > 0)
+        lines.append("## ⚠️ Paires au résultat invraisemblable")
+        lines.append("")
+        lines.append(
+            f"Ces paires gagnent (ou perdent) **100 % du temps**, alors que "
+            f"l'ensemble gagne {100 * gagnants / max(n_total, 1):.1f} %. "
+            f"Presque sûrement un artefact de log, pas un résultat.")
+        lines.append("")
+        lines.append("| Paire | n | mean PnL% |")
+        lines.append("|---|---:|---:|")
+        for pair, n, moy in louches:
+            lines.append(f"| `{pair}` | {n} | {moy:+.2f}% |")
+        lines.append("")
+        lines.append(
+            "> Elles sont **conservées** dans les chiffres ci-dessus — écarter "
+            "des données est une décision de méthode qui revient à l'humain. "
+            "Mais toute moyenne les incluant est à lire avec ça en tête : le "
+            "22/08, quatre d'entre elles portaient les trois quarts de l'écart "
+            "annoncé, et l'effet disparaissait sans elles.")
+        lines.append("")
 
     # ─── Par règle
     if by_rule:

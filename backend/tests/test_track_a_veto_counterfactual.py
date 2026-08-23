@@ -197,10 +197,36 @@ def test_build_report_partitions_by_would_veto(tmp_path):
     # Vérifie qu'il distingue les 2 groupes
     assert "Would VETO" in report
     assert "Would PASS" in report
-    # Verdict directionnel : ici veto aurait aidé (vetoed all SL, passed all TP)
-    assert "LE VETO AURAIT AIDÉ" in report
+    # ⛔ Corrigé le 2026-08-23. Ce test exigeait « LE VETO AURAIT AIDÉ » sur
+    # **3** observations — il enshrinait le défaut qu'on répare : le verdict
+    # directionnel se rendait sans aucune porte sur la taille du groupe qui
+    # décide. C'est ce qui a produit la fausse alerte du 22/08 sur 27 setups.
+    #
+    # > Un test qui fige un comportement fautif le protège des corrections.
+    #
+    # L'objet déclaré de ce test est la PARTITION en deux groupes ; le verdict
+    # directionnel a désormais le sien (`test_veto_porte_credibilite.py`).
+    assert "INSUFFISANT POUR TRANCHER" in report
+    assert "LE VETO AURAIT AIDÉ" not in report
     # Détail par règle : iran_hormuz mentionné
     assert "`iran_hormuz`" in report
+
+
+def test_le_verdict_directionnel_revient_au_dessus_du_seuil(tmp_path):
+    """La porte ne doit pas museler les échantillons qui, eux, suffisent."""
+    db = tmp_path / "trades.db"
+    _create_schema(db)
+    for _ in range(ctf.N_MIN_DECISION):
+        _insert(db, pair="XAU/USD", outcome="SL", pnl_pct=-1.0,
+                would_veto=True, rules_matched=["iran_hormuz"])
+    for _ in range(40):
+        _insert(db, pair="XAU/USD", outcome="TP1", pnl_pct=2.0,
+                would_veto=False, rules_matched=[])
+
+    report = ctf.build_report(ctf.load_reconciled_setups(db),
+                              datetime(2026, 8, 23, tzinfo=timezone.utc))
+    assert "LE VETO AURAIT AIDÉ" in report
+    assert "INSUFFISANT POUR TRANCHER" not in report
 
 
 def test_build_report_handles_only_passed_setups():
