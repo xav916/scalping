@@ -2267,16 +2267,18 @@ def _choisir_pour_liberer(candidats: list[dict], manque: float) -> list[dict]:
 
 
 def _remonter_a_l_equilibre(retenus: list[dict], positions) -> list[dict]:
-    """Pose le stop À L'ENTRÉE sur les positions retenues. Rend le détail.
+    """Pose le stop À L'ENTRÉE — jamais au-delà. Rend le détail.
 
-    ⛔ Trois refus possibles, chacun laissant la position INTACTE :
+    ⛔ Quatre refus possibles, chacun laissant la position INTACTE :
 
     1. `_clamp_stops` repousse un stop trop proche du marché hors de la zone
        interdite du courtier. Le stop obtenu peut donc ne PAS être à
        l'équilibre — on le vérifie au lieu de le supposer.
-    2. Si le stop clampé est **moins protecteur** que l'actuel, on renonce :
+    2. Un stop **au-delà de l'entrée** est refusé : il verrouillerait un gain
+       sans libérer un euro de plus, et se rapprocherait du marché pour rien.
+    3. Si le stop clampé est **moins protecteur** que l'actuel, on renonce :
        ce mécanisme ne doit jamais AUGMENTER le risque d'une position.
-    3. Si `_apply_stops` échoue côté courtier, on le trace et on continue.
+    4. Si `_apply_stops` échoue côté courtier, on le trace et on continue.
 
     Chaque déplacement est journalisé : un mécanisme qui se déclenche une
     fois par mois ne devient mesurable que si chaque activation laisse une
@@ -2298,7 +2300,28 @@ def _remonter_a_l_equilibre(retenus: list[dict], positions) -> list[dict]:
         # (1) le clamp a-t-il rendu un stop VRAIMENT a l'equilibre ?
         reste = _distance_perdante(_TYPE_ACHAT if est_achat else 1,
                                    entree, sl_vise)
-        # (2) ne JAMAIS reculer le stop
+
+        # (2) ⛔ JAMAIS AU-DELA DE L'ENTREE — tranche le 2026-08-23.
+        # Verrouiller un gain ne libere pas un euro de plus : `_risque_position`
+        # clampe a zero des l'equilibre, donc un stop positif rend le MEME
+        # risque nul. Il ne fait que rapprocher le stop du marche, donc
+        # augmenter la chance d'une sortie par le bruit — la definition d'un
+        # suiveur, la famille mesuree a -0,329 R sur l'or.
+        #
+        # ⚠️ Le spread ne justifie pas de decaler : `price_open` d'un achat est
+        # l'ask du fill et `price_current` vaut le BID (mesure sur 4 positions
+        # reelles le 23/08), donc un stop a `price_open` rend zero EXACT. La
+        # commission est nulle et le swap negligeable sur ces comptes (191
+        # trades). Le cout d'execution est deja dans le compte.
+        depasse = (sl_vise > entree) if est_achat else (sl_vise < entree)
+        if depasse:
+            logger.warning(
+                f"equilibre[{c['ticket']}] {c['symbole']} REFUSE : le stop "
+                f"{sl_vise} depasse l'entree {entree} — ce serait une prise de "
+                f"profit deguisee, zero budget en plus. Position intacte")
+            continue
+
+        # (3) ne JAMAIS reculer le stop
         recule = (sl_vise < sl_actuel) if est_achat else (sl_vise > sl_actuel)
         if recule:
             logger.warning(

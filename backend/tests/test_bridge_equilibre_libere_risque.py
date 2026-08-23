@@ -177,3 +177,113 @@ def test_le_sens_VENTE_est_traite_dans_la_selection(m):
     v = _Pos(1, "EURUSD", 1.10000, 1.10500, 0.10, 1.09000, type_=1)
     cands = m._candidats_equilibre([v], _specs, 1.0)
     assert len(cands) == 1 and cands[0]["risque_libere"] == pytest.approx(50.0)
+
+
+# --------------------------------------------------------------------------
+# ⛔ A L'EQUILIBRE, JAMAIS AU-DELA (question tranchee le 2026-08-23)
+#
+# « Vaut-il mieux poser le stop a l'equilibre ou a un niveau positif ? »
+# Reponse : a l'equilibre. Un stop qui verrouille un GAIN ne libere pas un
+# euro de plus — `_distance_perdante` clampe a zero, donc les deux rendent un
+# risque nul (cf. test_stop_AU_DELA_de_l_equilibre_ne_compte_pas_un_risque_
+# fantome dans test_bridge_risque_engage.py). Il ne fait que rapprocher le
+# stop du marche, donc augmenter la chance d'une sortie par le bruit : c'est
+# la definition d'un suiveur, la famille mesuree a -0,329 R sur l'or.
+#
+# ⚠️ Le spread n'est PAS un argument pour decaler : mesure le 23/08 sur 4
+# positions reelles, `price_current` d'un ACHAT vaut exactement le BID, et
+# `price_open` est l'ask du fill. Un stop a `price_open` rend donc un
+# resultat de zero EXACT — le spread est deja dans le compte. Commission
+# nulle et swap negligeable sur ces comptes (mesure sur 191 trades).
+#
+# Ces tests verrouillent la decision pour qu'une session future ne la
+# « ameliore » pas en prise de profit deguisee.
+# --------------------------------------------------------------------------
+
+@pytest.fixture(scope="module")
+def poseur():
+    """`_remonter_a_l_equilibre` avec le courtier remplace par des doublures.
+
+    Elle n'etait couverte par aucun test alors que c'est **elle** qui deplace
+    des stops en argent reel : les trois autres fonctions sont pures.
+    """
+    src = _SRC.read_text(encoding="utf-8")
+    debut = src.index("def _risque_realise(")
+    fin = src.index("def _controle_marge_libre(")
+    mod = types.ModuleType("bridge_poseur")
+    exec(compile(src[debut:fin], str(_SRC), "exec"), mod.__dict__)
+
+    mod.logger = types.SimpleNamespace(
+        info=lambda *a, **k: None, warning=lambda *a, **k: None)
+    mod.poses = []
+
+    def _apply(symbol, ticket, new_sl, new_tp):
+        mod.poses.append({"ticket": ticket, "sl": new_sl})
+        return {"ok": True}
+
+    mod._apply_stops = _apply
+    # Par defaut le courtier accepte le niveau demande tel quel.
+    mod._clamp_stops = lambda symbol, is_buy, new_sl, new_tp: (new_sl, new_tp)
+    return mod
+
+
+def _pose(poseur, position, clamp=None):
+    poseur.poses.clear()
+    if clamp is not None:
+        poseur._clamp_stops = clamp
+    else:
+        poseur._clamp_stops = lambda s, b, sl, tp: (sl, tp)
+    retenus = poseur._candidats_equilibre([position], _specs, 1.0)
+    faits = poseur._remonter_a_l_equilibre(retenus, [position])
+    return faits, list(poseur.poses)
+
+
+def test_le_stop_pose_est_EXACTEMENT_l_entree_pas_au_dela(poseur):
+    """Un achat tres gagnant : le stop va a l'entree, pas plus haut."""
+    a = _Pos(1, "EURUSD", 1.10000, 1.09500, 0.10, 1.15000)
+    faits, poses = _pose(poseur, a)
+    assert len(poses) == 1
+    assert poses[0]["sl"] == pytest.approx(1.10000)
+    assert faits[0]["reste_a_risque"] == pytest.approx(0.0)
+
+
+def test_le_stop_pose_est_EXACTEMENT_l_entree_sur_une_VENTE(poseur):
+    v = _Pos(1, "EURUSD", 1.10000, 1.10500, 0.10, 1.05000, type_=1)
+    faits, poses = _pose(poseur, v)
+    assert len(poses) == 1
+    assert poses[0]["sl"] == pytest.approx(1.10000)
+
+
+def test_un_stop_qui_VERROUILLERAIT_UN_GAIN_est_REFUSE(poseur):
+    """⛔ Le garde-fou du 23/08.
+
+    Si le clamp rendait un niveau au-dela de l'entree, on aurait une prise de
+    profit deguisee : zero euro de budget en plus, et un stop colle au
+    marche. On refuse et on laisse la position INTACTE.
+    """
+    a = _Pos(1, "EURUSD", 1.10000, 1.09500, 0.10, 1.15000)
+    faits, poses = _pose(poseur, a, clamp=lambda s, b, sl, tp: (1.12000, tp))
+    assert poses == [], "un gain verrouille a ete pose"
+    assert faits == []
+
+
+def test_un_stop_qui_verrouillerait_un_gain_est_refuse_en_VENTE(poseur):
+    v = _Pos(1, "EURUSD", 1.10000, 1.10500, 0.10, 1.05000, type_=1)
+    faits, poses = _pose(poseur, v, clamp=lambda s, b, sl, tp: (1.08000, tp))
+    assert poses == [] and faits == []
+
+
+def test_un_clamp_qui_laisse_du_risque_est_ACCEPTE_mais_trace(poseur):
+    """Le courtier peut refuser un stop trop proche : on prend ce qu'on
+    obtient, mais `reste_a_risque` doit le DIRE au lieu de pretendre zero."""
+    a = _Pos(1, "EURUSD", 1.10000, 1.09500, 0.10, 1.15000)
+    faits, poses = _pose(poseur, a, clamp=lambda s, b, sl, tp: (1.09800, tp))
+    assert poses[0]["sl"] == pytest.approx(1.09800)
+    assert faits[0]["reste_a_risque"] == pytest.approx(0.00200)
+
+
+def test_un_stop_qui_RECULE_est_toujours_refuse(poseur):
+    """Le garde-fou existant ne doit pas avoir ete casse par le nouveau."""
+    a = _Pos(1, "EURUSD", 1.10000, 1.09500, 0.10, 1.15000)
+    faits, poses = _pose(poseur, a, clamp=lambda s, b, sl, tp: (1.09000, tp))
+    assert poses == [] and faits == []
