@@ -216,12 +216,14 @@ def poseur():
     mod.logger = types.SimpleNamespace(
         info=lambda *a, **k: None, warning=lambda *a, **k: None)
     mod.poses = []
+    mod.audits = []
 
     def _apply(symbol, ticket, new_sl, new_tp):
         mod.poses.append({"ticket": ticket, "sl": new_sl})
         return {"ok": True}
 
     mod._apply_stops = _apply
+    mod._db_log_order = lambda **f: mod.audits.append(f)
     # Par defaut le courtier accepte le niveau demande tel quel.
     mod._clamp_stops = lambda symbol, is_buy, new_sl, new_tp: (new_sl, new_tp)
     return mod
@@ -229,6 +231,7 @@ def poseur():
 
 def _pose(poseur, position, clamp=None):
     poseur.poses.clear()
+    poseur.audits.clear()
     if clamp is not None:
         poseur._clamp_stops = clamp
     else:
@@ -287,3 +290,77 @@ def test_un_stop_qui_RECULE_est_toujours_refuse(poseur):
     a = _Pos(1, "EURUSD", 1.10000, 1.09500, 0.10, 1.15000)
     faits, poses = _pose(poseur, a, clamp=lambda s, b, sl, tp: (1.09000, tp))
     assert poses == [] and faits == []
+
+
+# --------------------------------------------------------------------------
+# Chaque activation doit être LISIBLE PAR UNE MACHINE (2026-08-24)
+#
+# Un `logger.info` sur le VPS ne se compte pas, ne se joint pas au devenir de
+# la position, et ne survit pas à une rotation de log. Un mécanisme qu'on ne
+# peut pas compter est un mécanisme auquel on ne peut que CROIRE.
+#
+# ⇒ Chaque déplacement réussi écrit une ligne d'audit `status='equilibre'`,
+# dans la table `orders` que le bridge tient déjà — aucune migration, et
+# `/audit` l'expose au reste du système.
+# --------------------------------------------------------------------------
+
+def test_chaque_deplacement_ECRIT_une_ligne_d_audit(poseur):
+    a = _Pos(42, "EURUSD", 1.10000, 1.09500, 0.10, 1.15000)
+    _pose(poseur, a)
+    assert len(poseur.audits) == 1
+    ligne = poseur.audits[0]
+    assert ligne["status"] == "equilibre"
+    assert ligne["ticket"] == 42
+    assert ligne["symbol"] == "EURUSD"
+    assert ligne["entry"] == pytest.approx(1.10000)
+    assert ligne["sl"] == pytest.approx(1.10000), "le stop POSE, pas l'ancien"
+
+
+def test_l_audit_porte_de_quoi_JUGER(poseur):
+    """Sans la marge et le risque libéré, on saurait que ça s'est déclenché
+    mais pas si ça valait le coup."""
+    a = _Pos(42, "EURUSD", 1.10000, 1.09500, 0.10, 1.15000)
+    _pose(poseur, a)
+    msg = poseur.audits[0]["message"]
+    assert "marge=" in msg and "libere=" in msg and "reste=" in msg
+
+
+def test_un_REFUS_n_ecrit_AUCUNE_ligne(poseur):
+    """⛔ Compter les refus comme des activations gonflerait le dénominateur
+    et diluerait exactement ce qu'on cherche à mesurer."""
+    a = _Pos(1, "EURUSD", 1.10000, 1.09500, 0.10, 1.15000)
+    _pose(poseur, a, clamp=lambda s, b, sl, tp: (1.12000, tp))   # depasse
+    assert poseur.audits == []
+    _pose(poseur, a, clamp=lambda s, b, sl, tp: (1.09000, tp))   # recule
+    assert poseur.audits == []
+
+
+def test_un_echec_du_courtier_n_ecrit_pas_non_plus(poseur):
+    """`ok=False` : le stop n'a PAS bougé, donc rien ne s'est passé."""
+    poseur.poses.clear(); poseur.audits.clear()
+    poseur._clamp_stops = lambda s, b, sl, tp: (sl, tp)
+    poseur._apply_stops = lambda symbol, ticket, new_sl, new_tp: {
+        "ok": False, "error": "requote"}
+    a = _Pos(1, "EURUSD", 1.10000, 1.09500, 0.10, 1.15000)
+    retenus = poseur._candidats_equilibre([a], _specs, 1.0)
+    faits = poseur._remonter_a_l_equilibre(retenus, [a])
+    assert faits == [] and poseur.audits == []
+    # on remet la doublure qui reussit, pour ne pas polluer les autres tests
+    poseur._apply_stops = lambda symbol, ticket, new_sl, new_tp: (
+        poseur.poses.append({"ticket": ticket, "sl": new_sl}) or {"ok": True})
+
+
+def test_l_audit_ne_doit_JAMAIS_faire_echouer_le_deplacement(poseur):
+    """⚠️ Le stop est déjà posé chez le courtier quand on journalise. Lever
+    ici perdrait le suivi d'un mouvement RÉEL, et pire, ferait croire qu'il
+    n'a pas eu lieu."""
+    poseur.poses.clear(); poseur.audits.clear()
+    poseur._clamp_stops = lambda s, b, sl, tp: (sl, tp)
+    def _explose(**f):
+        raise RuntimeError("base verrouillee")
+    poseur._db_log_order = _explose
+    a = _Pos(7, "EURUSD", 1.10000, 1.09500, 0.10, 1.15000)
+    retenus = poseur._candidats_equilibre([a], _specs, 1.0)
+    faits = poseur._remonter_a_l_equilibre(retenus, [a])
+    assert len(faits) == 1, "le deplacement doit rester comptabilise"
+    poseur._db_log_order = lambda **f: poseur.audits.append(f)

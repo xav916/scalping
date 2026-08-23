@@ -2533,6 +2533,31 @@ def _remonter_a_l_equilibre(retenus: list[dict], positions) -> list[dict]:
         if ok:
             faits.append({**c, "sl_avant": sl_actuel, "sl_apres": sl_vise,
                           "reste_a_risque": reste})
+            # ⚠️ Une ligne d'AUDIT, pas seulement un log. Un `logger.info` sur
+            # le VPS ne se compte pas, ne se joint pas au devenir de la
+            # position, et ne survit pas a une rotation de fichier. Un
+            # mecanisme qu'on ne peut pas compter est un mecanisme auquel on
+            # ne peut que CROIRE — or celui-ci appartient a la famille mesuree
+            # a -0,329 R, donc il doit rester JUGEABLE.
+            #
+            # ⛔ Ne jamais laisser la journalisation faire echouer le
+            # deplacement : le stop est DEJA pose chez le courtier a cet
+            # instant. Lever ici ferait croire qu'il n'a pas eu lieu.
+            try:
+                _db_log_order(
+                    mode="live", status="equilibre",
+                    symbol=c["symbole"], ticket=c["ticket"],
+                    entry=entree, sl=sl_vise, tp=tp or None,
+                    client_comment="equilibre",
+                    message=(f"marge={c['marge_r']:.2f}R "
+                             f"libere={c['risque_libere']:.2f} "
+                             f"reste={reste:.5f} sl_avant={sl_actuel}"),
+                )
+            except Exception as e:
+                logger.warning(
+                    f"equilibre[{c['ticket']}] stop DEPLACE mais audit non "
+                    f"ecrit ({type(e).__name__}: {e}) — activation invisible "
+                    f"pour la sonde")
     return faits
 
 
