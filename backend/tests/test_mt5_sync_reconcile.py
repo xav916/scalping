@@ -29,7 +29,8 @@ def temp_db(tmp_path, monkeypatch):
             created_at TEXT, mt5_ticket INTEGER, is_auto INTEGER,
             post_entry_sl INTEGER, post_entry_tp INTEGER, post_entry_size INTEGER,
             context_macro TEXT, exit_price REAL, pnl REAL, closed_at TEXT,
-            signal_id INTEGER, fill_price REAL, slippage_pips REAL, close_reason TEXT
+            signal_id INTEGER, fill_price REAL, slippage_pips REAL, close_reason TEXT,
+            sl_at_close REAL, tp_at_close REAL, niveaux_source TEXT
         )
     """)
     conn.commit()

@@ -499,6 +499,55 @@ def _heure_reelle_de_cloture(iso: str | None) -> str | None:
     return (dt - timedelta(hours=_decalage_courtier_h())).isoformat()
 
 
+def _niveaux_vivants(
+    row: dict[str, Any], close_reason: str | None
+) -> tuple[float | None, float | None, str | None]:
+    """Extrait les SL/TP réellement portés par la position à sa clôture.
+
+    ⛔ Pourquoi cette colonne existe. `stop_loss` / `take_profit` gardent les
+    niveaux d'ORIGINE. Le système les déplace lui-même (mise à zéro du risque,
+    stop suiveur, soupape d'équilibre) et Xavier aussi, à la main. Mesuré le
+    2026-08-24 sur 36 clôtures rejouées bougie par bougie : **16 (44 %) ont vu
+    leur niveau stocké franchi avant l'heure réelle de clôture** — il n'était
+    donc pas celui du courtier.
+
+    Deux qualités de source, jamais mélangées :
+    - `monitor` : les deux côtés, vus vivants juste avant la disparition ;
+    - `ordre_declencheur` : **un seul** côté, reconstruit après coup depuis
+      l'ordre de clôture. La cause dit lequel — un `SL` décrit le stop, un `TP`
+      la cible. Sans elle, on ne saurait pas où le ranger : on ne range rien.
+
+    ⚠️ Un `0.0` de MT5 signifie « aucun niveau », pas « niveau à zéro ». Le
+    laisser passer rendrait la position NUE du 2026-08-05 indiscernable d'une
+    position protégée — la maladie déjà vue sur `pnl=0.0`, `entry_price=0.0` et
+    `close_reason=MANUAL`. Cf. [[feedback_detection_par_absence]].
+    """
+    def _reel(v: Any) -> float | None:
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            return None
+        return f if f else None
+
+    sl = _reel(row.get("sl_at_close"))
+    tp = _reel(row.get("tp_at_close"))
+    if sl or tp:
+        return sl, tp, row.get("niveaux_source") or "monitor"
+
+    niveau = _reel(row.get("niveau_declencheur"))
+    if niveau is None:
+        return None, None, None
+    source = row.get("niveaux_source") or "ordre_declencheur"
+    cause = (close_reason or "").upper()
+    if cause.startswith("TP"):
+        return None, niveau, source
+    if cause in ("SL", "TRAILING_SL", "BREAKEVEN", "STOP_OUT"):
+        return niveau, None, source
+    # Cause muette ou ambiguë : le niveau existe mais on ignore ce qu'il décrit.
+    # Le ranger au hasard fabriquerait une mesure. On n'en range aucun.
+    return None, None, None
+
+
 def _update_closed_trade(row: dict[str, Any]) -> None:
     """Quand le bridge log une fermeture (status='closed'), met à jour la
     ligne personal_trades correspondante (par mt5_ticket).
@@ -525,20 +574,27 @@ def _update_closed_trade(row: dict[str, Any]) -> None:
         )
     else:
         close_reason = _derive_close_reason_from_exit(ticket, row.get("exit_price"))
+    sl_vif, tp_vif, source = _niveaux_vivants(row, close_reason)
     with sqlite3.connect(_db_path()) as c:
         c.execute("""
             UPDATE personal_trades
-               SET status       = 'CLOSED',
-                   exit_price   = COALESCE(?, exit_price),
-                   pnl          = COALESCE(?, pnl),
-                   closed_at    = COALESCE(closed_at, ?),
-                   close_reason = COALESCE(close_reason, ?)
+               SET status         = 'CLOSED',
+                   exit_price     = COALESCE(?, exit_price),
+                   pnl            = COALESCE(?, pnl),
+                   closed_at      = COALESCE(closed_at, ?),
+                   close_reason   = COALESCE(close_reason, ?),
+                   sl_at_close    = COALESCE(sl_at_close, ?),
+                   tp_at_close    = COALESCE(tp_at_close, ?),
+                   niveaux_source = COALESCE(niveaux_source, ?)
              WHERE mt5_ticket = ?
         """, (
             row.get("exit_price"),
             row.get("pnl"),
             row.get("created_at") or datetime.now(timezone.utc).isoformat(),
             close_reason,
+            sl_vif,
+            tp_vif,
+            source if (sl_vif or tp_vif) else None,
             ticket,
         ))
 
@@ -724,6 +780,11 @@ async def _reconcile_open_trades() -> None:
                 # l'heuristique, qui ne peut structurellement jamais rendre
                 # "MANUAL" — elle ne connaît que les SL/TP stockés.
                 "reason": data.get("reason"),
+                # Le niveau qui a DÉCLENCHÉ la clôture, seul récupérable sur
+                # une position déjà fermée (MT5 ne garde pas l'historique des
+                # modifications de stop). Partiel et étiqueté comme tel.
+                "niveau_declencheur": data.get("niveau_declencheur"),
+                "niveaux_source": data.get("niveaux_source"),
             })
             n_full += 1
             await _notify_close_telegram(int(ticket))

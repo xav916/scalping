@@ -100,6 +100,20 @@ def _init_schema() -> None:
         # dans le plafond journalier : une perte fictive coupait le trading
         # reel. On la resolvait par sous-requete sur `mt5_pushes` a chaque
         # appel ; la colonne rend la reponse directe et durable.
+        # Niveaux SL/TP REELLEMENT portes par la position a sa cloture
+        # (2026-08-24). Les colonnes `stop_loss`/`take_profit` gardent ceux de
+        # l'ORIGINE ; le systeme les deplace (mise a zero du risque, suiveur,
+        # soupape d'equilibre) et Xavier aussi, a la main. Rejeu bougie par
+        # bougie sur 36 clotures : 16 (44 %) avaient leur niveau stocke franchi
+        # AVANT l'heure reelle de cloture — il n'etait pas celui du courtier.
+        # `niveaux_source` distingue une mesure vivante d'une reconstruction
+        # partielle. Cf. [[project_analyse_clotures_main_2026_08_24]].
+        if "sl_at_close" not in cols:
+            c.execute("ALTER TABLE personal_trades ADD COLUMN sl_at_close REAL")
+        if "tp_at_close" not in cols:
+            c.execute("ALTER TABLE personal_trades ADD COLUMN tp_at_close REAL")
+        if "niveaux_source" not in cols:
+            c.execute("ALTER TABLE personal_trades ADD COLUMN niveaux_source TEXT")
         if "destination_id" not in cols:
             c.execute("ALTER TABLE personal_trades ADD COLUMN destination_id TEXT")
             # Reprise de l'historique, UNE SEULE FOIS — a l'ajout de la

@@ -68,7 +68,8 @@ def _charger(deals):
     module.__dict__.update({
         "mt5": _FauxMT5(deals),
         "logger": types.SimpleNamespace(
-            info=lambda *a, **k: None, warning=lambda *a, **k: None
+            info=lambda *a, **k: None, warning=lambda *a, **k: None,
+            debug=lambda *a, **k: None,
         ),
         "_db_log_order": lambda **champs: ecrites.append(champs),
     })
@@ -118,3 +119,61 @@ def test_une_cause_illisible_n_est_pas_inventee():
     log(2)
 
     assert ecrites[0].get("close_reason") in (None, "")
+
+
+# ─── Les niveaux VIVANTS à la clôture (2026-08-24) ──────────────────────────
+#
+# MT5 ne garde aucune trace des `TRADE_ACTION_SLTP` : modifier un stop mute la
+# position sans créer d'ordre. Une fois fermée, le niveau qu'elle portait est
+# perdu pour tout le monde. La base, elle, garde ceux de l'ORIGINE.
+#
+# Rejeu bougie par bougie des 39 clôtures à la main : sur 36 mesurables,
+# **16 (44 %)** ont vu leur niveau stocké franchi AVANT l'heure réelle de
+# clôture — il n'était donc pas celui du courtier. Le monitor a ces niveaux
+# sous la main à chaque passage ; il suffisait de s'en souvenir un tour de plus.
+# Cf. [[project_analyse_clotures_main_2026_08_24]].
+
+
+def test_les_niveaux_vivants_partent_dans_l_audit():
+    """Le monitor passe ce qu'il a vu juste avant la disparition du ticket."""
+    log, ecrites = _charger([
+        _Deal(entry=_FauxMT5.DEAL_ENTRY_OUT, reason=_FauxMT5.DEAL_REASON_CLIENT),
+    ])
+
+    log(3, {"sl_at_close": 4785.05, "tp_at_close": 4095.0,
+            "niveaux_source": "monitor"})
+
+    assert ecrites[0]["sl_at_close"] == 4785.05
+    assert ecrites[0]["tp_at_close"] == 4095.0
+    assert ecrites[0]["niveaux_source"] == "monitor"
+
+
+def test_un_zero_MT5_signifie_ABSENT_et_n_est_pas_ecrit():
+    """MT5 rend `sl = 0.0` pour « aucun stop ». L'écrire rendrait la position
+    NUE du 2026-08-05 indiscernable d'une position protégée — la maladie déjà
+    vue sur `pnl=0.0`, `entry_price=0.0` et `close_reason=MANUAL`.
+    """
+    log, ecrites = _charger([
+        _Deal(entry=_FauxMT5.DEAL_ENTRY_OUT, reason=_FauxMT5.DEAL_REASON_CLIENT),
+    ])
+
+    log(4, {"sl_at_close": 0.0, "tp_at_close": 0.0, "niveaux_source": "monitor"})
+
+    assert "sl_at_close" not in ecrites[0]
+    assert "tp_at_close" not in ecrites[0]
+
+
+def test_sans_memoire_du_monitor_on_n_invente_aucun_niveau():
+    """Bridge redémarré : la position n'a jamais été vue vivante. Le repli
+    interroge l'historique des ordres, qui ne rend rien ici — et l'audit part
+    donc SANS niveau, plutôt qu'avec un niveau supposé.
+    """
+    log, ecrites = _charger([
+        _Deal(entry=_FauxMT5.DEAL_ENTRY_OUT, reason=_FauxMT5.DEAL_REASON_SL),
+    ])
+
+    log(5)
+
+    assert "sl_at_close" not in ecrites[0]
+    assert "niveau_declencheur" not in ecrites[0]
+    assert ecrites[0]["close_reason"] == "SL", "la cause, elle, reste écrite"

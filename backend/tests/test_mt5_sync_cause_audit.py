@@ -81,7 +81,8 @@ def temp_db(tmp_path, monkeypatch):
             entry_price REAL, stop_loss REAL, take_profit REAL,
             size_lot REAL, status TEXT, created_at TEXT,
             mt5_ticket INTEGER, is_auto INTEGER, post_entry_sl INTEGER,
-            exit_price REAL, pnl REAL, closed_at TEXT, close_reason TEXT
+            exit_price REAL, pnl REAL, closed_at TEXT, close_reason TEXT,
+            sl_at_close REAL, tp_at_close REAL, niveaux_source TEXT
         )
     """)
     conn.commit()

@@ -401,6 +401,21 @@ def _db_init() -> None:
         # destruction de valeur.
         if "close_reason" not in cols:
             conn.execute("ALTER TABLE orders ADD COLUMN close_reason TEXT")
+        # Niveaux VIVANTS au moment de la clôture (2026-08-24). MT5 ne garde
+        # aucune trace des `TRADE_ACTION_SLTP` : sans cette capture, le niveau
+        # réellement porté par la position est perdu à la seconde où elle
+        # ferme. 44 % des niveaux stockés en base se sont révélés faux.
+        # Cf. `_derniers_niveaux`.
+        if "sl_at_close" not in cols:
+            conn.execute("ALTER TABLE orders ADD COLUMN sl_at_close REAL")
+        if "tp_at_close" not in cols:
+            conn.execute("ALTER TABLE orders ADD COLUMN tp_at_close REAL")
+        if "niveau_declencheur" not in cols:
+            conn.execute("ALTER TABLE orders ADD COLUMN niveau_declencheur REAL")
+        # `monitor` (niveaux vus vivants) vs `ordre_declencheur` (reconstruit
+        # après coup, partiel). Sans ce champ, les deux se liraient pareil.
+        if "niveaux_source" not in cols:
+            conn.execute("ALTER TABLE orders ADD COLUMN niveaux_source TEXT")
         conn.commit()
 
 
@@ -1220,6 +1235,23 @@ _last_known_tickets: set[int] = set()  # positions ouvertes au dernier passage d
 _position_meta: dict[int, dict] = {}
 _meta_lock = threading.Lock()
 
+# Derniers SL/TP VIVANTS observés sur chaque position ouverte (2026-08-24).
+#
+# ⛔ Pourquoi cette mémoire existe. MT5 ne garde AUCUNE trace des
+# `TRADE_ACTION_SLTP` : une modification de stop ne crée pas d'ordre, elle
+# mute la position. Dès qu'elle est fermée, le niveau qu'elle portait
+# réellement à cet instant est perdu — définitivement, pour tout le monde.
+#
+# La base, elle, garde les niveaux d'ORIGINE. Mesure du 2026-08-24 sur les 39
+# clôtures à la main : sur 36 rejouées minute par minute, **16 (44 %) ont vu
+# leur niveau stocké franchi AVANT l'heure réelle de clôture** — preuve directe
+# que le niveau stocké n'était pas celui du courtier. Toute simulation de
+# sortie assise dessus est fausse dans ~4 cas sur 10.
+#
+# Le monitor a ces niveaux sous la main à chaque passage. Il suffisait de s'en
+# souvenir un tour de plus.
+_derniers_niveaux: dict[int, dict] = {}
+
 # Volatilite par symbole, pour la porte de bruit de la soupape d'equilibre.
 # ⚠️ Declare ICI et non a cote de `_sigma_journalier` : les tests extraient la
 # plage `_risque_realise` -> `_controle_marge_libre` du source et l'executent
@@ -1472,9 +1504,13 @@ def _maybe_partial_close_and_trail(p) -> None:
         )
 
 
-def _log_closed_position(ticket: int) -> None:
+def _log_closed_position(ticket: int, niveaux: dict | None = None) -> None:
     """Quand un ticket disparaît des positions ouvertes, log sa fermeture
-    avec exit_price + pnl dans l'audit DB. Lit l'historique MT5 des deals."""
+    avec exit_price + pnl dans l'audit DB. Lit l'historique MT5 des deals.
+
+    `niveaux` porte les SL/TP **vivants** au dernier passage du monitor, que
+    MT5 ne conservera pas. Cf. `_derniers_niveaux`.
+    """
     try:
         # Deals liés à ce ticket (ouvre + clôture). On somme profit+swap+commission.
         deals = mt5.history_deals_get(position=ticket)
@@ -1515,9 +1551,60 @@ def _log_closed_position(ticket: int) -> None:
         # est définitive. Cf. [[feedback_detection_par_absence]].
         if cause and cause != "INCONNU":
             champs["close_reason"] = cause
+        # Niveaux vivants au dernier passage du monitor. À défaut, le niveau
+        # déclencheur reconstruit depuis l'ordre de clôture. Un zéro MT5
+        # signifie « pas de stop », pas « stop à 0 » : il n'est pas écrit.
+        n = dict(niveaux or {})
+        if not n:
+            n = _niveaux_depuis_historique(ticket)
+        for cle in ("sl_at_close", "tp_at_close", "niveau_declencheur"):
+            v = n.get(cle)
+            if v:
+                champs[cle] = float(v)
+        if n.get("niveaux_source"):
+            champs["niveaux_source"] = n["niveaux_source"]
         _db_log_order(**champs)
     except Exception as e:
         logger.warning(f"_log_closed_position({ticket}) error: {e}")
+
+
+def _niveaux_depuis_historique(ticket: int) -> dict:
+    """Repli quand le monitor n'a pas vu la position vivante (bridge redémarré).
+
+    ⚠️ Ce repli est PARTIEL, et c'est volontaire de le dire. MT5 ne garde pas
+    l'historique des modifications de stop. Mais quand c'est le stop LUI-MÊME
+    qui a fermé la position, l'ordre de clôture porte son niveau dans
+    `price_open` — donc le niveau déclencheur est récupérable **exactement**,
+    et lui seul. Le côté non déclenché reste inconnu.
+
+    Rend un dict vide plutôt qu'un niveau supposé : une absence se lit comme
+    une absence, jamais comme une mesure. Cf. [[feedback_detection_par_absence]].
+    """
+    try:
+        ordres = mt5.history_orders_get(position=ticket) or []
+    except Exception as e:
+        logger.debug(f"_niveaux_depuis_historique({ticket}): {e}")
+        return {}
+    # ⚠️ Les `None` sont écartés : un `getattr` manqué laisserait `{None}` dans
+    # le set, et tout ordre sans attribut `type` y correspondrait. Un trou de
+    # lecture deviendrait une correspondance.
+    declencheurs = {
+        c for c in (
+            getattr(mt5, n, None)
+            for n in ("ORDER_TYPE_BUY_STOP", "ORDER_TYPE_SELL_STOP",
+                      "ORDER_TYPE_BUY_LIMIT", "ORDER_TYPE_SELL_LIMIT")
+        ) if c is not None
+    }
+    if not declencheurs:
+        return {}
+    for o in sorted(ordres, key=lambda x: getattr(x, "time_done", 0) or 0,
+                    reverse=True):
+        if getattr(o, "type", None) in declencheurs and getattr(o, "price_open", 0):
+            return {
+                "niveau_declencheur": float(o.price_open),
+                "niveaux_source": "ordre_declencheur",
+            }
+    return {}
 
 
 def _position_monitor_loop():
@@ -1539,8 +1626,22 @@ def _position_monitor_loop():
                 # mais plus là maintenant. Log l'event dans l'audit DB.
                 closed_tickets = _last_known_tickets - open_tickets
                 for t in closed_tickets:
-                    _log_closed_position(t)
+                    # Les niveaux du TOUR PRÉCÉDENT : la position n'existe
+                    # plus, MT5 ne les rendra jamais. Purgés après usage.
+                    _log_closed_position(t, _derniers_niveaux.pop(t, None))
                 _last_known_tickets = open_tickets
+                # Mémoriser les niveaux vivants pour le tour suivant. Un 0
+                # MT5 vaut « aucun niveau » — on garde 0.0 tel quel ici,
+                # `_log_closed_position` se charge de ne pas l'écrire.
+                for p in positions:
+                    _derniers_niveaux[p.ticket] = {
+                        "sl_at_close": float(getattr(p, "sl", 0) or 0),
+                        "tp_at_close": float(getattr(p, "tp", 0) or 0),
+                        "niveaux_source": "monitor",
+                    }
+                for t in list(_derniers_niveaux):
+                    if t not in open_tickets:
+                        del _derniers_niveaux[t]
                 # Purge les tickets fermés des sets de tracking
                 _breakeven_applied.intersection_update(open_tickets)
                 _cleanup_closed_meta(open_tickets)
@@ -2101,6 +2202,13 @@ def deals():
         # étiqueter « fermé à la main » 215 sorties du stop suiveur (08-10),
         # parce que le stop avait bougé et que la base gardait celui d'origine.
         "reason": _deal_reason_label(out_deal),
+        # ⚠️ Ce que ces champs NE disent PAS. MT5 ne garde pas l'historique des
+        # modifications de stop : sur une position déjà fermée, seul le niveau
+        # qui l'a DÉCLENCHÉE est récupérable (il est dans l'ordre de clôture).
+        # Les autres cas rendent {} — une absence, pas un niveau supposé. Pour
+        # les positions à venir, c'est le monitor qui capture les vrais niveaux
+        # vivants (cf. `_derniers_niveaux`), et lui les a tous.
+        **_niveaux_depuis_historique(ticket),
         # ⚠️ `deal.time` est l'heure SERVEUR du courtier, pas un instant UTC.
         # L'habiller de tz=utc décale la valeur (mesuré : 3 h sur ICMarketsEU,
         # base 01:05:21 contre 04:05:19 annoncé UTC). Sans effet sur les
