@@ -34,10 +34,13 @@ from __future__ import annotations
 
 import html
 import json
+import math
 import os
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, "/app")
@@ -64,6 +67,13 @@ NOTIFY_URL = ("https://app.scalping-radar.online/api/admin/"
 COOLDOWN_SEC = 21600
 
 DESTINATIONS_SURVEILLEES = ("admin_legacy", "admin_live")
+
+# Volatilite journaliere relative en dessous de laquelle on refuse de conclure.
+# Un flux GELE rend un sigma minuscule mais positif : sans ce plancher, toute
+# position deviendrait eligible. Le forex reel vaut 0,15 a 0,75 % par jour.
+SIGMA_REL_MIN = float(os.environ.get("SIGMA_REL_MIN", "0.0001"))
+# Fenetre de mesure, alignee sur `EQUILIBRE_VOL_HEURES` cote bridge.
+VOL_HEURES = int(os.environ.get("VOL_HEURES", "720"))
 
 
 # --------------------------------------------------------------------------
@@ -111,8 +121,58 @@ def mesurer_position(p: dict) -> dict:
     return {"nue": False, "risque": risque, "marge_r": profit / risque}
 
 
+def _acquis_en_prix(p: dict) -> float | None:
+    """Profit acquis, en unités de PRIX, signé par le sens de la position."""
+    try:
+        entree = float(p["price_open"])
+        courant = float(p["price_current"])
+    except (TypeError, ValueError, KeyError):
+        return None
+    if courant <= 0:
+        return None
+    est_vente = str(p.get("type", "")).lower().startswith("s")
+    return (entree - courant) if est_vente else (courant - entree)
+
+
+def sigma_journalier(clotures) -> float | None:
+    """Écart-type journalier, en unités de PRIX. ``None`` si incalculable.
+
+    ⚠️ **Formule DUPLIQUÉE depuis `bridge.py::_sigma_journalier`.** Les deux
+    tournent sur des machines différentes et ne peuvent pas partager de code à
+    l'exécution. Toute modification ici doit être répercutée là-bas, et
+    inversement : des tests épinglent la formule des deux côtés sur les mêmes
+    entrées.
+
+    Rendements log H1 → écart-type → `× √24` → `× dernière clôture`.
+
+    ⛔ Rend ``None``, jamais 0.0 : un σ nul rendrait tout éligible, et un
+    échantillon trop mince servirait quand même à décider.
+    """
+    if not clotures or len(clotures) < 100:
+        return None
+    try:
+        c = [float(x) for x in clotures if float(x) > 0]
+    except (TypeError, ValueError):
+        return None
+    if len(c) < 100:
+        return None
+    rend = [math.log(c[i] / c[i - 1]) for i in range(1, len(c))]
+    moy = sum(rend) / len(rend)
+    var = sum((r - moy) ** 2 for r in rend) / (len(rend) - 1)
+    sigma_rel = math.sqrt(var) * math.sqrt(24.0)
+    # ⛔ Un flux GELE donne un sigma minuscule mais POSITIF, donc toute
+    # position deviendrait eligible — fail-open, exactement l'inverse du but.
+    # Une volatilite journaliere reelle vaut 0,15 a 0,75 % sur ces paires ;
+    # sous 0,01 % ce n'est pas un marche calme, c'est un flux casse.
+    if sigma_rel < SIGMA_REL_MIN:
+        return None
+    sigma = sigma_rel * c[-1]
+    return sigma if sigma > 0 else None
+
+
 def evaluer(positions: list, equity: float, plafond_pct: float,
-            marge_min_r: float) -> dict:
+            marge_min_r: float, sigmas=None,
+            marge_min_sigma: float = 0.0) -> dict:
     """Somme les risques et compte ce que la soupape pourrait libérer.
 
     ⛔ `indecidable` dès qu'une position est nue, non mesurable, ou que
@@ -131,10 +191,25 @@ def evaluer(positions: list, equity: float, plafond_pct: float,
             non_mesurables += 1
             continue
         total += m["risque"]
-        if (m["risque"] > 0 and m["marge_r"] is not None
+        if not (m["risque"] > 0 and m["marge_r"] is not None
                 and m["marge_r"] >= marge_min_r - 1e-9):
-            candidats += 1
-            liberable += m["risque"]
+            continue
+        # ⛔ La porte de BRUIT, la même que le bridge applique depuis le
+        # 24/08. Sans elle, la sonde annonçait 3 candidats qui n'en étaient
+        # aucun : elle promettait du budget libérable qui n'existait pas.
+        # Volatilité inconnue ⇒ pas candidat (fail-closed, comme le bridge).
+        if marge_min_sigma > 0:
+            try:
+                sigma = sigmas(p.get("symbol")) if sigmas else None
+            except Exception:
+                sigma = None
+            if not sigma or sigma <= 0:
+                continue
+            acquis = _acquis_en_prix(p)
+            if acquis is None or acquis < marge_min_sigma * sigma - 1e-12:
+                continue
+        candidats += 1
+        liberable += m["risque"]
 
     equity_ok = equity is not None and equity > 0
     indecidable = bool(nues or non_mesurables or not equity_ok)
@@ -207,6 +282,41 @@ def _appel(dest, chemin: str):
         return None, False
 
 
+def _source_volatilite(dest):
+    """Rend `symbole -> ecart-type journalier en prix`, via `/rates` du bridge.
+
+    ⚠️ **Meme fenetre et meme formule que le bridge** (`EQUILIBRE_VOL_HEURES`
+    = 720 h). C'est ce qui garantit que la sonde annonce ce que le bridge
+    fera — l'inverse etait le defaut qu'on repare.
+
+    Cache par passage : plusieurs positions partagent souvent un symbole.
+    ⛔ Rend `None` sur toute lecture ratee : l'appelant ecarte alors la
+    position, comme le bridge (fail-closed).
+    """
+    cache: dict = {}
+
+    def _lire(symbole):
+        if not symbole:
+            return None
+        if symbole in cache:
+            return cache[symbole]
+        fin = datetime.now(timezone.utc)
+        debut = fin - timedelta(hours=VOL_HEURES)
+        q = urllib.parse.urlencode({
+            "pair": symbole, "timeframe": "H1",
+            "from": debut.strftime("%Y-%m-%dT%H:%M:%S"),
+            "to": fin.strftime("%Y-%m-%dT%H:%M:%S")})
+        charge, ok = _appel(dest, "/rates?" + q)
+        clotures = None
+        if ok and isinstance(charge, dict):
+            clotures = [b.get("c") for b in (charge.get("bougies") or [])
+                        if b.get("c")]
+        cache[symbole] = sigma_journalier(clotures) if clotures else None
+        return cache[symbole]
+
+    return _lire
+
+
 def _lire_destination(dest) -> dict:
     """Santé + compte + positions. Toute lecture ratée ⇒ `illisible`."""
     sante, ok = _appel(dest, "/health")
@@ -216,6 +326,10 @@ def _lire_destination(dest) -> dict:
     try:
         plafond_pct = float(gf.get("max_risque_engage_pct"))
         marge_min_r = float(gf.get("equilibre_marge_r", 1.0))
+        # ⛔ Le bridge applique AUSSI cette porte depuis le 24/08. L'ignorer
+        # faisait annoncer du budget liberable qui n'existait pas.
+        # Absent (vieux bridge) => 0, donc porte desarmee : retro-compatible.
+        marge_min_sigma = float(gf.get("equilibre_marge_sigma", 0.0) or 0.0)
     except (TypeError, ValueError):
         return evaluation_illisible()
     if plafond_pct <= 0:
@@ -240,9 +354,11 @@ def _lire_destination(dest) -> dict:
     except (TypeError, ValueError):
         return evaluation_illisible()
 
-    e = evaluer(positions, equity, plafond_pct, marge_min_r)
+    e = evaluer(positions, equity, plafond_pct, marge_min_r,
+                sigmas=_source_volatilite(dest), marge_min_sigma=marge_min_sigma)
     e["login"] = sante.get("login")
     e["marge_min_r"] = marge_min_r
+    e["marge_min_sigma"] = marge_min_sigma
     return e
 
 

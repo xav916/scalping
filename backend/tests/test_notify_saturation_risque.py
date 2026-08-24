@@ -124,6 +124,86 @@ def test_la_saturation_des_deux_comptes_le_23_08(s):
     assert e["liberable"] == pytest.approx(0.0)
 
 
+# --------------------------------------------------------------------------
+# ⛔ La sonde doit appliquer LA MEME regle que le bridge (2026-08-24)
+#
+# Elle annoncait 2 candidats sur le demo et 1 sur le reel en n'appliquant que
+# le seuil en R. Le bridge, lui, applique AUSSI la porte de bruit en σ depuis
+# le 24/08 — et sous cette porte, AUCUN des trois ne passait :
+#
+#     DEMO USDJPY 85119920    acquis 0,766     1 σ = 1,178   NON
+#     DEMO USDJPY 85480095    acquis 0,358     1 σ = 1,178   NON
+#     REEL GBPUSD 1355176392  acquis 0,00221   1 σ = 0,00447 NON
+#
+# > **Une sonde qui n'applique pas la regle qu'elle decrit annonce du budget
+# > liberable qui n'existe pas.** C'est pire qu'une sonde muette : elle
+# > pousserait a compter sur une soupape qui ne se declenchera pas.
+#
+# ⚠️ La formule de σ est DUPLIQUEE entre le bridge et la sonde — ils tournent
+# sur des machines differentes et ne peuvent pas partager de code a
+# l'execution. Les tests ci-dessous epinglent la formule des DEUX cotes sur
+# les memes entrees ; toute derive les fait tomber.
+# --------------------------------------------------------------------------
+
+def test_un_flux_QUASI_GELE_rend_None_pas_un_sigma_minuscule(s):
+    """⛔ Le trou que ce test a trouve.
+
+    Une serie a croissance parfaitement reguliere (rendement log constant) a
+    une variance nulle en theorie, et ~1e-16 en flottant. Le sigma sort donc
+    minuscule mais POSITIF — et `acquis >= 1,0 × sigma` devient trivialement
+    vrai : **toute position deviendrait eligible**. Fail-OPEN, exactement
+    l'inverse du but de cette porte.
+
+    Un flux gele ou casse doit rendre `None`, comme une volatilite inconnue.
+    """
+    clotures = [100.0 * (1.001 ** i) for i in range(200)]
+    assert s.sigma_journalier(clotures) is None
+
+
+def test_sigma_sur_une_serie_a_volatilite_connue(s):
+    """Alternance +1 %/−1 % : l'ecart-type des rendements log vaut ln(1,01)."""
+    import math
+    clotures = [100.0]
+    for i in range(200):
+        clotures.append(clotures[-1] * (1.01 if i % 2 == 0 else 1 / 1.01))
+    attendu = math.log(1.01) * math.sqrt(24.0) * clotures[-1]
+    assert s.sigma_journalier(clotures) == pytest.approx(attendu, rel=0.02)
+
+
+def test_trop_peu_de_bougies_rend_None(s):
+    """⛔ Jamais une valeur calculee sur un echantillon trop mince : elle
+    servirait a decider quand meme."""
+    assert s.sigma_journalier([100.0 + i for i in range(50)]) is None
+    assert s.sigma_journalier([]) is None
+    assert s.sigma_journalier(None) is None
+
+
+def test_le_cas_REEL_du_24_08_aucun_candidat_sous_la_porte_sigma(s):
+    """Les trois positions que la sonde annoncait candidates a tort."""
+    p = _pos(price_open=158.459, price_current=159.225, sl=157.859,
+             profit=4.12, symbol="USDJPY")
+    e = s.evaluer([p], equity=524.05, plafond_pct=6.0, marge_min_r=0.40,
+                  sigmas=lambda _: 1.178, marge_min_sigma=1.0)
+    assert e["candidats"] == 0, "0,766 acquis < 1,178 de bruit"
+
+
+def test_sans_porte_sigma_le_comportement_est_INCHANGE(s):
+    """`marge_min_sigma=0` doit rendre exactement l'ancien resultat."""
+    p = _pos(price_open=1.10000, price_current=1.10500, sl=1.09500, profit=5.0)
+    assert s.evaluer([p], 1000.0, 6.0, 1.0)["candidats"] == 1
+    assert s.evaluer([p], 1000.0, 6.0, 1.0,
+                     sigmas=lambda _: None, marge_min_sigma=0.0)["candidats"] == 1
+
+
+def test_volatilite_inconnue_ECARTE_le_candidat(s):
+    """⛔ Meme choix fail-closed que le bridge : ne pas annoncer liberable ce
+    qu'on ne sait pas juger."""
+    p = _pos(price_open=1.10000, price_current=1.10500, sl=1.09500, profit=5.0)
+    e = s.evaluer([p], 1000.0, 6.0, 1.0,
+                  sigmas=lambda _: None, marge_min_sigma=1.0)
+    assert e["candidats"] == 0 and e["liberable"] == pytest.approx(0.0)
+
+
 def test_une_position_a_1R_est_candidate_seuil_INCLUSIF(s):
     p = _pos(price_open=1.10000, price_current=1.10500, sl=1.09500, profit=5.0)
     e = s.evaluer([p], equity=1000.0, plafond_pct=6.0, marge_min_r=1.0)

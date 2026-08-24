@@ -128,6 +128,12 @@ EQUILIBRE_VOL_HEURES = int(os.getenv("EQUILIBRE_VOL_HEURES", "720"))
 # La volatilite ne bouge pas d'une minute a l'autre : un calcul par jour
 # suffit, et evite d'appeler MT5 sur le chemin d'un ordre.
 EQUILIBRE_VOL_TTL_SEC = int(os.getenv("EQUILIBRE_VOL_TTL_SEC", "86400"))
+# ⛔ Plancher de plausibilite : sous cette volatilite journaliere RELATIVE, on
+# refuse de conclure. Un flux gele rend un sigma minuscule mais positif, ce qui
+# rendrait TOUTE position eligible (fail-open). Le forex reel vaut 0,15-0,75 %.
+# ⚠️ Duplique dans `scripts/notify_saturation_risque.py` : les deux tournent
+# sur des machines differentes. Toute modification ici doit y etre repercutee.
+SIGMA_REL_MIN = float(os.getenv("SIGMA_REL_MIN", "0.0001"))
 DEDUP_WINDOW_SEC = int(os.getenv("DEDUP_WINDOW_SEC", "300"))
 DEVIATION_POINTS = int(os.getenv("DEVIATION_POINTS", "20"))
 MAGIC_NUMBER = int(os.getenv("MAGIC_NUMBER", "20260419"))
@@ -2329,6 +2335,16 @@ def _sigma_journalier(symbole: str) -> float | None:
         moy = sum(rend) / len(rend)
         var = sum((r - moy) ** 2 for r in rend) / (len(rend) - 1)
         sigma_rel = math.sqrt(var) * math.sqrt(24.0)     # relatif, par jour
+        # ⛔ Un flux GELE rend un sigma minuscule mais POSITIF, donc
+        # `acquis >= 1,0 x sigma` devient trivialement vrai et TOUTE position
+        # devient eligible — fail-OPEN, l'inverse exact du but de cette porte.
+        # La volatilite journaliere reelle vaut 0,15 a 0,75 % sur ces paires ;
+        # sous 0,01 % ce n'est pas un marche calme, c'est un flux casse.
+        if sigma_rel < SIGMA_REL_MIN:
+            logger.warning(
+                f"equilibre/vol: {symbole} volatilite implausible "
+                f"({100 * sigma_rel:.5f} %) — flux gele ? position ecartee")
+            return None
         sigma_prix = sigma_rel * clotures[-1]
         if sigma_prix <= 0:
             return None
