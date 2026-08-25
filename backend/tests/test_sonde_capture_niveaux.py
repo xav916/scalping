@@ -186,6 +186,32 @@ def test_kraken_n_est_pas_surveille(bac):
     assert envois == []
 
 
+def test_un_passage_a_blanc_ne_deplace_RIEN(bac):
+    """Trouvé le 25/08 en testant le chemin qui alerte : `DRY_RUN=1` envoyait
+    bien zéro message — mais avançait le curseur. La clôture qu'il venait de
+    juger n'était donc jamais rejugée par le vrai passage : le test avait
+    **mangé l'événement qu'il servait à démontrer**.
+
+    En production, un « je regarde ce que ça donnerait » suffirait à faire
+    disparaître une régression.
+
+    ⚠️ `DRY_RUN` est lu à l'APPEL, pas à l'import : il doit être posé autour de
+    `main()`. Le poser seulement au chargement — comme le faisait la première
+    version de ce test — ne teste rien du tout.
+    """
+    db, etat = bac
+    _curseur(etat)
+    avant = etat.read_text()
+    _trade(db, 9, minutes=60, source=None)
+    mod, _ = _charger(db, etat, GRACE_MIN="20")
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("DRY_RUN", "1")
+        mod.main()
+
+    assert etat.read_text() == avant, "un passage à blanc a déplacé le curseur"
+
+
 def test_une_base_illisible_n_est_pas_aucune_cloture(bac):
     db, etat = bac
     _curseur(etat)

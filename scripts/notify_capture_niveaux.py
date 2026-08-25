@@ -79,6 +79,14 @@ def _lire_etat() -> dict:
 
 
 def _ecrire_etat(etat: dict) -> None:
+    # ⛔ Un passage « à blanc » qui AVANCE le curseur n'est pas à blanc : la
+    # clôture qu'il vient de juger ne serait jamais rejugée par le vrai
+    # passage, donc jamais notifiée. Défaut trouvé le 25/08 en testant le
+    # chemin qui alerte — le DRY_RUN avait mangé l'événement qu'il servait à
+    # démontrer. Une observation ne doit rien déplacer.
+    if os.environ.get("DRY_RUN") == "1":
+        print(f"  [DRY_RUN] curseur NON avancé (resterait à {etat.get('curseur')})")
+        return
     try:
         with open(ETAT, "w", encoding="utf-8") as f:
             json.dump(etat, f, indent=1)
