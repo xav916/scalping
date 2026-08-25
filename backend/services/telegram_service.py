@@ -986,22 +986,44 @@ async def send_setups(setups: list) -> None:
 _notified_closes: set[str] = set()
 
 
-def _mfe_mae(bougies: list, entry: float, risque: float, achat: bool) -> dict | None:
+def _mfe_mae(bougies: list, entry: float, risque: float, achat: bool,
+             point: float = 0.0) -> dict | None:
     """Meilleur et pire point atteints, en unités de risque.
 
     ⚠️ **L'inversion vente est le seul endroit où une erreur serait
     silencieuse** : sur une vente, le « meilleur » point est le plus BAS, et
     prendre le plus haut rendrait un MFE négatif qu'on lirait comme « jamais
     passé au vert ». D'où un test dédié plutôt qu'une relecture.
+
+    ⛔ **Le spread ne se paie que d'un côté.** Les bougies MT5 sont en BID.
+    Sur un ACHAT l'entrée enregistrée est déjà le fill à l'ask et la sortie se
+    fait au bid : les extrêmes sont directement les bons, en retirer un spread
+    facturerait le coût deux fois. Sur une VENTE on entre au bid mais on
+    **rachète à l'ask** : le point réellement atteignable est `bas + spread`.
+
+    Le spread retenu est celui de la bougie de l'EXTRÊME, pas une moyenne —
+    une moyenne lisserait justement le pic qui compte. Mesuré le 2026-08-25 :
+    médiane 1 % du risque, mais **29 % dans la queue**, et c'est exactement au
+    moment de ces pics que les stops se font toucher.
     """
-    hauts = [float(b["h"]) for b in bougies if b.get("h") is not None]
-    bas = [float(b["l"]) for b in bougies if b.get("l") is not None]
-    if not hauts or not bas or risque <= 0:
+    valides = [b for b in bougies
+               if b.get("h") is not None and b.get("l") is not None]
+    if not valides or risque <= 0:
         return None
+
+    def _spread(b) -> float:
+        return float(b.get("s") or 0) * float(point or 0)
+
     if achat:
-        mfe, mae = (max(hauts) - entry) / risque, (min(bas) - entry) / risque
+        haut = max(valides, key=lambda b: float(b["h"]))
+        bas = min(valides, key=lambda b: float(b["l"]))
+        mfe = (float(haut["h"]) - entry) / risque
+        mae = (float(bas["l"]) - entry) / risque
     else:
-        mfe, mae = (entry - min(bas)) / risque, (entry - max(hauts)) / risque
+        bas = min(valides, key=lambda b: float(b["l"]))
+        haut = max(valides, key=lambda b: float(b["h"]))
+        mfe = (entry - (float(bas["l"]) + _spread(bas))) / risque
+        mae = (entry - (float(haut["h"]) + _spread(haut))) / risque
     return {"mfe_R": round(mfe, 2), "mae_R": round(mae, 2)}
 
 
@@ -1051,21 +1073,40 @@ def _parcours_en_R(trade: dict, destination_id: str | None) -> dict | None:
         import urllib.parse
         import urllib.request
 
-        q = urllib.parse.urlencode({
-            "pair": _symbole_courtier(trade.get("pair"), destination_id),
-            "timeframe": "M1",
-            "from": debut.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "to": fin.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        })
-        rq = urllib.request.Request(f"{url.rstrip('/')}/rates?{q}", headers=entetes)
-        # ⚠️ Court, et dans un `try` total : cet appel entre dans le flux de
-        # clôture. Il n'a jamais le droit de retarder ni de casser la notif.
-        with urllib.request.urlopen(rq, timeout=5) as r:
-            bougies = (json.load(r) or {}).get("bougies") or []
-        if not bougies:
-            return None
-
-        return _mfe_mae(bougies, entry, risque, achat)
+        symbole = _symbole_courtier(trade.get("pair"), destination_id)
+        # ⛔ Le bridge coupe a MAX_BOUGIES et le DIT (`tronque`). Ignorer ce
+        # drapeau mesurerait le DEBUT du trade en presentant le resultat comme
+        # s'il portait sur toute sa vie — 3 trades sur 35 (positions crypto
+        # tenues 40 jours). On remonte donc le pas jusqu'a couvrir la fenetre.
+        #
+        # ⚠️ Un pas plus large ne degrade PAS le MFE : le maximum des hauts
+        # reste le maximum. Il ne degraderait que l'ORDRE intra-bougie — or
+        # cet ordre ne se pose sur aucun trade mesure (0 bougie ambigue sur 35).
+        for pas in ("M1", "M5", "M15", "H1"):
+            q = urllib.parse.urlencode({
+                "pair": symbole, "timeframe": pas,
+                "from": debut.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "to": fin.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            })
+            rq = urllib.request.Request(f"{url.rstrip('/')}/rates?{q}",
+                                        headers=entetes)
+            # ⚠️ Court, et dans un `try` total : cet appel entre dans le flux de
+            # clôture. Il n'a jamais le droit de retarder ni de casser la notif.
+            with urllib.request.urlopen(rq, timeout=5) as r:
+                charge = json.load(r) or {}
+            if charge.get("tronque"):
+                continue
+            bougies = charge.get("bougies") or []
+            if not bougies:
+                return None
+            r = _mfe_mae(bougies, entry, risque, achat,
+                         point=charge.get("point") or 0.0)
+            if r is not None:
+                r["pas"] = pas
+            return r
+        # Aucun pas ne couvre la fenetre : mieux vaut pas de mesure qu'une
+        # mesure partielle presentee comme entiere.
+        return None
     except Exception as e:  # pragma: no cover - garde-fou du flux trade
         logger.debug(f"_parcours_en_R indisponible : {e}")
         return None

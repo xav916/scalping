@@ -292,6 +292,106 @@ def test_parcours_en_R_avale_une_panne_reseau_sans_casser(monkeypatch):
     assert _VRAI_PARCOURS(_trade(), "admin_live") is None
 
 
+# ─── Precision : la troncature et le spread ─────────────────────────────
+#
+# Mesure du 2026-08-25 sur 35 trades du demo :
+#   bougies M1 AMBIGUES (SL et TP dans la meme minute)   0 / 35
+#   fenetres TRONQUEES silencieusement                   3 / 35
+#   spread max de la fenetre, en % du risque      mediane 1 % · pire 29 %
+#
+# ⇒ Passer aux ticks ne servirait a RIEN : l'ordre intra-bougie ne se pose
+#   jamais. En revanche la troncature et le spread mordent pour de vrai.
+
+
+def _repondeur(reponses):
+    """Rend un faux `urlopen` qui repond selon le `timeframe` demande."""
+    import io
+    import json as _json
+
+    class _R(io.StringIO):
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    def _ouvrir(requete, *a, **k):
+        url = requete.full_url if hasattr(requete, "full_url") else str(requete)
+        tf = next((t for t in ("M15", "M5", "M1") if f"timeframe={t}" in url), "M1")
+        return _R(_json.dumps(reponses[tf]))
+    return _ouvrir
+
+
+def _payload(n, tronque, bougies=None):
+    return {"n": n, "tronque": tronque, "point": 0.01,
+            "bougies": bougies or [{"h": 4150.0, "l": 4120.0, "s": 20}]}
+
+
+def test_une_fenetre_TRONQUEE_fait_passer_a_un_pas_plus_large(monkeypatch):
+    """⛔ Le bridge coupe a 5 000 bougies et le DIT (`tronque`). Ignorer ce
+    drapeau, c'est mesurer le DEBUT du trade et presenter le resultat comme
+    s'il portait sur toute sa vie. Mesure : 3 trades sur 35 — des positions
+    crypto tenues 40 jours, pour lesquelles M15 suffit.
+    """
+    monkeypatch.setenv("MT5_BRIDGE_LIVE_URL", "http://bridge-de-test:8788")
+    monkeypatch.setattr("urllib.request.urlopen", _repondeur({
+        "M1": _payload(5000, True),
+        "M5": _payload(5000, True),
+        "M15": _payload(3897, False,
+                        [{"h": 4200.0, "l": 4100.0, "s": 20}]),
+    }))
+
+    r = _VRAI_PARCOURS(_trade(), "admin_live")
+
+    assert r is not None
+    assert r["pas"] == "M15", "il faut remonter jusqu'au pas qui couvre tout"
+
+
+def test_si_AUCUN_pas_ne_couvre_la_fenetre_on_ne_conclut_pas(monkeypatch):
+    """Mieux vaut pas de mesure qu'une mesure partielle presentee comme
+    entiere. Cf. [[feedback_detection_par_absence]]."""
+    monkeypatch.setenv("MT5_BRIDGE_LIVE_URL", "http://bridge-de-test:8788")
+    monkeypatch.setattr("urllib.request.urlopen", _repondeur({
+        "M1": _payload(5000, True), "M5": _payload(5000, True),
+        "M15": _payload(5000, True)}))
+
+    assert _VRAI_PARCOURS(_trade(), "admin_live") is None
+
+
+def test_sur_une_VENTE_le_spread_est_retire_du_gain(monkeypatch):
+    """Les bougies MT5 sont en BID. Sur une vente, on entre au bid mais on
+    rachete a l'ASK : le meilleur point atteignable est `plus bas + spread`.
+    Compter le bid nu surestime le gain — d'autant plus que le spread explose
+    justement quand les stops se font toucher (jusqu'a 29 % du risque).
+    """
+    bougies = [{"h": 4150.0, "l": 4120.0, "s": 100}]   # 100 pts x 0,01 = 1,00
+    sans = ts._mfe_mae(bougies, entry=4145.37, risque=19.11, achat=False, point=0)
+    avec = ts._mfe_mae(bougies, entry=4145.37, risque=19.11, achat=False, point=0.01)
+
+    assert avec["mfe_R"] < sans["mfe_R"], "le spread doit reduire le gain"
+    assert avec["mfe_R"] == pytest.approx((4145.37 - (4120.0 + 1.0)) / 19.11, abs=0.01)
+
+
+def test_sur_un_ACHAT_le_spread_ne_se_paie_pas_deux_fois():
+    """L'entree etait deja a l'ask (c'est le fill enregistre) et la sortie se
+    fait au bid, que les bougies donnent directement. Retirer encore un spread
+    facturerait le cout deux fois."""
+    bougies = [{"h": 4150.0, "l": 4120.0, "s": 100}]
+    sans = ts._mfe_mae(bougies, entry=4145.37, risque=19.11, achat=True, point=0)
+    avec = ts._mfe_mae(bougies, entry=4145.37, risque=19.11, achat=True, point=0.01)
+
+    assert avec["mfe_R"] == sans["mfe_R"]
+
+
+def test_le_spread_pris_est_celui_de_la_bougie_de_l_EXTREME():
+    """Un spread moyen lisserait justement le pic qui compte. Le point haut se
+    paie au spread de SA minute, pas a celui du reste du trade."""
+    bougies = [
+        {"h": 4150.0, "l": 4130.0, "s": 1},      # spread calme
+        {"h": 4150.0, "l": 4120.0, "s": 200},    # l'extreme, spread ecarte
+    ]
+    r = ts._mfe_mae(bougies, entry=4145.37, risque=19.11, achat=False, point=0.01)
+
+    assert r["mfe_R"] == pytest.approx((4145.37 - (4120.0 + 2.0)) / 19.11, abs=0.01)
+
+
 # ─── Le calcul du parcours ──────────────────────────────────────────────
 
 _BOUGIES = [{"h": 4150.0, "l": 4120.0}, {"h": 4170.0, "l": 4140.0}]
