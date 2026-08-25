@@ -583,6 +583,33 @@ TRADE_DEROGATION_SINCE = os.getenv("TRADE_DEROGATION_SINCE", "").strip()
 # par défaut, désormais un réglage.
 PAC_PAUSE_COOLOFF_DAYS = int(os.getenv("PAC_PAUSE_COOLOFF_DAYS", "14"))
 
+# Tickets retirés du SCORING d'admission — et de rien d'autre (2026-08-25).
+#
+# Un trade que le système n'a pas géré ne doit pas le noter. Le cas fondateur :
+# le ticket 1353960866, tenu SANS STOP sur consigne explicite de Xavier
+# (« ne pas le compter dans l'équation, le laisser vivre sa vie ») puis fermé à
+# la main à -265,11 €. Il avait bien été exclu du garde-fou de perte journalière
+# du bridge (`DAILY_LOSS_EXCLUDED_TICKETS`) mais JAMAIS du calcul d'admission :
+# à lui seul il faisait passer le côté vente de l'or de +230,39 € à -34,72 €,
+# donc sous le plancher de -3 %, donc en PAUSED.
+#
+# ⛔ Cette liste ne retire rien au risque, au P&L, ni à aucun relevé d'argent.
+# L'argent a réellement été perdu. Elle retire une décision qui n'était pas
+# celle du système d'un bulletin qui juge le système.
+#
+# ⚠️ Pourquoi une liste explicite et pas « tous les close_reason = MANUAL » :
+# `MANUAL` est la BRANCHE PAR DÉFAUT du classement de sortie
+# (cf. project_close_reason_manual_invente_2026_08_10) — il est autant « on n'a
+# pas su » que « fermé à la main ». Exclure sur ce motif jetterait en silence
+# des trades réellement gérés par le système. Une exception doit être nommée.
+#
+# Vide par défaut : sans réglage explicite, aucun comportement ne change.
+PAC_EXCLUDED_TICKETS = frozenset(
+    int(t.strip())
+    for t in os.getenv("PAC_EXCLUDED_TICKETS", "").split(",")
+    if t.strip().lstrip("-").isdigit()
+)
+
 # Taille de bloc (en positions consécutives du domaine trié par temps) du
 # bootstrap par blocs apparié — cf. `backend.services.random_entry_control`.
 # Défaut aligné sur celui du module (10).

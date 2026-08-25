@@ -935,37 +935,93 @@ def _fetch_real_trades_for_pair(pair: str, window: int, direction: Optional[str]
     direction = _normalize_direction(direction)
     pnls: list[float] = []
 
+    # ⛔ L'exclusion se fait EN SQL, avant le LIMIT. La faire en Python après
+    # coup rendrait une fenêtre de moins de `window` trades comptables : on
+    # noterait la paire sur 29 trades en croyant en avoir 30.
+    # ⚠️ `CAST(... AS INTEGER)` n'est pas cosmétique. `mt5_ticket` est stocké en
+    # TEXTE ici et en ENTIER ailleurs ; et `coalesce(mt5_ticket, 0)` EFFACE
+    # l'affinité de la colonne, si bien que SQLite compare un texte à un entier
+    # sans jamais les trouver égaux. Le filtre passait alors inaperçu — écarter
+    # zéro ticket en silence, exactement le défaut qu'on prétend corriger.
+    exclus = _tickets_exclus()
+    filtre = ""
+    if exclus:
+        trous = ",".join("?" * len(exclus))
+        filtre = (f" AND (mt5_ticket IS NULL OR "
+                  f"CAST(mt5_ticket AS INTEGER) NOT IN ({trous}))")
+    ex = tuple(exclus)
+
     with sqlite3.connect(_db_path()) as c:
         if direction is not None:
             # Filtre par direction sur toutes les sources
             rows = c.execute(
-                """
+                f"""
                 SELECT pnl, closed_at FROM personal_trades
                  WHERE pair = ? AND status = 'CLOSED'
                    AND is_auto = 1 AND pnl IS NOT NULL
-                   AND LOWER(direction) = ?
+                   AND LOWER(direction) = ?{filtre}
                 UNION ALL
                 SELECT pnl, closed_at FROM ea_closed_trades
-                 WHERE pair = ? AND LOWER(direction) = ?
+                 WHERE pair = ? AND LOWER(direction) = ?{filtre}
                 ORDER BY closed_at DESC LIMIT ?
                 """,
-                (pair, direction, pair, direction, window),
+                (pair, direction) + ex + (pair, direction) + ex + (window,),
             ).fetchall()
         else:
             rows = c.execute(
-                """
+                f"""
                 SELECT pnl, closed_at FROM personal_trades
                  WHERE pair = ? AND status = 'CLOSED'
-                   AND is_auto = 1 AND pnl IS NOT NULL
+                   AND is_auto = 1 AND pnl IS NOT NULL{filtre}
                 UNION ALL
-                SELECT pnl, closed_at FROM ea_closed_trades WHERE pair = ?
+                SELECT pnl, closed_at FROM ea_closed_trades
+                 WHERE pair = ?{filtre}
                 ORDER BY closed_at DESC LIMIT ?
                 """,
-                (pair, pair, window),
+                (pair,) + ex + (pair,) + ex + (window,),
             ).fetchall()
         for r in rows:
             pnls.append(float(r[0]))
     return pnls
+
+
+def _tickets_exclus() -> frozenset[int]:
+    """Tickets retirés du scoring d'admission — et de rien d'autre.
+
+    Lu à l'appel, jamais à l'import : un test doit pouvoir le régler, et le
+    conteneur doit pouvoir changer sans reconstruction d'image.
+    """
+    try:
+        from config.settings import PAC_EXCLUDED_TICKETS
+        return frozenset(PAC_EXCLUDED_TICKETS)
+    except Exception:  # noqa: BLE001 — un réglage illisible ne doit rien casser
+        return frozenset()
+
+
+def tickets_exclus_presents(pair: str, direction: Optional[str] = None) -> list[int]:
+    """Tickets exclus qui existent RÉELLEMENT pour cette paire et ce sens.
+
+    Sert à inscrire l'exclusion dans le relevé de score. ⚠️ Sans cette trace,
+    un score ne serait pas reproductible : un lecteur futur verrait des
+    chiffres qu'il ne saurait pas refaire, et un scoring qui écarte en silence
+    est indiscernable d'un scoring qui n'a rien écarté.
+    """
+    exclus = _tickets_exclus()
+    if not exclus:
+        return []
+    _ensure_schema()
+    direction = _normalize_direction(direction)
+    trous = ",".join("?" * len(exclus))
+    ex = tuple(exclus)
+    sql = (f"SELECT DISTINCT mt5_ticket FROM personal_trades "
+           f"WHERE pair = ? AND status = 'CLOSED' AND is_auto = 1 "
+           f"AND pnl IS NOT NULL AND CAST(mt5_ticket AS INTEGER) IN ({trous})")
+    args: tuple = (pair,) + ex
+    if direction is not None:
+        sql += " AND LOWER(direction) = ?"
+        args += (direction,)
+    with sqlite3.connect(_db_path()) as c:
+        return sorted(int(r[0]) for r in c.execute(sql, args) if r[0] is not None)
 
 
 def compute_promotion_score(pair: str, window: int = 30, direction: Optional[str] = None) -> dict[str, Any]:
@@ -997,6 +1053,7 @@ def compute_promotion_score(pair: str, window: int = 30, direction: Optional[str
     """
     from config.settings import TRADING_CAPITAL
     real_pnls = _fetch_real_trades_for_pair(pair, window, direction=direction)
+    _exclus_vus = tickets_exclus_presents(pair, direction)
     n_real = len(real_pnls)
     pnls = list(real_pnls)
     # Complément signaux : les trades réels sont rares (une pair en OBSERVED
@@ -1037,6 +1094,9 @@ def compute_promotion_score(pair: str, window: int = 30, direction: Optional[str
             "eligible_for": eligible,
             "reason": reason,
             "pnl_source": pnl_source,
+            # ⚠️ Sans cette trace le score ne serait pas reproductible : un
+            # lecteur futur verrait des chiffres qu'il ne saurait pas refaire.
+            "tickets_exclus": _exclus_vus,
         }
 
     sum_pnl = round(sum(pnls), 2)
@@ -1079,6 +1139,9 @@ def compute_promotion_score(pair: str, window: int = 30, direction: Optional[str
             "metriques_masquees": True,
             "eligible_for": eligible, "reason": reason,
             "pnl_source": pnl_source,
+            # ⚠️ Sans cette trace le score ne serait pas reproductible : un
+            # lecteur futur verrait des chiffres qu'il ne saurait pas refaire.
+            "tickets_exclus": _exclus_vus,
         }
 
     # ---- n_real >= min_real : comportement inchangé depuis avant 2026-08-05 ----
@@ -1115,6 +1178,9 @@ def compute_promotion_score(pair: str, window: int = 30, direction: Optional[str
         "eligible_for": eligible,
         "reason": reason,
         "pnl_source": pnl_source,
+        # ⚠️ Sans cette trace le score ne serait pas reproductible : un
+        # lecteur futur verrait des chiffres qu'il ne saurait pas refaire.
+        "tickets_exclus": _exclus_vus,
     }
 
 
