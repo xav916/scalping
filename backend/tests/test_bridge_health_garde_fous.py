@@ -46,6 +46,11 @@ _REGLAGES = {
     "EQUILIBRE_MARGE_SIGMA": 1.0,
     "TRADING_HOURS_UTC": "",
     "DAILY_LOSS_EXCLUDED_TICKETS": frozenset(),
+    # Empreinte de la source, publiee depuis le 2026-08-25. Constantes de
+    # module comme les precedentes : le harnais n execute que `health()`,
+    # il doit donc les lui fournir.
+    "SOURCE_SHA": "abc123def456",
+    "DEMARRE_A": "2026-08-25T18:51:24+00:00",
 }
 
 
@@ -158,3 +163,35 @@ def test_health_reste_lisible_sans_authentification():
     charge = repr(_appeler_health()).lower()
     for interdit in ("password", "api_key", "token", "secret"):
         assert interdit not in charge
+
+
+# ── L'empreinte de la source (2026-08-25) ──────────────────────────────────
+
+def test_l_empreinte_de_la_source_est_publiee():
+    """Sans elle, on ne peut pas savoir si le bridge execute le code versionne.
+
+    C'est ce trou qui a laisse disparaitre, sans un bruit, le repli de
+    resolution de symbole du bridge Kraken — 13 ordres refuses entre le 20 et
+    le 24/08 sur des instruments pourtant cotes.
+    """
+    reponse = _appeler_health()
+    assert reponse["source_sha"] == "abc123def456"
+    assert reponse["demarre_a"] == "2026-08-25T18:51:24+00:00"
+
+
+def test_l_empreinte_est_calculee_a_l_IMPORT_pas_a_la_requete():
+    """⛔ Le piege que ce test garde fermé.
+
+    Hacher le fichier au moment de la requete annoncerait la NOUVELLE version
+    tout en faisant tourner l'ANCIENNE — pire que pas d'empreinte du tout,
+    puisqu'on croirait alors le deploiement effectif. `health()` doit se
+    contenter de LIRE une constante, jamais d'ouvrir le fichier.
+    """
+    src = _SRC.read_text(encoding="utf-8")
+    corps = src[src.index("def health():"):src.index('@app.route("/account"')]
+    assert "SOURCE_SHA" in corps, "le champ a disparu de /health"
+    for interdit in ("open(__file__", "_empreinte_source(", "hashlib."):
+        assert interdit not in corps, (
+            f"`{interdit}` dans health() : l'empreinte serait celle du FICHIER, "
+            "pas celle du code charge"
+        )
