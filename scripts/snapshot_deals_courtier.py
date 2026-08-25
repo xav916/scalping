@@ -94,6 +94,32 @@ def _bridges(env: dict[str, str]) -> list[tuple[str, str, str]]:
     ]
 
 
+def _joignables(bridges) -> list[tuple[str, str, str]]:
+    """Ne garde que les bridges qui répondent, et le dit.
+
+    ⛔ Sans cette sonde, un bridge éteint et un historique purgé rendent
+    **exactement la même chose** : zéro snapshot. Le script conclurait « tout
+    est purgé » alors qu'il n'a rien demandé à personne — l'erreur que
+    [[feedback_detection_par_absence]] décrit, et que la première version de ce
+    script a commise dans l'autre sens : elle criait à l'échec chaque fois que
+    tous les tickets restants étaient légitimement purgés.
+
+    Séparer les deux questions les rend toutes deux lisibles : « qui répond »
+    d'abord, « que sait-il » ensuite.
+    """
+    vivants = []
+    for nom, url, cle in bridges:
+        try:
+            req = urllib.request.Request(
+                f"{url}/health", headers={"X-API-Key": cle}
+            )
+            with urllib.request.urlopen(req, timeout=15):
+                vivants.append((nom, url, cle))
+        except Exception as e:
+            print(f"⛔ bridge {nom} injoignable : {e}", file=sys.stderr)
+    return vivants
+
+
 def _demander(bridges, ticket: int) -> tuple[str, dict] | None:
     """Le premier bridge qui CONNAIT la cloture fait foi.
 
@@ -127,6 +153,13 @@ def main() -> int:
     if not bridges:
         print("aucun bridge configure", file=sys.stderr)
         return 2
+    # La question « qui répond » se tranche AVANT d'interroger quoi que ce
+    # soit : après, un silence ne se distingue plus d'un historique purgé.
+    bridges = _joignables(bridges)
+    if not bridges:
+        print("⛔ AUCUN bridge ne repond — rien n'a ete demande. Ce n'est PAS "
+              "'historique purge'.", file=sys.stderr)
+        return 1
 
     conn = sqlite3.connect(DB)
     conn.execute(SCHEMA)
@@ -170,14 +203,12 @@ def main() -> int:
     avec_cause = conn.execute(
         "SELECT COUNT(*) FROM broker_close_snapshots "
         "WHERE reason IS NOT NULL").fetchone()[0]
-    # ⚠️ Compter ce qui a ETE MESURE, pas ce qui a ete demande : un run qui
-    # n'aurait joint aucun bridge afficherait sinon « 0 muet, tout va bien ».
-    print(f"repondus {figes} · muets {muets} · table {total} lignes "
-          f"(dont {avec_cause} avec cause du courtier)")
-    if figes == 0 and tickets:
-        print("⛔ AUCUNE reponse : bridges injoignables ou cle invalide, "
-              "ce n'est PAS 'historique purge'", file=sys.stderr)
-        return 1
+    # ⚠️ `muets` ne signifie « purgé » QUE parce que les bridges ont répondu à
+    # `/health` juste avant. Le nom des bridges vivants est affiché pour que
+    # cette condition se lise dans le log, pas seulement dans le code.
+    vivants = ",".join(n for n, _, _ in bridges)
+    print(f"bridges vivants [{vivants}] · figes {figes} · purges {muets} · "
+          f"table {total} lignes (dont {avec_cause} avec cause du courtier)")
     conn.close()
     return 0
 
