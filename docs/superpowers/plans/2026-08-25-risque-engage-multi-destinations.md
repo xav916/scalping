@@ -49,6 +49,11 @@ Refactor pur — aucun changement de comportement. Il crée le point d'accroche 
 **Interfaces:**
 - Produces : `mesurer(destination_ids: tuple[str, ...]) -> list[dict]` — rend une liste de `{"id": str, "badge": str, "evaluation": dict, "verdict": str}`. `evaluation` porte au minimum les clés `lisible`, `indecidable`, `risque_total`, `plafond`, `pct`, `restant`, `nues`, `non_mesurables`, `positions`, `candidats`, `liberable`, `login`, et désormais `devise` (`"EUR"` ou `"USD"`).
 - Produces : `DIALECTES: dict[str, callable]` — clé = `Destination.bridge_type`, valeur = `f(dest) -> dict` rendant une `evaluation`.
+- Produces : `verdict_destination(evaluation: dict, seuil_pct: float) -> str` — `"illisible"` | `"indecidable"` | `"sans_plafond"` | `"sature"` | `"ok"`.
+
+⛔ **`verdict_destination` existe pour une raison précise, vérifiée avant écriture du plan.** La `verdict()` de `notify_saturation_risque` rend **`"indecidable"` pour toute destination sans plafond** — elle traite `pct is None` comme une indécision, ce qui est juste pour MT5 mais faux pour Kraken et IBKR, qui n'ont simplement pas de plafond. Sans ce filtre, la production dirait `indecidable` sur toutes les destinations non-MT5 pendant que les tests, qui fabriquent la mesure à la main, resteraient verts.
+
+⛔ **Ne PAS modifier `verdict()` pour régler ça** : elle est partagée avec la sonde horaire de saturation, et la changer déplacerait le seuil d'alerte du cron. Le filtre s'ajoute ici, dans le nouveau module.
 
 - [ ] **Step 1 : Écrire le test qui verrouille l'aiguillage par dialecte**
 
@@ -90,6 +95,41 @@ def test_un_type_inconnu_rend_illisible_et_ne_leve_PAS():
     e = mesurer_destination(_Faux())
     assert e["lisible"] is False
     assert e["risque_total"] is None
+
+
+def test_une_destination_SANS_PLAFOND_n_est_PAS_indecidable():
+    """⛔ Le piège que ce filtre existe pour éviter.
+
+    `verdict()` de la sonde traite `pct is None` comme une indécision — juste
+    pour MT5, faux pour Kraken : n'avoir aucun plafond n'est pas ne pas savoir.
+    Sans ce filtre, la production dirait `indecidable` sur toutes les
+    destinations non-MT5 pendant que les tests, qui fabriquent la mesure à la
+    main, resteraient verts.
+    """
+    from backend.services.risque_engage import verdict_destination
+
+    e = {"lisible": True, "indecidable": False, "pct": None,
+         "risque_total": 1.409, "sans_plafond": True}
+    assert verdict_destination(e, 72.0) == "sans_plafond"
+
+
+def test_le_filtre_ne_MASQUE_pas_une_vraie_indecision():
+    """Une position nue reste indécidable, plafond ou pas."""
+    from backend.services.risque_engage import verdict_destination
+
+    e = {"lisible": True, "indecidable": True, "pct": None,
+         "risque_total": 1.409, "sans_plafond": True, "nues": 1}
+    assert verdict_destination(e, 72.0) == "indecidable"
+
+
+def test_le_filtre_laisse_MT5_intact():
+    from backend.services.risque_engage import verdict_destination
+
+    assert verdict_destination(
+        {"lisible": True, "indecidable": False, "pct": 89.3}, 72.0) == "sature"
+    assert verdict_destination(
+        {"lisible": True, "indecidable": False, "pct": 40.0}, 72.0) == "ok"
+    assert verdict_destination({"lisible": False}, 72.0) == "illisible"
 ```
 
 - [ ] **Step 2 : Lancer le test, vérifier qu'il échoue**
@@ -164,10 +204,31 @@ def mesurer_destination(dest) -> dict:
         return evaluation_illisible()
 
 
+def verdict_destination(evaluation: dict, seuil_pct: float) -> str:
+    """Verdict d'une destination, plafond ou pas.
+
+    ⛔ `verdict()` de la sonde rend `indecidable` dès que `pct is None`. C'est
+    juste pour MT5 — un pourcentage absent y signale une mesure impossible —
+    et faux pour Kraken et IBKR : **n'avoir aucun plafond n'est pas ne pas
+    savoir.** Sans ce filtre, la production dirait `indecidable` sur toutes
+    les destinations non-MT5.
+
+    ⛔ Et `verdict()` ne peut PAS être corrigée à la place : elle est partagée
+    avec la sonde horaire de saturation, dont elle commande le seuil d'alerte.
+    """
+    from scripts.notify_saturation_risque import verdict
+
+    if (evaluation.get("sans_plafond")
+            and evaluation.get("lisible")
+            and not evaluation.get("indecidable")):
+        return "sans_plafond"
+    return verdict(evaluation, seuil_pct)
+
+
 def mesurer(destination_ids: tuple[str, ...] = DESTINATIONS_MESUREES) -> list[dict]:
     """Une mesure par destination, dans l'ordre donné. Bloquant."""
     from backend.services.destinations_registry import DESTINATIONS
-    from scripts.notify_saturation_risque import SEUIL_PCT, verdict
+    from scripts.notify_saturation_risque import SEUIL_PCT
 
     mesures = []
     for did in destination_ids:
@@ -178,7 +239,7 @@ def mesurer(destination_ids: tuple[str, ...] = DESTINATIONS_MESUREES) -> list[di
         mesures.append({
             "id": did, "badge": dest.badge,
             "evaluation": evaluation,
-            "verdict": verdict(evaluation, SEUIL_PCT),
+            "verdict": verdict_destination(evaluation, SEUIL_PCT),
         })
     return mesures
 ```
@@ -649,7 +710,11 @@ def _eval_sans_plafond(total=1.409, devise="USD", positions=2):
     }
 
 
-def _kraken(evaluation, verdict="ok"):
+def _kraken(evaluation, verdict="sans_plafond"):
+    """⚠️ `sans_plafond` par défaut, et pas `ok` : c'est ce que
+    `verdict_destination` (Task 1) rend réellement pour ces destinations.
+    Fabriquer la mesure avec un verdict que la production ne produit jamais
+    donnerait un test vert sur un comportement inexistant."""
     return {"id": "admin_kraken", "badge": "🐙 Kraken Futures",
             "evaluation": evaluation, "verdict": verdict}
 
@@ -693,6 +758,22 @@ def test_sans_taux_le_total_est_IMPOSSIBLE_meme_si_tout_est_lisible():
         _kraken(_eval_sans_plafond(total=1.08)),
     ], taux=None)
     assert "total tous comptes : impossible" in texte.lower(), texte
+
+
+def test_le_verdict_FABRIQUE_ici_est_bien_celui_que_la_PRODUCTION_rend():
+    """⛔ Le garde-fou contre le test vert sur un comportement inexistant.
+
+    Tous les tests ci-dessus fabriquent la mesure à la main. Si
+    `verdict_destination` rendait autre chose que `sans_plafond` pour cette
+    forme d'évaluation, ils resteraient verts pendant que la production
+    dirait autre chose — et personne ne le saurait.
+    """
+    from backend.services.risque_engage import verdict_destination
+    from scripts.notify_saturation_risque import SEUIL_PCT
+
+    fabrique = _kraken(_eval_sans_plafond())
+    assert verdict_destination(fabrique["evaluation"], SEUIL_PCT) == \
+        fabrique["verdict"]
 ```
 
 - [ ] **Step 2 : Lancer, vérifier l'échec**
@@ -806,7 +887,8 @@ pas une mesure."
 - Test: `backend/tests/test_risque_engage_dialectes.py`
 
 **Interfaces:**
-- Consumes : `evaluer_positions_stop` de Task 2.
+- Consumes : `risque_position_stop` de Task 2 — **pas** `evaluer_positions_stop` : `evaluation_spot` construit son dict elle-même, parce qu'elle doit compter les positions **sans watcher**, ce que la fonction générique ne sait pas faire.
+- Consumes : le fabricant de test `_eval_sans_plafond`, défini dans les tests de Task 4 (`backend/tests/test_commande_risque_telegram.py`). Il est réutilisé tel quel à l'étape 5.
 - Produces : le watcher porte désormais `entry: float`.
 
 - [ ] **Step 1 : Écrire le test du dialecte spot**
@@ -920,7 +1002,7 @@ def test_un_stop_LOGICIEL_est_signale_comme_tel():
     e["stop_logiciel"] = True
     texte = _formater_risque(
         [{"id": "admin_kraken_spot", "badge": "🪙 Kraken Spot",
-          "evaluation": e, "verdict": "ok"}], taux=1.08)
+          "evaluation": e, "verdict": "sans_plafond"}], taux=1.08)
 
     assert "logiciel" in texte.lower(), texte
 ```
