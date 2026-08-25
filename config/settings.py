@@ -604,6 +604,14 @@ PAC_PAUSE_COOLOFF_DAYS = int(os.getenv("PAC_PAUSE_COOLOFF_DAYS", "14"))
 # des trades réellement gérés par le système. Une exception doit être nommée.
 #
 # Vide par défaut : sans réglage explicite, aucun comportement ne change.
+# Porte du banc d'essai hors-échantillon (cf. backend/services/research_bench.py).
+#
+# Quand elle est armée, promouvoir une paire en AUTO_EXEC sur une destination qui
+# engage de l'argent réel exige un essai pré-enregistré et passé, ou une clause
+# d'antériorité. Désarmée par défaut : un dépôt qui n'a pas amorcé le banc ne doit
+# pas se retrouver gelé par une table vide.
+RESEARCH_BENCH_GATE_ENABLED = os.getenv("RESEARCH_BENCH_GATE_ENABLED", "").lower() in ("1", "true", "yes")
+
 PAC_EXCLUDED_TICKETS = frozenset(
     int(t.strip())
     for t in os.getenv("PAC_EXCLUDED_TICKETS", "").split(",")

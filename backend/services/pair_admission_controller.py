@@ -710,6 +710,21 @@ def set_state(
     """
     if new_state not in VALID_STATES:
         raise ValueError(f"État invalide : {new_state}. Doit être dans {VALID_STATES}")
+    # Porte du banc d'essai : promouvoir en AUTO_EXEC sur de l'argent réel exige un
+    # essai pré-enregistré et passé. Désarmée par défaut, et sans effet sur les
+    # autres états ni sur les destinations fictives.
+    # ⛔ Placée AVANT toute normalisation : `destination=None` doit arriver tel quel
+    # à la porte, qui le traite comme de l'argent réel — un `None` signifie « toutes
+    # les destinations », donc `admin_live` en fait partie.
+    try:
+        from backend.services import research_bench
+        _ok, _motif = research_bench.gate_promotion(
+            pair, new_state, direction=direction, destination=destination,
+            transitioned_by=transitioned_by)
+    except ImportError:  # banc absent du déploiement : ne gèle personne
+        _ok, _motif = True, "banc absent"
+    if not _ok:
+        raise PermissionError(f"banc d'essai : {_motif}")
     _ensure_schema()
     direction = _normalize_direction(direction)
     # strict : une destination inconnue doit échouer, jamais devenir globale.
