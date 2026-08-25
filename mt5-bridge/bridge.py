@@ -1571,14 +1571,24 @@ def _log_closed_position(ticket: int, niveaux: dict | None = None) -> None:
 def _niveaux_depuis_historique(ticket: int) -> dict:
     """Repli quand le monitor n'a pas vu la position vivante (bridge redémarré).
 
-    ⚠️ Ce repli est PARTIEL, et c'est volontaire de le dire. MT5 ne garde pas
-    l'historique des modifications de stop. Mais quand c'est le stop LUI-MÊME
-    qui a fermé la position, l'ordre de clôture porte son niveau dans
-    `price_open` — donc le niveau déclencheur est récupérable **exactement**,
-    et lui seul. Le côté non déclenché reste inconnu.
+    ⛔ **MESURÉ LE 2026-08-25 : ce repli ne se déclenche JAMAIS, et il faut le
+    dire plutôt que de le laisser passer pour un filet.** J'avais écrit qu'un
+    stop touché laissait son niveau dans `price_open` de l'ordre de clôture.
+    C'est faux : MT5 ferme sur un **ordre au marché**, pas sur un ordre-stop en
+    attente. Vérifié sur trois tickets `reason=SL` du démo après déploiement —
+    `niveau_declencheur` vaut `None` sur les trois.
 
-    Rend un dict vide plutôt qu'un niveau supposé : une absence se lit comme
-    une absence, jamais comme une mesure. Cf. [[feedback_detection_par_absence]].
+    ⇒ **Il n'existe aucune route rétroactive.** Une fois la position fermée, le
+    niveau qu'elle portait est perdu : MT5 ne journalise pas les
+    `TRADE_ACTION_SLTP`. Seule la capture EN AVANT du monitor
+    (`_derniers_niveaux`) produit la donnée.
+
+    La fonction est conservée parce qu'elle ne peut rien inventer — elle rend
+    `{}` — et parce que la plomberie en aval (`niveaux_source`, rangement par
+    cause) reste juste si un courtier venait à exposer ce niveau. Mais **ne pas
+    compter dessus** : la seule source prouvée est le monitor.
+
+    Cf. [[feedback_detection_par_absence]] · [[project_analyse_clotures_main_2026_08_24]]
     """
     try:
         ordres = mt5.history_orders_get(position=ticket) or []
