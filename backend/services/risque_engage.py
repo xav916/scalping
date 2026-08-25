@@ -213,6 +213,45 @@ def verdict_destination(evaluation: dict, seuil_pct: float) -> str:
     return verdict(evaluation, seuil_pct)
 
 
+def taux_eurusd() -> float | None:
+    """Combien d'USD pour 1 EUR, lu sur un bridge MT5 déjà authentifié.
+
+    ⛔ Rend `None` sur toute lecture ratée. L'appelant refuse alors de
+    convertir et de sommer : un taux approximatif produirait un total
+    crédible et faux.
+    """
+    from backend.services.destinations_registry import DESTINATIONS
+    for did in ("admin_live", "admin_legacy"):
+        dest = DESTINATIONS.get(did)
+        if dest is None:
+            continue
+        charge, ok = _appel(dest, "/tick/EUR/USD")
+        if not ok or not isinstance(charge, dict):
+            continue
+        try:
+            bid, ask = float(charge["bid"]), float(charge["ask"])
+        except (TypeError, ValueError, KeyError):
+            continue
+        if bid > 0 and ask > 0:
+            return (bid + ask) / 2.0
+    return None
+
+
+def en_euros(montant, devise: str, taux) -> float | None:
+    """Convertit en euros. `None` dès que la conversion n'est pas sûre."""
+    if montant is None:
+        return None
+    if (devise or "EUR").upper() == "EUR":
+        return montant
+    try:
+        t = float(taux)
+    except (TypeError, ValueError):
+        return None
+    if t <= 0:
+        return None
+    return montant / t
+
+
 def mesurer(destination_ids: tuple[str, ...] = DESTINATIONS_MESUREES) -> list[dict]:
     """Une mesure par destination, dans l'ordre donné. Bloquant."""
     from backend.services.destinations_registry import DESTINATIONS

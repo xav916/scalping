@@ -142,3 +142,31 @@ def test_sans_plafond_il_n_y_a_ni_pct_ni_restant():
     assert e["pct"] is None
     assert e["restant"] is None
     assert e["indecidable"] is False
+
+
+# --------------------------------------------------------------------------
+# Conversion — elle a le droit d'échouer, pas de mentir
+# --------------------------------------------------------------------------
+
+def test_l_euro_ne_se_convertit_pas():
+    from backend.services.risque_engage import en_euros
+    assert en_euros(12.34, "EUR", None) == 12.34
+
+
+def test_l_usd_se_divise_par_le_taux():
+    """1,08 USD pour 1 EUR ⇒ 10,80 USD valent 10,00 EUR."""
+    from backend.services.risque_engage import en_euros
+    assert en_euros(10.80, "USD", 1.08) == pytest.approx(10.0)
+
+
+@pytest.mark.parametrize("taux", [None, 0.0, -1.2])
+def test_un_taux_ABSENT_ou_ABSURDE_rend_None(taux):
+    """⛔ Pas de repli sur un taux « à peu près ». Un total crédible et faux
+    est pire qu'une absence de total."""
+    from backend.services.risque_engage import en_euros
+    assert en_euros(10.80, "USD", taux) is None
+
+
+def test_un_montant_absent_reste_absent():
+    from backend.services.risque_engage import en_euros
+    assert en_euros(None, "USD", 1.08) is None
