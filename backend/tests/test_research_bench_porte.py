@@ -244,3 +244,45 @@ def test_le_moteur_de_promotion_distingue_lui_aussi(monkeypatch, caplog):
     assert not any(r.levelno >= logging.ERROR for r in caplog.records), \
         "un refus du banc ne doit pas remonter en erreur"
     assert any("refusé par le banc" in r.getMessage() for r in caplog.records)
+
+
+# ── L'antériorité ne doit pas ÉLARGIR ─────────────────────────────────────
+
+def test_une_anteriorite_etroite_ne_couvre_pas_une_promotion_large(banc_actif):
+    """⛔ Le même défaut d'élargissement, une troisième fois.
+
+    Une antériorité accordée à `sell @admin_live` ne doit PAS couvrir une
+    promotion `tous sens @toutes destinations` : celle-ci est strictement plus
+    large, elle atteint le `buy` et les autres comptes réels. Accorder l'étroit
+    puis laisser passer le large, c'est exactement ce que faisait
+    `_normalize_destination` le 2026-08-04.
+    """
+    from backend.services import research_bench as rb
+
+    rb.grant_legacy("XAU/USD", "sell", "admin_live", "en place")
+
+    ok, _ = rb.gate_promotion("XAU/USD", "AUTO_EXEC", direction=None,
+                              destination="admin_live", transitioned_by="auto")
+    assert ok is False, "tous sens est plus large que sell"
+
+    ok, _ = rb.gate_promotion("XAU/USD", "AUTO_EXEC", direction="sell",
+                              destination=None, transitioned_by="auto")
+    assert ok is False, "toutes destinations est plus large que admin_live"
+
+    ok, _ = rb.gate_promotion("XAU/USD", "AUTO_EXEC", direction="buy",
+                              destination="admin_live", transitioned_by="auto")
+    assert ok is False, "buy n'a pas été accordé"
+
+
+def test_une_anteriorite_large_couvre_bien_l_etroit(banc_actif):
+    """Le pendant : accorder « tous sens, toutes destinations » couvre tout ce
+    qui est plus étroit. Sinon la clause d'antériorité serait inapplicable."""
+    from backend.services import research_bench as rb
+
+    rb.grant_legacy("XAU/USD", None, None, "ligne globale en place")
+
+    for sens in (None, "buy", "sell"):
+        for dest in (None, "admin_live", "admin_kraken"):
+            ok, motif = rb.gate_promotion("XAU/USD", "AUTO_EXEC", direction=sens,
+                                          destination=dest, transitioned_by="auto")
+            assert ok is True, f"{sens}@{dest} : {motif}"

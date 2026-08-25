@@ -424,6 +424,24 @@ def _touche_argent_reel(destination: Optional[str]) -> bool:
         return True  # sur l'argent, le doute retient
 
 
+def _couvre(portee: Optional[list], demande: Optional[str]) -> bool:
+    """Une portée couvre-t-elle une demande, sur une dimension ?
+
+    ⛔ **Une couverture étroite ne couvre JAMAIS une demande large.** `None` du
+    côté demande signifie « tous les cas » : il faut alors une portée elle aussi
+    illimitée. Laisser passer l'inverse, c'est accorder `sell @admin_live` puis
+    autoriser `tous sens @toutes destinations` — le défaut d'élargissement que
+    `_normalize_destination` a produit le 2026-08-04, et qu'on a déjà rencontré
+    ici sur `destination=None`. Troisième fois : la règle est écrite une fois,
+    et les deux sources de couverture l'appellent.
+    """
+    if not portee:
+        return True                       # portée illimitée : couvre tout
+    if demande is None:
+        return False                      # demande illimitée, portée bornée
+    return demande in portee
+
+
 def _couvert_par_essai(pair: str, direction: Optional[str],
                        destination: Optional[str]) -> bool:
     d = (direction or "").lower() or None
@@ -431,13 +449,12 @@ def _couvert_par_essai(pair: str, direction: Optional[str],
         if not t.get("passed"):
             continue
         s = t["selector"]
-        if s.get("pairs") and pair not in s["pairs"]:
-            continue
-        if s.get("direction") and d and str(s["direction"]).lower() != d:
-            continue
-        if s.get("destinations") and destination not in s["destinations"]:
-            continue
-        return True
+        sens = s.get("direction")
+        portee_sens = [str(sens).lower()] if sens else None
+        if (_couvre(s.get("pairs"), pair)
+                and _couvre(portee_sens, d)
+                and _couvre(s.get("destinations"), destination)):
+            return True
     return False
 
 
@@ -446,13 +463,16 @@ def _couvert_par_anteriorite(pair: str, direction: Optional[str],
     _ensure_schema()
     d = (direction or "").lower() or None
     with sqlite3.connect(_db_path()) as c:
-        n = c.execute(
-            """SELECT COUNT(*) FROM bench_legacy_grants
-                WHERE pair = ?
-                  AND (direction IS NULL OR ? IS NULL OR direction = ?)
-                  AND (destination IS NULL OR ? IS NULL OR destination = ?)""",
-            (pair, d, d, destination, destination)).fetchone()[0]
-    return int(n) > 0
+        c.row_factory = sqlite3.Row
+        lignes = c.execute(
+            "SELECT direction, destination FROM bench_legacy_grants WHERE pair = ?",
+            (pair,)).fetchall()
+    for g in lignes:
+        portee_sens = [g["direction"]] if g["direction"] else None
+        portee_dest = [g["destination"]] if g["destination"] else None
+        if _couvre(portee_sens, d) and _couvre(portee_dest, destination):
+            return True
+    return False
 
 
 def gate_promotion(pair: str, new_state: str, direction: Optional[str] = None,
