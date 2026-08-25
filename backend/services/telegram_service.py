@@ -986,6 +986,166 @@ async def send_setups(setups: list) -> None:
 _notified_closes: set[str] = set()
 
 
+def _mfe_mae(bougies: list, entry: float, risque: float, achat: bool) -> dict | None:
+    """Meilleur et pire point atteints, en unités de risque.
+
+    ⚠️ **L'inversion vente est le seul endroit où une erreur serait
+    silencieuse** : sur une vente, le « meilleur » point est le plus BAS, et
+    prendre le plus haut rendrait un MFE négatif qu'on lirait comme « jamais
+    passé au vert ». D'où un test dédié plutôt qu'une relecture.
+    """
+    hauts = [float(b["h"]) for b in bougies if b.get("h") is not None]
+    bas = [float(b["l"]) for b in bougies if b.get("l") is not None]
+    if not hauts or not bas or risque <= 0:
+        return None
+    if achat:
+        mfe, mae = (max(hauts) - entry) / risque, (min(bas) - entry) / risque
+    else:
+        mfe, mae = (entry - min(bas)) / risque, (entry - max(hauts)) / risque
+    return {"mfe_R": round(mfe, 2), "mae_R": round(mae, 2)}
+
+
+def _parcours_en_R(trade: dict, destination_id: str | None) -> dict | None:
+    """MFE / MAE du trade, en unités de risque, lus sur le CHEMIN réel du prix.
+
+    ⛔ Sans le chemin, on ne sait pas distinguer une **perte franche** d'un
+    **gain rendu** — et « aurait-on pu anticiper » n'a aucune réponse.
+    `personal_trades` ne porte ni MFE ni MAE ; la seule source est `/rates` du
+    courtier, qui rend les bougies M1 de la vie de la position.
+
+    ⚠️ Le R est **interne à ce trade** (distance entrée↔stop d'origine) : on
+    compare la position à elle-même, jamais deux populations entre elles.
+    Cf. [[feedback_r_unit_trap]].
+
+    ⚠️ **Rend `None` dès que quoi que ce soit manque.** Un bridge muet ne
+    produit pas un zéro : le bloc disparaît du message plutôt que d'annoncer
+    « 0,00 R », qui se lirait comme une mesure.
+    """
+    import os
+    from datetime import datetime, timezone
+
+    try:
+        entry = float(trade.get("entry_price") or 0)
+        sl = float(trade.get("stop_loss") or 0)
+        risque = abs(entry - sl)
+        if entry <= 0 or sl <= 0 or risque <= 0:
+            return None
+        achat = (trade.get("direction") or "").lower().startswith("b")
+
+        def _t(v):
+            d = datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+            return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+
+        debut, fin = _t(trade["created_at"]), _t(trade["closed_at"])
+
+        from backend.services.destinations_registry import DESTINATIONS
+        d = DESTINATIONS.get(destination_id or "")
+        if d is None or d.bridge_type != "mt5":
+            return None
+        url = os.environ.get(d.url_env or "", "")
+        if not url:
+            return None
+        entetes = {d.key_header: os.environ.get(d.key_env or "", "")}
+
+        import urllib.parse
+        import urllib.request
+
+        q = urllib.parse.urlencode({
+            "pair": _symbole_courtier(trade.get("pair"), destination_id),
+            "timeframe": "M1",
+            "from": debut.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "to": fin.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        })
+        rq = urllib.request.Request(f"{url.rstrip('/')}/rates?{q}", headers=entetes)
+        # ⚠️ Court, et dans un `try` total : cet appel entre dans le flux de
+        # clôture. Il n'a jamais le droit de retarder ni de casser la notif.
+        with urllib.request.urlopen(rq, timeout=5) as r:
+            bougies = (json.load(r) or {}).get("bougies") or []
+        if not bougies:
+            return None
+
+        return _mfe_mae(bougies, entry, risque, achat)
+    except Exception as e:  # pragma: no cover - garde-fou du flux trade
+        logger.debug(f"_parcours_en_R indisponible : {e}")
+        return None
+
+
+def _symbole_courtier(pair: str | None, destination_id: str | None) -> str:
+    """Nom du symbole chez CE courtier. `WTI/USD` vaut `SpotCrude` chez l'un et
+    `XTIUSD` chez l'autre ; le repli retire simplement la barre oblique."""
+    defaut = (pair or "").replace("/", "")
+    try:
+        from backend.services import bridge_destinations as _bd
+        for cfg in _bd.admin_destinations():
+            if cfg.destination_id == destination_id and cfg.symbol_map:
+                return cfg.symbol_map.get(pair, defaut)
+    except Exception as e:  # pragma: no cover - garde-fou
+        logger.debug(f"_symbole_courtier repli : {e}")
+    return defaut
+
+
+def _etat_du_stop(trade: dict) -> tuple[str, bool]:
+    """Rend (phrase, risque_annule). Décrit ce que le stop a fait, ou se tait.
+
+    ⛔ **Trois cas, pas deux.** Un stop remonté AU-DELÀ de l'entrée met le
+    risque de la position à zéro : elle ne peut plus perdre. Si elle se ferme
+    là, ce n'est pas une perte, c'est un trade **neutralisé avant d'avoir
+    payé** — le coût exact que la gestion de sortie est soupçonnée d'infliger
+    (−0,329 R sur l'or). Le ranger avec les stops ordinaires effacerait ce
+    qu'on cherche à mesurer. Cf. [[project_edge_gestion_sorties_2026_08_11]].
+
+    ⚠️ **Silence si le niveau vivant n'a pas été capturé.** Avant le
+    2026-08-25 il n'existait pas, et le niveau d'origine s'est révélé faux
+    dans 44 % des cas : affirmer « le stop n'avait pas bougé » sur cette base
+    serait une devinette.
+    """
+    vif = trade.get("sl_at_close")
+    origine = trade.get("stop_loss")
+    if not trade.get("niveaux_source") or vif is None or not origine:
+        return "", False
+    entry = float(trade.get("entry_price") or 0)
+    achat = (trade.get("direction") or "").lower().startswith("b")
+    decimales = _decimales(trade.get("pair"))
+    if abs(float(vif) - float(origine)) < 10 ** -(decimales + 1):
+        return "le stop n'avait pas bougé depuis l'ouverture", False
+    niveau = f"{float(vif):.{decimales}f}".replace(".", ",")
+    au_dela = (float(vif) > entry) if achat else (float(vif) < entry)
+    if au_dela and entry:
+        # ⚠️ `*gras*` et non `**gras**` : le fil trades part en Markdown
+        # LEGACY, où la double étoile ne se ferme pas.
+        # Cf. [[feedback_telegram_legacy_markdown_bold]].
+        return (f"le stop avait été remonté à {niveau}, *au-delà de "
+                f"l'entrée* — la position était déjà neutralisée, sans risque "
+                f"restant"), True
+    return (f"le stop avait été déplacé à {niveau} : c'est le mécanisme qui a "
+            f"fermé, pas le marché"), False
+
+
+def _decimales(pair: str | None) -> int:
+    return 2 if any(k in (pair or "") for k in (
+        "XAU", "XAG", "BTC", "ETH", "SOL", "LTC", "BCH", "DOT", "ADA",
+        "XRP", "WTI")) else 5
+
+
+def _risque_annonce(trade: dict, destination_id: str | None):
+    """Ce que l'ouverture avait annoncé, pour pouvoir comparer au réalisé."""
+    from backend.services import destinations_registry as _reg, risk_eur
+    d = _reg.get(destination_id)
+    try:
+        return risk_eur.calculer(
+            pair=trade.get("pair") or "",
+            entry=float(trade.get("entry_price") or 0),
+            sl=float(trade.get("stop_loss") or 0),
+            tp=float(trade.get("take_profit") or 0),
+            volume=float(trade.get("size_lot") or 0),
+            bridge_type=(d.bridge_type if d else "mt5"),
+            eur_usd=risk_eur.taux_eur_usd(),
+        )
+    except Exception as e:  # pragma: no cover - garde-fou
+        logger.debug(f"_risque_annonce indisponible : {e}")
+        return None
+
+
 def _format_close(trade: dict, destination_id: str | None = None) -> str:
     """Format vulgarisé fermeture : 'résultat + impact sur ton solde'.
 
@@ -1099,8 +1259,6 @@ def _format_close(trade: dict, destination_id: str | None = None) -> str:
     entry_str = f"{entry:.{decimals}f}".replace(".", ",")
     exit_str = f"{exit_price:.{decimals}f}".replace(".", ",")
 
-    # Ligne 1 : le résultat, tout de suite. Ligne 2 : comment et en combien
-    # de temps. Le broker manquait entièrement au message de clôture.
     # Pas de .capitalize() : il transformerait « TP1 » en « Tp1 ».
     sortie = {"TP1": "Objectif TP1 atteint", "TP2": "Objectif TP2 atteint",
               "SL": "Stop de sécurité touché", "TIMEOUT": "Clôturé au temps",
@@ -1113,24 +1271,90 @@ def _format_close(trade: dict, destination_id: str | None = None) -> str:
     titre = f"{outcome_icon} *{pnl_sign}{pnl_fr} €* · {dir_mot} {pair_label}"
     if broker:
         titre += f" · {broker}"
-    lines = [
-        titre,
-        f"{sortie} après {duration_str}",
-        "",
-        f"Entrée {entry_str} → sortie {exit_str}"
-        + (f" · {trade.get('size_lot')} lot".replace(".", ",") if trade.get("size_lot") else ""),
-        explain,
-        "",
-    ]
-    # Rappel de la justification d'origine (pattern + score IA), si dispo
-    just_lines = _build_trade_justification(
-        trade.get("signal_pattern"),
-        trade.get("signal_confidence"),
-        pair=trade.get("pair"),
-    )
-    if just_lines:
-        lines.extend(just_lines)
-        lines.append("")
+    lines = [titre]
+
+    # ── Ligne miroir. L'ouverture annonce « Risque −X € → Objectif +Y € » ;
+    # la clôture répond sur la même ligne, pour que les deux messages se
+    # lisent ensemble dans le fil.
+    perte = pnl < 0
+    montants = _risque_annonce(trade, destination_id)
+    if montants:
+        prevu = montants["risque_eur"] if perte else montants["gain_eur"]
+        prevu_fr = f"{abs(prevu):.2f}".replace(".", ",")
+        lines.append(f"Prévu *{'−' if perte else '+'}{prevu_fr} €*  →  "
+                     f"Réalisé *{pnl_sign}{pnl_fr} €*")
+    lines.append("")
+
+    # ── Le plan et son issue, même grammaire que l'ouverture.
+    detail = [f"Entrée {entry_str} → {exit_str}"]
+    if trade.get("size_lot"):
+        detail.append(f"{trade.get('size_lot')} lot".replace(".", ","))
+    detail.append(duration_str)
+    # ⚠️ R = pnl / risque en EUROS, jamais déduit du prix de sortie : une
+    # position fermée en deux fois n'a pas un prix de sortie unique, et le
+    # reliquat seul sous-estime précisément les trades bien gérés.
+    # Cf. [[project_edge_gestion_sorties_2026_08_11]].
+    if montants and montants.get("risque_eur"):
+        detail.append(f"{pnl / montants['risque_eur']:+.2f} R".replace(".", ","))
+    lines.append(" · ".join(detail))
+    lines.append("")
+
+    # ── 🔎 Pourquoi c'est fermé
+    phrase_stop, _annule = _etat_du_stop(trade)
+    pourquoi = [f"• {sortie}" + (f" — {phrase_stop}" if phrase_stop else "")]
+    # `explain` décrit le marché ; il contredirait la phrase du stop quand
+    # c'est le mécanisme qui a fermé. On ne garde qu'une seule explication.
+    if not phrase_stop or "n'avait pas bougé" in phrase_stop:
+        pourquoi.append(f"• {explain}")
+
+    parcours = _parcours_en_R(trade, destination_id)
+    if parcours is not None:
+        mfe = parcours.get("mfe_R")
+        if mfe is not None:
+            mfe_fr = f"{mfe:+.2f}".replace(".", ",")
+            if mfe >= 0.25:
+                pourquoi.append(
+                    f"• Le trade est monté à {mfe_fr} R avant de se retourner"
+                    + (" — c'est un gain rendu, pas une entrée ratée"
+                       if perte else ""))
+            elif perte:
+                pourquoi.append(
+                    f"• Il n'est jamais passé au vert (au mieux {mfe_fr} R) : "
+                    f"l'entrée était contre le marché dès le départ")
+    lines.append("🔎 *Pourquoi c'est fermé ?*")
+    lines.extend(pourquoi)
+    lines.append("")
+
+    # ── 🎯 Anticipable ? — sur les pertes seulement.
+    #
+    # ⛔ CE BLOC NE DOIT RIEN INVENTER. Le contrôle aléatoire a mesuré
+    # Δ = +0,004 R sur 29 000 trades : il n'y a pas d'edge à la sélection
+    # d'entrée, et le score est anti-prédictif dans la bande 60-65. Écrire
+    # « le score était bas, on aurait pu se méfier » fabriquerait une
+    # causalité rétrospective. La réponse honnête est le plus souvent
+    # « non, et c'est mesuré ».
+    # Cf. [[project_controle_aleatoire_verdict_2026_08_05]] ·
+    #     [[feedback_v1_score_anti_predictive_60_65]]
+    if perte:
+        juge = []
+        if montants and montants.get("risque_eur"):
+            annonce = f"{montants['risque_eur']:.2f}".replace(".", ",")
+            if abs(pnl) <= montants["risque_eur"] * 1.15:
+                juge.append(f"• Perte conforme au risque annoncé (−{annonce} € "
+                            f"prévu) — c'est le risque assumé à l'entrée")
+            else:
+                juge.append(f"• ⚠️ Perte *au-delà* du risque annoncé "
+                            f"(−{annonce} € prévu) : glissement ou trou de "
+                            f"cotation, ça mérite un coup d'œil")
+        conf = trade.get("signal_confidence")
+        if conf is not None:
+            juge.append(f"• Score IA {float(conf):.0f}/100 — mesuré *sans "
+                        f"pouvoir prédictif*, n'en tirer aucun signal")
+        if juge:
+            lines.append("🎯 *Anticipable ?*")
+            lines.extend(juge)
+            lines.append("")
+
     lines.append(f"`#{ticket}`")
     return "\n".join(lines)
 

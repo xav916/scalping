@@ -65,8 +65,14 @@ def test_cloture_le_resultat_en_premiere_ligne():
     assert "+12,47 €" in l1
 
 
-def test_cloture_la_cause_en_deuxieme_ligne():
-    assert "Objectif TP1 atteint" in _cloture().split("\n")[1]
+def test_cloture_la_cause_ouvre_le_bloc_pourquoi():
+    """Réécrit le 2026-08-25. La cause était en ligne 2 ; cette place revient
+    désormais à la ligne miroir « Prévu → Réalisé », qui répond au
+    « Risque → Objectif » de l'ouverture. La cause n'a pas disparu : elle
+    ouvre le bloc qui l'explique, et c'est là qu'on la cherche."""
+    txt = _cloture()
+    bloc = txt.split("🔎")[1]
+    assert bloc.strip().splitlines()[1].startswith("• Objectif TP1 atteint")
 
 
 # --- exhaustivité : rien ne doit manquer -----------------------------------
@@ -94,13 +100,19 @@ def test_cloture_nomme_le_broker():
     assert "IC Markets" in _cloture()
 
 
-def test_cloture_garde_prix_duree_et_justification():
+def test_cloture_garde_prix_duree_et_reference():
     txt = _cloture()
     assert "3312,40" in txt and "3298,54" in txt
     assert "2h14" in txt
     assert "0,02 lot" in txt
-    assert "Pourquoi ce trade" in txt
     assert "#8842190" in txt
+
+
+def test_cloture_ne_recopie_PLUS_la_justification_d_ouverture():
+    """Elle était recopiée mot pour mot depuis le message d'ouverture, qui est
+    juste au-dessus dans le même fil. À la clôture, la question n'est plus
+    « pourquoi ce trade » mais « pourquoi il s'est fermé »."""
+    assert "Pourquoi ce trade" not in _cloture()
 
 
 # --- pas de répétition -----------------------------------------------------

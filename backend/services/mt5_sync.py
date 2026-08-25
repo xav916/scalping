@@ -604,10 +604,16 @@ def _fetch_closed_trade_for_notify(ticket: int) -> dict[str, Any] | None:
     Telegram de fermeture. Retourne None si introuvable."""
     with sqlite3.connect(_db_path()) as c:
         c.row_factory = sqlite3.Row
+        # ⚠️ `stop_loss`/`take_profit` et surtout les niveaux VIVANTS
+        # (`sl_at_close`, `niveaux_source`) manquaient : sans eux le message de
+        # clôture ne pouvait ni chiffrer le R, ni dire si c'est un stop remonté
+        # qui a fermé. Ajoutés le 2026-08-25.
         row = c.execute(
             "SELECT pair, direction, entry_price, exit_price, pnl, "
             "close_reason, signal_pattern, signal_confidence, mt5_ticket, "
-            "created_at, closed_at, size_lot FROM personal_trades WHERE mt5_ticket=?",
+            "created_at, closed_at, size_lot, stop_loss, take_profit, "
+            "sl_at_close, tp_at_close, niveaux_source, slippage_pips "
+            "FROM personal_trades WHERE mt5_ticket=?",
             (ticket,),
         ).fetchone()
     return dict(row) if row else None
