@@ -1211,6 +1211,47 @@ def _should_push(setup) -> bool:
     return _check_rejection(setup) is None
 
 
+def _categoriser_refus(status: int, corps: str) -> str:
+    """Traduit un refus du bridge en un code de raison, depuis SON MESSAGE.
+
+    ⛔ Le défaut corrigé le 2026-08-25. La version précédente rangeait tout
+    `status 429` sous `bridge_max_positions`. Or le bridge répond 429 pour
+    **tous** ses garde-fous. Relevé sur le compte réel :
+
+        108 lignes etiquetees « places pleines »
+         76  en realite : coupe-circuit de perte journaliere
+         19  en realite : doublon (fenetre de dedup)
+         10  vraiment  : max open positions
+          3  en realite : plafond de risque engage
+
+    ⇒ Le plafond de positions etait surestime **d'un facteur 10**, et trois
+    mecanismes distincts etaient invisibles. Meme maladie que
+    `close_reason=MANUAL` sur 215 trades : une branche par defaut qui se fait
+    passer pour une mesure.
+
+    ⚠️ **Le statut n'est qu'un transport, la cause est dans le texte.** On lit
+    donc le corps d'abord, et un refus qu'on ne sait pas lire se declare
+    `bridge_refus_indetermine` — jamais emprunter l'etiquette du voisin, sinon
+    il gonfle un compteur qu'on croira mesure.
+    """
+    t = corps or ""
+    if "Max open positions" in t:
+        return "bridge_max_positions"
+    if "Daily drawdown" in t:
+        return "bridge_perte_journaliere"
+    if "Duplicate:" in t:
+        return "bridge_doublon"
+    if "Risque engage" in t:
+        return "bridge_plafond_risque"
+    if status == 422 or "risque_realise" in t:
+        return "bridge_risque_incoherent"
+    if "10016" in t or "INVALID_STOPS" in t:
+        return "bridge_invalid_stops"
+    if status == 429:
+        return "bridge_refus_indetermine"
+    return "bridge_error"
+
+
 async def _push_to_destination(setup, dest) -> None:
     """Push un setup vers UNE destination (``BridgeConfig``).
 
@@ -1523,18 +1564,7 @@ async def _push_to_destination(setup, dest) -> None:
                 )
                 # Catégorise la rejection bridge pour la viz dédiée
                 body_text = r.text or ""
-                # ⚠️ Le risque mal dimensionne AVANT le fourre-tout : sans code
-                # dedie il disparaitrait dans `bridge_error`. C'est ce melange
-                # qui a fait passer trois causes distinctes pour un plafond de
-                # positions pendant des mois (cf. audit du 2026-08-11).
-                if r.status_code == 422 or "risque_realise" in body_text:
-                    reason = "bridge_risque_incoherent"
-                elif r.status_code == 429 or "Max open positions" in body_text:
-                    reason = "bridge_max_positions"
-                elif "10016" in body_text or "INVALID_STOPS" in body_text:
-                    reason = "bridge_invalid_stops"
-                else:
-                    reason = "bridge_error"
+                reason = _categoriser_refus(r.status_code, body_text)
                 record_rejection(
                     pair=setup.pair,
                     direction=direction,

@@ -43,6 +43,13 @@ REASON_LABELS_FR = {
     "asset_class_blocked": "Classe d'actif bloquée",
     "max_positions_per_pair": "Cap positions par pair",
     "bridge_max_positions": "Cap positions bridge",
+    # Les trois mecanismes qui se cachaient sous « cap positions » : le bridge
+    # repond 429 pour tous ses garde-fous, et le code ne lisait que le statut.
+    # Cf. `mt5_bridge._categoriser_refus`.
+    "bridge_perte_journaliere": "Coupe-circuit perte journalière",
+    "bridge_doublon": "Doublon (fenêtre de dedup)",
+    "bridge_plafond_risque": "Plafond de risque engagé",
+    "bridge_refus_indetermine": "Bridge : refus non identifié",
     "bridge_invalid_stops": "Bridge : stops invalides",
     "bridge_error": "Bridge : erreur autre",
     "bridge_timeout": "Bridge injoignable",
