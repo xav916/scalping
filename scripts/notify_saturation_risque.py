@@ -50,19 +50,29 @@ DELAI = 10
 # Le plafond n'est jamais atteint pile : on veut le savoir AVANT que le
 # prochain ordre tombe.
 #
-# ⚠️ Baissé de 85 à 80 le 2026-08-25, après avoir mesuré le démo à **83 %**
-# — donc SILENCIEUX — avec 5,24 € de marge pour des trades qui en risquent 7
-# à 9. L'admission y était déjà fermée en pratique, sous le seuil.
+# ⚠️ Baissé de 85 à 72 le 2026-08-25 (85 → 80 → 72 le même jour), après avoir
+# mesuré le démo à **83 %** — donc SILENCIEUX — avec 5,24 € de marge pour des
+# trades qui en risquent 7 à 9. L'admission y était déjà fermée en pratique,
+# sous le seuil.
 #
-# ⛔ 80 % ne referme pas toute la fenêtre : sur un plafond de ~32 €, l'alerte
-# part quand il reste 6,40 €, encore sous un trade typique. Couvrir vraiment
-# le cas demanderait ~72 %. Le réglage est un compromis assumé entre voir
-# venir le refus et se faire alerter en permanence.
+# 🔑 72 % n'est pas un chiffre rond, c'est le seul qui suit de la mesure : le
+# seuil doit laisser, AU MOMENT DE L'ALERTE, plus qu'un trade typique. Sur un
+# plafond de ~32 € et un trade qui risque jusqu'à 9 € :
+#
+#     seuil_max = 100 × (1 − 9 / 32) ≈ 72 %
+#
+# À 85 % il restait 4,80 € et à 80 % encore 6,40 € : dans les deux cas
+# l'alerte annonçait un blocage DÉJÀ EN COURS au lieu de le prévenir. Un
+# seuil qui prévient trop tard ne se distingue pas d'un silence.
+#
+# ⚠️ Le seuil dépend donc du PLAFOND, qui suit l'equity. Si le capital monte
+# nettement, 72 % redevient trop tardif — c'est le rapport « trade typique /
+# plafond » qu'il faut refaire, pas le pourcentage qu'il faut retenir.
 #
 # ⛔ CE DÉFAUT EST APPARIÉ à celui de `notify-saturation-risque.sh`, qui
 # l'écrase via `docker exec -e`. Changer l'un sans l'autre ferait diverger le
 # cron et la commande `risque` à la demande — un test épingle leur égalité.
-SEUIL_PCT = float(os.environ.get("SEUIL_SATURATION_PCT", "80"))
+SEUIL_PCT = float(os.environ.get("SEUIL_SATURATION_PCT", "72"))
 
 INSTANTANE = Path(os.environ.get(
     "SATURATION_SNAPSHOT_PATH", "/app/data/saturation_risque.json"))

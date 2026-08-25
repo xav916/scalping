@@ -21,6 +21,6 @@ set -uo pipefail
 docker exec -i \
   -e PYTHONPATH=/app \
   -e "DRY_RUN=${DRY_RUN:-0}" \
-  -e "SEUIL_SATURATION_PCT=${SEUIL_SATURATION_PCT:-80}" \
+  -e "SEUIL_SATURATION_PCT=${SEUIL_SATURATION_PCT:-72}" \
   -w /app scalping-radar \
   python /app/scripts/notify_saturation_risque.py
