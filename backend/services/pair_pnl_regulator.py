@@ -114,6 +114,73 @@ def _config() -> dict[str, Any]:
 # ─── Core metrics ───────────────────────────────────────────────────────
 
 
+def _tickets_exclus() -> frozenset[int]:
+    """Tickets retirés du bulletin — et de rien d'autre.
+
+    ⛔ **Même liste que `pair_admission_controller`, à dessein.** Les deux
+    modules notent la même paire sur les mêmes clôtures, et `mt5_bridge` les
+    interroge tous les deux (`:563` puis `:613`). Tant que l'un consultait la
+    liste et pas l'autre, une paire pouvait être promue par le premier et
+    gardée en pause par le second : c'est ce qui est arrivé à l'or entre le
+    19/08 et le 25/08/2026, 176 rejets `pair_auto_paused` par jour sur une
+    paire officiellement remise en `AUTO_EXEC`.
+
+    Lue à l'appel, jamais à l'import : un test doit pouvoir la régler, et le
+    conteneur doit pouvoir changer sans reconstruction d'image.
+    """
+    try:
+        from config.settings import PAC_EXCLUDED_TICKETS
+        return frozenset(PAC_EXCLUDED_TICKETS)
+    except Exception:  # noqa: BLE001 — un réglage illisible ne doit rien casser
+        return frozenset()
+
+
+def _filtre_exclusion(exclus: frozenset[int]) -> str:
+    """Fragment SQL écartant les tickets exclus, à coller après un WHERE.
+
+    ⚠️ `CAST(... AS INTEGER)` n'est pas cosmétique : `mt5_ticket` est stocké en
+    TEXTE dans `personal_trades` et en ENTIER dans `ea_closed_trades`. Sans le
+    cast, SQLite compare un texte à un entier sans jamais les trouver égaux —
+    le filtre n'écarterait rien, en silence. Cf. le défaut jumeau
+    `coalesce(mt5_ticket, 0)`, qui efface l'affinité de la colonne.
+    """
+    if not exclus:
+        return ""
+    trous = ",".join("?" * len(exclus))
+    return (f" AND (mt5_ticket IS NULL OR "
+            f"CAST(mt5_ticket AS INTEGER) NOT IN ({trous}))")
+
+
+def tickets_exclus_presents(pair: str) -> list[int]:
+    """Tickets exclus qui existent RÉELLEMENT pour cette paire.
+
+    Sert à inscrire l'exclusion dans le relevé. ⚠️ Sans cette trace, une
+    fenêtre qui écarte en silence est indiscernable d'une fenêtre qui n'a rien
+    écarté — et le chiffre affiché ne serait pas refaisable par un lecteur.
+    """
+    exclus = _tickets_exclus()
+    if not exclus:
+        return []
+    _ensure_schema()
+    from backend.services import ea_closed_trades_service as _eact
+    _eact._ensure_schema()
+    trous = ",".join("?" * len(exclus))
+    ex = tuple(exclus)
+    with sqlite3.connect(_db_path()) as c:
+        rows = c.execute(
+            f"""
+            SELECT DISTINCT CAST(mt5_ticket AS INTEGER) FROM personal_trades
+             WHERE pair = ? AND status = 'CLOSED' AND is_auto = 1
+               AND pnl IS NOT NULL AND CAST(mt5_ticket AS INTEGER) IN ({trous})
+            UNION
+            SELECT DISTINCT CAST(mt5_ticket AS INTEGER) FROM ea_closed_trades
+             WHERE pair = ? AND CAST(mt5_ticket AS INTEGER) IN ({trous})
+            """,
+            (pair,) + ex + (pair,) + ex,
+        ).fetchall()
+    return sorted(int(r[0]) for r in rows if r[0] is not None)
+
+
 def compute_window_metrics(pair: str, window_trades: int) -> dict[str, Any]:
     """Retourne PnL agrégé multi-tenant sur les N derniers trades fermés.
 
@@ -130,26 +197,34 @@ def compute_window_metrics(pair: str, window_trades: int) -> dict[str, Any]:
     from backend.services import ea_closed_trades_service as _eact
     _eact._ensure_schema()
 
+    # ⛔ L'exclusion se fait EN SQL, avant le LIMIT. La faire en Python après
+    # coup rendrait une fenêtre de moins de `window_trades` clôtures
+    # comptables : on noterait la paire sur 29 trades en annonçant 30.
+    exclus = _tickets_exclus()
+    filtre = _filtre_exclusion(exclus)
+    ex = tuple(exclus)
+
     with sqlite3.connect(_db_path()) as c:
         c.row_factory = sqlite3.Row
         rows = c.execute(
-            """
+            f"""
             SELECT pnl, closed_at, 'admin' AS source FROM personal_trades
              WHERE pair = ? AND status = 'CLOSED'
-               AND is_auto = 1 AND pnl IS NOT NULL
+               AND is_auto = 1 AND pnl IS NOT NULL{filtre}
             UNION ALL
             SELECT pnl, closed_at, 'ea_' || user_id AS source FROM ea_closed_trades
-             WHERE pair = ?
+             WHERE pair = ?{filtre}
             ORDER BY closed_at DESC LIMIT ?
             """,
-            (pair, pair, window_trades),
+            (pair,) + ex + (pair,) + ex + (window_trades,),
         ).fetchall()
+    ecartes = tickets_exclus_presents(pair)
     n = len(rows)
     if n == 0:
         return {
             "n": 0, "sum_pnl": 0.0, "wins": 0, "wr": 0.0,
             "oldest_at": None, "newest_at": None,
-            "by_source": {},
+            "by_source": {}, "excluded_tickets": ecartes,
         }
     sum_pnl = sum(r["pnl"] for r in rows)
     wins = sum(1 for r in rows if r["pnl"] > 0)
@@ -173,6 +248,7 @@ def compute_window_metrics(pair: str, window_trades: int) -> dict[str, Any]:
         "oldest_at": rows[-1]["closed_at"],
         "newest_at": rows[0]["closed_at"],
         "by_source": by_source,
+        "excluded_tickets": ecartes,
     }
 
 

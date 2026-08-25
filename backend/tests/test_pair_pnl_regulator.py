@@ -149,3 +149,148 @@ def test_resume_clears_active_pause(_isolated_db):
     assert pair_pnl_regulator.is_paused("XAG/USD") is True
     pair_pnl_regulator.apply_resume("XAG/USD", "manual_test")
     assert pair_pnl_regulator.is_paused("XAG/USD") is False
+
+
+# ─── PAC_EXCLUDED_TICKETS : le second juge ──────────────────────────────
+#
+# Le régulateur et `pair_admission_controller` notent la même paire sur les
+# mêmes clôtures, mais seul le second consultait la liste d'exclusion. Une
+# paire pouvait donc être promue par l'un et gardée en pause par l'autre —
+# c'est exactement ce qui est arrivé à l'or le 2026-08-25.
+
+
+def _poser_ticket(db_path: Path, pair: str, pnl: float, ticket, jours: int = 0):
+    """Insère un trade daté et TICKETÉ. `mt5_ticket` est en TEXTE ici, comme
+    en production — le piège d'affinité SQLite se reproduit tel quel."""
+    quand = (datetime.now(timezone.utc) - timedelta(days=jours)).isoformat()
+    with sqlite3.connect(db_path) as c:
+        c.execute(
+            """
+            INSERT INTO personal_trades (pair, status, pnl, is_auto, closed_at,
+                                         close_reason, mt5_ticket)
+            VALUES (?, 'CLOSED', ?, 1, ?, ?, ?)
+            """,
+            (pair, pnl, quand, "MANUAL" if pnl < 0 else "TP1", str(ticket)),
+        )
+
+
+@pytest.fixture
+def exclure(monkeypatch):
+    """Règle la liste telle que la lit la fonction livrée."""
+    def _set(tickets):
+        import config.settings as st
+        monkeypatch.setattr(st, "PAC_EXCLUDED_TICKETS", frozenset(tickets))
+    return _set
+
+
+def test_sans_reglage_aucun_trade_n_est_ecarte(_isolated_db, exclure):
+    """Vide par défaut : la fenêtre est celle d'avant le correctif."""
+    from backend.services import pair_pnl_regulator
+
+    exclure([])
+    for i in range(5):
+        _poser_ticket(_isolated_db, "XAU/USD", -10.0, 900 + i, jours=i)
+
+    m = pair_pnl_regulator.compute_window_metrics("XAU/USD", 30)
+    assert m["n"] == 5
+    assert m["sum_pnl"] == -50.0
+
+
+def test_un_ticket_exclu_sort_de_la_fenetre(_isolated_db, exclure):
+    """Le cas de l'or : une position tenue sans stop sur consigne, fermée à la
+    main, pèse à elle seule le verdict. Elle ne doit pas noter le système."""
+    from backend.services import pair_pnl_regulator
+
+    _poser_ticket(_isolated_db, "XAU/USD", -265.11, 1353960866, jours=5)
+    for i in range(4):
+        _poser_ticket(_isolated_db, "XAU/USD", +10.0, 900 + i, jours=i)
+
+    exclure([1353960866])
+    m = pair_pnl_regulator.compute_window_metrics("XAU/USD", 30)
+
+    assert m["n"] == 4
+    assert m["sum_pnl"] == 40.0
+
+
+def test_la_fenetre_reste_pleine_un_trade_plus_ancien_remonte(_isolated_db, exclure):
+    """⛔ L'exclusion se fait avant le LIMIT. L'écarter après rendrait une
+    fenêtre de 9 trades en annonçant 10 : on noterait la paire sur moins de
+    clôtures que le relevé ne le prétend."""
+    from backend.services import pair_pnl_regulator
+
+    # 12 trades : le plus récent (jours=0) est le ticket honni.
+    _poser_ticket(_isolated_db, "XAU/USD", -500.0, 777, jours=0)
+    for i in range(11):
+        _poser_ticket(_isolated_db, "XAU/USD", +1.0, 800 + i, jours=i + 1)
+
+    exclure([777])
+    m = pair_pnl_regulator.compute_window_metrics("XAU/USD", 10)
+
+    assert m["n"] == 10, "la fenêtre doit rester pleine"
+    assert m["sum_pnl"] == 10.0
+
+
+def test_les_trades_des_users_premium_sont_filtres_aussi(_isolated_db, exclure):
+    """`ea_closed_trades` stocke `mt5_ticket` en ENTIER quand `personal_trades`
+    le stocke en TEXTE. Le filtre doit valoir des deux côtés de l'UNION."""
+    from backend.services import ea_closed_trades_service, pair_pnl_regulator
+
+    ea_closed_trades_service._ensure_schema()
+    with sqlite3.connect(_isolated_db) as c:
+        for ticket, pnl in ((555, -300.0), (556, +20.0)):
+            c.execute(
+                """
+                INSERT INTO ea_closed_trades (user_id, pair, direction,
+                    entry_price, exit_price, pnl, mt5_ticket, closed_at, reported_at)
+                VALUES (2, 'XAU/USD', 'sell', 1.0, 1.0, ?, ?, ?, ?)
+                """,
+                (pnl, ticket, datetime.now(timezone.utc).isoformat(),
+                 datetime.now(timezone.utc).isoformat()),
+            )
+
+    exclure([555])
+    m = pair_pnl_regulator.compute_window_metrics("XAU/USD", 30)
+
+    assert m["n"] == 1
+    assert m["sum_pnl"] == 20.0
+
+
+def test_la_fenetre_dit_ce_qu_elle_a_ecarte(_isolated_db, exclure):
+    """⚠️ Un relevé qui écarte en silence est indiscernable d'un relevé qui
+    n'a rien écarté. Le ticket retiré doit être nommé dans le résultat."""
+    from backend.services import pair_pnl_regulator
+
+    _poser_ticket(_isolated_db, "XAU/USD", -265.11, 1353960866, jours=5)
+    _poser_ticket(_isolated_db, "XAU/USD", +10.0, 901, jours=1)
+
+    exclure([1353960866, 424242])  # 424242 n'existe pas pour cette paire
+    m = pair_pnl_regulator.compute_window_metrics("XAU/USD", 30)
+
+    assert m["excluded_tickets"] == [1353960866]
+
+
+def test_un_seul_ticket_fait_basculer_la_pause(_isolated_db, exclure, monkeypatch):
+    """Bout en bout : c'est `evaluate_pair` qui pose la pause opposable à
+    TOUTES les destinations. Sans le ticket exclu, elle ne doit pas être posée.
+
+    ⚠️ `TRADING_CAPITAL` est épinglé à sa valeur de PRODUCTION : le seuil se
+    mesure en % du capital, donc un test qui laisse traîner le défaut local
+    (10 000 €) jugerait sur une échelle que la prod (650 €) n'a jamais eue.
+    """
+    import config.settings as st
+    from backend.services import pair_pnl_regulator
+
+    monkeypatch.setattr(st, "TRADING_CAPITAL", 650.0)
+
+    _poser_ticket(_isolated_db, "XAU/USD", -265.11, 1353960866, jours=5)
+    for i in range(11):
+        _poser_ticket(_isolated_db, "XAU/USD", +1.0, 900 + i, jours=i)
+
+    exclure([])
+    assert pair_pnl_regulator.evaluate_pair("XAU/USD")["action"] == "pause"
+
+    with sqlite3.connect(_isolated_db) as c:
+        c.execute("DELETE FROM auto_paused_pairs")
+
+    exclure([1353960866])
+    assert pair_pnl_regulator.evaluate_pair("XAU/USD")["action"] == "keep_active"
