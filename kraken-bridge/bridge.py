@@ -122,7 +122,56 @@ _PAIR_TO_SYMBOL: dict[str, str] = {
 
 
 def _resolve_symbol(pair: str) -> str | None:
-    return _PAIR_TO_SYMBOL.get(pair)
+    """Paire du radar vers symbole Kraken Futures.
+
+    La carte explicite prime, et elle reste indispensable : ``BTC/USD`` se
+    derive en ``PF_BTCUSD``, qui **n'existe pas** — Kraken nomme le bitcoin
+    ``PF_XBTUSD``. Les exceptions de nommage ne se devinent pas.
+
+    Pour tout le reste, on derive ``PF_<BASE>USD`` et on le **valide contre le
+    catalogue d'instruments negociables** du courtier. Jamais de symbole
+    devine : un symbole non valide part en ordre et se fait refuser au mieux,
+    executer sur le mauvais instrument au pire.
+
+    ⛔ Retabli le 2026-08-25. Ce repli existait depuis le 2026-08-08 et avait
+    disparu : le fichier vivait hors git, une edition manuelle l'a ecrase.
+    Entre le 20 et le 24/08, 13 ordres ont ete refuses en ``unsupported pair``
+    sur 8 instruments pourtant presents au catalogue (HBAR, XLM, AAVE, ALGO,
+    ARB, BNB, MANA, SEI) — la carte en connait 16, le courtier en cote 280.
+    """
+    explicite = _PAIR_TO_SYMBOL.get(pair)
+    if explicite:
+        return explicite
+
+    morceaux = (pair or "").upper().split("/")
+    if len(morceaux) != 2:
+        return None
+    base, cotation = morceaux[0].strip(), morceaux[1].strip()
+    # Seuls les perpetuels marges en USD sont derivables ainsi.
+    if not base or not base.isalnum() or cotation != "USD":
+        return None
+
+    derive = f"PF_{base}USD"
+    if _get_specs(derive):
+        return derive
+
+    # ⚠️ Ne pas confondre « le courtier ne cote pas cet instrument » avec « on
+    # n'a pas pu lire le catalogue ». Les deux rendent None — c'est le choix
+    # sur : on n'envoie jamais d'ordre sur un symbole non valide. Mais les deux
+    # doivent se LIRE differemment dans le journal, sinon une panne reseau se
+    # diagnostique comme un instrument absent.
+    if not _specs_cache:
+        logger.warning(
+            "_resolve_symbol(%s) : catalogue d'instruments VIDE — refus par "
+            "defaut de prudence, ce n'est PAS la preuve que %s n'existe pas",
+            pair, derive,
+        )
+    else:
+        logger.info(
+            "_resolve_symbol(%s) : %s absent des %d instruments negociables",
+            pair, derive, len(_specs_cache),
+        )
+    return None
 
 
 # ─── Auth Kraken Futures v3 ────────────────────────────────────────────
