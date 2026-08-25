@@ -11,11 +11,16 @@
 #   notify-saturation-risque.sh                      -> alerte si l'admission se ferme
 #   DRY_RUN=1 notify-saturation-risque.sh            -> affiche sans envoyer
 #   SEUIL_SATURATION_PCT=70 notify-saturation-risque.sh
+#
+# ⛔ Le `:-80` ci-dessous ECRASE l'environnement du conteneur : c'est lui qui
+# fait foi pour le cron, pas /opt/scalping/.env. Il doit rester egal au defaut
+# de notify_saturation_risque.py, sans quoi le cron et la commande `risque` a
+# la demande alerteraient a deux seuils differents. Un test epingle l'egalite.
 set -uo pipefail
 
 docker exec -i \
   -e PYTHONPATH=/app \
   -e "DRY_RUN=${DRY_RUN:-0}" \
-  -e "SEUIL_SATURATION_PCT=${SEUIL_SATURATION_PCT:-85}" \
+  -e "SEUIL_SATURATION_PCT=${SEUIL_SATURATION_PCT:-80}" \
   -w /app scalping-radar \
   python /app/scripts/notify_saturation_risque.py

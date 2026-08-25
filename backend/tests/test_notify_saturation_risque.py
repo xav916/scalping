@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import importlib.util
 import pathlib
+import re
 
 import pytest
 
@@ -305,3 +306,40 @@ def test_premier_passage_sain_est_silencieux(s):
 
 def test_premier_passage_sature_PARLE(s):
     assert s.doit_parler(None, "sature") is True
+
+
+# --------------------------------------------------------------------------
+# ⛔ Le seuil a DEUX sources — elles doivent rester d'accord
+# --------------------------------------------------------------------------
+
+_ENVELOPPE = (pathlib.Path(__file__).resolve().parents[2]
+              / "scripts" / "notify-saturation-risque.sh")
+
+
+def _defaut_python(monkeypatch) -> float:
+    """Le seuil que prend le module quand rien n'est imposé par l'env."""
+    monkeypatch.delenv("SEUIL_SATURATION_PCT", raising=False)
+    spec = importlib.util.spec_from_file_location("saturation_defaut", _SCRIPT)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.SEUIL_PCT
+
+
+def _defaut_enveloppe() -> float:
+    m = re.search(r"SEUIL_SATURATION_PCT=\$\{SEUIL_SATURATION_PCT:-([0-9.]+)\}",
+                  _ENVELOPPE.read_text(encoding="utf-8"))
+    assert m, "l'enveloppe cron ne fixe plus de seuil par défaut"
+    return float(m.group(1))
+
+
+def test_le_cron_et_la_commande_a_la_demande_partagent_LE_MEME_seuil(monkeypatch):
+    """⛔ Deux sources, deux vérités — le piège qu'on referme ici.
+
+    L'enveloppe cron passe `docker exec -e SEUIL_SATURATION_PCT=…`, ce qui
+    **écrase** l'environnement du conteneur. La commande `risque` à la
+    demande, elle, lit le défaut du module. Régler l'un sans l'autre ferait
+    alerter le cron à un seuil pendant que l'emoji de la réponse
+    instantanée bascule à un autre — deux chiffres qui se contredisent sans
+    que rien ne le dise.
+    """
+    assert _defaut_python(monkeypatch) == _defaut_enveloppe()
