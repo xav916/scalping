@@ -1330,7 +1330,10 @@ def _format_close(trade: dict, destination_id: str | None = None) -> str:
     # reliquat seul sous-estime précisément les trades bien gérés.
     # Cf. [[project_edge_gestion_sorties_2026_08_11]].
     if montants and montants.get("risque_eur"):
-        detail.append(f"{pnl / montants['risque_eur']:+.2f} R".replace(".", ","))
+        # Le vrai signe moins, comme sur les montants en euros juste au-dessus :
+        # le trait d'union se lit plus court et casse l'alignement visuel.
+        detail.append(f"{pnl / montants['risque_eur']:+.2f} R"
+                      .replace(".", ",").replace("-", "−"))
     lines.append(" · ".join(detail))
     lines.append("")
 
