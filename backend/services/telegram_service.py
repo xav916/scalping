@@ -1347,11 +1347,15 @@ def _format_close(trade: dict, destination_id: str | None = None) -> str:
         mfe = parcours.get("mfe_R")
         if mfe is not None:
             mfe_fr = f"{mfe:+.2f}".replace(".", ",")
-            if mfe >= 0.25:
+            if mfe >= 0.25 and perte:
                 pourquoi.append(
-                    f"• Le trade est monté à {mfe_fr} R avant de se retourner"
-                    + (" — c'est un gain rendu, pas une entrée ratée"
-                       if perte else ""))
+                    f"• Le trade est monté à {mfe_fr} R avant de se retourner "
+                    f"— c'est un gain rendu, pas une entrée ratée")
+            elif mfe >= 0.25:
+                # ⚠️ Pas de « avant de se retourner » sur un gain : un TP
+                # atteint ne s'est pas retourné, il a touché sa cible. Le point
+                # haut y mesure ce qui restait sur la table, pas un échec.
+                pourquoi.append(f"• Au plus haut : {mfe_fr} R")
             elif perte:
                 pourquoi.append(
                     f"• Il n'est jamais passé au vert (au mieux {mfe_fr} R) : "

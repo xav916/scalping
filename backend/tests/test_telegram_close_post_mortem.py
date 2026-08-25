@@ -180,6 +180,21 @@ def test_un_trade_monte_puis_rendu_est_appele_un_GAIN_RENDU(monkeypatch):
     assert "rendu" in texte.lower()
 
 
+def test_un_GAIN_ne_se_dit_pas_retourne(monkeypatch):
+    """⛔ Constaté sur un vrai trade : un TP1 atteint affichait « monté à
+    +1,86 R avant de se retourner ». Il ne s'est pas retourné, il a touché sa
+    cible. Sur un gain, le point haut se dit sans récit — il mesure ce qui
+    restait sur la table, pas un échec."""
+    monkeypatch.setattr(ts, "_parcours_en_R",
+                        lambda *a, **k: {"mfe_R": 1.86, "mae_R": -0.2})
+    texte = ts._format_close(
+        _trade(pnl=34.17, close_reason="TP1", exit_price=4105.90), "admin_live")
+
+    assert "1,86" in texte
+    assert "se retourner" not in texte
+    assert "rendu" not in texte.lower()
+
+
 def test_un_trade_jamais_passe_au_vert_est_dit_contre_le_marche(monkeypatch):
     monkeypatch.setattr(ts, "_parcours_en_R",
                         lambda *a, **k: {"mfe_R": 0.02, "mae_R": -1.0})
