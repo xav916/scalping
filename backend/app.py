@@ -2861,44 +2861,21 @@ async def _build_sales_recap_text(date_iso: str | None = None) -> str:
 # chiffres divergeraient sans que rien ne le dise.
 # ──────────────────────────────────────────────────────────────────────
 
-_RISQUE_DESTINATIONS = ("admin_live", "admin_legacy")
-
-
 def _eur(x: float) -> str:
     """Montant en euros, à la française : virgule décimale, espace fine."""
     return f"{x:,.2f}".replace(",", " ").replace(".", ",")
 
 
 def _mesurer_risque_destinations() -> list[dict]:
-    """Lit les bridges et rend une mesure par destination MT5.
+    """Lit les bridges et rend une mesure par destination.
 
     ⛔ **Lecture seule stricte.** Aucune écriture de
-    `saturation_risque.json`, aucun cooldown consommé : la sonde horaire
-    décide de parler en comparant à l'état précédent, donc écrire ici
-    ferait taire l'alerte suivante. On aurait rendu le système muet en
-    l'interrogeant — la leçon du `DRY_RUN` de la sonde de capture.
+    `saturation_risque.json`, aucun cooldown consommé.
 
-    Bloquant (urllib, timeouts bornés) : l'appelant doit le sortir de la
-    boucle d'événements.
+    Bloquant : l'appelant doit le sortir de la boucle d'événements.
     """
-    from backend.services.destinations_registry import DESTINATIONS
-    from scripts.notify_saturation_risque import (
-        SEUIL_PCT, _lire_destination, verdict,
-    )
-
-    mesures = []
-    for did in _RISQUE_DESTINATIONS:
-        dest = DESTINATIONS.get(did)
-        if dest is None:
-            continue
-        evaluation = _lire_destination(dest)
-        mesures.append({
-            "id": did,
-            "badge": dest.badge,
-            "evaluation": evaluation,
-            "verdict": verdict(evaluation, SEUIL_PCT),
-        })
-    return mesures
+    from backend.services.risque_engage import mesurer
+    return mesurer()
 
 
 def _formater_risque(mesures: list[dict]) -> str:
