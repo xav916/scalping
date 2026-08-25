@@ -115,40 +115,15 @@ def _config() -> dict[str, Any]:
 
 
 def _tickets_exclus() -> frozenset[int]:
-    """Tickets retirés du bulletin — et de rien d'autre.
-
-    ⛔ **Même liste que `pair_admission_controller`, à dessein.** Les deux
-    modules notent la même paire sur les mêmes clôtures, et `mt5_bridge` les
-    interroge tous les deux (`:563` puis `:613`). Tant que l'un consultait la
-    liste et pas l'autre, une paire pouvait être promue par le premier et
-    gardée en pause par le second : c'est ce qui est arrivé à l'or entre le
-    19/08 et le 25/08/2026, 176 rejets `pair_auto_paused` par jour sur une
-    paire officiellement remise en `AUTO_EXEC`.
-
-    Lue à l'appel, jamais à l'import : un test doit pouvoir la régler, et le
-    conteneur doit pouvoir changer sans reconstruction d'image.
-    """
-    try:
-        from config.settings import PAC_EXCLUDED_TICKETS
-        return frozenset(PAC_EXCLUDED_TICKETS)
-    except Exception:  # noqa: BLE001 — un réglage illisible ne doit rien casser
-        return frozenset()
+    """Délègue à `tickets_exclus` — cf. ce module pour la raison d'être."""
+    from backend.services.tickets_exclus import tickets_exclus
+    return tickets_exclus()
 
 
 def _filtre_exclusion(exclus: frozenset[int]) -> str:
-    """Fragment SQL écartant les tickets exclus, à coller après un WHERE.
-
-    ⚠️ `CAST(... AS INTEGER)` n'est pas cosmétique : `mt5_ticket` est stocké en
-    TEXTE dans `personal_trades` et en ENTIER dans `ea_closed_trades`. Sans le
-    cast, SQLite compare un texte à un entier sans jamais les trouver égaux —
-    le filtre n'écarterait rien, en silence. Cf. le défaut jumeau
-    `coalesce(mt5_ticket, 0)`, qui efface l'affinité de la colonne.
-    """
-    if not exclus:
-        return ""
-    trous = ",".join("?" * len(exclus))
-    return (f" AND (mt5_ticket IS NULL OR "
-            f"CAST(mt5_ticket AS INTEGER) NOT IN ({trous}))")
+    """Délègue à `tickets_exclus.filtre_sql`."""
+    from backend.services.tickets_exclus import filtre_sql
+    return filtre_sql(exclus)
 
 
 def tickets_exclus_presents(pair: str) -> list[int]:

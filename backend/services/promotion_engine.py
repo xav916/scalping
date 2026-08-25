@@ -156,25 +156,40 @@ def _query_direction_distribution(pair: str, since_utc: str) -> tuple[int, int]:
         return 0, 0
 
 
+def _tickets_exclus() -> frozenset[int]:
+    """Délègue à `tickets_exclus` — cf. ce module pour la raison d'être."""
+    from backend.services.tickets_exclus import tickets_exclus
+    return tickets_exclus()
+
+
 def _query_trades_pnl(pair: str, direction: str, since_utc: str) -> list[dict]:
     """Trades fermés PnL depuis since (personal_trades admin + ea_closed_trades users).
 
     Query splittée pour être robuste si l'une des tables est absente (tests isolated
     ou schema pas encore migré). Chaque source contribue best-effort.
+
+    ⚠️ La fenêtre est **temporelle** (`closed_at >= since`), pas un « N derniers
+    trades » : écarter un ticket réduit l'échantillon de 1, aucun trade plus
+    ancien ne remonte. C'est correct ici — il n'y a pas de compte à tenir plein,
+    contrairement aux deux autres juges qui bornent par `LIMIT`.
     """
+    from backend.services.tickets_exclus import filtre_sql
+    exclus = _tickets_exclus()
+    filtre = filtre_sql(exclus)
+    ex = tuple(exclus)
     rows: list[dict] = []
     # 1. personal_trades (admin Xavier + admin_legacy/live si sync)
     try:
         with sqlite3.connect(_db_path()) as c:
             c.row_factory = sqlite3.Row
             r = c.execute(
-                """
+                f"""
                 SELECT pnl, closed_at, close_reason FROM personal_trades
                  WHERE pair = ? AND direction = ? AND status = 'CLOSED'
-                   AND is_auto = 1 AND pnl IS NOT NULL AND closed_at >= ?
+                   AND is_auto = 1 AND pnl IS NOT NULL AND closed_at >= ?{filtre}
                 ORDER BY closed_at DESC
                 """,
-                (pair, direction, since_utc),
+                (pair, direction, since_utc) + ex,
             ).fetchall()
             rows.extend(dict(x) for x in r)
     except Exception as e:
@@ -185,12 +200,12 @@ def _query_trades_pnl(pair: str, direction: str, since_utc: str) -> list[dict]:
         with sqlite3.connect(_db_path()) as c:
             c.row_factory = sqlite3.Row
             r = c.execute(
-                """
+                f"""
                 SELECT pnl, closed_at, close_reason FROM ea_closed_trades
-                 WHERE pair = ? AND direction = ? AND closed_at >= ?
+                 WHERE pair = ? AND direction = ? AND closed_at >= ?{filtre}
                 ORDER BY closed_at DESC
                 """,
-                (pair, direction, since_utc),
+                (pair, direction, since_utc) + ex,
             ).fetchall()
             rows.extend(dict(x) for x in r)
     except Exception as e:

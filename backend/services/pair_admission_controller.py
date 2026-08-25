@@ -943,12 +943,9 @@ def _fetch_real_trades_for_pair(pair: str, window: int, direction: Optional[str]
     # l'affinité de la colonne, si bien que SQLite compare un texte à un entier
     # sans jamais les trouver égaux. Le filtre passait alors inaperçu — écarter
     # zéro ticket en silence, exactement le défaut qu'on prétend corriger.
+    from backend.services.tickets_exclus import filtre_sql
     exclus = _tickets_exclus()
-    filtre = ""
-    if exclus:
-        trous = ",".join("?" * len(exclus))
-        filtre = (f" AND (mt5_ticket IS NULL OR "
-                  f"CAST(mt5_ticket AS INTEGER) NOT IN ({trous}))")
+    filtre = filtre_sql(exclus)
     ex = tuple(exclus)
 
     with sqlite3.connect(_db_path()) as c:
@@ -991,11 +988,8 @@ def _tickets_exclus() -> frozenset[int]:
     Lu à l'appel, jamais à l'import : un test doit pouvoir le régler, et le
     conteneur doit pouvoir changer sans reconstruction d'image.
     """
-    try:
-        from config.settings import PAC_EXCLUDED_TICKETS
-        return frozenset(PAC_EXCLUDED_TICKETS)
-    except Exception:  # noqa: BLE001 — un réglage illisible ne doit rien casser
-        return frozenset()
+    from backend.services.tickets_exclus import tickets_exclus
+    return tickets_exclus()
 
 
 def tickets_exclus_presents(pair: str, direction: Optional[str] = None) -> list[int]:
