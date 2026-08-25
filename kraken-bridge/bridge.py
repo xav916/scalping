@@ -47,6 +47,39 @@ from urllib.parse import urlencode
 import httpx
 from flask import Flask, jsonify, request
 
+
+# ─── Empreinte de la source ────────────────────────────────────────────
+# ⛔ Calculee A L'IMPORT, jamais a la requete. Un fichier edite sur disque
+# n'est pas le code que le processus execute : hacher a la requete
+# annoncerait la NOUVELLE version tout en faisant tourner l'ANCIENNE, ce qui
+# est pire que pas d'empreinte du tout.
+#
+# Pourquoi elle existe (2026-08-25) : le repli de resolution de symbole ajoute
+# le 08/08 a disparu sans que personne le voie, faute de pouvoir comparer ce
+# qui tourne a ce qui est versionne. Comparer avec :
+#     sha256sum <fichier du depot> | cut -c1-12
+def _empreinte_source() -> str:
+    try:
+        with open(__file__, "rb") as fichier:
+            octets = fichier.read()
+    except Exception:  # noqa: BLE001 — une empreinte absente ne casse rien
+        return "inconnue"
+    # ⚠️ Fins de ligne normalisees AVANT le hachage. Les fichiers du VPS sont
+    # en CRLF, le depot est stocke en LF, et git reconvertit a la sortie : sans
+    # cela, deux copies au contenu IDENTIQUE annonceraient des empreintes
+    # differentes, et la comparaison — seule raison d'etre de ce champ —
+    # crierait a la derive en permanence.
+    # Sequences construites par code : ecrire une sequence d echappement
+    # dans un fichier qui en contient deja est une source d erreur inutile.
+    return hashlib.sha256(
+        octets.replace(bytes([13, 10]), bytes([10]))
+    ).hexdigest()[:12]
+
+
+SOURCE_SHA = _empreinte_source()
+DEMARRE_A = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
 # ─── Config ────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
@@ -470,6 +503,8 @@ def health():
         # Test public reachability
         _public_get("/api/v3/instruments", timeout=5)
         return jsonify({
+            "source_sha": SOURCE_SHA,
+            "demarre_a": DEMARRE_A,
             "ok": True,
             "base_url": BASE_URL,
             "api_key_set": bool(KRAKEN_API_KEY),
