@@ -23,7 +23,7 @@ Vérifié endpoint par endpoint le 2026-08-25, pas déduit de la documentation.
 |---|---|---|---|---|---|
 | `admin_legacy` / `admin_live` (MT5) | `price_open` | `price_current` | `profit` | `sl` dans la position | `garde_fous.max_risque_engage_pct` |
 | `admin_kraken` (Futures) | `price` | ✗ | ✗ | ✅ **`/openorders` → `stopPrice`** | ✗ |
-| `admin_kraken_spot` | ✗ | `price_usd` | ✗ | ✗ — **pas d'endpoint d'ordres** | ✗ |
+| `admin_kraken_spot` | ✗ | `price_usd` | ✗ | ⚠️ **`/positions.active_watchers.sl`** — stop LOGICIEL, pas un ordre du carnet | ✗ |
 | `admin_ibkr_us` | `avg_cost` | ✗ | ✗ | ✗ — **pas d'endpoint d'ordres** | ✗ |
 
 Deux conclusions structurent tout le reste :
@@ -145,14 +145,39 @@ Ce qui manquait était une troisième hypothèse, celle qui s'est vérifiée : l
 
 ## 5. Ce qui change côté bridges
 
+> **Révisé le 2026-08-25 après lecture du bridge spot** — la première version
+> de cette section prévoyait un `GET /openorders` sur le spot. C'est faux, et
+> pour une raison qui compte (voir ci-dessous).
+
 | bridge | changement | déploiement |
 |---|---|---|
-| Kraken Futures | **aucun** | — |
-| Kraken Spot | ajouter `GET /openorders` (stops vivants + `reduceOnly`) | `kraken-spot-bridge`, EC2 |
-| IBKR | ajouter `GET /openorders` (ordres enfants du bracket, rattachés au `conId`) | VPS `100.74.160.72:8792` |
+| Kraken Futures | **aucun** — `/openorders` expose déjà `stopPrice` | — |
+| Kraken Spot | **ajouter `entry` au registre des watchers** (2 lignes) | `kraken-spot-bridge`, EC2 |
+| IBKR | ajouter `GET /openorders` (ordres enfants du bracket) | VPS `100.74.160.72:8792` |
 
-Le geste est le même trois fois : **exposer le prix du stop vivant, pas un
-booléen de protection.** Un booléen dit qu'une position est bornée, jamais où.
+### ⛔ Le spot n'a pas de stop chez le courtier
+
+`kraken-spot-bridge` ne pose **aucun ordre stop chez Kraken**. Il lance un
+**watcher logiciel** (`_start_watcher`, ligne 368) : un thread qui surveille le
+prix et vend au marché quand le niveau est touché. Un `/openorders` n'y
+trouverait rien.
+
+`/positions` publie déjà `active_watchers` avec `pair`, `qty`, `sl` et `tp` —
+**il ne manque que le prix d'entrée**, d'où un changement de deux lignes au
+lieu d'un endpoint.
+
+⚠️ **Un stop logiciel et un stop courtier ne sont pas le même objet.**
+`_watchers` est un dictionnaire en mémoire, **sans persistance** : un
+redémarrage du bridge spot perd ses stops et laisse les positions nues. Le
+message doit donc le marquer (`stop_logiciel`) — les compter à l'identique
+surestimerait la protection.
+
+⇒ **La non-persistance des watchers est un risque réel, hors périmètre de ce
+chantier.** Constatée ici, elle est à traiter séparément.
+
+Là où un stop courtier existe, le geste est le même : **exposer son prix, pas
+un booléen de protection.** Un booléen dit qu'une position est bornée, jamais
+où.
 
 ## 6. Devise — une seule conversion, faillible sans dommage
 
