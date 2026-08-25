@@ -1021,6 +1021,7 @@ def _parcours_en_R(trade: dict, destination_id: str | None) -> dict | None:
     produit pas un zéro : le bloc disparaît du message plutôt que d'annoncer
     « 0,00 R », qui se lirait comme une mesure.
     """
+    import json
     import os
     from datetime import datetime, timezone
 
@@ -1125,6 +1126,40 @@ def _decimales(pair: str | None) -> int:
     return 2 if any(k in (pair or "") for k in (
         "XAU", "XAG", "BTC", "ETH", "SOL", "LTC", "BCH", "DOT", "ADA",
         "XRP", "WTI")) else 5
+
+
+def _frais_de_portage(ticket) -> float | None:
+    """Swap + commission + frais réellement facturés, lus chez le COURTIER.
+
+    ⛔ Pourquoi ça compte. Une position tenue plusieurs nuits paie un coût de
+    portage qui n'a rien d'anormal — mais qui creuse la perte au-delà du risque
+    annoncé. Constaté le 25/08 : EUR/GBP tenu 4j19h, −4,64 € contre −3,30 €
+    prévus. Annoncer « glissement ou trou de cotation » aurait fait chercher un
+    défaut inexistant.
+
+    `personal_trades` ne porte pas ces frais ; `broker_close_snapshots` si,
+    depuis qu'on fige les réponses du courtier. Rend `None` si la ligne n'y est
+    pas — auquel cas on ne conclut rien plutôt que de supposer zéro.
+    """
+    if not ticket:
+        return None
+    try:
+        # ⚠️ Importé DANS la fonction, comme ailleurs dans ce module : le
+        # `except` ci-dessous transformerait un `NameError` en « donnée
+        # indisponible », exactement le piège qui a masqué `json` deux heures
+        # plus tôt. Un test exécute cette fonction pour de vrai.
+        import sqlite3
+
+        from backend.services.trade_log_service import _DB_PATH
+        with sqlite3.connect(str(_DB_PATH)) as c:
+            r = c.execute(
+                "SELECT COALESCE(swap,0) + COALESCE(commission,0) + "
+                "COALESCE(fee,0) FROM broker_close_snapshots WHERE ticket=?",
+                (int(ticket),)).fetchone()
+        return float(r[0]) if r and r[0] is not None else None
+    except Exception as e:  # pragma: no cover - garde-fou
+        logger.debug(f"_frais_de_portage indisponible : {e}")
+        return None
 
 
 def _risque_annonce(trade: dict, destination_id: str | None):
@@ -1339,13 +1374,26 @@ def _format_close(trade: dict, destination_id: str | None = None) -> str:
         juge = []
         if montants and montants.get("risque_eur"):
             annonce = f"{montants['risque_eur']:.2f}".replace(".", ",")
-            if abs(pnl) <= montants["risque_eur"] * 1.15:
+            depassement = abs(pnl) - montants["risque_eur"]
+            if depassement <= montants["risque_eur"] * 0.15:
                 juge.append(f"• Perte conforme au risque annoncé (−{annonce} € "
                             f"prévu) — c'est le risque assumé à l'entrée")
             else:
-                juge.append(f"• ⚠️ Perte *au-delà* du risque annoncé "
-                            f"(−{annonce} € prévu) : glissement ou trou de "
-                            f"cotation, ça mérite un coup d'œil")
+                # ⚠️ Le coût de portage EXPLIQUE souvent le dépassement sur une
+                # position tenue plusieurs nuits. Le présenter comme un
+                # glissement ferait chercher un défaut qui n'existe pas — mais
+                # il ne doit pas devenir l'excuse universelle : on ne l'invoque
+                # que s'il couvre vraiment l'écart.
+                frais = _frais_de_portage(trade.get("mt5_ticket"))
+                if frais is not None and abs(frais) >= depassement * 0.6:
+                    frais_fr = f"{abs(frais):.2f}".replace(".", ",")
+                    juge.append(f"• Perte au-delà des −{annonce} € prévus, mais "
+                                f"expliquée : {frais_fr} € de frais de portage "
+                                f"(swap) sur la durée — rien d'anormal")
+                else:
+                    juge.append(f"• ⚠️ Perte *au-delà* du risque annoncé "
+                                f"(−{annonce} € prévu) : glissement ou trou de "
+                                f"cotation, ça mérite un coup d'œil")
         conf = trade.get("signal_confidence")
         if conf is not None:
             juge.append(f"• Score IA {float(conf):.0f}/100 — mesuré *sans "

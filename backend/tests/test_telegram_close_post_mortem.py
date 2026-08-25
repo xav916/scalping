@@ -20,6 +20,12 @@ import pytest
 
 from backend.services import telegram_service as ts
 
+# ⚠️ Capturee AVANT que la fixture `_pas_de_reseau` ne la remplace. Sans ca,
+# les deux tests qui veulent executer la vraie fonction appellent le stub —
+# et concluent « None » quoi qu'il arrive, y compris sur un `NameError`.
+# La fixture qui protege les autres tests cachait justement celui-la.
+_VRAI_PARCOURS = ts._parcours_en_R
+
 
 def _trade(**kw):
     base = {
@@ -126,13 +132,40 @@ def test_une_perte_conforme_au_risque_annonce_est_dite_normale():
     assert "conforme" in texte.lower()
 
 
-def test_une_perte_SUPERIEURE_au_risque_annonce_est_une_anomalie():
+def test_une_perte_SUPERIEURE_au_risque_annonce_est_une_anomalie(monkeypatch):
     """Là il s'est passé quelque chose : glissement, trou de cotation, stop non
     respecté. C'est le seul cas où « anticipable » a une vraie réponse."""
+    monkeypatch.setattr(ts, "_frais_de_portage", lambda t: None)
     texte = ts._format_close(_trade(pnl=-48.0, exit_price=4200.0), "admin_live")
 
     assert "⚠️" in texte
     assert "au-delà" in texte.lower() or "supérieur" in texte.lower()
+
+
+def test_un_depassement_EXPLIQUE_par_le_swap_n_est_pas_une_anomalie(monkeypatch):
+    """⛔ Constaté sur un vrai trade le 25/08 : EUR/GBP tenu 4j19h, perte
+    −4,64 € contre −3,30 € annoncés. Annoncer « glissement ou trou de
+    cotation » aurait été FAUX — l'écart est le coût de portage, accumulé nuit
+    après nuit. Un mécanisme normal présenté comme une anomalie ferait chercher
+    un défaut qui n'existe pas.
+    """
+    # Risque annoncé ≈ 16,55 € ; perte 20,00 € ⇒ dépassement 3,45 €, dont
+    # 2,50 € de portage : le mécanisme couvre l'essentiel de l'écart.
+    monkeypatch.setattr(ts, "_frais_de_portage", lambda t: -2.50)
+    texte = ts._format_close(_trade(pnl=-20.00), "admin_live")
+
+    assert "portage" in texte.lower() or "swap" in texte.lower()
+    assert "glissement" not in texte.lower()
+
+
+def test_un_depassement_NON_explique_par_le_swap_reste_une_anomalie(monkeypatch):
+    """Le swap ne doit pas devenir l'excuse universelle : s'il ne couvre qu'une
+    fraction de l'écart, l'alerte reste."""
+    monkeypatch.setattr(ts, "_frais_de_portage", lambda t: -0.20)
+    texte = ts._format_close(_trade(pnl=-48.0, exit_price=4200.0), "admin_live")
+
+    assert "⚠️" in texte
+    assert "glissement" in texte.lower()
 
 
 # ─── Le chemin du prix ──────────────────────────────────────────────────
@@ -176,6 +209,72 @@ def test_le_score_est_affiche_MAIS_desarme():
 
     assert "72" in texte
     assert "prédictif" in texte or "prédit" in texte
+
+
+# ─── La fonction reseau elle-meme, VRAIMENT executee ────────────────────
+
+
+def test_parcours_en_R_s_execute_pour_de_vrai(monkeypatch):
+    """⛔ Trouvé en production le 2026-08-25 : `_parcours_en_R` levait
+    `NameError: json is not defined`, et son `except Exception` l'avalait. Le
+    bloc disparaissait du message exactement comme si le bridge était muet.
+
+    **Tous les autres tests de ce fichier remplacent `_parcours_en_R`** — donc
+    aucun ne l'exécutait, et un nom non défini pouvait survivre au vert. Celui-ci
+    la fait tourner de bout en bout, avec le réseau seul remplacé.
+
+    > Un garde-fou qui transforme un bug de programmation en « donnée
+    > indisponible » ne protège pas : il cache. Il faut un test qui passe DANS
+    > la fonction. Cf. [[feedback_source_inspection_tests_weak]].
+    """
+    import io
+    import json as _json
+
+    class _Reponse(io.StringIO):
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    monkeypatch.setenv("MT5_BRIDGE_LIVE_URL", "http://bridge-de-test:8788")
+    monkeypatch.setenv("MT5_BRIDGE_LIVE_API_KEY", "cle")
+    monkeypatch.setattr(
+        "urllib.request.urlopen",
+        lambda *a, **k: _Reponse(_json.dumps(
+            {"bougies": [{"h": 4150.0, "l": 4120.0}, {"h": 4170.0, "l": 4140.0}]})))
+
+    r = _VRAI_PARCOURS(_trade(), "admin_live")
+
+    assert r is not None, "la fonction n'a pas abouti — regarde le log DEBUG"
+    assert r["mfe_R"] > 0
+
+
+def test_frais_de_portage_s_execute_pour_de_vrai(tmp_path, monkeypatch):
+    """Même exigence que pour `_parcours_en_R` : cette fonction a elle aussi un
+    `except Exception` qui rendrait un `NameError` indiscernable d'une donnée
+    absente. Elle doit être exécutée, pas seulement remplacée."""
+    import sqlite3
+
+    db = tmp_path / "trades.db"
+    with sqlite3.connect(db) as c:
+        c.execute("CREATE TABLE broker_close_snapshots ("
+                  "ticket INTEGER PRIMARY KEY, swap REAL, commission REAL, fee REAL)")
+        c.execute("INSERT INTO broker_close_snapshots VALUES (42, -1.20, -0.15, 0)")
+    monkeypatch.setattr("backend.services.trade_log_service._DB_PATH", db)
+
+    assert ts._frais_de_portage(42) == pytest.approx(-1.35)
+    assert ts._frais_de_portage(999) is None, "ticket absent : on ne suppose pas 0"
+    assert ts._frais_de_portage(None) is None
+
+
+def test_parcours_en_R_avale_une_panne_reseau_sans_casser(monkeypatch):
+    """Le seul cas où rendre None est légitime : le bridge ne répond pas.
+    Cet appel entre dans le flux de clôture, il ne doit jamais propager."""
+    monkeypatch.setenv("MT5_BRIDGE_LIVE_URL", "http://bridge-de-test:8788")
+
+    def _boum(*a, **k):
+        raise OSError("connexion refusée")
+    monkeypatch.setattr("urllib.request.urlopen", _boum)
+
+    assert _VRAI_PARCOURS(_trade(), "admin_live") is None
 
 
 # ─── Le calcul du parcours ──────────────────────────────────────────────
