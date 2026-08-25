@@ -57,7 +57,62 @@ stops viennent des ordres vivants. C'est la leçon des 44 % de SL/TP stockés
 qui différaient de ceux du courtier, et des `entry_price=0` d'IC Markets : nos
 enregistrements ne sont pas la vérité.
 
-## 4. ⛔ Le contrôle de réciprocité NE TOMBE PAS JUSTE — premier livrable
+## 4. ✅ RÉSOLU — l'écart venait de ma référence, pas du dimensionnement
+
+> **Statut : clos le 2026-08-25.** La section originale est conservée
+> ci-dessous ; sa conclusion est corrigée ici.
+
+**Cause racine : `base` n'est pas `risk_money`.** Le système ne vise pas
+`capital × risk_pct`, il vise (`sizing.py:203-208`) :
+
+```python
+final_mult = conf_mult * pnl_mult * session_mult * macro_mult
+risk_money = round(base * final_mult, 2)
+```
+
+Les 2,16 USD pris comme référence étaient le `base`. Facteurs mesurés en
+production le 25/08 sur `admin_kraken` :
+
+| facteur | valeur mesurée | pourquoi |
+|---|---|---|
+| `pnl_mult` | **0,5** | PnL 7 jours négatif — **frein de perte, actif en ce moment** |
+| `session_mult` | **1,0** | crypto 24/7, grille de séance neutralisée |
+| `conf_mult` | 0,5 – 1,5 | selon le score du setup |
+| `macro_mult` | plancher 0,3 | selon l'alignement |
+
+Six des huit ordres retombent directement dans la plage légitime de
+`conf × macro` (0,5 – 1,5). Les deux qui sortent de ~3 % sont expliqués par
+**l'arrondi vers le bas de la quantité** — le risque mesuré est un
+**minorant** du risque visé. Vérifié au centième sur DOT :
+
+```
+risk_money visé = 2,1586 × 0,5 × 0,5 = 0,5397 USD
+qty théorique   = 0,5397 / 0,2371    = 2,2760
+pas de 0,1, arrondi bas               → 2,2      (observé : 2,2)
+risque réel     = 2,2 × 0,2371        = 0,5216 USD (mesuré : 0,5216)
+```
+
+⇒ **Ni le dimensionnement ni la formule `|entrée − stop| × taille` ne sont en
+cause.** Le contrôle de réciprocité était mal spécifié.
+
+### Ce que l'enquête a produit d'utile
+
+1. ⛔ **Le contrôle doit viser `risk_money`, pas `base`**, et accepter
+   `mesuré ≤ risk_money` puisque la quantité s'arrondit vers le bas. Un
+   contrôle qui vise `base` crie au loup à chaque fois que le frein de perte
+   ou un score médiocre réduit la taille — c'est-à-dire en permanence.
+2. ⛔ **`risk_money` n'est persisté nulle part.** `journalctl` ne tient qu'un
+   jour, et `mt5_pushes.bridge_response` ne le porte pas. Il a fallu le
+   reconstruire par l'arithmétique inverse. ⇒ **Le persister avec le push**
+   est le prérequis pour que ce contrôle tourne en routine plutôt qu'à la
+   main. C'est aussi ce qui manquait pour détecter les positions placebo.
+3. ⚠️ **Fait d'exploitation, silencieux** : `pnl_mult = 0,5` en ce moment.
+   **Chaque ordre Kraken part à demi-taille**, par conception, et rien ne
+   l'annonce.
+
+---
+
+## 4-bis. La section originale — ce qui avait alerté
 
 Mesuré sur les deux positions Kraken vivantes le 2026-08-25 :
 
@@ -79,18 +134,14 @@ Le garde-fou posé alors, `_risque_realise()` + `RISK_RATIO_MIN=0.5`, **refuse**
 une position qui risque moins de la moitié du voulu — mais il vit dans
 `bridge.py` (MT5). **Il faut établir s'il est armé sur la route Kraken.**
 
-⇒ **Aucun chiffre n'est publié avant que cet écart soit expliqué.** Deux
-hypothèses, exclusives, et il faut trancher :
+Deux hypothèses avaient été posées : **(a)** le dimensionnement sous-délivre,
+**(b)** la formule manque quelque chose. **Les deux sont réfutées** — voir §4.
+L'ordre d'origine de PAXG, retrouvé dans `mt5_pushes` (`id=14187`), montre
+entrée, stop et volume **identiques à aujourd'hui** : ni stop déplacé, ni
+fermeture partielle. La position est née avec ce risque.
 
-- **(a) la mesure est juste et le dimensionnement sous-délivre** — alors la
-  commande vient de révéler un défaut de sizing sur le réel Kraken, et c'est
-  le résultat le plus important de tout ce chantier ;
-- **(b) la formule manque quelque chose** — stop déplacé depuis l'ouverture,
-  position partiellement fermée, ou taille plancher du courtier.
-
-Publier avant de savoir laquelle, c'est publier un chiffre dont on ignore le
-sens. Le distinguer se fait en rejouant l'ordre d'origine : `bridge_audit.db`
-et `journalctl -u scalping` portent le `risk=` demandé au dispatch.
+Ce qui manquait était une troisième hypothèse, celle qui s'est vérifiée : la
+**référence** était fausse.
 
 ## 5. Ce qui change côté bridges
 
@@ -139,9 +190,11 @@ Cette limite est déclarée ici pour ne pas être comptée comme faite.
 
 ## 9. Tests
 
-1. **Réciprocité** — `|entrée − stop| × taille` restitue le `risk_money` du
-   dispatch, sur les positions Kraken réelles. C'est le test qui a déjà
-   détecté quelque chose (§4) ; il doit conclure avant la publication.
+1. **Réciprocité** — `|entrée − stop| × taille` doit valoir **`risk_money`, à
+   un arrondi de quantité près et par en dessous** — ⛔ jamais `base`
+   (`capital × risk_pct`), qui ignore les quatre multiplicateurs et ferait
+   crier au loup dès que le frein de perte s'active (§4). Prérequis :
+   persister `risk_money` avec le push.
 2. **Mutations** — stop absent ⇒ `indécidable` jamais 0 ; taux FX manquant ⇒
    pas de total ; bridge muet ⇒ `illisible` ; une destination oubliée du
    parcours ⇒ un test tombe.
