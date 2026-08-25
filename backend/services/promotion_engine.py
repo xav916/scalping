@@ -546,6 +546,17 @@ def run_promotion_cycle() -> dict:
                         "pair": pair, "direction": direction,
                         "gate": result["gate"], "metrics": result["metrics"],
                     })
+            except PermissionError as refus:
+                # ⛔ Un refus du banc d'essai est une DÉCISION, pas une panne — et
+                # le cycle en rencontrera à chaque tour dès que la porte sera
+                # armée. Le journaliser en `exception` dirait « échec » là où le
+                # dispositif fait son travail. Même correction que dans
+                # `pair_admission_controller.check_and_regulate` : une parade
+                # posée sur un chemin n'est pas posée sur l'autre.
+                logger.warning("promotion_engine: %s/%s refusé par le banc — %s",
+                               pair, direction, refus)
+                errors.append({"pair": pair, "direction": direction,
+                               "refused_by_bench": str(refus)})
             except Exception as e:
                 logger.exception(f"promotion_engine: error {pair}/{direction}: {e}")
                 errors.append({"pair": pair, "direction": direction, "error": str(e)})

@@ -177,3 +177,70 @@ def test_set_state_accepte_ce_que_le_banc_couvre(banc_actif):
                         direction="sell", destination="admin_live")
     assert rid > 0
     assert pac.get_current_state("XAU/USD", "sell", "admin_live") == pac.STATE_AUTO_EXEC
+
+
+# ── Un refus n'est pas une panne ──────────────────────────────────────────
+
+def test_le_cycle_d_admission_distingue_un_refus_d_une_panne(monkeypatch, caplog):
+    """⛔ Une fois la porte armée, le moteur d'auto-promotion se fera refuser des
+    transitions toutes les heures. Si ces refus remontent en `logger.exception`,
+    les journaux diront « échec » là où le dispositif fait exactement son travail
+    — et quelqu'un « réparera » la porte.
+    """
+    import logging
+    from backend.services import pair_admission_controller as pac
+
+    def _refuse(pair, direction=None, **kw):
+        raise PermissionError("banc d'essai : aucun essai passé ne couvre ce couple")
+
+    monkeypatch.setattr(pac, "evaluate_pair", _refuse)
+    monkeypatch.setattr("config.settings.WATCHED_PAIRS", ["XAU/USD"], raising=False)
+
+    with caplog.at_level(logging.DEBUG):
+        r = pac.check_and_regulate()
+
+    refus = [d for d in r["decisions"] if d["action"] == "refused_by_bench"]
+    assert refus, "le refus doit apparaître comme une décision, pas disparaître"
+    assert not any(rec.levelno >= logging.ERROR for rec in caplog.records), \
+        "un refus attendu ne doit pas être journalisé comme une erreur"
+
+
+def test_le_cycle_d_admission_signale_toujours_les_vraies_pannes(monkeypatch, caplog):
+    """Le pendant du test précédent : distinguer le refus ne doit pas rendre le
+    cycle muet sur les défauts réels."""
+    import logging
+    from backend.services import pair_admission_controller as pac
+
+    def _casse(pair, direction=None, **kw):
+        raise RuntimeError("base corrompue")
+
+    monkeypatch.setattr(pac, "evaluate_pair", _casse)
+    monkeypatch.setattr("config.settings.WATCHED_PAIRS", ["XAU/USD"], raising=False)
+
+    with caplog.at_level(logging.DEBUG):
+        pac.check_and_regulate()
+
+    assert any(rec.levelno >= logging.ERROR for rec in caplog.records)
+
+
+def test_le_moteur_de_promotion_distingue_lui_aussi(monkeypatch, caplog):
+    """Le même défaut existe dans les deux cycles. Corriger l'un et pas l'autre,
+    c'est la leçon que ce dépôt a déjà payée trois fois : une parade posée sur un
+    chemin n'est pas posée sur les autres."""
+    import logging
+    from backend.services import promotion_engine as pe
+
+    def _refuse(*a, **kw):
+        raise PermissionError("banc d'essai : aucun essai passé ne couvre ce couple")
+
+    monkeypatch.setattr(pe.pac, "get_current_state", _refuse)
+    monkeypatch.setattr("config.settings.WATCHED_PAIRS", ["XAU/USD"], raising=False)
+    monkeypatch.setattr(pe, "check_demotion", lambda *a, **k: None)
+    monkeypatch.setattr(pe, "_notify_telegram_infra", lambda *a, **k: None)
+
+    with caplog.at_level(logging.DEBUG):
+        pe.run_promotion_cycle()
+
+    assert not any(r.levelno >= logging.ERROR for r in caplog.records), \
+        "un refus du banc ne doit pas remonter en erreur"
+    assert any("refusé par le banc" in r.getMessage() for r in caplog.records)

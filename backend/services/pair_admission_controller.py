@@ -1765,6 +1765,16 @@ def check_and_regulate() -> dict[str, Any]:
                 d["pair"] = pair
                 d["direction"] = direction
                 decisions.append(d)
+            except PermissionError as refus:
+                # ⛔ Un refus du banc d'essai est une DÉCISION, pas une panne.
+                # Journalisé en `exception`, il remplirait les logs de traces
+                # toutes les heures, dirait « échec » là où le dispositif fait
+                # son travail — et quelqu'un finirait par « réparer » la porte.
+                logger.warning(
+                    "pair_admission: %s/%s refusé par le banc — %s",
+                    pair, direction, refus)
+                decisions.append({"pair": pair, "direction": direction,
+                                  "action": "refused_by_bench", "reason": str(refus)})
             except Exception:
                 logger.exception(f"pair_admission: evaluate {pair}/{direction} failed")
 
