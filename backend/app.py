@@ -7,6 +7,7 @@ import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
@@ -2846,6 +2847,159 @@ async def _build_sales_recap_text(date_iso: str | None = None) -> str:
     return "\n".join(lines)
 
 
+# ──────────────────────────────────────────────────────────────────────
+# Commande `risque` — le risque engagé cumulé, à la demande (2026-08-25)
+#
+# La sonde de saturation ne parle qu'une fois par heure, et seulement quand
+# le seuil est franchi. Entre deux franchissements, « combien ai-je
+# d'engagé, là, maintenant ? » n'avait aucune réponse.
+#
+# ⛔ Le calcul n'est PAS réécrit ici : il est importé tel quel depuis
+# `scripts/notify_saturation_risque.py`, où il est couvert par 24 tests et
+# vérifié au centime près contre les positions réelles du 23/08. Une
+# seconde implémentation du risque serait exactement l'endroit où les deux
+# chiffres divergeraient sans que rien ne le dise.
+# ──────────────────────────────────────────────────────────────────────
+
+_RISQUE_DESTINATIONS = ("admin_live", "admin_legacy")
+
+
+def _eur(x: float) -> str:
+    """Montant en euros, à la française : virgule décimale, espace fine."""
+    return f"{x:,.2f}".replace(",", " ").replace(".", ",")
+
+
+def _mesurer_risque_destinations() -> list[dict]:
+    """Lit les bridges et rend une mesure par destination MT5.
+
+    ⛔ **Lecture seule stricte.** Aucune écriture de
+    `saturation_risque.json`, aucun cooldown consommé : la sonde horaire
+    décide de parler en comparant à l'état précédent, donc écrire ici
+    ferait taire l'alerte suivante. On aurait rendu le système muet en
+    l'interrogeant — la leçon du `DRY_RUN` de la sonde de capture.
+
+    Bloquant (urllib, timeouts bornés) : l'appelant doit le sortir de la
+    boucle d'événements.
+    """
+    from backend.services.destinations_registry import DESTINATIONS
+    from scripts.notify_saturation_risque import (
+        SEUIL_PCT, _lire_destination, verdict,
+    )
+
+    mesures = []
+    for did in _RISQUE_DESTINATIONS:
+        dest = DESTINATIONS.get(did)
+        if dest is None:
+            continue
+        evaluation = _lire_destination(dest)
+        mesures.append({
+            "id": did,
+            "badge": dest.badge,
+            "evaluation": evaluation,
+            "verdict": verdict(evaluation, SEUIL_PCT),
+        })
+    return mesures
+
+
+def _formater_risque(mesures: list[dict]) -> str:
+    """Met en mots une liste de mesures. Fonction PURE, sans réseau.
+
+    Le contrat tient en une phrase : **tout chiffre affiché a été mesuré.**
+    Les quatre façons de ne pas savoir (bridge muet, position pile à
+    l'entrée, position sans stop, plafond désarmé) rendent chacune une
+    phrase distincte, jamais un zéro rassurant.
+    """
+    import html as _html
+
+    maintenant = datetime.now(ZoneInfo("Europe/Paris"))
+    lignes = [f"<b>📊 Risque engagé — {maintenant:%d/%m %H:%M} Paris</b>"]
+
+    total, complet = 0.0, True
+
+    for m in mesures:
+        e = m["evaluation"] or {}
+        v = m["verdict"]
+        badge = _html.escape(str(m.get("badge") or m.get("id") or "?"))
+        login = e.get("login")
+        entete = f"<b>{badge}</b>" + (f" · compte {_html.escape(str(login))}"
+                                      if login else "")
+        lignes += ["", entete]
+
+        if v == "illisible":
+            complet = False
+            lignes += [
+                "❓ <b>Illisible</b> — le bridge ne répond pas.",
+                "Ce n'est pas « il reste de la place », c'est « on ne sait "
+                "pas » : l'admission peut être fermée sans que rien ne le dise.",
+            ]
+            continue
+
+        if e.get("desarme"):
+            lignes.append("⚪ Plafond de risque <b>désarmé</b> — il n'y a pas "
+                          "de plafond à saturer.")
+            continue
+
+        if v == "indecidable":
+            complet = False
+            if e.get("nues"):
+                lignes += [
+                    f"🚨 <b>{e['nues']} position(s) SANS STOP</b> — admission "
+                    "fermée.",
+                    "Un risque non borné rend toute somme impossible : aucun "
+                    "nouvel ordre ne passera tant qu'elles sont là.",
+                ]
+            else:
+                lignes += [
+                    f"⚠️ <b>{e.get('non_mesurables', 0)} position(s) non "
+                    "mesurable(s)</b> — pile au prix d'entrée.",
+                    "Le total serait amputé, donc rassurant à tort. On ne "
+                    "conclut pas.",
+                ]
+            continue
+
+        pct = e["pct"]
+        total += e["risque_total"]
+        puce = "🚨" if v == "sature" else "✅"
+        lignes += [
+            f"{puce} <b>{_eur(e['risque_total'])} €</b> engagés sur "
+            f"{_eur(e['plafond'])} € autorisés — <b>{pct:.0f} %</b>",
+            f"Marge restante : <b>{_eur(e['restant'])} €</b> · "
+            f"{e['positions']} position(s)",
+        ]
+        if e.get("candidats"):
+            lignes.append(
+                f"🔓 La soupape d'équilibre peut libérer "
+                f"<b>{_eur(e['liberable'])} €</b> ({e['candidats']} "
+                f"position(s) au-delà de {e.get('marge_min_r', 1):.0f} R).")
+        elif v == "sature":
+            lignes.append(
+                "⛔ Soupape d'équilibre : <b>aucun candidat</b> — aucune "
+                f"position n'atteint {e.get('marge_min_r', 1):.0f} R. Elle se "
+                "déclenchera, ne trouvera rien, et le refus tiendra.")
+
+    if len(mesures) > 1:
+        lignes.append("")
+        if complet:
+            lignes.append(f"<b>Total tous comptes : {_eur(total)} €</b>")
+        else:
+            # ⛔ Sommer ce qui se lit et taire le reste rendrait un total
+            # crédible et faux — plus dangereux qu'une absence de total :
+            # personne ne se méfie d'un chiffre qui s'affiche.
+            lignes += [
+                "⛔ <b>Total tous comptes : impossible</b> — un compte au "
+                "moins n'a pas pu être mesuré.",
+                "Sommer les autres donnerait un chiffre crédible et faux.",
+            ]
+
+    return "\n".join(lignes)
+
+
+async def _build_risque_text() -> str:
+    """Le message complet. Sort le calcul bloquant de la boucle d'événements."""
+    mesures = await asyncio.to_thread(_mesurer_risque_destinations)
+    return _formater_risque(mesures)
+
+
 @app.post("/api/telegram/sales-webhook")
 async def api_telegram_sales_webhook(request: Request):
     """Webhook Telegram pour le bot sales (@xav_scalping_radar_sales_bot).
@@ -2855,8 +3009,12 @@ async def api_telegram_sales_webhook(request: Request):
     TELEGRAM_SALES_WEBHOOK_SECRET (si configuré). Filtre par
     `chat.id == SALES_TELEGRAM_CHAT_ID` pour ignorer toute autre source.
 
-    Commandes reconnues : `recap`, `/recap`, `Recap` → renvoie le daily recap
-    via `send_sales_text`. Tout autre message est ignoré (no-op).
+    Commandes reconnues :
+    - `recap`, `/recap`, `Recap` → le daily recap ;
+    - `risque`, `/risque`, `risk`, `/risk` → le risque engagé cumulé à
+      l'instant t, par compte MT5 (2026-08-25).
+
+    Tout autre message est ignoré (no-op).
     """
     import hmac as _hmac
     from fastapi import HTTPException
@@ -2887,10 +3045,29 @@ async def api_telegram_sales_webhook(request: Request):
     if SALES_TELEGRAM_CHAT_ID and chat_id != str(SALES_TELEGRAM_CHAT_ID):
         return {"ok": True, "skipped": "chat_id_mismatch"}
 
-    if text.lower() in ("recap", "/recap"):
+    mot = text.lower().strip()
+
+    if mot in ("recap", "/recap"):
         recap_text = await _build_sales_recap_text()
         sent = await send_sales_text(recap_text)
         return {"ok": True, "command": "recap", "sent": bool(sent), "chars": len(recap_text)}
+
+    if mot in ("risque", "/risque", "risk", "/risk"):
+        try:
+            risque_text = await _build_risque_text()
+        except Exception as e:
+            # ⛔ Se taire ici rejouerait le garde-fou qui cachait un
+            # NameError : la question resterait sans réponse, et l'absence
+            # de réponse se lit comme « rien à signaler ».
+            logger.exception("commande risque: calcul échoué")
+            risque_text = (
+                "⚠️ <b>Risque engagé : calcul impossible</b>\n"
+                f"{type(e).__name__}: {str(e)[:300]}\n\n"
+                "Ce n'est pas « aucun risque » — c'est « on n'a pas pu lire »."
+            )
+        sent = await send_sales_text(risque_text)
+        return {"ok": True, "command": "risque", "sent": bool(sent),
+                "chars": len(risque_text)}
 
     return {"ok": True, "command": None}
 
