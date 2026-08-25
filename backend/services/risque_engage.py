@@ -12,14 +12,39 @@ implémentation serait l'endroit exact où les deux chiffres divergeraient.
 """
 from __future__ import annotations
 
+import json
 import logging
+import os
+import urllib.error
+import urllib.request
 
 logger = logging.getLogger(__name__)
+
+DELAI = 10
 
 DESTINATIONS_MESUREES = (
     "admin_live", "admin_legacy", "admin_kraken",
     "admin_kraken_spot", "admin_ibkr_us",
 )
+
+
+def _appel(dest, chemin: str):
+    """GET sur un bridge. Rend `(charge, lecture_reussie)`."""
+    url = os.environ.get(getattr(dest, "url_env", "") or "", "")
+    if not url:
+        return None, False
+    cle = os.environ.get(getattr(dest, "key_env", "") or "", "")
+    entete = getattr(dest, "key_header", "") or ""
+    entetes = {entete: cle} if cle and entete else {}
+    try:
+        rq = urllib.request.Request(url.rstrip("/") + chemin, headers=entetes)
+        with urllib.request.urlopen(rq, timeout=DELAI) as r:
+            if r.status != 200:
+                return None, False
+            return json.load(r), True
+    except (urllib.error.URLError, TimeoutError, ValueError, OSError) as e:
+        logger.info("risque_engage: %s injoignable (%s)", chemin, e)
+        return None, False
 
 
 def evaluation_illisible(devise: str = "EUR") -> dict:
@@ -39,8 +64,97 @@ def _dialecte_mt5(dest) -> dict:
     return e
 
 
+def risque_position_stop(entree, stop, taille) -> float | None:
+    """`|entrée − stop| × taille`, en devise de cotation.
+
+    ⛔ Rend `None`, jamais `0.0`, dès qu'une donnée manque : zéro dirait
+    « aucun risque » quand la vérité est « on ne sait pas ». Seul un stop
+    EXACTEMENT à l'entrée rend un vrai zéro — la position ne peut plus perdre,
+    et c'est une mesure.
+    """
+    try:
+        e, s, t = float(entree), float(stop), float(taille)
+    except (TypeError, ValueError):
+        return None
+    if e <= 0 or t <= 0 or s < 0:
+        return None
+    return abs(e - s) * t
+
+
+def _stops_reduce_only(charge: dict) -> dict:
+    """`{symbole: prix de déclenchement}` depuis les ordres vivants.
+
+    ⛔ Un ordre ne protège une position que s'il la RÉDUIT. Un ordre d'entrée
+    en attente sur le même symbole n'est pas une protection ; le compter ferait
+    passer pour bornée une position qui ne l'est pas.
+    """
+    stops = {}
+    for o in (charge or {}).get("orders") or []:
+        if not isinstance(o, dict):
+            continue
+        if not o.get("reduceOnly"):
+            continue
+        if (o.get("orderType") or "").lower() not in ("stp", "stop"):
+            continue
+        sym, prix = o.get("symbol"), o.get("stopPrice")
+        if sym and prix is not None:
+            try:
+                stops[sym] = float(prix)
+            except (TypeError, ValueError):
+                continue
+    return stops
+
+
+def evaluer_positions_stop(positions, stops, devise,
+                           cle_symbole="symbol", cle_entree="price",
+                           cle_taille="size") -> dict:
+    """Somme les risques de positions dont le stop vit dans un ordre séparé.
+
+    ⛔ Pas de plafond sur ces destinations : `plafond`, `pct` et `restant`
+    valent `None`. Inventer un pourcentage donnerait un chiffre d'apparence
+    comparable à MT5 sans mesurer la même chose.
+    """
+    total, nues, non_mesurables = 0.0, 0, 0
+    for p in positions or []:
+        if not isinstance(p, dict):
+            non_mesurables += 1
+            continue
+        sym = p.get(cle_symbole)
+        if sym not in stops:
+            nues += 1
+            continue
+        r = risque_position_stop(p.get(cle_entree), stops[sym], p.get(cle_taille))
+        if r is None:
+            non_mesurables += 1
+            continue
+        total += r
+    return {
+        "lisible": True,
+        "indecidable": bool(nues or non_mesurables),
+        "risque_total": total, "plafond": None, "pct": None, "restant": None,
+        "nues": nues, "non_mesurables": non_mesurables,
+        "positions": len(positions or []),
+        "candidats": 0, "liberable": 0.0, "login": None, "devise": devise,
+        "sans_plafond": True,
+    }
+
+
 def _dialecte_kraken_futures(dest) -> dict:
-    return evaluation_illisible("USD")      # Task 2
+    """Kraken Futures : ni profit, ni prix courant dans la position — le
+    stop vit dans un ordre `reduceOnly` séparé, lu sur `/openorders`.
+
+    ⛔ Aucun changement de bridge : `/openorders` expose déjà `stopPrice`,
+    `reduceOnly` et `orderType`. Les tailles PF_* sont en actif de base
+    direct, donc aucun multiplicateur de contrat.
+    """
+    pos, ok = _appel(dest, "/positions")
+    if not ok or not isinstance(pos, dict) or not isinstance(pos.get("positions"), list):
+        return evaluation_illisible("USD")
+    oo, ok = _appel(dest, "/openorders")
+    if not ok or not isinstance(oo, dict):
+        return evaluation_illisible("USD")
+    return evaluer_positions_stop(pos.get("positions"), _stops_reduce_only(oo),
+                                  devise="USD")
 
 
 def _dialecte_kraken_spot(dest) -> dict:

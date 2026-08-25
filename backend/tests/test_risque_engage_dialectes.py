@@ -68,3 +68,77 @@ def test_le_filtre_laisse_MT5_intact():
     assert verdict_destination(
         {"lisible": True, "indecidable": False, "pct": 40.0}, 72.0) == "ok"
     assert verdict_destination({"lisible": False}, 72.0) == "illisible"
+
+
+# --------------------------------------------------------------------------
+# Kraken Futures — |entrée − stop| × taille
+# --------------------------------------------------------------------------
+
+def test_le_cas_REEL_du_25_08_DOT():
+    """PF_DOTUSD : entrée 0,9507, stop 0,7136, taille 2,2 ⇒ 0,5216 USD.
+    Mesuré en production le 25/08."""
+    from backend.services.risque_engage import risque_position_stop
+    assert risque_position_stop(0.9507, 0.7136, 2.2) == pytest.approx(0.5216, abs=1e-4)
+
+
+def test_le_cas_REEL_du_25_08_PAXG():
+    from backend.services.risque_engage import risque_position_stop
+    assert risque_position_stop(4608.0, 4312.2, 0.003) == pytest.approx(0.8874, abs=1e-4)
+
+
+def test_un_stop_A_L_ENTREE_est_un_VRAI_zero():
+    """Le stop ramené au prix d'entrée : la position ne peut plus perdre.
+    C'est une mesure, pas une faute de mesure."""
+    from backend.services.risque_engage import risque_position_stop
+    assert risque_position_stop(1.2345, 1.2345, 10.0) == 0.0
+
+
+@pytest.mark.parametrize("entree,stop,taille", [
+    (None, 0.7, 2.2), (0.95, None, 2.2), (0.95, 0.7, None),
+    (0.95, 0.7, 0.0), (0.0, 0.7, 2.2),
+])
+def test_une_donnee_manquante_rend_None_JAMAIS_zero(entree, stop, taille):
+    """⛔ Zéro dirait « aucun risque ». None dit « on ne sait pas »."""
+    from backend.services.risque_engage import risque_position_stop
+    assert risque_position_stop(entree, stop, taille) is None
+
+
+def test_seuls_les_stops_reduceOnly_comptent():
+    """Un ordre d'ENTRÉE en attente sur le même symbole n'est pas une
+    protection — le compter en ferait une, et la position passerait pour
+    bornée alors qu'elle ne l'est pas."""
+    from backend.services.risque_engage import _stops_reduce_only
+    charge = {"orders": [
+        {"symbol": "PF_DOTUSD", "orderType": "stp", "reduceOnly": True,
+         "stopPrice": 0.7136},
+        {"symbol": "PF_SOLUSD", "orderType": "stp", "reduceOnly": False,
+         "stopPrice": 100.0},
+        {"symbol": "PF_ETHUSD", "orderType": "lmt", "reduceOnly": True,
+         "stopPrice": None},
+    ]}
+    assert _stops_reduce_only(charge) == {"PF_DOTUSD": 0.7136}
+
+
+def test_une_position_sans_stop_rend_le_compte_INDECIDABLE():
+    from backend.services.risque_engage import evaluer_positions_stop
+    e = evaluer_positions_stop(
+        positions=[{"symbol": "PF_DOTUSD", "price": 0.9507, "size": 2.2}],
+        stops={}, devise="USD")
+    assert e["nues"] == 1
+    assert e["indecidable"] is True
+    assert e["pct"] is None
+
+
+def test_sans_plafond_il_n_y_a_ni_pct_ni_restant():
+    """⛔ Kraken n'a pas de garde-fou de risque engagé. Inventer un
+    pourcentage donnerait un chiffre comparable à celui de MT5 sans mesurer
+    la même chose."""
+    from backend.services.risque_engage import evaluer_positions_stop
+    e = evaluer_positions_stop(
+        positions=[{"symbol": "PF_DOTUSD", "price": 0.9507, "size": 2.2}],
+        stops={"PF_DOTUSD": 0.7136}, devise="USD")
+    assert e["risque_total"] == pytest.approx(0.5216, abs=1e-4)
+    assert e["plafond"] is None
+    assert e["pct"] is None
+    assert e["restant"] is None
+    assert e["indecidable"] is False
