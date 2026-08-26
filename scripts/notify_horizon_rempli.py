@@ -36,6 +36,12 @@ un passage à blanc ne peut rien consommer. Le seul état persisté est « la
 confirmation a-t-elle déjà été envoyée » et l'instant de la dernière alerte —
 ni l'un ni l'autre n'est écrit en `DRY_RUN`.
 
+## ⛔ Texte SIMPLE, pas de balises
+
+Le corps est `html.escape`é côté serveur : une balise n'y est pas interprétée,
+elle s'affiche telle quelle. Mesuré le 26/08 — un corps `AB<b>CD</b>` de 11
+caractères en pèse 23 une fois échappé. Un test le verrouille.
+
 Usage :
     python notify_horizon_rempli.py
     DRY_RUN=1 python notify_horizon_rempli.py
@@ -99,14 +105,14 @@ def juger(recents: list[dict], essai_n_obs: int, essai_min: int,
             "action": "alerte",
             "manquants": len(manquants), "remplis": len(remplis),
             "message": (
-                f"⚠️ <b>L'horizon ne se remplit plus</b>\n\n"
+                f"⚠️ L'horizon ne se remplit plus\n\n"
                 f"Sur les {len(recents)} derniers trades automatiques, "
-                f"<b>{len(manquants)} n'ont pas d'horizon</b> enregistré.\n\n"
-                f"Sans lui, l'essai <code>{ESSAI}</code> ne les comptera jamais : "
+                f"{len(manquants)} n'ont pas d'horizon enregistré.\n\n"
+                f"Sans lui, l'essai {ESSAI} ne les comptera jamais : "
                 f"il attend des clôtures marquées 4 h, et une clôture non marquée "
                 f"n'en est pas une.\n\n"
-                f"Où regarder : la table <code>mt5_pushes</code> — si la colonne "
-                f"<code>horizon</code> y est vide aussi, c'est le dispatch qui ne "
+                f"Où regarder : la table mt5_pushes — si la colonne "
+                f"horizon y est vide aussi, c'est le dispatch qui ne "
                 f"la transmet plus. Si elle y est pleine, c'est la jointure par le "
                 f"ticket qui a lâché."),
         }
@@ -117,15 +123,15 @@ def juger(recents: list[dict], essai_n_obs: int, essai_min: int,
             "action": "alerte",
             "manquants": 0, "remplis": len(remplis),
             "message": (
-                f"⚠️ <b>L'essai n'accumule rien</b>\n\n"
-                f"L'or a clôturé <b>{clotures_or_depuis_declaration} fois</b> depuis "
-                f"la déclaration, et l'essai <code>{ESSAI}</code> en compte "
-                f"<b>0 sur {essai_min}</b>.\n\n"
+                f"⚠️ L'essai n'accumule rien\n\n"
+                f"L'or a clôturé {clotures_or_depuis_declaration} fois depuis "
+                f"la déclaration, et l'essai {ESSAI} en compte "
+                f"0 sur {essai_min}.\n\n"
                 f"Ça ne ressemble pas à une panne — ça ressemble à un marché calme. "
                 f"C'est justement pour ça que personne ne le verrait.\n\n"
                 f"Cause probable : les clôtures de l'or ne portent pas "
-                f"<code>horizon = 4h</code>. Vérifier <code>mt5_pushes</code> puis "
-                f"<code>personal_trades.horizon</code> sur XAU/USD."),
+                f"horizon = 4h. Vérifier mt5_pushes puis "
+                f"personal_trades.horizon sur XAU/USD."),
         }
 
     if remplis and not confirmation_deja_envoyee:
@@ -133,12 +139,12 @@ def juger(recents: list[dict], essai_n_obs: int, essai_min: int,
             "action": "confirmation",
             "manquants": 0, "remplis": len(remplis),
             "message": (
-                f"✅ <b>La chaîne de l'horizon fonctionne</b>\n\n"
-                f"<b>{len(remplis)} trades</b> viennent d'être enregistrés avec leur "
+                f"✅ La chaîne de l'horizon fonctionne\n\n"
+                f"{len(remplis)} trades viennent d'être enregistrés avec leur "
                 f"horizon. Avant le 26/08, cette information n'existait nulle part "
                 f"une fois le trade passé.\n\n"
-                f"L'essai <code>{ESSAI}</code> peut donc se remplir : "
-                f"<b>{essai_n_obs} sur {essai_min}</b> clôtures à ce jour.\n\n"
+                f"L'essai {ESSAI} peut donc se remplir : "
+                f"{essai_n_obs} sur {essai_min} clôtures à ce jour.\n\n"
                 f"Cette sonde se tait à partir de maintenant, sauf si ça casse."),
         }
 
@@ -233,7 +239,13 @@ def envoyer(titre: str, message: str) -> None:
     if os.environ.get("DRY_RUN") == "1":
         print(f"  [DRY_RUN] n'envoie pas :\n{message}\n")
         return
-    charge = json.dumps({"title": titre, "message": message}).encode()
+    # ⛔ La clé est `body`. Mesuré en production le 26/08 : `{"message": ...}`
+    # rend `chars: 10`, soit le TITRE SEUL — le corps est ignoré EN SILENCE.
+    # C'est le défaut que « prouver que l'alerte arrive » a fait tomber, et
+    # qu'aucun 200 n'aurait révélé.
+    charge = json.dumps({"title": titre, "body": message,
+                         "dedup_key": "sonde-horizon",
+                         "cooldown_seconds": COOLDOWN_SEC}).encode("utf-8")
     rq = urllib.request.Request(
         NOTIFY_URL, data=charge,
         headers={"Content-Type": "application/json"}, method="POST")

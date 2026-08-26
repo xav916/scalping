@@ -112,3 +112,52 @@ def test_le_message_dit_quoi_faire_pas_seulement_ce_qui_ne_va_pas():
               clotures_or_depuis_declaration=0, confirmation_deja_envoyee=True)
     assert v["action"] == "alerte"
     assert "mt5_pushes" in v["message"], "le message doit nommer où regarder"
+
+
+# ── Le contrat d'envoi ────────────────────────────────────────────────────
+#
+# ⛔ Défaut trouvé le 26/08 en prouvant que l'alerte ARRIVE, et pas seulement
+# qu'elle part : la sonde postait son texte sous la clé `message`, quand
+# l'endpoint lit `body`. Mesuré sur la production — `{"message": ...}` rend
+# `chars: 10`, soit le TITRE SEUL. L'alerte serait arrivée vide de son contenu,
+# et rien ne l'aurait signalé.
+
+def test_le_texte_part_sous_la_cle_body(monkeypatch):
+    """La clé attendue par l'endpoint est `body`. `message` est silencieusement
+    ignorée — le pire des deux comportements possibles."""
+    import json
+    from scripts import notify_horizon_rempli as sonde
+
+    captures = {}
+
+    class _Rep:
+        status = 200
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    def _faux_urlopen(rq, timeout=None):
+        captures["charge"] = json.loads(rq.data.decode("utf-8"))
+        return _Rep()
+
+    monkeypatch.setattr(sonde.urllib.request, "urlopen", _faux_urlopen)
+    monkeypatch.delenv("DRY_RUN", raising=False)
+    sonde.envoyer("Un titre", "Un corps qui doit arriver en entier.")
+
+    assert "body" in captures["charge"], "l'endpoint lit `body`, pas `message`"
+    assert captures["charge"]["body"] == "Un corps qui doit arriver en entier."
+
+
+def test_les_messages_ne_contiennent_pas_de_balises():
+    """⛔ Le corps est `html.escape`é côté serveur : une balise n'y est pas
+    interprétée, elle s'affiche telle quelle. Mesuré : un corps `AB<b>CD</b>`
+    de 11 caractères en pèse 23 une fois échappé."""
+    from scripts.notify_horizon_rempli import juger
+
+    cas = [
+        juger([{"pair": "XAU/USD", "horizon": None}], 0, 60, 0, True),
+        juger([{"pair": "XAU/USD", "horizon": "4h"}], 0, 60, 12, True),
+        juger([{"pair": "XAU/USD", "horizon": "4h"}], 0, 60, 0, False),
+    ]
+    for v in cas:
+        assert "<" not in v["message"] and ">" not in v["message"], \
+            f"balise dans : {v['message'][:60]}"
