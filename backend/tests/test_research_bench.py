@@ -270,12 +270,105 @@ def test_le_cli_refuse_proprement_de_rejouer_un_essai(_isolated_db, capsys):
     assert "Traceback" not in err
 
 
-def test_le_cli_rend_le_compteur(_isolated_db, capsys):
+def test_le_cli_rend_le_compteur_et_ses_plafonds(_isolated_db, capsys):
+    """Le plafond n'est plus un nombre unique : il dépend de la longueur
+    d'échantillon. Le CLI doit le montrer, sinon un lecteur croira à une barre
+    fixe et jugera le banc infranchissable."""
+    import re
     from backend.services import research_bench as rb
     from scripts.research import bench
 
-    rb.seed_legacy("journal", variants_declared=75, note="grille du 25/08")
+    rb.seed_legacy("journal", variants_declared=1226, note="dépouillement du 26/08")
     bench.main(["counter"])
     sortie = capsys.readouterr().out
-    assert "N = 75" in sortie
-    assert "+0.19" in sortie, "le plafond du hasard doit être affiché avec N"
+
+    assert "N = 1226" in sortie
+    plafonds = [float(x) for x in re.findall(r"^\s+\d+\s+([\d.]+)", sortie, re.M)]
+    assert len(plafonds) >= 4, "plusieurs longueurs d'échantillon doivent être montrées"
+    assert plafonds == sorted(plafonds, reverse=True),         "le plafond doit décroître quand l'échantillon s'allonge"
+
+
+# ── var_sr : le plafond doit dépendre de la longueur d'échantillon ────────
+#
+# ⛔ Le défaut trouvé le 26/08 en dépouillant le journal. `VAR_SR_REFERENCE` était
+# mesurée sur des fenêtres de 128 jours et servait à TOUS les essais. À N = 1 226,
+# elle exigeait un Sharpe annualisé de 5,0 — infranchissable, et pour une raison
+# qui n'a rien à voir avec le marché.
+
+def test_la_variance_sous_h0_decroit_en_un_sur_t():
+    """Sous H₀, la variance du Sharpe estimé vaut ~1/T. C'est ce qui rend le
+    plafond dépendant de la longueur d'échantillon, comme il doit l'être."""
+    from backend.services import research_bench as rb
+
+    assert rb.var_sr_h0(128) == pytest.approx(1 / 128, rel=1e-9)
+    assert rb.var_sr_h0(730) == pytest.approx(1 / 730, rel=1e-9)
+    assert rb.var_sr_h0(128) > rb.var_sr_h0(730)
+
+
+def test_la_valeur_theorique_est_de_l_ordre_de_celle_mesuree_a_128_jours():
+    """🔑 À T=128, 1/T vaut 0,0078 quand la grille du 25/08 mesurait 0,006286.
+    Que la dispersion observée entre variantes coïncide avec ce que le pur bruit
+    prédit est une confirmation de plus de l'absence d'edge — et la garantie que
+    le repli théorique ne sort pas de nulle part."""
+    from backend.services import research_bench as rb
+
+    assert rb.var_sr_h0(128) == pytest.approx(rb.VAR_SR_REFERENCE, rel=0.30)
+    assert rb.var_sr_h0(128) > rb.VAR_SR_REFERENCE, \
+        "le repli théorique doit être le plus SÉVÈRE des deux"
+
+
+def test_le_plafond_decroit_en_racine_de_t():
+    """Un essai jugé sur deux ans ne doit pas affronter la barre calibrée pour
+    quatre mois."""
+    from backend.services import research_bench as rb
+
+    court = rb.sharpe_attendu_sous_h0(rb.var_sr_h0(128), 1226)
+    long_ = rb.sharpe_attendu_sous_h0(rb.var_sr_h0(730), 1226)
+    assert long_ < court
+    assert long_ / court == pytest.approx((128 / 730) ** 0.5, rel=1e-6)
+
+
+def test_un_essai_long_est_juge_sur_sa_propre_longueur(_isolated_db):
+    """Le cœur du correctif : `evaluate` ne doit plus figer la variance."""
+    from backend.services import research_bench as rb
+
+    rb.declare("long", "…", selector=SEL, variants_declared=1, author="x", min_sample=40)
+    depart = datetime.now(timezone.utc)
+    for i in range(60):
+        _clore(_isolated_db, 4.0 if i % 3 else -3.0, depart + timedelta(days=i + 1))
+
+    r = rb.evaluate("long")
+    assert r["var_sr"] == pytest.approx(rb.var_sr_h0(r["T"]), rel=1e-9)
+    assert r["var_sr"] != rb.VAR_SR_REFERENCE
+
+
+def test_un_essai_peut_declarer_sa_propre_variance(_isolated_db):
+    """Quand un essai mesure la dispersion entre ses variantes, elle prime sur le
+    repli théorique — c'est une observation, elle vaut mieux qu'un modèle."""
+    from backend.services import research_bench as rb
+
+    rb.declare("mesure", "…", selector=SEL, variants_declared=12, author="x",
+               min_sample=3, var_sr=0.0021)
+    apres = datetime.now(timezone.utc)
+    for i in range(8):
+        _clore(_isolated_db, 6.0, apres + timedelta(days=i + 1))
+
+    r = rb.evaluate("mesure")
+    assert r["var_sr"] == pytest.approx(0.0021)
+
+
+def test_la_variance_declaree_est_scellee_avec_la_declaration(_isolated_db):
+    """Sinon on la baisse après coup pour faire passer un essai."""
+    from backend.services import research_bench as rb
+
+    rb.declare("mesure", "…", selector=SEL, variants_declared=3, author="x",
+               min_sample=2, var_sr=0.0080)
+    apres = datetime.now(timezone.utc)
+    for i in range(5):
+        _clore(_isolated_db, 6.0, apres + timedelta(days=i + 1))
+
+    with sqlite3.connect(_isolated_db) as c:
+        c.execute("UPDATE bench_trials SET var_sr = 0.00001 WHERE slug = 'mesure'")
+
+    with pytest.raises(rb.DeclarationAlteree):
+        rb.evaluate("mesure")

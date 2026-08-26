@@ -52,10 +52,11 @@ _GAMMA_EM = 0.5772156649015329
 #: Seuil de significativité. Bailey retient 0,95 ; on ne le desserre pas.
 DSR_SEUIL = 0.95
 
-#: Variance des Sharpe entre variantes, mesurée sur la grille de référence du
-#: 2026-08-25 (75 variantes, 128 jours). Sert de repli quand un essai ne fournit
-#: pas ses propres Sharpe par variante. **Inscrite telle quelle dans le verdict**
-#: — un lecteur doit pouvoir savoir d'où sort le chiffre qui l'a jugé.
+#: Variance des Sharpe entre variantes **mesurée** sur la grille de l'audit du
+#: 2026-08-25 (75 variantes, 128 jours). ⛔ **Valeur HISTORIQUE, plus le défaut.**
+#: Elle a servi à produire le `DSR = 0,350` publié, et sert d'ancrage de test —
+#: mais l'appliquer à tous les essais imposait à un essai de deux ans la barre
+#: calibrée pour quatre mois. Cf. `var_sr_h0`.
 VAR_SR_REFERENCE = 0.006286
 
 _ETAT_OUVERT, _ETAT_DEPENSE = "open", "spent"
@@ -102,9 +103,15 @@ def _ensure_schema() -> None:
                 dsr REAL, sr REAL, sr0 REAL, n_obs INTEGER,
                 n_trials_at_verdict INTEGER,
                 verdict_at TEXT,
-                note TEXT
+                note TEXT,
+                var_sr REAL
             )
         """)
+        # Migration : la colonne est arrivée le 2026-08-26, après que la table ait
+        # été créée en production. `CREATE TABLE IF NOT EXISTS` ne la poserait pas.
+        colonnes = {r[1] for r in c.execute("PRAGMA table_info(bench_trials)")}
+        if "var_sr" not in colonnes:
+            c.execute("ALTER TABLE bench_trials ADD COLUMN var_sr REAL")
         c.execute("""
             CREATE TABLE IF NOT EXISTS bench_legacy_grants (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -124,7 +131,8 @@ def _now() -> str:
 
 
 def _empreinte(slug: str, hypothesis: str, selector: dict,
-               variants: int, min_sample: int, declared_at: str) -> str:
+               variants: int, min_sample: int, declared_at: str,
+               var_sr: Optional[float] = None) -> str:
     """SHA-256 des champs de déclaration.
 
     ⛔ `sort_keys=True` : sans ordre stable, un aller-retour JSON changerait
@@ -133,7 +141,7 @@ def _empreinte(slug: str, hypothesis: str, selector: dict,
     charge = json.dumps(
         {"slug": slug, "hypothesis": hypothesis, "selector": selector,
          "variants_declared": variants, "min_sample": min_sample,
-         "declared_at": declared_at},
+         "declared_at": declared_at, "var_sr": var_sr},
         sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(charge.encode("utf-8")).hexdigest()
 
@@ -147,6 +155,27 @@ def _ligne(row: sqlite3.Row) -> dict[str, Any]:
 
 
 # ─── Le calcul ──────────────────────────────────────────────────────────
+
+
+def var_sr_h0(T: int) -> float:
+    """Variance du Sharpe estimé sous H₀, sur un échantillon de `T` observations.
+
+    ⛔ **Le correctif du 2026-08-26.** Le banc figeait cette variance à
+    `VAR_SR_REFERENCE`, mesurée sur des fenêtres de 128 jours. À N = 1 226, le
+    plafond qui en découlait réclamait un Sharpe **annualisé de 5,0** — hors de
+    portée, et pour une raison qui n'a rien à voir avec le marché : un essai jugé
+    sur deux ans affrontait la barre calibrée pour quatre mois.
+
+    Sous l'hypothèse nulle, `Var(SR_hat) ≈ 1/T`. Le plafond décroît donc en
+    `1/√T` : plus l'échantillon est long, moins le bruit peut imiter un edge.
+
+    🔑 À T = 128, `1/T = 0,0078` quand la grille du 25/08 mesurait **0,006286**.
+    Que la dispersion réellement observée entre 75 variantes coïncide avec ce que
+    le pur bruit prédit est une confirmation de plus de l'absence d'edge — et la
+    garantie que ce repli théorique ne sort pas de nulle part. Il est aussi le
+    plus **sévère** des deux, ce qui est le bon sens du repli.
+    """
+    return 1.0 / max(1, int(T))
 
 
 def sharpe_attendu_sous_h0(var_sr: float, n_trials: int) -> float:
@@ -186,23 +215,31 @@ def deflated_sharpe(sr: float, T: int, skew: float, kurt: float,
 
 
 def declare(slug: str, hypothesis: str, selector: dict, variants_declared: int,
-            author: str, min_sample: int = 30) -> int:
-    """Pré-enregistre une hypothèse. C'est l'instant qui fixe la frontière."""
+            author: str, min_sample: int = 30,
+            var_sr: Optional[float] = None) -> int:
+    """Pré-enregistre une hypothèse. C'est l'instant qui fixe la frontière.
+
+    `var_sr` : dispersion des Sharpe **mesurée** entre les variantes de l'essai,
+    quand elle est connue. Une observation vaut mieux qu'un modèle. Laissée à
+    `None`, le verdict retombe sur `var_sr_h0(T)`. Elle est scellée avec le reste
+    de la déclaration — sinon on la baisserait après coup pour faire passer.
+    """
     _ensure_schema()
     if variants_declared < 1:
         raise ValueError("variants_declared doit valoir au moins 1")
     if get_trial(slug) is not None:
         raise ValueError(f"L'essai « {slug} » existe déjà — un slug ne se redéclare pas")
     declared_at = _now()
-    h = _empreinte(slug, hypothesis, selector, variants_declared, min_sample, declared_at)
+    h = _empreinte(slug, hypothesis, selector, variants_declared, min_sample,
+                   declared_at, var_sr)
     with sqlite3.connect(_db_path()) as c:
         cur = c.execute(
             """INSERT INTO bench_trials (slug, declared_at, author, hypothesis, selector,
-                    variants_declared, min_sample, declaration_hash, status)
-               VALUES (?,?,?,?,?,?,?,?,?)""",
+                    variants_declared, min_sample, declaration_hash, status, var_sr)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
             (slug, declared_at, author, hypothesis,
              json.dumps(selector, sort_keys=True, ensure_ascii=False, separators=(",", ":")),
-             variants_declared, min_sample, h, _ETAT_OUVERT))
+             variants_declared, min_sample, h, _ETAT_OUVERT, var_sr))
     logger.warning("banc: essai « %s » déclaré — %d variantes, N devient %d",
                    slug, variants_declared, counter())
     return int(cur.lastrowid)
@@ -318,7 +355,8 @@ def evaluate(slug: str) -> dict[str, Any]:
         raise EssaiDepense(f"L'essai « {slug} » est {t['status']} — il ne se rejoue pas")
 
     attendu = _empreinte(t["slug"], t["hypothesis"], t["selector"],
-                         t["variants_declared"], t["min_sample"], t["declared_at"])
+                         t["variants_declared"], t["min_sample"], t["declared_at"],
+                         t.get("var_sr"))
     if attendu != t["declaration_hash"]:
         raise DeclarationAlteree(
             f"La déclaration de « {slug} » a été modifiée après coup — essai nul")
@@ -346,7 +384,10 @@ def evaluate(slug: str) -> dict[str, Any]:
         sr, skew, kurt = 0.0, 0.0, 3.0
 
     n_trials = counter()
-    o = deflated_sharpe(sr, len(r), skew, kurt, VAR_SR_REFERENCE, n_trials)
+    # Une dispersion mesurée entre variantes prime ; sinon le repli théorique,
+    # qui se calibre sur la longueur de CET échantillon.
+    var = t.get("var_sr") if t.get("var_sr") is not None else var_sr_h0(len(r))
+    o = deflated_sharpe(sr, len(r), skew, kurt, var, n_trials)
     verdict = ("passé — le Sharpe survit à %d essais" if o["passed"]
                else "refusé — sous le plafond du hasard à %d essais") % n_trials
 

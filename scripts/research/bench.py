@@ -31,9 +31,15 @@ def _fmt(x, n=4):
 
 def cmd_counter(_):
     n = rb.counter()
-    print(f"N = {n} variantes déclarées")
-    print(f"Plafond du hasard à ce N : Sharpe/jour {rb.sharpe_attendu_sous_h0(rb.VAR_SR_REFERENCE, n):+.4f}")
-    print(f"(variance de référence {rb.VAR_SR_REFERENCE}, mesurée le 2026-08-25)")
+    print(f"N = {n} variantes déclarées\n")
+    print("Plafond du hasard, selon la longueur d'échantillon de l'essai :")
+    print(f"  {'jours':>6} {'Sharpe/jour':>13} {'annualisé':>11}")
+    for T in (128, 182, 365, 730, 1095):
+        s0 = rb.sharpe_attendu_sous_h0(rb.var_sr_h0(T), n)
+        print(f"  {T:>6} {s0:>13.4f} {s0 * (365 ** 0.5):>11.2f}")
+    print("\n⛔ Le plafond décroît en 1/√T : un essai long est jugé sur une barre")
+    print("   plus basse. Un essai qui déclare la dispersion mesurée entre ses")
+    print("   variantes (--var-sr) est jugé sur elle plutôt que sur ce repli.")
 
 
 def cmd_declare(a):
@@ -46,7 +52,8 @@ def cmd_declare(a):
         selector["min_confidence"] = a.confiance
     if a.destinations:
         selector["destinations"] = a.destinations
-    rb.declare(a.slug, a.hypothese, selector, a.variantes, a.auteur, a.echantillon)
+    rb.declare(a.slug, a.hypothese, selector, a.variantes, a.auteur, a.echantillon,
+               var_sr=a.var_sr)
     t = rb.get_trial(a.slug)
     print(f"Essai « {a.slug} » ouvert le {t['declared_at'][:19]}")
     print(f"  sélecteur   {json.dumps(t['selector'], ensure_ascii=False)}")
@@ -96,6 +103,8 @@ def cmd_evaluate(a):
     print(f"« {a.slug} » — {r['verdict']}")
     print(f"  clôtures    {r['n_obs']}   P&L {r['sum_pnl']:+.2f} €   jours {r['T']}")
     print(f"  Sharpe/jour {_fmt(r['sr'])}   plafond H0 {_fmt(r['sr0'])}   N={r['n_trials']}")
+    print(f"  variance retenue {r['var_sr']:.6f}"
+          f"{'  (declaree)' if r['var_sr'] != rb.var_sr_h0(r['T']) else '  (repli 1/T)'}")
     print(f"  dissymétrie {r['skew']:+.3f}   aplatissement {r['kurt']:.3f}")
     print(f"  DSR         {r['dsr']:.4f}   seuil {rb.DSR_SEUIL}")
     print("\n" + ("✅ PASSÉ" if r["passed"] else "⛔ REFUSÉ"))
@@ -135,6 +144,9 @@ def main(argv=None):
     d.add_argument("--confiance", type=float)
     d.add_argument("--destinations", nargs="*")
     d.add_argument("--echantillon", type=int, default=30)
+    d.add_argument("--var-sr", dest="var_sr", type=float,
+                   help="dispersion MESUREE des Sharpe entre les variantes de cet essai ; "
+                        "sans elle, le repli theorique 1/T s'applique")
     d.set_defaults(f=cmd_declare)
 
     l = sub.add_parser("list", help="les essais du registre")
