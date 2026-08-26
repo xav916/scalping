@@ -107,29 +107,43 @@ dépouillement plus fin ne pourra que faire monter N.
 
 ## Conséquence chiffrée
 
-| | N | Plafond du hasard (Sharpe/jour) | DSR de la meilleure variante connue |
-|---|---:|---:|---:|
-| Avant | 75 | +0,1925 | 0,350 |
-| **Après** | **1 226** | **+0,2626** | **0,054** |
+Le DSR de la meilleure variante jamais trouvée (Sharpe/jour +0,1703 sur 128 jours) :
 
-⛔ **Lu tel quel, ce seuil correspond à un Sharpe annualisé de 5,0** — hors de portée
-d'un système retail. Ce n'est pas une propriété du marché : c'est une propriété de
-la manière dont `var_sr` est actuellement figée. Voir la réserve ci-dessous.
+| | N | variance retenue | Plafond du hasard | DSR |
+|---|---:|---|---:|---:|
+| Publié le 25/08 | 75 | 0,006286 (mesurée) | +0,1925 | 0,350 |
+| Après dépouillement | 1 226 | 0,006286 (mesurée) | +0,2626 | 0,054 |
+| **Tel que le banc juge aujourd'hui** | **1 226** | **1/T (repli)** | **+0,2928** | **0,017** |
 
-## ⛔ Réserve méthodologique — `var_sr` ne doit pas rester figée
+## Le plafond dépend de la longueur d'échantillon
 
-Le banc utilise `VAR_SR_REFERENCE = 0.006286`, la variance des Sharpe entre variantes
-**mesurée sur des fenêtres de 128 jours**. Or sous l'hypothèse nulle, la variance du
-Sharpe estimé vaut approximativement `1/T` : à T = 128, `1/T = 0,0078` — soit
-pratiquement la valeur mesurée. *(Au passage : que la dispersion observée entre
-variantes coïncide avec ce que le pur bruit prédit est une confirmation de plus de
-l'absence d'edge.)*
+Correctif du 2026-08-26 (`c224dcd`), écrit à la suite de ce dépouillement.
 
-Conséquence : **le plafond décroît en `1/√T`**. Un essai jugé sur deux ans devrait
-affronter un seuil bien plus bas qu'un essai jugé sur quatre mois. En gelant
-`var_sr` à sa valeur 128 jours, le banc impose à tous la barre calibrée pour le plus
-court — et devient impossible à franchir pour de mauvaises raisons.
+`VAR_SR_REFERENCE` était figée à 0,006286, la dispersion **mesurée** sur des
+fenêtres de 128 jours, et s'appliquait à tous les essais. Un essai jugé sur deux ans
+affrontait donc la barre calibrée pour quatre mois, et le banc devenait
+infranchissable pour une raison sans rapport avec le marché.
 
-**À corriger avant que le premier essai n'arrive à échéance** : dériver `var_sr` de
-la longueur d'échantillon de l'essai, ou de ses propres variantes quand il en
-déclare plusieurs.
+Sous H₀, `Var(SR_hat) ≈ 1/T`. Le plafond décroît donc en **1/√T** :
+
+| Échantillon | Plafond (Sharpe/jour) | Annualisé |
+|---:|---:|---:|
+| 128 j | 0,2928 | 5,59 |
+| 365 j | 0,1734 | 3,31 |
+| 730 j | 0,1226 | 2,34 |
+| 1 095 j | 0,1001 | 1,91 |
+
+🔑 À T = 128, `1/T = 0,0078` quand la grille du 25/08 mesurait **0,006286**. Que la
+dispersion réellement observée entre 75 variantes coïncide avec ce que le pur bruit
+prédit est une confirmation de plus de l'absence d'edge. Le repli théorique est de
+surcroît le plus **sévère** des deux — ce qui est le bon sens d'un repli.
+
+Un essai qui mesure la dispersion entre ses propres variantes peut la déclarer
+(`--var-sr`) : elle prime alors sur le repli, et elle est scellée dans l'empreinte
+de déclaration — sinon on la baisserait après coup pour faire passer un essai.
+
+⚠️ **Ce que cela veut dire concrètement.** Même avec le correctif, prouver un edge
+demande désormais soit **trois ans d'observation** pour un Sharpe annualisé de 1,9,
+soit un edge franchement supérieur sur une fenêtre plus courte. C'est le prix de
+1 226 essais déjà consommés — et c'est un prix qui ne se rembourse pas : le compteur
+est un cliquet.
