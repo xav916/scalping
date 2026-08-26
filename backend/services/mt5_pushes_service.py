@@ -49,10 +49,21 @@ def _ensure_schema() -> None:
                 pushed_at TEXT NOT NULL,
                 ok INTEGER NOT NULL,
                 bridge_response TEXT,
+                horizon TEXT,
+                pattern TEXT,
+                mt5_ticket INTEGER,
                 UNIQUE(destination_id, date, pair, direction, entry_price_5dp)
             )
             """
         )
+        # Migration 2026-08-26 : l'horizon et le motif n'existaient nulle part
+        # dans la chaîne persistée. Ils ne sont connus qu'ICI, au moment du
+        # dispatch, et le ticket est le seul identifiant partagé avec le trade.
+        cols = {r[1] for r in c.execute("PRAGMA table_info(mt5_pushes)")}
+        for nom, typ in (("horizon", "TEXT"), ("pattern", "TEXT"),
+                         ("mt5_ticket", "INTEGER")):
+            if nom not in cols:
+                c.execute(f"ALTER TABLE mt5_pushes ADD COLUMN {nom} {typ}")
         c.execute(
             """
             CREATE INDEX IF NOT EXISTS idx_mt5_pushes_lookup
@@ -67,8 +78,14 @@ def try_register_push(
     pair: str,
     direction: str,
     entry_price_5dp: str,
+    horizon: str | None = None,
+    pattern: str | None = None,
 ) -> bool:
     """Tente d'enregistrer un push (status PENDING / ok=0).
+
+    ``horizon`` et ``pattern`` viennent du setup, seul endroit de la chaîne où
+    ils sont encore connus. Sans eux, aucune hypothèse par horizon n'est
+    mesurable en aval — cf. `backend/tests/test_horizon_trace.py`.
 
     Returns
     -------
@@ -89,8 +106,8 @@ def try_register_push(
                 """
                 INSERT OR IGNORE INTO mt5_pushes (
                     destination_id, date, pair, direction, entry_price_5dp,
-                    pushed_at, ok, bridge_response
-                ) VALUES (?, ?, ?, ?, ?, ?, 0, NULL)
+                    pushed_at, ok, bridge_response, horizon, pattern
+                ) VALUES (?, ?, ?, ?, ?, ?, 0, NULL, ?, ?)
                 """,
                 (
                     destination_id,
@@ -99,6 +116,8 @@ def try_register_push(
                     direction,
                     entry_price_5dp,
                     datetime.now(timezone.utc).isoformat(),
+                    horizon,
+                    pattern,
                 ),
             )
             return cur.rowcount > 0
@@ -123,17 +142,27 @@ def update_push_result(
     """
     try:
         body = json.dumps(response, default=str)[:500] if response else None
+        # Le ticket est rangé en COLONNE, pas laissé dans le JSON : une jointure
+        # qui oblige à ré-analyser du texte à chaque lecture n'est jamais faite.
+        ticket = None
+        if response:
+            try:
+                ticket = int(response.get("ticket")) if response.get("ticket") else None
+            except (TypeError, ValueError):
+                ticket = None
         with sqlite3.connect(_db_path()) as c:
             c.execute(
                 """
                 UPDATE mt5_pushes
-                SET ok = ?, bridge_response = ?
+                SET ok = ?, bridge_response = ?,
+                    mt5_ticket = COALESCE(?, mt5_ticket)
                 WHERE destination_id = ? AND date = ? AND pair = ?
                   AND direction = ? AND entry_price_5dp = ?
                 """,
                 (
                     1 if ok else 0,
                     body,
+                    ticket,
                     destination_id,
                     push_date,
                     pair,
@@ -195,3 +224,22 @@ def purge_old_pushes(retention_days: int = 30) -> int:
     except Exception as e:
         logger.debug(f"mt5_pushes: purge_old_pushes failed: {e}")
         return 0
+
+
+def get_push(destination_id: str, push_date: str, pair: str, direction: str,
+             entry_price_5dp: str) -> dict[str, Any] | None:
+    """La ligne de poussée, ou ``None``. Sert au diagnostic et aux tests."""
+    try:
+        _ensure_schema()
+        with sqlite3.connect(_db_path()) as c:
+            c.row_factory = sqlite3.Row
+            r = c.execute(
+                """SELECT * FROM mt5_pushes
+                    WHERE destination_id = ? AND date = ? AND pair = ?
+                      AND direction = ? AND entry_price_5dp = ?""",
+                (destination_id, push_date, pair, direction, entry_price_5dp),
+            ).fetchone()
+        return dict(r) if r else None
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"mt5_pushes: get_push failed: {e}")
+        return None

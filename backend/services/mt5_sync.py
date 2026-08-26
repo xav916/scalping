@@ -41,6 +41,36 @@ _STATE_PATH = Path("/app/data/mt5_sync_state.json") if Path("/app").exists() els
 _STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
+
+def horizon_et_motif_du_push(ticket) -> tuple[str | None, str | None]:
+    """``(horizon, motif)`` de la poussée qui a produit ce ticket.
+
+    ⛔ **La jointure qui manquait.** Avant le 2026-08-26, l'horizon d'un setup
+    mourait avec l'objet en mémoire : ni `personal_trades` ni les 390 676 lignes
+    de `signals` ne le portaient. L'hypothèse « le 4 h sur l'or porte un edge »
+    n'était donc pas mesurable.
+
+    Le motif, lui, était rempli par une recherche après coup dans `signals` via
+    `signal_id` — laquelle n'appariait que **16 à 35 %** des trades selon le
+    mois, **0 % en juillet**. La poussée, elle, connaît les deux de source sûre.
+
+    ⛔ Rend ``(None, None)`` quand rien ne correspond. Une absence se dit, elle
+    ne se devine pas : `MANUAL` comme branche par défaut a déjà coûté assez cher.
+    """
+    if ticket in (None, "", 0):
+        return (None, None)
+    try:
+        from backend.services.mt5_pushes_service import _ensure_schema
+        _ensure_schema()
+        with sqlite3.connect(_db_path()) as c:
+            r = c.execute(
+                "SELECT horizon, pattern FROM mt5_pushes WHERE mt5_ticket = ? "
+                "ORDER BY id DESC LIMIT 1", (int(ticket),)).fetchone()
+        return (r[0], r[1]) if r else (None, None)
+    except Exception as e:  # noqa: BLE001 — un diagnostic ne casse pas un dispatch
+        logger.debug(f"mt5_sync: horizon_et_motif_du_push({ticket}) failed: {e}")
+        return (None, None)
+
 def _load_last_synced_id() -> int:
     """Compat legacy : retourne last_id du bridge admin_legacy uniquement."""
     return _load_state().get("bridges", {}).get("legacy", 0)
@@ -207,17 +237,29 @@ def _upsert_open_trade(row: dict[str, Any], user: str,
     except Exception as e:
         logger.debug(f"mt5_sync: find_signal_for_order failed: {e}")
 
+    # L'horizon et le motif viennent de la POUSSÉE, seule source qui les
+    # connaisse de première main. La recherche après coup dans `signals` via
+    # `signal_id` n'appariait que 16 à 35 % des trades selon le mois — 0 % en
+    # juillet. Elle reste en repli pour le motif, jamais pour l'horizon :
+    # `signals` ne l'a jamais porté.
+    horizon, motif_pousse = horizon_et_motif_du_push(ticket)
+    if motif_pousse:
+        signal_pattern = motif_pousse
+
     with sqlite3.connect(_db_path()) as c:
         from backend.services.trade_log_service import assurer_colonne_destination
         assurer_colonne_destination(c)
+        cols_pt = {r[1] for r in c.execute("PRAGMA table_info(personal_trades)")}
+        if "horizon" not in cols_pt:
+            c.execute("ALTER TABLE personal_trades ADD COLUMN horizon TEXT")
         c.execute("""
             INSERT OR IGNORE INTO personal_trades (
                 user, pair, direction, entry_price, stop_loss, take_profit,
                 size_lot, signal_pattern, signal_confidence, checklist_passed,
                 notes, status, created_at, mt5_ticket, is_auto,
                 post_entry_sl, post_entry_tp, post_entry_size, context_macro,
-                signal_id, fill_price, slippage_pips, destination_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 'OPEN', ?, ?, 1, 1, 1, 1, ?, ?, ?, ?, ?)
+                signal_id, fill_price, slippage_pips, destination_id, horizon
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 'OPEN', ?, ?, 1, 1, 1, 1, ?, ?, ?, ?, ?, ?)
         """, (
             user,
             pair,
@@ -243,6 +285,8 @@ def _upsert_open_trade(row: dict[str, Any], user: str,
             # Destination (2026-08-20) : sans elle, demo et reel se
             # confondaient dans le plafond journalier.
             destination_id,
+            # Horizon (2026-08-26) : NULL quand la poussee ne le portait pas.
+            horizon,
         ))
 
 

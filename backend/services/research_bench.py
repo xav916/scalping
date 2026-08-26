@@ -334,6 +334,17 @@ def _clotures_eligibles(selector: dict, declared_at: str) -> list[dict]:
     if dests:
         ou.append("destination_id IN (%s)" % ",".join("?" * len(dests)))
         args += list(dests)
+    # ⛔ Un horizon ABSENT n'est jamais assimilé à l'horizon demandé. Le compter
+    # reviendrait à juger l'hypothèse sur des clôtures qui ne la concernent
+    # peut-être pas — le défaut même qui rendait « le 4 h sur l'or » indécidable.
+    horizons = selector.get("horizons")
+    if horizons:
+        ou.append("horizon IN (%s)" % ",".join("?" * len(horizons)))
+        args += list(horizons)
+    motifs = selector.get("patterns")
+    if motifs:
+        ou.append("signal_pattern IN (%s)" % ",".join("?" * len(motifs)))
+        args += list(motifs)
 
     with sqlite3.connect(_db_path()) as c:
         c.row_factory = sqlite3.Row

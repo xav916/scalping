@@ -52,6 +52,10 @@ def cmd_declare(a):
         selector["min_confidence"] = a.confiance
     if a.destinations:
         selector["destinations"] = a.destinations
+    if a.horizons:
+        selector["horizons"] = a.horizons
+    if a.motifs:
+        selector["patterns"] = a.motifs
     rb.declare(a.slug, a.hypothese, selector, a.variantes, a.auteur, a.echantillon,
                var_sr=a.var_sr)
     t = rb.get_trial(a.slug)
@@ -143,6 +147,9 @@ def main(argv=None):
     d.add_argument("--sens", choices=["buy", "sell"])
     d.add_argument("--confiance", type=float)
     d.add_argument("--destinations", nargs="*")
+    d.add_argument("--horizons", nargs="*",
+                   help="ex. 4h — un horizon ABSENT n'est jamais assimile a celui demande")
+    d.add_argument("--motifs", nargs="*", help="motifs de signal admis")
     d.add_argument("--echantillon", type=int, default=30)
     d.add_argument("--var-sr", dest="var_sr", type=float,
                    help="dispersion MESUREE des Sharpe entre les variantes de cet essai ; "

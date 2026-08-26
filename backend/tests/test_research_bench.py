@@ -372,3 +372,54 @@ def test_la_variance_declaree_est_scellee_avec_la_declaration(_isolated_db):
 
     with pytest.raises(rb.DeclarationAlteree):
         rb.evaluate("mesure")
+
+
+# ── Le sélecteur sait dire « 4h » ─────────────────────────────────────────
+
+def _clore_h(db, pnl, quand, horizon, pair="XAU/USD", direction="sell"):
+    with sqlite3.connect(db) as c:
+        cols = {r[1] for r in c.execute("PRAGMA table_info(personal_trades)")}
+        if "horizon" not in cols:
+            c.execute("ALTER TABLE personal_trades ADD COLUMN horizon TEXT")
+        c.execute(
+            "INSERT INTO personal_trades (pair, direction, status, pnl, signal_confidence,"
+            " closed_at, is_auto, close_reason, mt5_ticket, destination_id, horizon)"
+            " VALUES (?,?,'CLOSED',?,70,?,1,'TP1',?,'admin_live',?)",
+            (pair, direction, pnl, quand.isoformat(),
+             str(int(quand.timestamp() * 1e6) % 10**9), horizon))
+
+
+def test_le_selecteur_filtre_par_horizon(_isolated_db):
+    """Sans ça, « le 4 h sur l'or » se jugeait sur un mélange d'horizons."""
+    from backend.services import research_bench as rb
+
+    sel = dict(SEL, horizons=["4h"])
+    rb.declare("or-4h", "Le 4 h sur l'or porte un edge", selector=sel,
+               variants_declared=1, author="x", min_sample=2)
+    apres = datetime.now(timezone.utc)
+    for i in range(4):
+        _clore_h(_isolated_db, 10.0, apres + timedelta(minutes=i + 1), "4h")
+    for i in range(9):
+        _clore_h(_isolated_db, 999.0, apres + timedelta(minutes=i + 30), "1h")
+        _clore_h(_isolated_db, 999.0, apres + timedelta(minutes=i + 60), None)
+
+    r = rb.evaluate("or-4h")
+    assert r["n_obs"] == 4
+    assert r["sum_pnl"] == pytest.approx(40.0)
+
+
+def test_un_horizon_absent_n_est_jamais_assimile_a_l_horizon_demande(_isolated_db):
+    """⛔ Un trade dont l'horizon n'a pas été enregistré n'est pas un trade 4 h.
+    Le compter reviendrait à juger l'hypothèse sur des données qui ne la
+    concernent peut-être pas — exactement le défaut qu'on vient de réparer."""
+    from backend.services import research_bench as rb
+
+    sel = dict(SEL, horizons=["4h"])
+    rb.declare("or-4h", "…", selector=sel, variants_declared=1, author="x", min_sample=1)
+    apres = datetime.now(timezone.utc)
+    for i in range(6):
+        _clore_h(_isolated_db, 10.0, apres + timedelta(minutes=i + 1), None)
+
+    r = rb.evaluate("or-4h")
+    assert r["status"] == "open"
+    assert r["n_obs"] == 0

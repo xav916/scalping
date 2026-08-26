@@ -67,6 +67,12 @@ class PushLedger:
     pair: str
     direction: str
     entry_5dp: str
+    #: Horizon et motif du setup — hors clé de déduplication, mais persistés.
+    #: ⛔ Avant le 2026-08-26 ils mouraient avec l'objet en mémoire : aucune
+    #: hypothèse par horizon n'était mesurable en aval, alors que
+    #: `_horizon_rejection` s'en servait déjà pour refuser des routes.
+    horizon: str | None = None
+    pattern: str | None = None
 
     @classmethod
     def for_setup(cls, dest, setup, direction: str) -> PushLedger:
@@ -77,6 +83,8 @@ class PushLedger:
             pair=setup.pair,
             direction=direction,
             entry_5dp=f"{float(setup.entry_price):.5f}",
+            horizon=getattr(setup, "horizon", None),
+            pattern=getattr(setup, "pattern", None),
         )
 
     @property
@@ -90,7 +98,8 @@ class PushLedger:
         À appeler juste avant l'appel HTTP, jamais après : c'est ce qui
         garantit qu'un fill non confirmé laisse quand même une trace.
         """
-        return mt5_pushes_service.try_register_push(*self._args)
+        return mt5_pushes_service.try_register_push(
+            *self._args, horizon=self.horizon, pattern=self.pattern)
 
     def confirm(self, response: dict[str, Any] | None = None) -> None:
         """Le broker a accepté l'ordre."""

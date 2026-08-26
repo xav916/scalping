@@ -1061,7 +1061,9 @@ async def _mirror_fill_to_live(setup, sz: dict, fill: dict, source_id: str) -> N
     # Dedup par la base, comme un push normal : un fill démo rejoué ne doit
     # pas ouvrir deux positions réelles.
     if not mt5_pushes_service.try_register_push(
-        cible.destination_id, push_date, setup.pair, direction, entry_5dp
+        cible.destination_id, push_date, setup.pair, direction, entry_5dp,
+        horizon=getattr(setup, "horizon", None),
+        pattern=getattr(setup, "pattern", None),
     ):
         return
 
@@ -1397,7 +1399,9 @@ async def _push_to_destination(setup, dest) -> None:
     direction = _direction_value(setup)
     entry_5dp = f"{setup.entry_price:.5f}"
     if not mt5_pushes_service.try_register_push(
-        dest.destination_id, push_date, setup.pair, direction, entry_5dp
+        dest.destination_id, push_date, setup.pair, direction, entry_5dp,
+        horizon=getattr(setup, "horizon", None),
+        pattern=getattr(setup, "pattern", None),
     ):
         return
     _sent_setups_today.add(key)

@@ -45,6 +45,7 @@ def _init_schema() -> None:
                 take_profit REAL NOT NULL,
                 size_lot REAL NOT NULL,
                 signal_pattern TEXT,
+                horizon TEXT,
                 signal_confidence REAL,
                 checklist_passed INTEGER DEFAULT 0,
                 notes TEXT,
@@ -92,6 +93,13 @@ def _init_schema() -> None:
             c.execute("ALTER TABLE personal_trades ADD COLUMN fill_price REAL")
         if "slippage_pips" not in cols:
             c.execute("ALTER TABLE personal_trades ADD COLUMN slippage_pips REAL")
+        # Horizon d'analyse du setup (2026-08-26). Son ABSENCE rendait
+        # l'hypothese « le 4 h sur l'or porte un edge » non mesurable : elle
+        # n'existait nulle part dans la chaine persistee, ni ici ni dans les
+        # 390 676 lignes de `signals`. Elle vit desormais depuis la poussee,
+        # rattachee au trade par le ticket.
+        if "horizon" not in cols:
+            c.execute("ALTER TABLE personal_trades ADD COLUMN horizon TEXT")
         if "close_reason" not in cols:
             # TP1 | TP2 | SL | MANUAL | TIMEOUT | UNKNOWN — remonte depuis
             # le bridge si disponible, sinon reste NULL.
