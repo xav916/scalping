@@ -214,3 +214,50 @@ def test_le_code_de_refus_a_UNE_ETIQUETTE():
     """Un code qui n'est pas dans la table s'affiche brut dans les tableaux."""
     from backend.services.rejection_service import REASON_LABELS_FR
     assert "max_positions_per_pair_indecidable" in REASON_LABELS_FR
+
+
+# ── Les deux pièges relevés EN PRODUCTION, dans l'heure du déploiement ─────
+
+def test_le_MT5_SYMBOL_MAP_global_sert_de_seconde_table():
+    """⛔ `admin_legacy` n'a aucune `symbol_map` de destination : son mapping
+    vit dans le `MT5_SYMBOL_MAP` global (`WTI/USD:SpotCrude`). S'arrêter à la
+    première table rendait `WTIUSD` pour une position nommée `SpotCrude` — un
+    compte à zéro sur la paire même qui a motivé ce garde-fou."""
+    d = _dest(symbol_map=None)
+    with patch.object(mt5_bridge, "MT5_SYMBOL_MAP", {"WTI/USD": "SpotCrude"}):
+        assert mt5_bridge._symbole_courtier_pour("WTI/USD", d) == "SpotCrude"
+        with patch.object(mt5_bridge, "_positions_courtier",
+                          return_value=[_position("SpotCrude")]):
+            assert mt5_bridge._compter_positions_courtier("WTI/USD", d) == 1
+
+
+def test_la_table_de_la_DESTINATION_prime_sur_la_globale():
+    """Le même WTI/USD vaut `SpotCrude` chez Pepperstone et `XTIUSD` chez IC
+    Markets : la table la plus spécifique gagne."""
+    d = _dest(symbol_map={"WTI/USD": "XTIUSD"})
+    with patch.object(mt5_bridge, "MT5_SYMBOL_MAP", {"WTI/USD": "SpotCrude"}):
+        assert mt5_bridge._symbole_courtier_pour("WTI/USD", d) == "XTIUSD"
+
+
+def test_une_destination_KRAKEN_n_est_PAS_jugee_par_cette_porte():
+    """⛔ `admin_kraken` porte aussi une `bridge_url` et un `user_id` nul, mais
+    son `/positions` parle une autre langue. Sans le filtre `bridge_type`,
+    toute la route Kraken tombait en « indécidable » — un refus total posé par
+    un garde-fou qui ne la concerne pas."""
+    d_kraken = SimpleNamespace(
+        destination_id="admin_kraken", user_id=None,
+        bridge_url="http://kraken:8790", bridge_api_key="cle",
+        bridge_type="kraken", min_confidence=50,
+        allowed_asset_classes=frozenset({"energy", "forex", "metal"}),
+        auto_exec_enabled=True, symbol_map=None,
+    )
+
+    def _interdit(_dest):
+        raise AssertionError("le /positions MT5 ne doit PAS être interrogé ici")
+
+    verdict = _juger(d_kraken, extra=[
+        patch("backend.services.mt5_bridge._count_open_trades_for_pair",
+              return_value=0),
+        patch("backend.services.mt5_bridge._positions_courtier", _interdit),
+    ])
+    assert verdict != "max_positions_per_pair_indecidable"

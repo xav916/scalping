@@ -82,6 +82,7 @@ from config.settings import (
     MT5_BRIDGE_MIN_SL_DISTANCE_PCT,
     MT5_BRIDGE_MIN_SL_DISTANCE_PCT_PER_CLASS,
     MT5_BRIDGE_MAX_POSITIONS_PER_PAIR,
+    MT5_SYMBOL_MAP,
     MT5_BRIDGE_BLOCKED_DIRECTIONS,
     MT5_BRIDGE_BLOCKED_PAIRS,
     MT5_BRIDGE_AVOID_HOURS_UTC,
@@ -204,11 +205,23 @@ def _symbole_courtier_pour(pair: str, dest) -> str:
     """Nom du symbole chez CE courtier. Repli : la barre oblique en moins.
 
     `WTI/USD` vaut `SpotCrude` chez Pepperstone et `XTIUSD` chez IC Markets —
-    comparer une paire du radar à un symbole du courtier sans passer par la
-    `symbol_map` ne trouverait jamais rien, donc compterait toujours zéro.
+    comparer une paire du radar à un symbole du courtier sans passer par une
+    table de correspondance ne trouverait jamais rien, donc compterait
+    toujours zéro.
+
+    ⛔ **Deux tables, pas une**, et c'est le piège relevé en production le
+    2026-08-28 : `admin_legacy` n'a **aucune** `symbol_map` côté destination,
+    parce que son mapping vit dans le `MT5_SYMBOL_MAP` global
+    (`WTI/USD:SpotCrude,SPX:US500,NDX:NAS100`). S'arrêter à la table de la
+    destination rendait `WTIUSD` pour une position nommée `SpotCrude` : le
+    compte serait resté à zéro **sur la paire même** qui a motivé ce garde-fou.
     """
-    table = getattr(dest, "symbol_map", None) or {}
-    return table.get(pair) or (pair or "").replace("/", "")
+    propre = getattr(dest, "symbol_map", None) or {}
+    if propre.get(pair):
+        return propre[pair]
+    if MT5_SYMBOL_MAP.get(pair):
+        return MT5_SYMBOL_MAP[pair]
+    return (pair or "").replace("/", "")
 
 
 def _positions_courtier(dest) -> list | None:
@@ -852,7 +865,14 @@ def _check_rejection(setup, dest=None) -> str | None:
     # validation de tick : destinations admin avec `bridge_url`, jamais les
     # routes EA queue, qui n'ont pas de bridge à interroger et garderaient
     # sinon un refus permanent).
+    # ⛔ `bridge_type == "mt5"` n'est pas decoratif : `admin_kraken` porte lui
+    # aussi une `bridge_url` et un `user_id` nul, mais son `/positions` parle
+    # une autre langue (autre en-tete de cle, autre forme de charge). Sans ce
+    # filtre, toute la route Kraken tombait en « indecidable » — un refus
+    # total, pose par un garde-fou qui ne la concerne pas. Constate en
+    # production le 2026-08-28, dans les minutes suivant le deploiement.
     if (dest is not None and getattr(dest, "bridge_url", "")
+            and getattr(dest, "bridge_type", "mt5") == "mt5"
             and getattr(dest, "user_id", -1) is None):
         open_count = _compter_positions_courtier(setup.pair, dest)
         if open_count is None:
