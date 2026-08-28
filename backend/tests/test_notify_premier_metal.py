@@ -253,3 +253,17 @@ def test_un_audit_ILLISIBLE_ne_pose_ni_n_avance_le_curseur(s, monkeypatch):
     monkeypatch.setattr(s, "_notifier", lambda t, c, dedup: True)
     assert s.main() == 0
     assert ecrits["curseur:admin_legacy"] == 5
+
+
+def test_le_digest_ne_NIE_pas_ce_que_sa_propre_liste_montre(s):
+    """⛔ Le premier essai à blanc affichait « aucun de ces motifs n'est le
+    plafond de risque » **trois lignes sous** un `bridge_plafond_risque : 20`.
+    Une conclusion que la liste dément juste au-dessus vaut moins que pas de
+    conclusion du tout."""
+    _, avec = s.message_silence([("bridge_plafond_risque", 20),
+                                 ("fees_exceed_edge", 3)], 24, {})
+    assert "20 refus par le plafond de risque" in avec
+    assert "Aucun de ces refus n'est le plafond" not in avec
+
+    _, sans = s.message_silence([("fees_exceed_edge", 3)], 24, {})
+    assert "Aucun de ces refus n'est le plafond" in sans

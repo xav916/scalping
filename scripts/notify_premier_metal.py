@@ -172,11 +172,23 @@ def message_silence(refus: list[tuple], heures: int,
                                for h, n in sorted(horizons.items(),
                                                   key=lambda kv: -kv[1]))
             lignes += ["", f"Horizons de ces signaux : {detail}"]
+        # ⛔ Ne JAMAIS affirmer « la poche ne refuse rien » sans regarder :
+        # le premier essai a blanc listait 20 `bridge_plafond_risque` juste
+        # au-dessus de cette phrase. Une conclusion que la liste dementait
+        # trois lignes plus haut vaut moins que pas de conclusion.
+        plafond = next((n for m, n in refus if m == "bridge_plafond_risque"), 0)
+        if plafond:
+            lignes += ["",
+                       f"⚠️ Dont {plafond} refus par le plafond de risque "
+                       "lui-meme. A verifier : ils peuvent dater d'avant "
+                       "l'ouverture de la poche."]
+        else:
+            lignes += ["",
+                       "⛔ Aucun de ces refus n'est le plafond de risque : la "
+                       "poche metaux ne refuse rien."]
         lignes += ["",
-                   "⛔ Aucun de ces motifs n'est le plafond de risque : la "
-                   "poche metaux ne refuse plus rien. Desserrer une de ces "
-                   "portes pour voir passer un ordre fabriquerait le "
-                   "resultat au lieu de le mesurer."]
+                   "Desserrer une de ces portes pour voir passer un ordre "
+                   "fabriquerait le resultat au lieu de le mesurer."]
     return ("⏳ Toujours aucun ordre metal parti", "\n".join(lignes))
 
 
