@@ -455,8 +455,8 @@ def test_le_message_NOMME_la_poche_saturee(s):
     e["marge_min_r"] = 1.0
     titre, corps = s._message("admin_live", e, "sature")
     assert "[or_argent]" in titre
-    assert "poche <b>or_argent</b>" in corps
-    assert "Autre poche <b>autres</b>" in corps
+    assert "poche or_argent" in corps
+    assert "Autre poche autres" in corps
 
 
 def test_la_regle_des_poches_est_LA_MEME_que_celle_du_bridge(s):
@@ -477,3 +477,48 @@ def test_la_regle_des_poches_est_LA_MEME_que_celle_du_bridge(s):
     for symbole in ("XAUUSD", "XAUEUR", "GOLD", "XAGUSD", "SILVER",
                     "XPTUSD", "GBPUSD", "BTCUSD", "", None):
         assert mod._poche_du_symbole(symbole) == s.poche_du_symbole(symbole)
+
+
+def test_le_corps_ne_porte_AUCUNE_balise(s):
+    """⛔ Corrigé le 2026-08-28. L'endpoint `notify-infra-telegram` passe le
+    body dans `html.escape` : depuis la pose de cette sonde, chaque alerte
+    affichait ses balises **en clair** dans Telegram — `<b>28,75 €</b>` au
+    lieu d'un gras. Seul le `title` est mis en forme, et par l'endpoint.
+
+    > **Une mise en forme qui traverse un échappement n'est plus une mise en
+    > forme, c'est du bruit.**
+
+    Les quatre verdicts sont couverts : une balise oubliée dans une branche
+    rare est exactement ce qui survit à une relecture.
+    """
+    cas = [
+        (_eval_deux_poches_pour_message(), "sature"),
+        (_eval_deux_poches_pour_message(), "ok"),
+        (s.evaluer([_pos(sl=0.0)], 552.0, 6.0, 1.0), "indecidable"),
+        (s.evaluation_illisible(), "illisible"),
+    ]
+    for e, verdict in cas:
+        e.setdefault("login", 13137475)
+        e.setdefault("marge_min_r", 1.0)
+        _, corps = s._message("admin_live", e, verdict)
+        assert "<" not in corps and ">" not in corps, (verdict, corps)
+        # ⛔ Et pas d'echappement local non plus : applique ici PUIS par
+        # l'endpoint, un `&` ressortait en `&amp;` a l'ecran.
+        assert "&amp;" not in corps and "&lt;" not in corps, (verdict, corps)
+
+
+def _eval_deux_poches_pour_message():
+    """Une évaluation saturée, à deux poches, prête pour `_message`."""
+    poches = {
+        "autres": {"risque": 28.75, "plafond": 33.12, "pct": 86.8,
+                   "candidats": 0, "liberable": 0.0},
+        "or_argent": {"risque": 60.0, "plafond": 77.28, "pct": 77.6,
+                      "candidats": 0, "liberable": 0.0},
+    }
+    return {
+        "lisible": True, "indecidable": False, "poche": "autres",
+        "multi_poches": True, "detail_poches": poches,
+        "risque_total": 28.75, "plafond": 33.12, "pct": 86.8, "restant": 4.37,
+        "nues": 0, "non_mesurables": 0, "positions": 6,
+        "candidats": 0, "liberable": 0.0,
+    }

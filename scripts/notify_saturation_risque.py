@@ -32,7 +32,6 @@ Usage :
 """
 from __future__ import annotations
 
-import html
 import json
 import math
 import os
@@ -488,12 +487,28 @@ def _notifier(titre: str, corps: str, dedup: str) -> None:
 
 
 def _message(did: str, e: dict, v: str) -> tuple[str, str]:
-    nom = html.escape(did)
-    compte = html.escape(str(e.get("login") or "?"))
+    """Titre et corps de l'alerte. **Texte simple, sans une seule balise.**
+
+    ⛔ Corrige le 2026-08-28. Ce corps partait avec des `<b>`, et l'endpoint
+    `notify-infra-telegram` passe le body dans `html.escape` : les balises
+    s'affichaient **en clair** dans Telegram (`<b>28,75 €</b>`), sur toutes
+    les alertes de saturation depuis leur pose. Seul le `title` est mis en
+    gras, et c'est l'endpoint qui le fait.
+
+    ⛔ Et `html.escape` etait applique ICI en plus : un nom contenant `&`
+    ressortait donc en `&amp;` a l'ecran, double-echappe. Echapper deux fois
+    n'est pas echapper mieux.
+
+    > **Une mise en forme qui traverse un echappement n'est plus une mise en
+    > forme, c'est du bruit.** On met donc l'accent avec des majuscules et de
+    > l'espace, qui survivent a tout.
+    """
+    nom = did
+    compte = str(e.get("login") or "?")
 
     if v == "illisible":
         return (f"⚠️ Risque engagé illisible — {nom}",
-                f"Impossible de lire le risque engagé sur <b>{nom}</b>.\n\n"
+                f"Impossible de lire le risque engagé sur {nom}.\n\n"
                 "Ce n'est pas « le compte a de la place » — c'est « on ne "
                 "sait pas ». L'admission peut être fermée sans que rien "
                 "ne le dise.")
@@ -501,49 +516,48 @@ def _message(did: str, e: dict, v: str) -> tuple[str, str]:
     if v == "indecidable":
         if e["nues"]:
             return (f"🚨 Admission FERMÉE — {nom}",
-                    f"<b>{e['nues']}</b> position(s) SANS STOP sur {nom} "
+                    f"{e['nues']} position(s) SANS STOP sur {nom} "
                     f"(compte {compte}).\n\nUn risque non borné rend toute "
-                    "somme impossible : <b>aucun nouvel ordre ne passera</b> "
+                    "somme impossible : AUCUN nouvel ordre ne passera "
                     "tant qu'elles sont là. Reposer un stop ou fermer.")
         return (f"⚠️ Risque engagé indécidable — {nom}",
-                f"<b>{e['non_mesurables']}</b> position(s) non mesurable(s) "
+                f"{e['non_mesurables']} position(s) non mesurable(s) "
                 f"sur {nom}.\n\nLe total serait amputé, donc rassurant à "
                 "tort. On ne conclut pas.")
 
     pct, restant = e["pct"], e["restant"]
     # ⛔ Nommer la poche n'est pas cosmétique : « 88 % du plafond » sur un
-    # compte qui en a deux ne dit pas CE QUI est fermé, et l'or bouché
-    # n'appelle pas la même décision que le forex bouché.
-    poche = (f" (poche <b>{html.escape(str(e.get('poche')))}</b>)"
-             if e.get("multi_poches") else "")
+    # compte qui en a deux ne dit pas CE QUI est fermé, et les métaux bouchés
+    # n'appellent pas la même décision que le forex bouché.
+    poche = (f" (poche {e.get('poche')})" if e.get("multi_poches") else "")
     etiquette = f" [{e.get('poche')}]" if e.get("multi_poches") else ""
     if v == "ok":
         return (f"✅ Admission rouverte — {nom}{etiquette}",
                 f"Le risque engagé de {nom} (compte {compte}){poche} est "
-                f"redescendu à <b>{pct:.0f} %</b> du plafond — {restant:.2f} € "
+                f"redescendu à {pct:.0f} % du plafond — {restant:.2f} € "
                 "de marge. Les nouveaux ordres repassent.")
 
-    soupape = (f"La soupape d'équilibre peut libérer <b>{e['liberable']:.2f} €</b> "
+    soupape = (f"La soupape d'équilibre peut libérer {e['liberable']:.2f} € "
                f"({e['candidats']} position(s) au-delà de {e['marge_min_r']:.0f} R)."
                if e["candidats"] else
-               "⛔ <b>La soupape d'équilibre n'a AUCUN candidat</b> : aucune "
+               "⛔ La soupape d'équilibre n'a AUCUN candidat : aucune "
                f"position n'atteint {e['marge_min_r']:.0f} R de profit. Elle se "
                "déclenchera, ne trouvera rien, et le refus tiendra.")
 
-    # L'autre poche est dite aussi : « l'or est plein » et « tout est plein »
-    # n'appellent pas la même décision, et rien d'autre ne le publie.
+    # L'autre poche est dite aussi : « les métaux sont pleins » et « tout est
+    # plein » n'appellent pas la même décision, et rien d'autre ne le publie.
     autres = "".join(
-        f"\nAutre poche <b>{q}</b> : {d['risque']:.2f} € "
+        f"\nAutre poche {q} : {d['risque']:.2f} € "
         + (f"sur {d['plafond']:.2f} € ({d['pct']:.0f} %)"
            if d["pct"] is not None else "— non mesurée")
         for q, d in sorted((e.get("detail_poches") or {}).items())
         if q != e.get("poche"))
 
     return (f"🚨 Risque engagé à {pct:.0f} % — {nom}{etiquette}",
-            f"<b>{nom}</b> (compte {compte}) — {e['positions']} position(s)\n"
-            f"Risque engagé{poche} <b>{e['risque_total']:.2f} €</b> sur un "
+            f"{nom} (compte {compte}) — {e['positions']} position(s)\n"
+            f"Risque engagé{poche} {e['risque_total']:.2f} € sur un "
             f"plafond de {e['plafond']:.2f} €{autres}\n"
-            f"Marge restante : <b>{restant:.2f} €</b>\n\n"
+            f"Marge restante : {restant:.2f} €\n\n"
             f"{soupape}\n\n"
             "Un ordre refusé pour dépassement ne produit aucune notification : "
             "sans ce message, le blocage ressemblerait à une absence de signal.")
