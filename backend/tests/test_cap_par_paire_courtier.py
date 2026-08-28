@@ -142,6 +142,12 @@ def _neutre():
         patch("backend.services.mt5_bridge.MT5_BRIDGE_BLOCKED_PAIRS", frozenset()),
         patch("backend.services.bridge_tick_validator.validate_tick_pre_push",
               return_value=None),
+        # ⛔ Le gel energie du VENDREDI SOIR. Sans lui, ces tests passaient du
+        # lundi au jeudi et echouaient le vendredi apres 20 h UTC — sur
+        # `energy_pre_weekend_freeze`, une porte qui n'a rien a voir avec le
+        # cap par paire. Une horloge dans un test est une bombe a retardement
+        # qui n'explose qu'un jour sur sept.
+        patch("config.settings.NO_FRIDAY_LATE_OPEN_ENERGY_ENABLED", False),
     ]
 
 

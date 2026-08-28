@@ -43,8 +43,15 @@ def test_earnings_ne_bloque_pas_a_horizon_court(monkeypatch):
 
 
 def test_hors_fenetre_earnings_rien_ne_bloque(monkeypatch):
+    """⛔ Le blocage de detention week-end est neutralise ici : sans ca, ce
+    test passait du lundi au jeudi et echouait le vendredi apres 20 h UTC, sur
+    `weekend_hold_blocked` — une porte qui n'est pas son sujet. Constate le
+    2026-08-28 a 20 h 17 UTC. Une horloge dans un test est une bombe a
+    retardement qui n'explose qu'un jour sur sept."""
+    import config.settings as reglages
     from backend.services import earnings_veto
 
+    monkeypatch.setattr(reglages, "WEEKEND_HOLD_BLOCK_ENABLED", False)
     monkeypatch.setattr(earnings_veto, "blocks_at_long_horizon",
                         lambda pair, now=None: False)
     assert _event_rejection(_setup("4h"), _dest()) is None
