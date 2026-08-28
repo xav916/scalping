@@ -600,6 +600,15 @@ def main() -> int:
         print(f"  ALERTE ({avant} -> {v})")
         _notifier(titre, corps, dedup=f"saturation:{did}:{v}")
 
+    if os.environ.get("DRY_RUN") == "1":
+        # ⛔ Une observation ne doit RIEN déplacer. Ce `_ecrire_etats` était
+        # inconditionnel : un `DRY_RUN` qui voyait passer `ok -> sature`
+        # écrivait `sature` SANS notifier, donc le passage réel suivant
+        # comparait `sature` à `sature`, se taisait, et **l'alerte était
+        # perdue**. Trouvé le 2026-08-28 en lançant précisément ce DRY_RUN.
+        # Même famille que la sonde de capture des niveaux.
+        print("[DRY_RUN] etats NON ecrits")
+        return 0
     _ecrire_etats(nouveaux)
     return 0
 

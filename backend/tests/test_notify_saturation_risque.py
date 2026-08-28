@@ -521,4 +521,37 @@ def _eval_deux_poches_pour_message():
         "risque_total": 28.75, "plafond": 33.12, "pct": 86.8, "restant": 4.37,
         "nues": 0, "non_mesurables": 0, "positions": 6,
         "candidats": 0, "liberable": 0.0,
+        "login": 13137475, "marge_min_r": 1.0, "marge_min_sigma": 0.0,
     }
+
+
+def test_DRY_RUN_n_ecrit_AUCUN_etat(s, monkeypatch):
+    """⛔ Trouvé le 2026-08-28 en lançant ce DRY_RUN pour vérifier le
+    nettoyage des balises. L'écriture était inconditionnelle : un `DRY_RUN`
+    qui voyait `ok -> sature` écrivait `sature` sans notifier, donc le passage
+    RÉEL suivant comparait `sature` à `sature`, se taisait, et **l'alerte
+    était perdue**. Même famille que la sonde de capture des niveaux.
+
+    > **Une observation ne doit rien déplacer.**
+    """
+    monkeypatch.setenv("DRY_RUN", "1")
+    ecrits = []
+    monkeypatch.setattr(s, "_charger_etats", lambda: {"admin_live": "ok"})
+    monkeypatch.setattr(s, "_ecrire_etats", lambda e: ecrits.append(e))
+    monkeypatch.setattr(s, "_lire_destination",
+                        lambda dest: _eval_deux_poches_pour_message())
+    assert s.main() == 0
+    assert ecrits == []
+
+
+def test_hors_DRY_RUN_l_etat_est_bien_ecrit(s, monkeypatch):
+    """Le garde-fou ci-dessus ne doit pas rendre la sonde amnésique."""
+    monkeypatch.delenv("DRY_RUN", raising=False)
+    ecrits = []
+    monkeypatch.setattr(s, "_charger_etats", lambda: {})
+    monkeypatch.setattr(s, "_ecrire_etats", lambda e: ecrits.append(e))
+    monkeypatch.setattr(s, "_lire_destination",
+                        lambda dest: _eval_deux_poches_pour_message())
+    monkeypatch.setattr(s, "_notifier", lambda t, c, dedup: None)
+    assert s.main() == 0
+    assert ecrits and ecrits[0]
