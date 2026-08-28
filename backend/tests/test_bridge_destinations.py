@@ -20,6 +20,17 @@ def _mk_setup(pair: str = "EUR/USD") -> MagicMock:
     s.pair = pair
     s.direction = MagicMock(value="buy")
     s.entry_price = 1.0
+    # ⛔ `source` DOIT être posée. Un `MagicMock` fabrique tout attribut qu'on
+    # lui demande : sans cette ligne, `getattr(setup, "source", None)` rend un
+    # mock, dont le `str()` est non vide et différent de « interne » — donc
+    # `_est_externe` déclarait CHAQUE setup de ce fichier comme venant d'un bot
+    # tiers, et le verrou d'argent réel retirait admin_live et admin_kraken_spot
+    # de toutes les résolutions. Cinq tests rouges pour un attribut jamais écrit.
+    #
+    # > **Un mock ne rend jamais `None` par défaut : il rend un mock.** Toute
+    # > nouvelle lecture d'attribut côté production devient donc vraie ici sans
+    # > que rien ne le signale.
+    s.source = None
     return s
 
 
@@ -568,6 +579,7 @@ def test_admin_kraken_spot_included_when_buy(monkeypatch):
 
     setup = _mk_setup(pair="BTC/USD")
     setup.direction = MagicMock(value="buy")
+    setup.source = None          # cf. `_mk_setup`
 
     dests = bridge_destinations.resolve_destinations(setup)
     ids = [d.destination_id for d in dests]
@@ -582,6 +594,7 @@ def test_admin_kraken_spot_excluded_when_sell(monkeypatch):
 
     setup = _mk_setup(pair="BTC/USD")
     setup.direction = MagicMock(value="sell")
+    setup.source = None          # cf. `_mk_setup`
 
     dests = bridge_destinations.resolve_destinations(setup)
     ids = [d.destination_id for d in dests]

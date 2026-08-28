@@ -289,32 +289,60 @@ def test_l_observation_n_est_pas_bloquee_faute_d_edge_connu():
     assert _cost_rejection(_setup_factice(), dest) is None
 
 
-def test_le_portage_bloque_largent_reel_quand_la_duree_est_inconnue():
-    """Integration du branchement de l'etape 7 dans `_cost_rejection` (2026-08-05).
+def test_le_portage_MESURE_et_excessif_refuse_AUSSI_l_observation():
+    """Un excès qu'on a MESURÉ n'est pas un doute (premisse corrigee 2026-08-28).
 
-    Les autres tests de ce fichier construisent tous un `CostModel` avec
-    `funding_interval_hours=0.0` (le defaut) : aucun n'entre dans la branche
-    de portage. Ici, un `CostModel(funding_interval_hours=1.0)` avec un
-    signal a horizon long declenche le calcul. `shadow_system_id` n'existe
-    pas encore (tache 5) : `getattr` renvoie `None`, donc la duree de
-    detention est inconnue, donc le portage est `None`, donc le cout total
-    est `None` — `exceeds_edge` bloque alors l'argent reel (`auto_exec=True`)
-    sans bloquer l'observation (`auto_exec=False`).
+    Ce test portait « quand la durée est inconnue » et supposait que
+    `_duree_detention_pire_cas()` rendait `None`. Ce n'est plus vrai : elle
+    rend `HOLDING_WORST_CASE_HOURS`, **96 h par défaut**, une borne
+    supérieure posée exprès pour que le portage soit calculable tant qu'aucune
+    médiane n'est mesurée.
+
+    ⇒ Le portage EST calculable ici, le coût dépasse réellement l'edge, et la
+    porte refuse des deux côtés. C'est le comportement voulu : l'indulgence
+    envers l'observation vaut pour ce qu'on ne sait PAS calculer, pas pour ce
+    qu'on a calculé et qui ne passe pas.
     """
     from backend.services.cost_model import CostModel
-    from backend.services.mt5_bridge import _cost_rejection
+    from backend.services.mt5_bridge import _cost_rejection, _duree_detention_pire_cas
+
+    assert _duree_detention_pire_cas() is not None, (
+        "la premisse de ce test est que la duree EST bornee")
 
     setup = _setup_factice()
     setup.horizon = "4h"
-    assert not hasattr(setup, "shadow_system_id")
-
     modele = CostModel(proportional_rate_per_leg=0.0005, funding_interval_hours=1.0)
 
-    dest_auto_exec = _dest_factice("admin_kraken", modele, edge=0.110, auto_exec=True)
-    assert _cost_rejection(setup, dest_auto_exec) == "fees_exceed_edge"
+    for auto_exec in (True, False):
+        dest = _dest_factice("admin_kraken", modele, edge=0.110, auto_exec=auto_exec)
+        assert _cost_rejection(setup, dest) == "fees_exceed_edge", auto_exec
 
-    dest_observation = _dest_factice("admin_kraken", modele, edge=0.110, auto_exec=False)
-    assert _cost_rejection(setup, dest_observation) is None
+
+def test_un_portage_INCALCULABLE_ne_bloque_que_l_argent_reel(monkeypatch):
+    """L'intention d'origine (2026-08-05), sur une prémisse rendue vraie.
+
+    Durée de détention inconnue ⇒ portage `None` ⇒ coût total `None` ⇒
+    `exceeds_edge` bloque l'argent réel (`auto_exec=True`) sans bloquer
+    l'observation (`auto_exec=False`).
+
+    ⛔ On rend la durée inconnue EXPLICITEMENT au lieu de compter sur un
+    `getattr` qui rendait `None` par accident : une prémisse qui tient par
+    accident cesse de tenir sans prévenir — c'est ce qui est arrivé ici.
+    """
+    from backend.services import mt5_bridge
+    from backend.services.cost_model import CostModel
+
+    monkeypatch.setattr(mt5_bridge, "_duree_detention_pire_cas", lambda: None)
+
+    setup = _setup_factice()
+    setup.horizon = "4h"
+    modele = CostModel(proportional_rate_per_leg=0.0005, funding_interval_hours=1.0)
+
+    reel = _dest_factice("admin_kraken", modele, edge=0.110, auto_exec=True)
+    assert mt5_bridge._cost_rejection(setup, reel) == "fees_exceed_edge"
+
+    observation = _dest_factice("admin_kraken", modele, edge=0.110, auto_exec=False)
+    assert mt5_bridge._cost_rejection(setup, observation) is None
 
 
 def test_un_cout_de_base_non_calculable_ne_devient_pas_gratuit_face_au_portage(

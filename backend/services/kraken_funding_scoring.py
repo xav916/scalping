@@ -163,6 +163,46 @@ _LAST_FETCH_AT: float = 0.0
 _LAST_FETCH_DATA: dict[str, float] = {}  # {symbol -> fundingRate}
 
 
+# ⛔ Bases qui ne sont JAMAIS de la crypto, nommees une par une.
+#
+# Kraken Futures cote aussi des perpetuels de DEVISES : `PF_EURUSD` existe.
+# La derivation `PF_{base}USD` validee contre le catalogue rendait donc un
+# symbole pour `EUR/USD`, et `is_crypto_pair("EUR/USD")` valait **True** —
+# le veto de funding et le cout de portage crypto s'appliquaient a du forex.
+#
+# ⚠️ On ne filtre PAS par `asset_class_for(pair) == "crypto"` : cette fonction
+# retombe sur `forex` par defaut, et classe donc AVAX, LINK, PEPE, SUI, TIA...
+# en forex. S'en servir ici re-couperait 14 des 23 cryptos de l'univers Kraken
+# — exactement le defaut du 2026-08-23. On nomme donc ce qui est EXCLU, et
+# l'inconnu reste derivable.
+_BASES_NON_CRYPTO = frozenset({
+    "EUR", "USD", "GBP", "JPY", "CHF", "AUD", "CAD", "NZD",
+    "SEK", "NOK", "DKK", "PLN", "HUF", "CZK", "TRY", "ZAR",
+    "MXN", "SGD", "HKD", "CNH", "ILS", "RUB",
+})
+# Les classes que `asset_class_for` reconnait de facon FIABLE (par prefixe ou
+# liste explicite), contrairement a `forex` qui est son repli.
+_CLASSES_NON_CRYPTO = frozenset({"metal", "energy", "equity_index", "equity"})
+
+
+def _peut_etre_crypto(pair: str) -> bool:
+    """Cette paire peut-elle etre un perpetuel CRYPTO ? Fail-open sur l'inconnu.
+
+    Rend `False` pour ce qu'on sait ne pas etre de la crypto (devises, metaux,
+    energie, indices, actions) et `True` pour tout le reste — un altcoin qu'on
+    ne connait pas encore doit rester derivable, sinon l'univers Kraken se
+    recoupe tout seul a chaque nouvelle cotation.
+    """
+    base = pair.split("/", 1)[0].upper()
+    if base in _BASES_NON_CRYPTO:
+        return False
+    try:
+        from config.settings import asset_class_for
+        return asset_class_for(pair) not in _CLASSES_NON_CRYPTO
+    except Exception:  # noqa: BLE001 — la classe est un garde-fou secondaire
+        return True
+
+
 def symbole_pour(pair: str) -> str | None:
     """Symbole Kraken Futures d'une paire interne, ou ``None``.
 
@@ -187,6 +227,11 @@ def symbole_pour(pair: str) -> str | None:
         return None
     base, quote = pair.split("/", 1)
     if quote.upper() != "USD":
+        return None
+    # ⛔ AVANT d'interroger Kraken : son catalogue contient des perpetuels de
+    # DEVISES. Sans ce garde, `EUR/USD` rendait `PF_EURUSD` et passait pour
+    # de la crypto — veto de funding et cout de portage crypto sur du forex.
+    if not _peut_etre_crypto(pair):
         return None
     derive = f"PF_{base.upper()}USD"
     return derive if derive in _fetch_all_rates() else None
