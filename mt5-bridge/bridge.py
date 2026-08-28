@@ -3509,6 +3509,70 @@ def audit():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/position/close", methods=["POST"])
+@require_api_key
+def position_close():
+    """Ferme UNE position, designee par son ticket. Corps : `{"ticket": N}`.
+
+    Pose le 2026-08-28. Jusque-la, la seule fermeture disponible etait
+    `/kill`, qui ferme **TOUT**. Vouloir fermer l'or un vendredi soir obligeait
+    donc a fermer aussi le forex — ou a ne rien fermer du tout.
+
+    > **Un interrupteur general n'est pas un outil de precision.** Les deux
+    > gestes portent le meme nom (« fermer ») et n'ont rien de commun.
+
+    ⛔ Le ticket est cherche chez le COURTIER, jamais suppose. Un ticket
+    inconnu rend 404 : fermer « ce qui y ressemble » serait exactement
+    l'erreur que cette route existe pour eviter.
+
+    Champ `raison` optionnel : il finit dans l'audit, pour qu'une fermeture
+    automatique se distingue plus tard d'une fermeture a la main.
+    """
+    if not ensure_mt5_connected():
+        return jsonify({"error": "MT5 not connected"}), 503
+
+    charge = request.get_json(silent=True) or {}
+    try:
+        ticket = int(charge.get("ticket"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "ticket manquant ou illisible"}), 400
+    raison = str(charge.get("raison") or "close-api")[:60]
+
+    positions = mt5.positions_get(ticket=ticket) or []
+    if not positions:
+        # ⛔ 404 et non 200 : « deja fermee » et « fermee par moi » sont deux
+        # faits differents, et l'appelant doit pouvoir les distinguer.
+        return jsonify({"ok": False, "ticket": ticket,
+                        "error": "position introuvable (deja fermee ?)"}), 404
+    p = positions[0]
+
+    if PAPER_MODE:
+        logger.warning(f"[PAPER CLOSE] Aurait ferme #{p.ticket} {p.symbol}")
+        return jsonify({"mode": "paper", "would_close": p.ticket,
+                        "symbol": p.symbol})
+
+    r = _close_position(p)
+    _db_log_order(
+        mode="live",
+        status="filled" if r.get("ok") else "rejected",
+        symbol=p.symbol,
+        direction="close-" + ("sell" if p.type == mt5.POSITION_TYPE_BUY else "buy"),
+        lots=p.volume,
+        ticket=p.ticket,
+        retcode=r.get("retcode"),
+        message=f"CLOSE({raison}): {r.get('message')}",
+        client_comment=raison,
+    )
+    logger.warning(
+        f"[LIVE CLOSE] #{p.ticket} {p.symbol} {p.volume} lot "
+        f"({raison}) -> {'OK' if r.get('ok') else 'REFUS'} "
+        f"retcode={r.get('retcode')} {r.get('message')}"
+    )
+    return jsonify({**r, "ticket": p.ticket, "symbol": p.symbol,
+                    "volume": p.volume, "raison": raison}), (
+        200 if r.get("ok") else 409)
+
+
 @app.route("/kill", methods=["POST"])
 @require_api_key
 def kill_switch():
