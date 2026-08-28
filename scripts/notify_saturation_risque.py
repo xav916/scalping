@@ -64,14 +64,28 @@ DELAI = 10
 # l'alerte annonçait un blocage DÉJÀ EN COURS au lieu de le prévenir. Un
 # seuil qui prévient trop tard ne se distingue pas d'un silence.
 #
-# ⚠️ Le seuil dépend donc du PLAFOND, qui suit l'equity. Si le capital monte
-# nettement, 72 % redevient trop tardif — c'est le rapport « trade typique /
-# plafond » qu'il faut refaire, pas le pourcentage qu'il faut retenir.
+# ⚠️ Le seuil dépend donc du PLAFOND, qui suit l'equity ET le réglage des
+# poches. C'est le rapport « trade typique / plafond » qu'il faut refaire, pas
+# le pourcentage qu'il faut retenir.
+#
+# ⇒ **Refait le 2026-08-28 au soir**, quand la poche « autres » est passée de
+# 6 % à 5 % : le plafond baisse, donc le seuil doit baisser avec lui.
+#
+#     démo   plafond 27,11 €   100 × (1 − 9 / 27,11) ≈ 67 %
+#     réel   plafond 31,04 €   100 × (1 − 9 / 31,04) ≈ 71 %
+#
+# On retient **67 %**, le plus contraignant des deux : un seuil trop tardif ne
+# se distingue pas d'un silence, alors qu'un seuil un peu tôt ne coûte qu'un
+# message. Les deux erreurs ne sont pas symétriques.
+#
+# 🔑 Le pourcentage n'a jamais été le réglage — le réglage, c'est la formule.
+# Baisser un plafond sans refaire ce calcul laisse une alerte qui prévient
+# après coup, et personne ne s'en aperçoit puisqu'elle parle encore.
 #
 # ⛔ CE DÉFAUT EST APPARIÉ à celui de `notify-saturation-risque.sh`, qui
 # l'écrase via `docker exec -e`. Changer l'un sans l'autre ferait diverger le
 # cron et la commande `risque` à la demande — un test épingle leur égalité.
-SEUIL_PCT = float(os.environ.get("SEUIL_SATURATION_PCT", "72"))
+SEUIL_PCT = float(os.environ.get("SEUIL_SATURATION_PCT", "67"))
 
 INSTANTANE = Path(os.environ.get(
     "SATURATION_SNAPSHOT_PATH", "/app/data/saturation_risque.json"))
