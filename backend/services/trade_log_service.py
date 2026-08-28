@@ -46,6 +46,7 @@ def _init_schema() -> None:
                 size_lot REAL NOT NULL,
                 signal_pattern TEXT,
                 horizon TEXT,
+                source TEXT,
                 signal_confidence REAL,
                 checklist_passed INTEGER DEFAULT 0,
                 notes TEXT,
@@ -100,6 +101,11 @@ def _init_schema() -> None:
         # rattachee au trade par le ticket.
         if "horizon" not in cols:
             c.execute("ALTER TABLE personal_trades ADD COLUMN horizon TEXT")
+        # Fournisseur du signal (2026-08-26), `interne` par defaut. Sans
+        # elle, la performance d'un bot externe et la notre se melangent
+        # dans le meme P&L, sans rattrapage possible.
+        if "source" not in cols:
+            c.execute("ALTER TABLE personal_trades ADD COLUMN source TEXT")
         if "close_reason" not in cols:
             # TP1 | TP2 | SL | MANUAL | TIMEOUT | UNKNOWN — remonte depuis
             # le bridge si disponible, sinon reste NULL.

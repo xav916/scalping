@@ -52,6 +52,7 @@ def _ensure_schema() -> None:
                 horizon TEXT,
                 pattern TEXT,
                 mt5_ticket INTEGER,
+                source TEXT,
                 UNIQUE(destination_id, date, pair, direction, entry_price_5dp)
             )
             """
@@ -61,7 +62,7 @@ def _ensure_schema() -> None:
         # dispatch, et le ticket est le seul identifiant partagé avec le trade.
         cols = {r[1] for r in c.execute("PRAGMA table_info(mt5_pushes)")}
         for nom, typ in (("horizon", "TEXT"), ("pattern", "TEXT"),
-                         ("mt5_ticket", "INTEGER")):
+                         ("mt5_ticket", "INTEGER"), ("source", "TEXT")):
             if nom not in cols:
                 c.execute(f"ALTER TABLE mt5_pushes ADD COLUMN {nom} {typ}")
         c.execute(
@@ -80,6 +81,7 @@ def try_register_push(
     entry_price_5dp: str,
     horizon: str | None = None,
     pattern: str | None = None,
+    source: str | None = None,
 ) -> bool:
     """Tente d'enregistrer un push (status PENDING / ok=0).
 
@@ -106,8 +108,8 @@ def try_register_push(
                 """
                 INSERT OR IGNORE INTO mt5_pushes (
                     destination_id, date, pair, direction, entry_price_5dp,
-                    pushed_at, ok, bridge_response, horizon, pattern
-                ) VALUES (?, ?, ?, ?, ?, ?, 0, NULL, ?, ?)
+                    pushed_at, ok, bridge_response, horizon, pattern, source
+                ) VALUES (?, ?, ?, ?, ?, ?, 0, NULL, ?, ?, ?)
                 """,
                 (
                     destination_id,
@@ -118,6 +120,7 @@ def try_register_push(
                     datetime.now(timezone.utc).isoformat(),
                     horizon,
                     pattern,
+                    source,
                 ),
             )
             return cur.rowcount > 0

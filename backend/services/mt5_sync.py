@@ -42,6 +42,25 @@ _STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
 
+def source_du_push(ticket) -> str | None:
+    """Fournisseur du signal ayant produit ce ticket, ou ``None``.
+
+    ⛔ Rend ``None`` quand rien ne correspond — jamais une valeur devinée.
+    """
+    if ticket in (None, "", 0):
+        return None
+    try:
+        from backend.services.mt5_pushes_service import _ensure_schema
+        _ensure_schema()
+        with sqlite3.connect(_db_path()) as c:
+            r = c.execute("SELECT source FROM mt5_pushes WHERE mt5_ticket = ? "
+                          "ORDER BY id DESC LIMIT 1", (int(ticket),)).fetchone()
+        return r[0] if r else None
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"mt5_sync: source_du_push({ticket}) failed: {e}")
+        return None
+
+
 def horizon_et_motif_du_push(ticket) -> tuple[str | None, str | None]:
     """``(horizon, motif)`` de la poussée qui a produit ce ticket.
 
@@ -243,6 +262,7 @@ def _upsert_open_trade(row: dict[str, Any], user: str,
     # juillet. Elle reste en repli pour le motif, jamais pour l'horizon :
     # `signals` ne l'a jamais porté.
     horizon, motif_pousse = horizon_et_motif_du_push(ticket)
+    source = source_du_push(ticket) or "interne"
     if motif_pousse:
         signal_pattern = motif_pousse
 
@@ -252,14 +272,16 @@ def _upsert_open_trade(row: dict[str, Any], user: str,
         cols_pt = {r[1] for r in c.execute("PRAGMA table_info(personal_trades)")}
         if "horizon" not in cols_pt:
             c.execute("ALTER TABLE personal_trades ADD COLUMN horizon TEXT")
+        if "source" not in cols_pt:
+            c.execute("ALTER TABLE personal_trades ADD COLUMN source TEXT")
         c.execute("""
             INSERT OR IGNORE INTO personal_trades (
                 user, pair, direction, entry_price, stop_loss, take_profit,
                 size_lot, signal_pattern, signal_confidence, checklist_passed,
                 notes, status, created_at, mt5_ticket, is_auto,
                 post_entry_sl, post_entry_tp, post_entry_size, context_macro,
-                signal_id, fill_price, slippage_pips, destination_id, horizon
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 'OPEN', ?, ?, 1, 1, 1, 1, ?, ?, ?, ?, ?, ?)
+                signal_id, fill_price, slippage_pips, destination_id, horizon, source
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 'OPEN', ?, ?, 1, 1, 1, 1, ?, ?, ?, ?, ?, ?, ?)
         """, (
             user,
             pair,
@@ -287,6 +309,8 @@ def _upsert_open_trade(row: dict[str, Any], user: str,
             destination_id,
             # Horizon (2026-08-26) : NULL quand la poussee ne le portait pas.
             horizon,
+            # Fournisseur du signal (2026-08-26). `interne` par defaut.
+            source,
         ))
 
 

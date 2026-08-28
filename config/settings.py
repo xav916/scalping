@@ -610,6 +610,22 @@ PAC_PAUSE_COOLOFF_DAYS = int(os.getenv("PAC_PAUSE_COOLOFF_DAYS", "14"))
 # engage de l'argent réel exige un essai pré-enregistré et passé, ou une clause
 # d'antériorité. Désarmée par défaut : un dépôt qui n'a pas amorcé le banc ne doit
 # pas se retrouver gelé par une table vide.
+# Fournisseurs de signaux tiers autorises : {"source": "jeton"}.
+#
+# ⛔ VIDE PAR DEFAUT — sans reglage, aucun signal externe n'entre. Un jeton vaut
+# pour UNE source et une seule : sinon un fournisseur pourrait poster sous le nom
+# d'un autre, et l'attribution — donc tout le dispositif de mesure — s'effondre.
+#
+# ⚠️ Un setup portant une `source` tierce ne peut atteindre AUCUNE destination en
+# argent reel : le verrou est dans `bridge_destinations.resolve_destinations`.
+try:
+    _raw_ext = os.getenv("EXTERNAL_SIGNAL_TOKENS", "")
+    EXTERNAL_SIGNAL_TOKENS = json.loads(_raw_ext) if _raw_ext else {}
+    if not isinstance(EXTERNAL_SIGNAL_TOKENS, dict):
+        EXTERNAL_SIGNAL_TOKENS = {}
+except Exception:
+    EXTERNAL_SIGNAL_TOKENS = {}
+
 RESEARCH_BENCH_GATE_ENABLED = os.getenv("RESEARCH_BENCH_GATE_ENABLED", "").lower() in ("1", "true", "yes")
 
 PAC_EXCLUDED_TICKETS = frozenset(

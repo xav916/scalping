@@ -687,6 +687,20 @@ def admin_destinations() -> list[BridgeConfig]:
     return [d for d in (c() for c in constructeurs) if d is not None]
 
 
+def _est_externe(setup: Any) -> bool:
+    """Le setup vient-il d'un bot tiers ?
+
+    ⚠️ Une chaîne vide ou blanche n'est PAS un fournisseur : la traiter comme
+    externe couperait notre propre flux au premier champ mal rempli. Seul un
+    identifiant renseigné et différent de ``interne`` fait basculer.
+    """
+    src = getattr(setup, "source", None)
+    if src is None:
+        return False
+    src = str(src).strip().lower()
+    return bool(src) and src != "interne"
+
+
 def resolve_destinations(setup: Any) -> list[BridgeConfig]:
     """Liste toutes les destinations vers lesquelles ce setup doit être poussé.
 
@@ -695,6 +709,7 @@ def resolve_destinations(setup: Any) -> list[BridgeConfig]:
     l'ancien ``mt5_bridge.is_configured() == False``.
     """
     destinations: list[BridgeConfig] = []
+    externe = _est_externe(setup)
     admin = _admin_legacy_destination()
     if admin is not None:
         destinations.append(admin)
@@ -742,4 +757,13 @@ def resolve_destinations(setup: Any) -> list[BridgeConfig]:
                 and classe in admin_ibkr.allowed_asset_classes):
             destinations.append(admin_ibkr)
     destinations.extend(_user_destinations(setup))
+    if externe:
+        # ⛔ Un setup venu d'un bot externe n'atteint JAMAIS l'argent réel.
+        # Le verrou est ICI, dans le résolveur, jamais chez l'appelant : un
+        # appelant peut oublier, un résolveur non. Même motif que la porte du
+        # banc dans `set_state`, et que `destination=None ⇒ argent réel`.
+        from backend.services.destinations_registry import is_real_money
+        destinations = [d for d in destinations
+                        if not is_real_money(getattr(d, "destination_id", None))]
+
     return destinations

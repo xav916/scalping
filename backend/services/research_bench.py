@@ -341,6 +341,10 @@ def _clotures_eligibles(selector: dict, declared_at: str) -> list[dict]:
     if horizons:
         ou.append("horizon IN (%s)" % ",".join("?" * len(horizons)))
         args += list(horizons)
+    sources = selector.get("sources")
+    if sources:
+        ou.append("source IN (%s)" % ",".join("?" * len(sources)))
+        args += list(sources)
     motifs = selector.get("patterns")
     if motifs:
         ou.append("signal_pattern IN (%s)" % ",".join("?" * len(motifs)))
