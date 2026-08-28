@@ -73,6 +73,10 @@ class PushLedger:
     #: `_horizon_rejection` s'en servait déjà pour refuser des routes.
     horizon: str | None = None
     pattern: str | None = None
+    #: Fournisseur du signal (2026-08-28). ``interne`` pour les nôtres — jamais
+    #: ``None`` : la colonne sert à filtrer, et un ``NULL`` échappe à tout
+    #: filtre, y compris à celui qui chercherait nos propres trades.
+    source: str = "interne"
 
     @classmethod
     def for_setup(cls, dest, setup, direction: str) -> PushLedger:
@@ -85,6 +89,7 @@ class PushLedger:
             entry_5dp=f"{float(setup.entry_price):.5f}",
             horizon=getattr(setup, "horizon", None),
             pattern=getattr(setup, "pattern", None),
+            source=mt5_pushes_service.source_du_setup(setup),
         )
 
     @property
@@ -99,7 +104,8 @@ class PushLedger:
         garantit qu'un fill non confirmé laisse quand même une trace.
         """
         return mt5_pushes_service.try_register_push(
-            *self._args, horizon=self.horizon, pattern=self.pattern)
+            *self._args, horizon=self.horizon, pattern=self.pattern,
+            source=self.source)
 
     def confirm(self, response: dict[str, Any] | None = None) -> None:
         """Le broker a accepté l'ordre."""

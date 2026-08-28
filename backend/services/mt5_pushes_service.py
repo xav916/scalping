@@ -73,6 +73,23 @@ def _ensure_schema() -> None:
         )
 
 
+def source_du_setup(setup) -> str:
+    """Fournisseur d'un setup — ``interne`` par défaut.
+
+    ⛔ Un seul point de lecture pour les quatre appelants de
+    `try_register_push`. Recopier `getattr(setup, "source", None)` quatre fois
+    garantissait qu'un des quatre l'oublie, et un push sans `source` fait
+    disparaître un trade externe dans notre P&L sans rattrapage possible —
+    c'est ce que l'horizon a démontré sur 390 676 signaux.
+
+    ⚠️ Jamais `None` : la colonne sert à FILTRER (`source IN (...)` du banc
+    d'essai). Un `NULL` échappe à tout filtre, y compris à celui qui
+    chercherait nos propres trades.
+    """
+    valeur = str(getattr(setup, "source", "") or "").strip()
+    return valeur or "interne"
+
+
 def try_register_push(
     destination_id: str,
     push_date: str,

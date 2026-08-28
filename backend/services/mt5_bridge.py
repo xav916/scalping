@@ -1178,6 +1178,7 @@ async def _mirror_fill_to_live(setup, sz: dict, fill: dict, source_id: str) -> N
         cible.destination_id, push_date, setup.pair, direction, entry_5dp,
         horizon=getattr(setup, "horizon", None),
         pattern=getattr(setup, "pattern", None),
+        source=mt5_pushes_service.source_du_setup(setup),
     ):
         return
 
@@ -1516,6 +1517,7 @@ async def _push_to_destination(setup, dest) -> None:
         dest.destination_id, push_date, setup.pair, direction, entry_5dp,
         horizon=getattr(setup, "horizon", None),
         pattern=getattr(setup, "pattern", None),
+        source=mt5_pushes_service.source_du_setup(setup),
     ):
         return
     _sent_setups_today.add(key)

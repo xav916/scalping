@@ -216,7 +216,8 @@ async def push_to_binance(setup, sz: dict, dest) -> None:
 
     # Dedup atomique côté DB (réutilise la même table que MT5)
     if not mt5_pushes_service.try_register_push(
-        dest.destination_id, push_date, setup.pair, direction, entry_5dp
+        dest.destination_id, push_date, setup.pair, direction, entry_5dp,
+        source=mt5_pushes_service.source_du_setup(setup),
     ):
         return
 

@@ -125,8 +125,19 @@ def _fournisseurs() -> dict[str, str]:
 # ─── Validation ─────────────────────────────────────────────────────────
 
 
-def valider(charge: dict[str, Any], jeton: str) -> tuple[bool, str]:
-    """``(accepté, motif)``. Le motif est renseigné **même en cas d'acceptation**.
+# Causes de refus, telles que la route les traduit en code HTTP.
+#
+# ⛔ Une CLÉ, pas le texte du motif. Faire deviner le code a la route en
+# relisant la phrase francaise ferait dependre le contrat HTTP d'une
+# tournure : reformuler un message casserait le statut, en silence.
+CAUSE_OK = "ok"
+CAUSE_AUTH = "auth"        # fournisseur inconnu, jeton faux, rien de declare
+CAUSE_FORME = "forme"      # champ manquant, sens inconnu, nombre illisible
+
+
+def valider_detaille(charge: dict[str, Any],
+                     jeton: str) -> tuple[bool, str, str]:
+    """``(accepté, motif, cause)``. Le motif est renseigné **même si accepté**.
 
     ⛔ L'ordre compte : l'authentification d'abord. Un fournisseur inconnu ne doit
     pas apprendre, par la différence des messages, quels champs on attend.
@@ -134,23 +145,25 @@ def valider(charge: dict[str, Any], jeton: str) -> tuple[bool, str]:
     connus = _fournisseurs()
     if not connus:
         return False, ("aucun fournisseur déclaré sur cette installation "
-                       "(EXTERNAL_SIGNAL_TOKENS est vide)")
+                       "(EXTERNAL_SIGNAL_TOKENS est vide)"), CAUSE_AUTH
 
     source = str(charge.get("source") or "").strip()
     if not source:
-        return False, "champ obligatoire manquant : source"
+        return False, "champ obligatoire manquant : source", CAUSE_AUTH
     if source not in connus:
-        return False, f"source inconnue : {source} — un fournisseur se déclare avant d'émettre"
+        return False, (f"source inconnue : {source} — un fournisseur se "
+                       "déclare avant d'émettre"), CAUSE_AUTH
     if not jeton or jeton != connus[source]:
-        return False, f"jeton invalide pour la source {source}"
+        return False, f"jeton invalide pour la source {source}", CAUSE_AUTH
 
     for champ in _OBLIGATOIRES:
         if charge.get(champ) in (None, ""):
-            return False, f"champ obligatoire manquant : {champ}"
+            return False, f"champ obligatoire manquant : {champ}", CAUSE_FORME
 
     sens = str(charge.get("direction") or "").strip().lower()
     if sens not in _SENS:
-        return False, f"direction inconnue : {charge.get('direction')} — attendu buy ou sell"
+        return False, (f"direction inconnue : {charge.get('direction')} — "
+                       "attendu buy ou sell"), CAUSE_FORME
 
     for champ in _NUMERIQUES:
         v = charge.get(champ)
@@ -159,9 +172,15 @@ def valider(charge: dict[str, Any], jeton: str) -> tuple[bool, str]:
         try:
             float(v)
         except (TypeError, ValueError):
-            return False, f"{champ} n'est pas un nombre : {v!r}"
+            return False, f"{champ} n'est pas un nombre : {v!r}", CAUSE_FORME
 
-    return True, "accepté"
+    return True, "accepté", CAUSE_OK
+
+
+def valider(charge: dict[str, Any], jeton: str) -> tuple[bool, str]:
+    """``(accepté, motif)`` — la forme historique, sans la cause."""
+    ok, motif, _ = valider_detaille(charge, jeton)
+    return ok, motif
 
 
 def enregistrer(charge: dict[str, Any]) -> bool:
@@ -201,14 +220,21 @@ def construire_setup(charge: dict[str, Any]) -> ExternalSetup:
 
 
 async def ingerer(charge: dict[str, Any], jeton: str) -> dict[str, Any]:
-    """Valide, dédoublonne, dispatche. Rend toujours un motif lisible."""
-    ok, motif = valider(charge, jeton)
+    """Valide, dédoublonne, dispatche. Rend toujours un motif lisible.
+
+    Le verdict porte une `cause` : c'est elle que la route traduit en code
+    HTTP, jamais le texte du motif.
+    """
+    ok, motif, cause = valider_detaille(charge, jeton)
     if not ok:
         logger.info("external_signals: refusé — %s", motif)
-        return {"accepte": False, "motif": motif}
+        return {"accepte": False, "motif": motif, "cause": cause}
 
     if not enregistrer(charge):
-        return {"accepte": False, "motif": "signal déjà reçu (external_id connu)"}
+        # ⛔ Un rejeu n'est PAS une erreur : c'est l'idempotence qui fonctionne.
+        # Le signaler comme un echec apprendrait au fournisseur a reessayer.
+        return {"accepte": False, "motif": "signal déjà reçu (external_id connu)",
+                "cause": "doublon"}
 
     setup = construire_setup(charge)
     from backend.services.mt5_bridge import send_setup
@@ -216,4 +242,5 @@ async def ingerer(charge: dict[str, Any], jeton: str) -> dict[str, Any]:
     logger.warning("external_signals: %s %s %s dispatché (démo seul)",
                    setup.source, setup.pair, setup.direction.value)
     return {"accepte": True, "motif": "dispatché vers le démo",
+            "cause": CAUSE_OK,
             "source": setup.source, "external_id": setup.external_id}

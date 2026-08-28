@@ -1,7 +1,9 @@
 # Tester un bot externe sur le démo — conception
 
 **Date** : 2026-08-26
-**Statut** : validé, en implémentation
+**Statut** : implémenté le 2026-08-28 — plomberie (`827b702`), route et
+attribution (ci-dessous). ⛔ **Aucun fournisseur déclaré en production** :
+`EXTERNAL_SIGNAL_TOKENS` est vide, donc la porte existe et reste fermée.
 
 ## Ce qu'on cherche à savoir
 

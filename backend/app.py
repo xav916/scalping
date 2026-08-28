@@ -2606,6 +2606,58 @@ async def api_admin_test_telegram_close_pedagogic(
 _INFRA_ALERT_LAST_SENT: dict[str, datetime] = {}
 
 
+@app.post("/api/signals/external")
+@limiter.limit("120/minute")
+async def api_signal_externe(request: Request, payload: dict):
+    """Ingestion d'un signal de bot tiers — dispatch vers le DÉMO seul.
+
+    Posée le 2026-08-28, dernier maillon de la conception du 26/08
+    (`docs/superpowers/specs/2026-08-26-bot-externe-demo-design.md`). Le
+    module `external_signals` existait, testé, mais **rien ne l'appelait** :
+    aucun bot ne pouvait poster.
+
+    ## Le jeton voyage en EN-TÊTE, pas en query
+
+    `X-Signal-Token`. Un jeton dans l'URL se retrouve dans les journaux
+    d'accès, les référents et l'historique du client — trois endroits d'où
+    personne ne le retire ensuite. Les endpoints `?token=` de ce fichier sont
+    antérieurs ; on ne reproduit pas le choix pour un secret confié à un tiers.
+
+    ## Codes rendus, et pourquoi le motif accompagne TOUJOURS
+
+    | cause | code | quand |
+    |---|---|---|
+    | `auth` | 401 | fournisseur inconnu, jeton faux, aucun déclaré |
+    | `forme` | 400 | champ manquant, sens inconnu, nombre illisible |
+    | `doublon` | 200 | `external_id` déjà reçu — l'idempotence FONCTIONNE |
+    | `ok` | 200 | validé et dispatché vers les portes |
+
+    ⛔ Le code vient de la **cause** rendue par le validateur, jamais d'une
+    relecture du texte français : reformuler un message casserait sinon le
+    contrat HTTP, en silence.
+
+    ⛔ Un rejeu rend **200**, pas une erreur. Le marquer en échec apprendrait
+    au fournisseur à réessayer — soit exactement ce que l'idempotence évite.
+
+    ⚠️ **200 ne veut pas dire « ordre passé ».** Le setup part dans
+    `send_setup()` et traverse toutes les portes (admission, whitelist,
+    confiance, horizon, motifs, coût, corrélation, plafond de risque, banc).
+    La réponse dit qu'il a été ACCEPTÉ À L'ENTRÉE, rien de plus.
+
+    ⛔ L'argent réel est hors d'atteinte, et pas grâce à cette route : le
+    verrou est dans `resolve_destinations`, qui écarte toute destination
+    réelle dès que `setup.source` désigne un tiers. Une garde posée ici serait
+    contournée par le premier appelant qui construirait un setup autrement.
+    """
+    from backend.services.external_signals import ingerer
+
+    jeton = request.headers.get("X-Signal-Token", "")
+    verdict = await ingerer(payload or {}, jeton)
+    codes = {"auth": 401, "forme": 400}
+    statut = codes.get(verdict.get("cause"), 200)
+    return JSONResponse(status_code=statut, content=verdict)
+
+
 @app.post("/api/admin/notify-infra-telegram")
 async def api_admin_notify_infra_telegram(
     payload: dict,
