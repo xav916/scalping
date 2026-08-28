@@ -151,3 +151,101 @@ async def test_un_refus_du_courtier_reel_est_journalise_sans_lever(env, monkeypa
     await mb._mirror_fill_to_live(
         _setup(), {"risk_money": 3.25}, {"volume": 0.01}, "admin_legacy")
     assert rejets and rejets[0]["destination_id"] == "admin_live"
+
+
+# ─── ⛔ Une issue INCONNUE n'est pas un echec (2026-08-28) ────────────────
+
+@pytest.mark.asyncio
+async def test_une_exception_APRES_un_POST_ne_libere_PAS_la_reservation(
+        monkeypatch):
+    """⛔ La boucle de reprise poste jusqu'a quatre fois, avec des pauses de
+    3, 10 et 20 s. Une exception levee APRES qu'une tentative a atteint le
+    courtier effacait la ligne — donc autorisait un RETRY d'un ordre qui
+    existe peut-etre deja.
+
+    Un delai de 5 s cote client n'annule rien cote broker.
+
+    > **Une issue inconnue n'est pas un echec.** Les traiter pareil transforme
+    > un doute en second ordre.
+
+    Semantique de `flag_unknown` du `PushLedger`, que les routes IBKR et
+    Kraken appliquent deja ; le miroir, lui, effacait.
+    """
+    from backend.services import mt5_bridge, mt5_pushes_service
+
+    appels = {"discard": 0, "marque": []}
+    monkeypatch.setattr(mt5_pushes_service, "try_register_push",
+                        lambda *a, **k: True)
+    monkeypatch.setattr(mt5_pushes_service, "discard_push",
+                        lambda *a, **k: appels.__setitem__(
+                            "discard", appels["discard"] + 1))
+    monkeypatch.setattr(mt5_pushes_service, "update_push_result",
+                        lambda *a, **k: appels["marque"].append(k))
+
+    class _ClientQuiLeveApresAvoirPoste:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, *a, **k):
+            raise RuntimeError("le reseau lache APRES l'envoi")
+
+    monkeypatch.setattr(mt5_bridge.httpx, "AsyncClient",
+                        _ClientQuiLeveApresAvoirPoste)
+    monkeypatch.setattr(mt5_bridge, "_mirror_active", lambda: True)
+    monkeypatch.setattr(mt5_bridge, "_horizon_rejection", lambda s, d: None)
+    monkeypatch.setattr(
+        "backend.services.bridge_destinations._admin_live_destination",
+        lambda: _Dest("admin_live"))
+
+    await mt5_bridge._mirror_fill_to_live(
+        _setup(), {"risk_money": 5.0}, {"ok": True, "ticket": 1, "volume": 0.01},
+        "admin_legacy")
+
+    assert appels["discard"] == 0, "la reservation a ete liberee malgre un POST parti"
+    assert appels["marque"], "l'issue inconnue doit etre MARQUEE, pas effacee"
+    assert appels["marque"][0]["ok"] is False
+    assert appels["marque"][0]["response"]["issue"] == "inconnue"
+
+
+@pytest.mark.asyncio
+async def test_une_exception_AVANT_tout_POST_libere_bien_la_reservation(
+        monkeypatch):
+    """Le garde-fou ne doit pas empecher la liberation qu'il sert a encadrer :
+    si rien n'est parti, aucun ordre ne peut exister."""
+    from backend.services import mt5_bridge, mt5_pushes_service
+
+    appels = {"discard": 0}
+    monkeypatch.setattr(mt5_pushes_service, "try_register_push",
+                        lambda *a, **k: True)
+    monkeypatch.setattr(mt5_pushes_service, "discard_push",
+                        lambda *a, **k: appels.__setitem__(
+                            "discard", appels["discard"] + 1))
+    monkeypatch.setattr(mt5_bridge, "_mirror_active", lambda: True)
+    monkeypatch.setattr(mt5_bridge, "_horizon_rejection", lambda s, d: None)
+    monkeypatch.setattr(
+        "backend.services.bridge_destinations._admin_live_destination",
+        lambda: _Dest("admin_live"))
+    # Echoue a l'ouverture du client : aucun POST n'a pu partir.
+    class _ClientQuiLeveALOuverture:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            raise RuntimeError("connexion impossible")
+
+        async def __aexit__(self, *a):
+            return False
+
+    monkeypatch.setattr(mt5_bridge.httpx, "AsyncClient",
+                        _ClientQuiLeveALOuverture)
+
+    await mt5_bridge._mirror_fill_to_live(
+        _setup(), {"risk_money": 5.0}, {"ok": True, "ticket": 1}, "admin_legacy")
+
+    assert appels["discard"] == 1

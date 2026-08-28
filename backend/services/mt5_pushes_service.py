@@ -225,7 +225,7 @@ def discard_push(
     """
     try:
         with sqlite3.connect(_db_path()) as c:
-            c.execute(
+            cur = c.execute(
                 """
                 DELETE FROM mt5_pushes
                 WHERE destination_id = ? AND date = ? AND pair = ?
@@ -240,6 +240,17 @@ def discard_push(
                     entry_price_5dp,
                 ),
             )
+            # ⛔ Trace au niveau INFO, pas DEBUG. Le 2026-08-28, la table etait
+            # tombee de 139 lignes a zero sans qu'une seule ligne de journal ne
+            # le dise : la suppression et le refus de supprimer se lisaient
+            # pareil, c'est-a-dire pas du tout.
+            #
+            # `rowcount = 0` porte deux sens qu'il faut distinguer en lisant :
+            # aucune ligne (deja liberee) OU une ligne CONFIRMEE que le
+            # garde-fou vient de proteger.
+            logger.info(
+                "mt5_pushes: discard %s %s %s %s -> %d ligne(s) supprimee(s)",
+                destination_id, push_date, pair, direction, cur.rowcount or 0)
     except Exception as e:
         logger.debug(f"mt5_pushes: discard_push failed: {e}")
 

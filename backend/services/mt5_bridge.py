@@ -1182,15 +1182,26 @@ async def _mirror_fill_to_live(setup, sz: dict, fill: dict, source_id: str) -> N
     ):
         return
 
-    # Payload construit POUR la destination réelle : son `symbol_map` diffère
-    # (WTI_N6 chez IC Markets contre SpotCrude chez Pepperstone). Réutiliser
-    # celui du démo enverrait un symbole que le courtier ne connaît pas.
-    payload = _build_order_payload(setup, sz, dest=cible)
-    volume = fill.get("volume")
-    if volume:
-        payload["lots"] = float(volume)
-
+    # ⛔ Defini AVANT le `try` : c'est le `except` qui en a besoin, et une
+    # exception peut survenir avant les initialisations qui suivent.
+    #
+    # Un POST parti signifie que l'ordre PEUT exister chez le courtier, meme
+    # si notre client n'a jamais vu la reponse — un delai de 5 s cote client
+    # n'annule rien cote broker.
+    poste = False
     try:
+        # Payload construit POUR la destination réelle : son `symbol_map`
+        # diffère (WTI_N6 chez IC Markets contre SpotCrude chez Pepperstone).
+        # Réutiliser celui du démo enverrait un symbole inconnu du courtier.
+        #
+        # ⛔ Construit DANS le `try` depuis le 2026-08-28. Dehors, une erreur
+        # de construction laissait la reservation posee pour la journee sans
+        # que personne ne la libere : ni confirmee, ni effacee, juste bloquante.
+        payload = _build_order_payload(setup, sz, dest=cible)
+        volume = fill.get("volume")
+        if volume:
+            payload["lots"] = float(volume)
+
         # Reprise sur refus PASSAGER (2026-08-12). Le bridge reessayait deux
         # fois en 400 ms — donc dans les memes conditions de prix et de
         # latence — puis abandonnait. Les delais croissants laissent le marche
@@ -1202,6 +1213,7 @@ async def _mirror_fill_to_live(setup, sz: dict, fill: dict, source_id: str) -> N
             if attente:
                 await asyncio.sleep(attente)
             async with httpx.AsyncClient(timeout=5.0) as client:
+                poste = True
                 r = await client.post(
                     cible.bridge_url + "/order",
                     json=payload,
@@ -1269,9 +1281,30 @@ async def _mirror_fill_to_live(setup, sz: dict, fill: dict, source_id: str) -> N
             )
     except Exception as e:
         logger.warning(f"MIROIR démo→réel échoué ({type(e).__name__}): {e}")
-        mt5_pushes_service.discard_push(
-            cible.destination_id, push_date, setup.pair, direction, entry_5dp
-        )
+        if poste:
+            # ⛔ Un POST est PARTI. L'ordre peut exister chez le courtier — un
+            # delai de 5 s cote client n'annule rien cote broker, et la boucle
+            # de reprise peut lever apres qu'une tentative a deja atteint MT5.
+            # Effacer la ligne autoriserait un RETRY d'un ordre deja execute.
+            #
+            # On garde donc la reservation et on la marque : c'est la
+            # semantique de `flag_unknown` du `PushLedger`, que les routes
+            # IBKR et Kraken appliquent deja. Le miroir, lui, effacait.
+            #
+            # > **Une issue inconnue n'est pas un echec.** Les traiter pareil
+            # > transforme un doute en second ordre.
+            mt5_pushes_service.update_push_result(
+                cible.destination_id, push_date, setup.pair, direction,
+                entry_5dp, ok=False,
+                response={"exception": f"{type(e).__name__}: {e}"[:200],
+                          "poste": True, "issue": "inconnue"},
+            )
+        else:
+            # Rien n'est parti : la reservation se libere, comme prevu.
+            mt5_pushes_service.discard_push(
+                cible.destination_id, push_date, setup.pair, direction,
+                entry_5dp
+            )
 
 
 def _build_order_payload(setup, sz: dict, dest=None) -> dict:
