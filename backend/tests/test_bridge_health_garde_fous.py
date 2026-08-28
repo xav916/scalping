@@ -39,6 +39,10 @@ _REGLAGES = {
     # Poche de l'or ET de l'argent, ouverte le 2026-08-28.
     "MAX_RISQUE_ENGAGE_OR_ARGENT_PCT": 14.0,
     "MARGE_LIBRE_MIN_PCT": 30.0,
+    # Le garde-fou des positions NUES, publie le 2026-08-28.
+    "SLTP_GUARD_ENABLED": True,
+    "SLTP_GUARD_ACTIVATED_AT": "2026-08-28T21:00:00+00:00",
+    "SLTP_GUARD_FROZEN_TICKETS": frozenset({1353960866}),
     "DEVIATION_POINTS": 20,
     "TRAIL_DISTANCE_POINTS": 0,
     "PARTIAL_CLOSE_PCT": 50.0,
@@ -218,3 +222,29 @@ def test_l_empreinte_est_calculee_a_l_IMPORT_pas_a_la_requete():
             f"`{interdit}` dans health() : l'empreinte serait celle du FICHIER, "
             "pas celle du code charge"
         )
+
+
+def test_le_garde_fou_des_positions_NUES_se_lit_a_distance():
+    """⛔ Il etait armable mais illisible : un redemarrage qui perdait sa
+    variable le desarmait EN SILENCE. Une position nue bloque en plus TOUTE
+    nouvelle ouverture (son risque n'est pas bornable) — donc le garde-fou
+    desarme se manifeste par un compte qui ne trade plus, sans qu'on sache
+    pourquoi."""
+    g = _appeler_health()["garde_fous"]
+    assert g["sltp_guard_enabled"] is True
+    assert g["sltp_guard_activated_at"] == "2026-08-28T21:00:00+00:00"
+    assert g["sltp_guard_frozen_tickets"] == [1353960866]
+
+
+def test_un_horodatage_d_activation_VIDE_se_voit():
+    """⚠️ `enabled=true` avec un horodatage vide = fail-closed : AUCUNE
+    position n'est eligible. Les deux champs se lisent ensemble, jamais l'un
+    sans l'autre — sinon on croit le mecanisme arme alors qu'il ne fait rien."""
+    g = _appeler_health(SLTP_GUARD_ACTIVATED_AT="")["garde_fous"]
+    assert g["sltp_guard_enabled"] is True
+    assert g["sltp_guard_activated_at"] is None
+
+
+def test_le_garde_fou_DESARME_se_voit_aussi():
+    g = _appeler_health(SLTP_GUARD_ENABLED=False)["garde_fous"]
+    assert g["sltp_guard_enabled"] is False

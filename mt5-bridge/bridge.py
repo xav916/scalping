@@ -2119,6 +2119,19 @@ def health():
             # Lisible depuis le 2026-08-28 : cette fenetre a valu 3 h 05 au
             # lieu de 5 min pendant des mois sans que rien ne l'expose.
             "dedup_window_sec": DEDUP_WINDOW_SEC,
+            # ⛔ Le garde-fou qui pose un stop sur une position NUE. Publie
+            # depuis le 2026-08-28 : il etait armable mais illisible, donc un
+            # redemarrage qui perdait sa variable le desarmait EN SILENCE.
+            # C'est exactement le defaut que ce bloc `garde_fous` existe pour
+            # empecher — un garde-fou qu'on ne peut pas lire est un garde-fou
+            # dont on ne sait jamais s'il s'applique.
+            #
+            # ⚠️ `sltp_guard_activated_at` VIDE = fail-closed : aucune position
+            # n'est eligible, meme si `enabled` vaut true. Les deux se lisent
+            # donc ensemble, jamais l'un sans l'autre.
+            "sltp_guard_enabled": SLTP_GUARD_ENABLED,
+            "sltp_guard_activated_at": SLTP_GUARD_ACTIVATED_AT or None,
+            "sltp_guard_frozen_tickets": sorted(SLTP_GUARD_FROZEN_TICKETS),
             # Lisible a distance : sans ca, savoir si ce mecanisme est arme
             # demanderait une session RDP.
             "equilibre_auto_enabled": EQUILIBRE_AUTO_ENABLED,
