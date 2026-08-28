@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Une position OR ou ARGENT a fait UN TIERS du chemin vers son objectif.
+"""Une position OR ou ARGENT franchit un PALIER vers son objectif.
 
 Demandé le 2026-08-28 : être prévenu dès que le P&L flottant dépasse le tiers
-du gain visé. Deux restrictions demandées, et elles réduisent le bruit d'un
-ordre de grandeur :
+du gain visé — puis, dans la foulée, **la moitié et les trois quarts**. Deux
+restrictions demandées, et elles réduisent le bruit d'un ordre de grandeur :
 
 - le compte **réel IC Markets seul** — le démo porte six positions en
   permanence et noierait le fil ;
@@ -32,12 +32,18 @@ forme de silence que ce dépôt paie depuis des mois. Leur nombre est donc dit
 **dans le message**, là où quelqu'un lit déjà, plutôt que dans une seconde
 notification que personne n'a demandée.
 
-## Une seule fois par ticket
+## Une seule fois par palier, et UN SEUL message par passage
 
-Franchir le tiers est un événement, pas un état. Le ticket est mémorisé après
-un envoi **confirmé** ; la mémoire est ensuite élaguée des tickets fermés.
+Franchir un palier est un événement, pas un état. La mémoire retient, par
+ticket, **le plus haut palier déjà annoncé** ; elle est ensuite élaguée des
+tickets fermés.
 
-⚠️ Au premier passage, les positions DÉJÀ au-delà du tiers sont annoncées :
+⛔ Une position qui saute de 20 % à 80 % entre deux passages produit **un
+seul** message — celui des trois quarts, le palier le plus haut atteint.
+Trois messages pour un seul mouvement seraient trois fois le même
+événement, et c'est ainsi qu'on apprend à ne plus lire un fil.
+
+⚠️ Au premier passage, les positions DÉJÀ au-delà d'un palier sont annoncées :
 c'est l'état courant, et le demandeur veut le connaître. Contrairement à la
 sonde du premier ordre métal, il n'y a pas d'histoire ancienne à rejouer —
 seulement des positions vivantes.
@@ -73,8 +79,48 @@ DESTINATION = os.environ.get("TIERS_OBJECTIF_DESTINATION", "admin_live")
 # les mauvaises positions, ce qui est pire que de ne pas démarrer.
 from scripts.notify_premier_metal import est_metal  # noqa: E402
 
-# La fraction du chemin. Réglable, mais c'est un tiers qui a été demandé.
-FRACTION = float(os.environ.get("TIERS_OBJECTIF_FRACTION", "0.3333333"))
+# Les paliers du chemin, en fractions. Un tiers, la moitié, trois quarts —
+# demandés dans cet ordre le 2026-08-28. Réglable en liste séparée par des
+# virgules ; toujours trié, toujours dédoublonné.
+def _lire_paliers(brut: str) -> tuple[float, ...]:
+    """Fractions valides, triées. Une entrée illisible est ÉCARTÉE, pas devinée.
+
+    ⛔ Hors de `]0, 1]`, une fraction n'a pas de sens : 0 alerterait sur toute
+    position vivante, au-delà de 1 n'arriverait jamais. Les deux sont des
+    réglages qui ne diraient rien, et un réglage muet ressemble à une sonde
+    en panne.
+    """
+    valides = []
+    for morceau in str(brut or "").split(","):
+        morceau = morceau.strip()
+        if not morceau:
+            continue
+        try:
+            v = float(morceau)
+        except ValueError:
+            print(f"  palier illisible, ecarte : {morceau!r}")
+            continue
+        if not (0 < v <= 1):
+            print(f"  palier hors de ]0, 1], ecarte : {v}")
+            continue
+        valides.append(v)
+    return tuple(sorted(set(valides)))
+
+
+PALIERS = _lire_paliers(os.environ.get(
+    "TIERS_OBJECTIF_PALIERS", "0.3333333,0.5,0.75"))
+
+# Comment se nomme un palier dans le message. Un pourcentage seul se lit mal ;
+# « la moitie » se comprend sans calcul.
+_NOMS = ((0.3333333, "un tiers"), (0.5, "la moitie"), (0.75, "trois quarts"),
+         (0.25, "un quart"), (1.0, "l objectif"))
+
+
+def nom_du_palier(palier: float) -> str:
+    for valeur, nom in _NOMS:
+        if abs(palier - valeur) < 1e-6:
+            return nom
+    return f"{palier:.0%}"
 
 ETAT = Path(os.environ.get("TIERS_OBJECTIF_ETAT_PATH",
                            "/app/data/tiers_objectif.json"))
@@ -158,8 +204,32 @@ def franchit(mesure: dict, fraction: float) -> bool:
             and mesure["part"] >= fraction - _EPSILON)
 
 
-def a_annoncer(positions, deja: set, fraction: float) -> tuple[list, list]:
+def palier_atteint(mesure: dict, paliers, deja: float | None) -> float | None:
+    """Le PLUS HAUT palier franchi, s'il est au-dessus du dernier annoncé.
+
+    ⛔ Un seul palier est rendu, même si la position en a sauté plusieurs
+    depuis le dernier passage. Trois messages pour un seul mouvement seraient
+    trois fois le même événement — et c'est ainsi qu'on apprend à ne plus lire
+    un fil.
+
+    ``None`` si rien de neuf, ou si la position n'est pas mesurable.
+    """
+    if not mesure.get("mesurable"):
+        return None
+    franchis = [q for q in paliers if franchit(mesure, q)]
+    if not franchis:
+        return None
+    plus_haut = max(franchis)
+    if deja is not None and plus_haut <= deja + _EPSILON:
+        return None
+    return plus_haut
+
+
+def a_annoncer(positions, deja: dict, paliers) -> tuple[list, list]:
     """``(à annoncer, non mesurables)``. Fonction pure.
+
+    ``deja`` associe un ticket au plus haut palier déjà annoncé. Chaque entrée
+    de ``à annoncer`` est un triplet ``(position, mesure, palier)``.
 
     ⛔ Les non mesurables sont rendues À PART, jamais jetées : une position
     sans objectif ne déclenchera jamais, et ce silence-là doit se voir. Le
@@ -177,10 +247,9 @@ def a_annoncer(positions, deja: set, fraction: float) -> tuple[list, list]:
         if not m["mesurable"]:
             muettes.append((p, m))
             continue
-        if str(p.get("ticket")) in deja:
-            continue
-        if franchit(m, fraction):
-            a_dire.append((p, m))
+        q = palier_atteint(m, paliers, (deja or {}).get(str(p.get("ticket"))))
+        if q is not None:
+            a_dire.append((p, m, q))
     return a_dire, muettes
 
 
@@ -190,7 +259,8 @@ def _eur(x) -> str:
     return f"{x:,.2f}".replace(",", " ").replace(".", ",") + " €"
 
 
-def message(position: dict, mesure: dict, muettes: int) -> tuple[str, str]:
+def message(position: dict, mesure: dict, muettes: int,
+            palier: float) -> tuple[str, str]:
     """⚠️ TEXTE SIMPLE : l'endpoint passe le corps dans `html.escape`."""
     sym = position.get("symbol")
     sens = str(position.get("type") or "").lower()
@@ -222,7 +292,8 @@ def message(position: dict, mesure: dict, muettes: int) -> tuple[str, str]:
         "-0,329 R par trade sur l'or : intervenir a la main sur cette "
         "information est precisement ce qui a coute.",
     ]
-    return (f"🎯 Un tiers de l'objectif — {sym} {sens}", "\n".join(lignes))
+    return (f"🎯 {nom_du_palier(palier).capitalize()} de l'objectif — "
+            f"{sym} {sens}", "\n".join(lignes))
 
 
 # --------------------------------------------------------------------------
@@ -251,10 +322,26 @@ def _positions(dest) -> list | None:
 
 
 def _charger_etat() -> dict:
+    """Rend ``{ticket: plus_haut_palier}``.
+
+    ⛔ Reprend l'ancien format `{"annonces": [ticket, ...]}`, qui ne connaissait
+    qu'un seul palier. Sans cette reprise, chaque ticket deja annonce au tiers
+    le serait une seconde fois au premier passage de la nouvelle version — un
+    doublon pose par une migration, la pire facon d'introduire du bruit.
+    """
     try:
-        return json.loads(ETAT.read_text(encoding="utf-8"))
+        brut = json.loads(ETAT.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
+    if not isinstance(brut, dict):
+        return {}
+    paliers = brut.get("paliers")
+    if isinstance(paliers, dict):
+        return {str(k): float(v) for k, v in paliers.items()}
+    anciennes = brut.get("annonces")
+    if isinstance(anciennes, list) and PALIERS:
+        return {str(t): PALIERS[0] for t in anciennes}
+    return {}
 
 
 def _ecrire_etat(etat: dict) -> None:
@@ -308,40 +395,47 @@ def main() -> int:
         print(f"{DESTINATION} : positions illisibles — etat inchange")
         return 0
 
+    if not PALIERS:
+        # ⛔ Aucun palier lisible : on ne devine pas un seuil. Une sonde qui
+        # invente son propre reglage alerte sur autre chose que ce qu'on croit.
+        print("aucun palier valide — rien a surveiller")
+        return 1
+
     etat = _charger_etat()
-    deja = set(etat.get("annonces") or [])
-    a_dire, muettes = a_annoncer(positions, deja, FRACTION)
+    a_dire, muettes = a_annoncer(positions, etat, PALIERS)
     metaux = [p for p in positions
               if isinstance(p, dict) and est_metal(p.get("symbol"))]
     print(f"{DESTINATION} : {len(positions)} position(s) dont "
-          f"{len(metaux)} metal(aux), {len(a_dire)} au-dela de "
-          f"{FRACTION:.0%}, {len(muettes)} non mesurable(s)")
+          f"{len(metaux)} metal(aux), paliers "
+          f"{', '.join(f'{q:.0%}' for q in PALIERS)} — "
+          f"{len(a_dire)} franchissement(s), {len(muettes)} non mesurable(s)")
     for p, m in muettes:
         print(f"    non mesurable : ticket {p.get('ticket')} "
               f"{p.get('symbol')} — {m['motif']}")
 
-    annonces = set(deja)
-    for p, m in a_dire:
-        titre, corps = message(p, m, len(muettes))
+    atteints = dict(etat)
+    for p, m, palier in a_dire:
+        titre, corps = message(p, m, len(muettes), palier)
         print(f"  ALERTE {p.get('symbol')} ticket {p.get('ticket')} "
-              f"— {m['part']:.0%} du chemin")
-        if _notifier(titre, corps, dedup=f"tiers_objectif:{p.get('ticket')}"):
-            # ⛔ Le ticket n'est retenu qu'ici : une annonce ratee doit etre
+              f"— {nom_du_palier(palier)} ({m['part']:.0%} du chemin)")
+        if _notifier(titre, corps,
+                     dedup=f"tiers_objectif:{p.get('ticket')}:{palier:.4f}"):
+            # ⛔ Le palier n'est retenu qu'ici : une annonce ratee doit etre
             # rejouee au passage suivant, pas perdue.
-            annonces.add(str(p.get("ticket")))
+            atteints[str(p.get("ticket"))] = palier
         else:
-            print("    ticket NON retenu — l'evenement sera rejoue")
+            print("    palier NON retenu — l'evenement sera rejoue")
 
     # Elagage : on ne garde que les tickets encore ouverts, sinon le fichier
     # grossit sans fin et on ne saurait plus le relire.
     ouverts = {str(p.get("ticket")) for p in positions
                if isinstance(p, dict) and est_metal(p.get("symbol"))}
-    annonces &= ouverts
+    atteints = {t: q for t, q in atteints.items() if t in ouverts}
 
     if os.environ.get("DRY_RUN") == "1":
         print("[DRY_RUN] etat NON ecrit")
         return 0
-    _ecrire_etat({"annonces": sorted(annonces),
+    _ecrire_etat({"paliers": atteints,
                   "maj": datetime.now(timezone.utc).isoformat()})
     return 0
 
