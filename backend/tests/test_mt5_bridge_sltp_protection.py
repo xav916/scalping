@@ -416,6 +416,9 @@ def test_position_sltp_opened_before_activation_is_never_touched(bridge, monkeyp
     monkeypatch.setattr(bridge, "SLTP_GUARD_FROZEN_TICKETS", frozenset())
     activation = 1_700_000_000
     monkeypatch.setattr(bridge, "_SLTP_GUARD_ACTIVATED_AT_EPOCH", activation)
+    # `p.time` est en heure SERVEUR depuis le 2026-08-28 : un decalage nul
+    # laisse ces fixtures, ecrites en epoch UTC, dire exactement la meme chose.
+    monkeypatch.setattr(bridge, "_decalage_serveur_courant", lambda: 0.0)
     monkeypatch.setattr(bridge, "ensure_mt5_connected", lambda: True)
     # Position ouverte AVANT l'activation.
     monkeypatch.setattr(
@@ -437,6 +440,9 @@ def test_position_sltp_eligible_naked_position_gets_protected(bridge, monkeypatc
     monkeypatch.setattr(bridge, "SLTP_GUARD_FROZEN_TICKETS", frozenset())
     activation = 1_700_000_000
     monkeypatch.setattr(bridge, "_SLTP_GUARD_ACTIVATED_AT_EPOCH", activation)
+    # `p.time` est en heure SERVEUR depuis le 2026-08-28 : un decalage nul
+    # laisse ces fixtures, ecrites en epoch UTC, dire exactement la meme chose.
+    monkeypatch.setattr(bridge, "_decalage_serveur_courant", lambda: 0.0)
     monkeypatch.setattr(bridge, "ensure_mt5_connected", lambda: True)
     monkeypatch.setattr(
         bridge.mt5, "positions_get",
@@ -459,6 +465,9 @@ def test_position_sltp_already_protected_is_a_noop(bridge, monkeypatch):
     monkeypatch.setattr(bridge, "SLTP_GUARD_FROZEN_TICKETS", frozenset())
     activation = 1_700_000_000
     monkeypatch.setattr(bridge, "_SLTP_GUARD_ACTIVATED_AT_EPOCH", activation)
+    # `p.time` est en heure SERVEUR depuis le 2026-08-28 : un decalage nul
+    # laisse ces fixtures, ecrites en epoch UTC, dire exactement la meme chose.
+    monkeypatch.setattr(bridge, "_decalage_serveur_courant", lambda: 0.0)
     monkeypatch.setattr(bridge, "ensure_mt5_connected", lambda: True)
     monkeypatch.setattr(
         bridge.mt5, "positions_get",

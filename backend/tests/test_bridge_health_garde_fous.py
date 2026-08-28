@@ -33,6 +33,8 @@ _REGLAGES = {
     "MAX_LOT_PER_CLASS": {"forex": 0.02},
     "MAX_DAILY_LOSS_PCT": 3.0,
     "MAX_OPEN_POSITIONS": 3,
+    # Fenetre de dedup, publiee depuis le 2026-08-28.
+    "DEDUP_WINDOW_SEC": 3600,
     "MAX_RISQUE_ENGAGE_PCT": 6.0,
     # Poche de l'or, ouverte le 2026-08-28.
     "MAX_RISQUE_ENGAGE_OR_PCT": 14.0,
@@ -81,6 +83,7 @@ def test_les_garde_fous_sont_publies():
     g = _appeler_health()["garde_fous"]
     assert g["max_daily_loss_pct"] == 3.0
     assert g["max_open_positions"] == 3
+    assert g["dedup_window_sec"] == 3600
     assert g["deviation_points"] == 20
     assert g["trail_distance_points"] == 0
     assert g["partial_close_pct"] == 50.0

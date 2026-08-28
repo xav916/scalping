@@ -159,6 +159,9 @@ async def test_admin_destination_uses_http_post(db, reset_fake_client, monkeypat
     monkeypatch.setattr(
         "backend.services.mt5_bridge.httpx.AsyncClient", _FakeAsyncClient
     )
+    monkeypatch.setattr(
+        "backend.services.mt5_bridge._positions_courtier", lambda dest: []
+    )
 
     await mt5_bridge.send_setup(_mk_setup("EUR/USD"))
 
@@ -184,6 +187,9 @@ async def test_user_destination_enqueues_in_db(db, reset_fake_client, monkeypatc
     monkeypatch.setattr(
         "backend.services.mt5_bridge.httpx.AsyncClient", _FakeAsyncClient
     )
+    monkeypatch.setattr(
+        "backend.services.mt5_bridge._positions_courtier", lambda dest: []
+    )
 
     await mt5_bridge.send_setup(_mk_setup("EUR/USD"))
 
@@ -204,6 +210,9 @@ async def test_user_enqueue_payload_has_required_fields(db, reset_fake_client, m
     )
     monkeypatch.setattr(
         "backend.services.mt5_bridge.httpx.AsyncClient", _FakeAsyncClient
+    )
+    monkeypatch.setattr(
+        "backend.services.mt5_bridge._positions_courtier", lambda dest: []
     )
 
     await mt5_bridge.send_setup(_mk_setup("EUR/USD"))
@@ -234,6 +243,9 @@ async def test_both_admin_and_user_dispatched(db, reset_fake_client, monkeypatch
     monkeypatch.setattr(
         "backend.services.mt5_bridge.httpx.AsyncClient", _FakeAsyncClient
     )
+    monkeypatch.setattr(
+        "backend.services.mt5_bridge._positions_courtier", lambda dest: []
+    )
 
     await mt5_bridge.send_setup(_mk_setup("EUR/USD"))
 
@@ -257,6 +269,9 @@ async def test_user_enqueue_dedupe_per_destination(db, reset_fake_client, monkey
     )
     monkeypatch.setattr(
         "backend.services.mt5_bridge.httpx.AsyncClient", _FakeAsyncClient
+    )
+    monkeypatch.setattr(
+        "backend.services.mt5_bridge._positions_courtier", lambda dest: []
     )
 
     setup = _mk_setup("EUR/USD")
@@ -282,6 +297,9 @@ async def test_two_users_get_separate_enqueues(db, reset_fake_client, monkeypatc
     )
     monkeypatch.setattr(
         "backend.services.mt5_bridge.httpx.AsyncClient", _FakeAsyncClient
+    )
+    monkeypatch.setattr(
+        "backend.services.mt5_bridge._positions_courtier", lambda dest: []
     )
 
     await mt5_bridge.send_setup(_mk_setup("EUR/USD"))
@@ -323,6 +341,9 @@ async def test_marche_ferme_bloque_le_dispatch(db, reset_fake_client, monkeypatc
     )
     monkeypatch.setattr(
         "backend.services.mt5_bridge.httpx.AsyncClient", _FakeAsyncClient
+    )
+    monkeypatch.setattr(
+        "backend.services.mt5_bridge._positions_courtier", lambda dest: []
     )
 
     await mt5_bridge.send_setup(_mk_setup("EUR/USD"))

@@ -154,7 +154,8 @@ async def test_forex_not_blocked_by_guard():
          patch.object(mt5_bridge, "MT5_BRIDGE_ENABLED", True), \
          patch.object(mt5_bridge, "MT5_BRIDGE_URL", "http://test"), \
          patch.object(mt5_bridge, "MT5_BRIDGE_API_KEY", "test"), \
-         patch("backend.services.mt5_bridge.httpx.AsyncClient", _FakeClient):
+         patch("backend.services.mt5_bridge.httpx.AsyncClient", _FakeClient), \
+         patch("backend.services.mt5_bridge._positions_courtier", return_value=[]):
         await mt5_bridge.send_setup(_mk_setup("EUR/USD"))
 
     # The guard did not block → dedup key was registered.
@@ -190,7 +191,8 @@ async def test_crypto_allowed_when_in_allowed_classes():
     ), patch.object(mt5_bridge, "MT5_BRIDGE_ENABLED", True), \
          patch.object(mt5_bridge, "MT5_BRIDGE_URL", "http://test"), \
          patch.object(mt5_bridge, "MT5_BRIDGE_API_KEY", "test"), \
-         patch("backend.services.mt5_bridge.httpx.AsyncClient", _FakeClient):
+         patch("backend.services.mt5_bridge.httpx.AsyncClient", _FakeClient), \
+         patch("backend.services.mt5_bridge._positions_courtier", return_value=[]):
         await mt5_bridge.send_setup(_mk_setup("BTC/USD"))
 
     today = date.today().isoformat()
@@ -231,7 +233,8 @@ async def test_skip_verdict_without_blockers_still_pushed():
          patch.object(mt5_bridge, "MT5_BRIDGE_URL", "http://test"), \
          patch.object(mt5_bridge, "MT5_BRIDGE_API_KEY", "test"), \
          patch.object(mt5_bridge, "MT5_BRIDGE_MIN_CONFIDENCE", 60), \
-         patch("backend.services.mt5_bridge.httpx.AsyncClient", _FakeClient):
+         patch("backend.services.mt5_bridge.httpx.AsyncClient", _FakeClient), \
+         patch("backend.services.mt5_bridge._positions_courtier", return_value=[]):
         await mt5_bridge.send_setup(setup)
 
     today = date.today().isoformat()

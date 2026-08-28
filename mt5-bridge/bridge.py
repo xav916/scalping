@@ -183,7 +183,18 @@ EQUILIBRE_VOL_TTL_SEC = int(os.getenv("EQUILIBRE_VOL_TTL_SEC", "86400"))
 # ⚠️ Duplique dans `scripts/notify_saturation_risque.py` : les deux tournent
 # sur des machines differentes. Toute modification ici doit y etre repercutee.
 SIGMA_REL_MIN = float(os.getenv("SIGMA_REL_MIN", "0.0001"))
-DEDUP_WINDOW_SEC = int(os.getenv("DEDUP_WINDOW_SEC", "300"))
+# ⛔ Cette fenetre valait 300 s SUR LE PAPIER et 3 h 05 EN FAIT, de sa pose
+# jusqu'au 2026-08-28 : `p.time` est en heure SERVEUR (UTC+3) et etait compare
+# a de l'UTC, donc l'age calcule etait faux de -10 800 s. Mesure sur 30 jours :
+# 49 refus « Duplicate » sur le demo dont **8 seulement** etaient de vrais
+# doublons, 76 sur le reel dont **7**. Les 110 autres etaient du sur-blocage,
+# concentre sur un meme couple (47 x XTIUSD buy).
+#
+# ⇒ En corrigeant la pendule, revenir a 300 s aurait ete un desserrage de 37x
+# JAMAIS DECIDE. Xavier tranche a 1 h le 28/08 : le rythme reel du radar est
+# d'un signal toutes les 3 min sur un meme couple, et c'est cet empilement-la
+# que la fenetre doit borner.
+DEDUP_WINDOW_SEC = int(os.getenv("DEDUP_WINDOW_SEC", "3600"))
 DEVIATION_POINTS = int(os.getenv("DEVIATION_POINTS", "20"))
 MAGIC_NUMBER = int(os.getenv("MAGIC_NUMBER", "20260419"))
 TRADING_HOURS_UTC = os.getenv("TRADING_HOURS_UTC", "").strip()
@@ -260,7 +271,8 @@ def _parse_iso_to_epoch(raw: str) -> int | None:
 _SLTP_GUARD_ACTIVATED_AT_EPOCH = _parse_iso_to_epoch(SLTP_GUARD_ACTIVATED_AT)
 
 
-def _sltp_guard_eligible(ticket: int, position_open_epoch: int) -> tuple[bool, str]:
+def _sltp_guard_eligible(ticket: int,
+                        position_open_epoch: int | None) -> tuple[bool, str]:
     """Décide si une position peut recevoir un stop automatique du garde-fou.
 
     Exclusion à double verrou, chacun suffisant seul pour bloquer :
@@ -274,6 +286,13 @@ def _sltp_guard_eligible(ticket: int, position_open_epoch: int) -> tuple[bool, s
     """
     if ticket in SLTP_GUARD_FROZEN_TICKETS:
         return False, "ticket explicitement gelé (SLTP_GUARD_FROZEN_TICKETS)"
+    if position_open_epoch is None:
+        # ⛔ Position indatable (decalage serveur non mesurable). Le defaut
+        # repare le 2026-08-28 penchait de l'autre cote : `p.time` etant en
+        # heure serveur, une position ouverte jusqu'a 3 h AVANT l'activation
+        # passait pour posterieure et devenait eligible. Fail-OPEN sur un
+        # garde-fou, l'exact inverse de son role.
+        return False, "ouverture indatable — décalage serveur non mesurable"
     if _SLTP_GUARD_ACTIVATED_AT_EPOCH is None:
         return False, "SLTP_GUARD_ACTIVATED_AT non défini — impossible de dater l'activation"
     if position_open_epoch <= _SLTP_GUARD_ACTIVATED_AT_EPOCH:
@@ -741,8 +760,18 @@ def _check_safety_gates(mt5_symbol: str, direction: str,
     wanted_type = mt5.POSITION_TYPE_BUY if direction == "buy" else mt5.POSITION_TYPE_SELL
     for p in positions:
         if p.symbol == mt5_symbol and p.type == wanted_type:
-            if now_ts - p.time < DEDUP_WINDOW_SEC:
-                age = now_ts - p.time
+            ouverture = _ouverture_utc(p)
+            if ouverture is None:
+                # ⛔ Position indatable : on refuse. C'est exactement ce que
+                # faisait le code d'avant (par accident) et c'est le bon sens
+                # ici — un age invente laisserait passer un vrai doublon.
+                return False, (
+                    f"Duplicate: {direction} {mt5_symbol} already open "
+                    f"(ouverture indatable, decalage serveur non mesurable, "
+                    f"ticket #{p.ticket})"
+                )
+            age = now_ts - ouverture
+            if age < DEDUP_WINDOW_SEC:
                 return False, (
                     f"Duplicate: {direction} {mt5_symbol} already open (age {age}s "
                     f"< DEDUP_WINDOW_SEC={DEDUP_WINDOW_SEC}s, ticket #{p.ticket})"
@@ -1770,6 +1799,58 @@ def _decalage_serveur_sec() -> float | None:
     return None
 
 
+# Le decalage ne bouge qu'aux changements d'heure : le remesurer a chaque ordre
+# couterait deux appels MT5 sur le chemin critique pour rien.
+DECALAGE_TTL_SEC = int(os.getenv("DECALAGE_TTL_SEC", "3600"))
+_decalage_mesure: tuple[float, float] | None = None   # (mesure_a, decalage)
+
+
+def _decalage_serveur_courant() -> float | None:
+    """`_decalage_serveur_sec()` avec un cache d'une heure. `None` si inconnu.
+
+    ⛔ Un echec de mesure ne se replie PAS sur 0. Zero est une valeur qui a du
+    sens (un courtier en UTC), et la confondre avec « je ne sais pas » est
+    exactement ce qui a fait vivre le decalage de 3 h sans que personne le voie.
+    """
+    global _decalage_mesure
+    maintenant = time.time()
+    if (_decalage_mesure is not None
+            and maintenant - _decalage_mesure[0] < DECALAGE_TTL_SEC):
+        return _decalage_mesure[1]
+    d = _decalage_serveur_sec()
+    if d is None:
+        return None
+    _decalage_mesure = (maintenant, float(d))
+    return float(d)
+
+
+def _ouverture_utc(p) -> int | None:
+    """Instant d'ouverture d'une position, en UTC REEL. `None` si indatable.
+
+    ⛔ `p.time` est en heure SERVEUR du courtier — UTC+3 chez IC Markets et
+    Pepperstone — et MT5 ne le signale nulle part. Le comparer a
+    `datetime.now(timezone.utc)` rendait un age faux de **-10 800 s**, donc
+    negatif pendant 3 h, donc toujours sous n'importe quelle fenetre.
+
+    > **Deux horloges qui se ressemblent ne sont pas la meme horloge.** Ici
+    > l'ecart etait un multiple exact de l'heure, ce qui rendait l'erreur
+    > parfaitement plausible et parfaitement invisible.
+
+    Rend `None` plutot qu'une valeur brute presentee comme de l'UTC :
+    l'appelant decide quoi faire d'une position qu'on ne sait pas dater.
+    """
+    try:
+        brut = int(getattr(p, "time", 0) or 0)
+    except (TypeError, ValueError):
+        return None
+    if brut <= 0:
+        return None
+    decalage = _decalage_serveur_courant()
+    if decalage is None:
+        return None
+    return int(brut - decalage)
+
+
 @app.route("/rates", methods=["GET"])
 @require_api_key
 def rates():
@@ -2021,6 +2102,9 @@ def health():
             # sonde de saturation doit donc les mesurer separement.
             "max_risque_engage_or_pct": MAX_RISQUE_ENGAGE_OR_PCT,
             "marge_libre_min_pct": MARGE_LIBRE_MIN_PCT,
+            # Lisible depuis le 2026-08-28 : cette fenetre a valu 3 h 05 au
+            # lieu de 5 min pendant des mois sans que rien ne l'expose.
+            "dedup_window_sec": DEDUP_WINDOW_SEC,
             # Lisible a distance : sans ca, savoir si ce mecanisme est arme
             # demanderait une session RDP.
             "equilibre_auto_enabled": EQUILIBRE_AUTO_ENABLED,
@@ -2151,8 +2235,14 @@ def positions():
     if not ensure_mt5_connected():
         return jsonify({"error": "MT5 not connected"}), 503
     pos_list = mt5.positions_get() or []
+    # ⛔ `p.time` est en heure SERVEUR : le publier tel quel sous une etiquette
+    # UTC (`tz=timezone.utc`) faisait lire a l'EC2 des ouvertures 3 h dans le
+    # futur. On corrige, et on publie le decalage pour qu'un lecteur puisse
+    # VERIFIER au lieu de croire — `null` quand il n'est pas mesurable.
+    decalage = _decalage_serveur_courant()
     return jsonify({
         "count": len(pos_list),
+        "decalage_serveur_sec": decalage,
         "positions": [
             {
                 "ticket": p.ticket,
@@ -2164,7 +2254,9 @@ def positions():
                 "sl": p.sl,
                 "tp": p.tp,
                 "profit": p.profit,
-                "time": datetime.fromtimestamp(p.time, tz=timezone.utc).isoformat(),
+                "time": (datetime.fromtimestamp(_ouverture_utc(p),
+                                                tz=timezone.utc).isoformat()
+                         if _ouverture_utc(p) is not None else None),
                 "comment": p.comment,
             }
             for p in pos_list
@@ -3289,7 +3381,7 @@ def set_position_sltp():
         }), 404
     p = positions[0]
 
-    eligible, reason = _sltp_guard_eligible(ticket, int(p.time))
+    eligible, reason = _sltp_guard_eligible(ticket, _ouverture_utc(p))
     if not eligible:
         logger.warning(f"[SLTP GUARD] refus ticket={ticket} — {reason}")
         return jsonify({

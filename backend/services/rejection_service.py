@@ -42,6 +42,7 @@ REASON_LABELS_FR = {
     "pattern_not_allowed": "Pattern hors whitelist",
     "asset_class_blocked": "Classe d'actif bloquée",
     "max_positions_per_pair": "Cap positions par pair",
+    "max_positions_per_pair_indecidable": "Cap par pair indécidable (bridge muet)",
     "bridge_max_positions": "Cap positions bridge",
     # Les trois mecanismes qui se cachaient sous « cap positions » : le bridge
     # repond 429 pour tous ses garde-fous, et le code ne lisait que le statut.

@@ -469,6 +469,7 @@ class TestMt5BridgeIntegration:
              patch("backend.services.mt5_bridge.MT5_BRIDGE_BLOCKED_DIRECTIONS", set()), \
              patch("backend.services.mt5_bridge.MT5_BRIDGE_AVOID_HOURS_UTC", set()), \
              patch("backend.services.mt5_bridge.MT5_BRIDGE_BLOCKED_PAIRS", frozenset()), \
+             patch("backend.services.mt5_bridge._positions_courtier", return_value=[]), \
              patch("backend.services.bridge_tick_validator.validate_tick_pre_push", return_value=None):
             result = mt5_bridge._check_rejection(setup, dest)
 

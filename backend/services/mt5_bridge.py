@@ -194,9 +194,91 @@ def _max_positions_for_pair(pair: str) -> int:
     return 2  # défaut générique
 
 
+# Le cap par paire est consulté une fois par setup et par destination : sans
+# cache, une vague de signaux ferait autant d'aller-retours HTTP.
+_POSITIONS_CACHE_SEC = float(os.getenv("MT5_POSITIONS_CACHE_SEC", "10"))
+_positions_cache: dict[str, tuple[float, list]] = {}
+
+
+def _symbole_courtier_pour(pair: str, dest) -> str:
+    """Nom du symbole chez CE courtier. Repli : la barre oblique en moins.
+
+    `WTI/USD` vaut `SpotCrude` chez Pepperstone et `XTIUSD` chez IC Markets —
+    comparer une paire du radar à un symbole du courtier sans passer par la
+    `symbol_map` ne trouverait jamais rien, donc compterait toujours zéro.
+    """
+    table = getattr(dest, "symbol_map", None) or {}
+    return table.get(pair) or (pair or "").replace("/", "")
+
+
+def _positions_courtier(dest) -> list | None:
+    """`GET /positions` de la destination. **`None` = lecture ratée**, pas zéro.
+
+    ⛔ La distinction est tout l'objet de cette fonction. Une liste vide dit
+    « le courtier ne tient rien » ; `None` dit « on ne sait pas ». Les
+    confondre, c'est exactement le défaut qu'on répare ici : une porte qui
+    compte 0 quand elle ne sait pas est une porte ouverte.
+    """
+    url = (getattr(dest, "bridge_url", "") or "").rstrip("/")
+    if not url:
+        return None
+    cle = str(getattr(dest, "destination_id", "") or url)
+    en_cache = _positions_cache.get(cle)
+    if en_cache and (time.time() - en_cache[0]) < _POSITIONS_CACHE_SEC:
+        return en_cache[1]
+    entetes = {}
+    if getattr(dest, "bridge_api_key", None):
+        entetes["X-API-Key"] = dest.bridge_api_key
+    try:
+        with httpx.Client(timeout=5.0) as c:
+            r = c.get(url + "/positions", headers=entetes)
+        if r.status_code != 200:
+            logger.info(
+                "mt5_bridge: /positions[%s] -> %s, cap par paire indécidable",
+                cle, r.status_code)
+            return None
+        positions = r.json().get("positions")
+    except Exception as e:  # noqa: BLE001 — toute panne réseau = on ne sait pas
+        logger.info("mt5_bridge: /positions[%s] injoignable (%s), cap par "
+                    "paire indécidable", cle, e)
+        return None
+    if not isinstance(positions, list):
+        return None
+    _positions_cache[cle] = (time.time(), positions)
+    return positions
+
+
+def _compter_positions_courtier(pair: str, dest) -> int | None:
+    """Positions ouvertes CHEZ LE COURTIER sur cette paire. `None` = indécidable.
+
+    Posée le 2026-08-28. Le cap par paire comptait dans `personal_trades`, la
+    base du radar : le 31/07, **47 ordres `XTIUSD buy`** ont franchi un cap
+    fixé à 1 pour l'énergie, parce que cette base voyait zéro WTI ouvert
+    pendant que le courtier en tenait un. Seul un bug de pendule dans
+    l'anti-doublon du bridge les a arrêtés.
+
+    > **Une porte qui compte dans sa propre mémoire ne compte pas le monde.**
+
+    ⚠️ Compte AUSSI les positions ouvertes à la main : ce sont bien des
+    positions simultanées sur la paire, et c'est ce que le cap borne.
+    """
+    positions = _positions_courtier(dest)
+    if positions is None:
+        return None
+    cible = _symbole_courtier_pour(pair, dest).upper()
+    if not cible:
+        return None
+    return sum(1 for p in positions
+               if str((p or {}).get("symbol") or "").upper() == cible)
+
+
 def _count_open_trades_for_pair(pair: str) -> int:
     """Compte les trades auto encore OPEN pour cette pair (source : DB
-    locale personal_trades). Évite un round-trip bridge."""
+    locale personal_trades). Évite un round-trip bridge.
+
+    ⚠️ Ne sert plus qu'aux appelants SANS destination HTTP — la simulation
+    (`_should_push`) et les routes EA queue. Sur les destinations admin, c'est
+    `_compter_positions_courtier` qui décide : cf. son avertissement."""
     try:
         import sqlite3
         from backend.services.trade_log_service import _DB_PATH
@@ -766,7 +848,19 @@ def _check_rejection(setup, dest=None) -> str | None:
     # peut avoir jusqu'à 5-7 trades XAU simultanés sur un même régime, ce
     # qui transforme 1 pari macro en 5-7 pertes corrélées si le régime
     # tourne. Limite configurable par asset class.
-    open_count = _count_open_trades_for_pair(setup.pair)
+    # Compté chez le COURTIER quand la destination en a un (même garde que la
+    # validation de tick : destinations admin avec `bridge_url`, jamais les
+    # routes EA queue, qui n'ont pas de bridge à interroger et garderaient
+    # sinon un refus permanent).
+    if (dest is not None and getattr(dest, "bridge_url", "")
+            and getattr(dest, "user_id", -1) is None):
+        open_count = _compter_positions_courtier(setup.pair, dest)
+        if open_count is None:
+            # ⛔ « On ne sait pas » n'est pas « il reste de la place ». Un
+            # bridge muet ne laissera de toute façon pas passer l'ordre.
+            return "max_positions_per_pair_indecidable"
+    else:
+        open_count = _count_open_trades_for_pair(setup.pair)
     max_allowed = _max_positions_for_pair(setup.pair)
     if open_count >= max_allowed:
         return "max_positions_per_pair"
