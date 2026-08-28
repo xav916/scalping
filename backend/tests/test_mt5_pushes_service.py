@@ -177,3 +177,51 @@ def test_try_register_push_returns_true_on_db_error(monkeypatch):
         "admin_legacy", "2026-04-28", "EUR/USD", "buy", "1.10000"
     )
     assert ok is True
+
+
+# ─── ⛔ Un ordre CONFIRME ne se libere pas ────────────────────────────────
+
+def test_discard_ne_supprime_PAS_une_ligne_confirmee(db):
+    """⛔ Constate le 2026-08-28 : `mt5_pushes` etait tombe de 139 lignes le
+    20/08 a ZERO les 27 et 28, pendant que des ordres partaient. La date est
+    celle du plafond de risque, qui a fait exploser les refus — et chaque
+    refus efface sa ligne.
+
+    Une ligne `ok=1` avec un ticket atteste d'un ordre REELLEMENT passe chez
+    le courtier. L'effacer autoriserait un retry d'un ordre deja execute, et
+    surtout effacerait la seule trace reliant cet ordre a son horizon, son
+    motif et sa source. Aucun rattrapage n'existe.
+
+    > **Une ligne qui atteste d'un ordre passe n'est pas une reservation a
+    > liberer.**
+    """
+    cle = ("admin_live", "2026-08-28", "XAU/USD", "sell", "4475.20000")
+    assert mt5_pushes_service.try_register_push(*cle, horizon="4h")
+    mt5_pushes_service.update_push_result(*cle, ok=True,
+                                          response={"ticket": 1357145568})
+
+    mt5_pushes_service.discard_push(*cle)
+
+    ligne = mt5_pushes_service.get_push(*cle)
+    assert ligne is not None, "la ligne d'un ordre PASSE a ete effacee"
+    assert ligne["mt5_ticket"] == 1357145568
+    assert ligne["horizon"] == "4h"
+
+
+def test_discard_libere_toujours_une_reservation_NON_confirmee(db):
+    """Le garde-fou ne doit pas empecher le retry qu'il sert a autoriser."""
+    cle = ("admin_live", "2026-08-28", "EUR/USD", "buy", "1.10000")
+    assert mt5_pushes_service.try_register_push(*cle)
+    mt5_pushes_service.discard_push(*cle)
+    assert mt5_pushes_service.get_push(*cle) is None
+    # ... et la cle redevient reservable, ce qui est tout l'objet du discard.
+    assert mt5_pushes_service.try_register_push(*cle)
+
+
+def test_discard_libere_une_ligne_marquee_EN_ECHEC(db):
+    """`ok=0` explicite : le bridge a refuse, la reservation doit se liberer."""
+    cle = ("admin_live", "2026-08-28", "GBP/USD", "sell", "1.30000")
+    assert mt5_pushes_service.try_register_push(*cle)
+    mt5_pushes_service.update_push_result(*cle, ok=False, response={"error": "429"})
+    mt5_pushes_service.discard_push(*cle)
+    assert mt5_pushes_service.get_push(*cle) is None

@@ -205,6 +205,23 @@ def discard_push(
 
     Utile quand un push HTTP échoue avec une erreur récupérable
     (timeout PC éteint, max_positions bridge à libérer).
+
+    ⛔ **Ne touche JAMAIS une ligne déjà confirmée** — `ok = 1` ou un ticket
+    présent. Une telle ligne atteste d'un ordre RÉELLEMENT passé chez le
+    courtier : l'effacer ferait deux dégâts, et le second est le pire.
+
+    1. Elle autoriserait un retry d'un ordre déjà exécuté, donc un doublon.
+    2. Elle effacerait la seule trace reliant l'ordre à son `horizon`, son
+       motif et sa `source`. Aucun rattrapage n'existe — l'horizon l'a
+       démontré sur 390 676 signaux.
+
+    > **Une ligne qui atteste d'un ordre passé n'est pas une réservation à
+    > libérer.** Les deux vivaient dans la même table et sous la même clé.
+
+    Constaté le 2026-08-28 : `mt5_pushes` était tombé de 139 lignes le 20/08
+    à ZÉRO les 27 et 28, pendant que des ordres partaient. La date n'est pas
+    un hasard — c'est celle du plafond de risque, qui a fait exploser les
+    refus, et **chaque refus efface sa ligne**.
     """
     try:
         with sqlite3.connect(_db_path()) as c:
@@ -213,6 +230,7 @@ def discard_push(
                 DELETE FROM mt5_pushes
                 WHERE destination_id = ? AND date = ? AND pair = ?
                   AND direction = ? AND entry_price_5dp = ?
+                  AND COALESCE(ok, 0) = 0 AND mt5_ticket IS NULL
                 """,
                 (
                     destination_id,
