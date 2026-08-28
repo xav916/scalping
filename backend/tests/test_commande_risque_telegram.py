@@ -347,3 +347,69 @@ def test_repondre_n_ecrit_RIEN(client, envois, mesure_bouchonnee, tmp_path,
     _poster(client, "risque")
 
     assert not instantane.exists(), "la réponse a écrit l'état de la sonde"
+
+
+# --------------------------------------------------------------------------
+# Deux poches : 6 % hors or, 14 % pour l'or seul (2026-08-28)
+# --------------------------------------------------------------------------
+
+
+def _eval_deux_poches(hors_or=28.75, or_=60.0, plafond_hors_or=33.12,
+                      plafond_or=77.28, login=13137475, positions=7):
+    """Ce que `_lire_destination` rend depuis que le bridge a deux budgets.
+
+    ⛔ `risque_total` n'y décrit QUE la poche la plus tendue : c'est elle qui
+    refusera le prochain ordre. L'afficher comme « l'engagement du compte »
+    serait un chiffre amputé de tout ce qui vit dans l'autre poche.
+    """
+    poches = {
+        "hors_or": {"risque": hors_or, "plafond": plafond_hors_or,
+                    "pct": 100.0 * hors_or / plafond_hors_or,
+                    "candidats": 0, "liberable": 0.0},
+        "or": {"risque": or_, "plafond": plafond_or,
+               "pct": 100.0 * or_ / plafond_or,
+               "candidats": 0, "liberable": 0.0},
+    }
+    q = max(poches, key=lambda k: poches[k]["pct"])
+    return {
+        "lisible": True, "indecidable": False,
+        "poche": q, "multi_poches": True, "detail_poches": poches,
+        "risque_total": poches[q]["risque"], "plafond": poches[q]["plafond"],
+        "pct": poches[q]["pct"],
+        "restant": poches[q]["plafond"] - poches[q]["risque"],
+        "nues": 0, "non_mesurables": 0, "positions": positions,
+        "candidats": 0, "liberable": 0.0,
+        "login": login, "marge_min_r": 1.0, "marge_min_sigma": 0.0,
+    }
+
+
+def test_les_DEUX_poches_sont_montrees_avec_leur_propre_plafond():
+    from backend.app import _formater_risque
+
+    texte = _formater_risque([_live(_eval_deux_poches(), "sature")])
+
+    assert "hors_or" in texte and "or" in texte, texte
+    assert "33,12" in texte and "77,28" in texte, texte
+    # 28,75 / 33,12 = 87 % contre 60 / 77,28 = 78 % : c'est le forex qui mord.
+    assert "87" in texte, texte
+
+
+def test_l_engagement_affiche_SOMME_les_deux_poches():
+    """⛔ 28,75 € seuls seraient l'engagement de la poche la plus tendue, pas
+    celui du compte. Un total amputé s'affiche sans que personne s'en méfie."""
+    from backend.app import _formater_risque
+
+    texte = _formater_risque([_live(_eval_deux_poches(), "sature")])
+
+    assert "88,75" in texte, texte
+
+
+def test_le_total_tous_comptes_additionne_bien_les_poches():
+    from backend.app import _formater_risque
+
+    texte = _formater_risque([
+        _live(_eval_deux_poches(), "sature"),
+        _demo(_eval_ok(total=10.0, plafond=33.0), "ok"),
+    ])
+
+    assert "98,75" in texte, texte

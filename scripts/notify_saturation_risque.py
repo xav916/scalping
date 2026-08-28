@@ -192,19 +192,52 @@ def sigma_journalier(clotures) -> float | None:
     return sigma if sigma > 0 else None
 
 
+def poche_du_symbole(symbole: str) -> str:
+    """Poche de risque du symbole : l'or d'un côté, tout le reste de l'autre.
+
+    ⚠️ **Règle DUPLIQUÉE depuis `bridge.py::_poche_du_symbole`** — même raison
+    que `sigma_journalier` : les deux tournent sur des machines différentes et
+    ne peuvent pas partager de code à l'exécution. Toute modification ici doit
+    être répercutée là-bas ; un test épingle les deux sur les mêmes entrées.
+
+    ⛔ L'ARGENT (XAG) n'est PAS de l'or : les 14 % sont réservés à l'or seul.
+    """
+    s = (symbole or "").upper()
+    return "or" if ("XAU" in s or "GOLD" in s) else "hors_or"
+
+
 def evaluer(positions: list, equity: float, plafond_pct: float,
             marge_min_r: float, sigmas=None,
-            marge_min_sigma: float = 0.0) -> dict:
+            marge_min_sigma: float = 0.0,
+            plafond_or_pct: float = 0.0) -> dict:
     """Somme les risques et compte ce que la soupape pourrait libérer.
 
     ⛔ `indecidable` dès qu'une position est nue, non mesurable, ou que
     l'equity manque : un pourcentage calculé sur un total amputé serait une
     mesure inventée, et c'est pire qu'une absence de mesure.
+
+    ## Deux poches depuis le 2026-08-28
+
+    Le bridge borne séparément l'or (14 %) et le reste (6 %), et **ne prête
+    rien de l'une à l'autre**. Un pourcentage unique sur 20 % afficherait 35 %
+    là où la poche de l'or est PLEINE : le blocage redeviendrait exactement ce
+    que cette sonde existe pour empêcher — un refus silencieux.
+
+    ⇒ On mesure chaque poche et on remonte **la plus saturée**. Les clés
+    historiques (`pct`, `plafond`, `risque_total`, `restant`, `candidats`,
+    `liberable`) décrivent donc cette poche-là, nommée par `poche`.
+
+    `plafond_or_pct <= 0` ⇒ une seule poche : l'état d'avant, au bit près.
     """
-    total, nues, non_mesurables = 0.0, 0, 0
-    candidats, liberable = 0, 0.0
+    or_separe = plafond_or_pct > 0
+    poches = ("hors_or", "or") if or_separe else ("hors_or",)
+    total = {q: 0.0 for q in poches}
+    candidats = {q: 0 for q in poches}
+    liberable = {q: 0.0 for q in poches}
+    nues, non_mesurables = 0, 0
 
     for p in positions or []:
+        q = poche_du_symbole(p.get("symbol")) if or_separe else "hors_or"
         m = mesurer_position(p)
         if m["nue"]:
             nues += 1
@@ -212,7 +245,7 @@ def evaluer(positions: list, equity: float, plafond_pct: float,
         if m["risque"] is None:
             non_mesurables += 1
             continue
-        total += m["risque"]
+        total[q] += m["risque"]
         if not (m["risque"] > 0 and m["marge_r"] is not None
                 and m["marge_r"] >= marge_min_r - 1e-9):
             continue
@@ -230,21 +263,41 @@ def evaluer(positions: list, equity: float, plafond_pct: float,
             acquis = _acquis_en_prix(p)
             if acquis is None or acquis < marge_min_sigma * sigma - 1e-12:
                 continue
-        candidats += 1
-        liberable += m["risque"]
+        candidats[q] += 1
+        liberable[q] += m["risque"]
 
     equity_ok = equity is not None and equity > 0
     indecidable = bool(nues or non_mesurables or not equity_ok)
-    plafond = (equity * plafond_pct / 100.0) if equity_ok else None
-    pct = None if (indecidable or not plafond) else 100.0 * total / plafond
+    pcts = {q: (plafond_pct if q == "hors_or" else plafond_or_pct)
+            for q in poches}
+    plafonds = {q: (equity * pcts[q] / 100.0) if (equity_ok and pcts[q] > 0)
+                else None for q in poches}
+
+    # La poche qui MORD est celle dont le pourcentage est le plus haut : c'est
+    # elle qui refusera le prochain ordre, donc elle qu'il faut annoncer. Une
+    # moyenne, ou un total rapporté à la somme des plafonds, diluerait une
+    # poche pleine dans une poche vide — et se tairait.
+    def _pct(q):
+        return (None if (indecidable or not plafonds[q])
+                else 100.0 * total[q] / plafonds[q])
+
+    mesurables = [q for q in poches if _pct(q) is not None]
+    q_max = max(mesurables, key=_pct) if mesurables else poches[0]
+    plafond, pct = plafonds[q_max], _pct(q_max)
 
     return {
         "lisible": True, "indecidable": indecidable,
-        "risque_total": total, "plafond": plafond, "pct": pct,
-        "restant": (plafond - total) if plafond is not None else None,
+        "poche": q_max, "multi_poches": or_separe,
+        "detail_poches": {
+            q: {"risque": total[q], "plafond": plafonds[q], "pct": _pct(q),
+                "candidats": candidats[q], "liberable": liberable[q]}
+            for q in poches
+        },
+        "risque_total": total[q_max], "plafond": plafond, "pct": pct,
+        "restant": (plafond - total[q_max]) if plafond is not None else None,
         "nues": nues, "non_mesurables": non_mesurables,
         "positions": len(positions or []),
-        "candidats": candidats, "liberable": liberable,
+        "candidats": candidats[q_max], "liberable": liberable[q_max],
     }
 
 
@@ -252,6 +305,7 @@ def evaluation_illisible() -> dict:
     """⛔ Muet n'est pas sain. Un bridge injoignable ne vaut pas « 0 % »."""
     return {
         "lisible": False, "indecidable": True,
+        "poche": None, "multi_poches": False, "detail_poches": {},
         "risque_total": None, "plafond": None, "pct": None, "restant": None,
         "nues": 0, "non_mesurables": 0, "positions": 0,
         "candidats": 0, "liberable": 0.0,
@@ -347,6 +401,9 @@ def _lire_destination(dest) -> dict:
     gf = sante.get("garde_fous") or {}
     try:
         plafond_pct = float(gf.get("max_risque_engage_pct"))
+        # Poche de l'or (2026-08-28). Absente (vieux bridge) => 0, donc une
+        # seule poche : retro-compatible, et jamais un plafond invente.
+        plafond_or_pct = float(gf.get("max_risque_engage_or_pct", 0.0) or 0.0)
         marge_min_r = float(gf.get("equilibre_marge_r", 1.0))
         # ⛔ Le bridge applique AUSSI cette porte depuis le 24/08. L'ignorer
         # faisait annoncer du budget liberable qui n'existait pas.
@@ -354,8 +411,9 @@ def _lire_destination(dest) -> dict:
         marge_min_sigma = float(gf.get("equilibre_marge_sigma", 0.0) or 0.0)
     except (TypeError, ValueError):
         return evaluation_illisible()
-    if plafond_pct <= 0:
-        # Porte desarmee : il n'y a pas de plafond a saturer.
+    if plafond_pct <= 0 and plafond_or_pct <= 0:
+        # Porte desarmee des DEUX cotes : il n'y a pas de plafond a saturer.
+        # Une seule des deux a zero laisse l'autre mesurable — donc dite.
         e = evaluation_illisible()
         e.update({"lisible": True, "indecidable": False, "pct": 0.0,
                   "desarme": True})
@@ -377,7 +435,8 @@ def _lire_destination(dest) -> dict:
         return evaluation_illisible()
 
     e = evaluer(positions, equity, plafond_pct, marge_min_r,
-                sigmas=_source_volatilite(dest), marge_min_sigma=marge_min_sigma)
+                sigmas=_source_volatilite(dest), marge_min_sigma=marge_min_sigma,
+                plafond_or_pct=plafond_or_pct)
     e["login"] = sante.get("login")
     e["marge_min_r"] = marge_min_r
     e["marge_min_sigma"] = marge_min_sigma
@@ -441,11 +500,17 @@ def _message(did: str, e: dict, v: str) -> tuple[str, str]:
                 "tort. On ne conclut pas.")
 
     pct, restant = e["pct"], e["restant"]
+    # ⛔ Nommer la poche n'est pas cosmétique : « 88 % du plafond » sur un
+    # compte qui en a deux ne dit pas CE QUI est fermé, et l'or bouché
+    # n'appelle pas la même décision que le forex bouché.
+    poche = (f" (poche <b>{html.escape(str(e.get('poche')))}</b>)"
+             if e.get("multi_poches") else "")
+    etiquette = f" [{e.get('poche')}]" if e.get("multi_poches") else ""
     if v == "ok":
-        return (f"✅ Admission rouverte — {nom}",
-                f"Le risque engagé de {nom} (compte {compte}) est redescendu "
-                f"à <b>{pct:.0f} %</b> du plafond — {restant:.2f} € de marge. "
-                "Les nouveaux ordres repassent.")
+        return (f"✅ Admission rouverte — {nom}{etiquette}",
+                f"Le risque engagé de {nom} (compte {compte}){poche} est "
+                f"redescendu à <b>{pct:.0f} %</b> du plafond — {restant:.2f} € "
+                "de marge. Les nouveaux ordres repassent.")
 
     soupape = (f"La soupape d'équilibre peut libérer <b>{e['liberable']:.2f} €</b> "
                f"({e['candidats']} position(s) au-delà de {e['marge_min_r']:.0f} R)."
@@ -454,10 +519,19 @@ def _message(did: str, e: dict, v: str) -> tuple[str, str]:
                f"position n'atteint {e['marge_min_r']:.0f} R de profit. Elle se "
                "déclenchera, ne trouvera rien, et le refus tiendra.")
 
-    return (f"🚨 Risque engagé à {pct:.0f} % — {nom}",
+    # L'autre poche est dite aussi : « l'or est plein » et « tout est plein »
+    # n'appellent pas la même décision, et rien d'autre ne le publie.
+    autres = "".join(
+        f"\nAutre poche <b>{q}</b> : {d['risque']:.2f} € "
+        + (f"sur {d['plafond']:.2f} € ({d['pct']:.0f} %)"
+           if d["pct"] is not None else "— non mesurée")
+        for q, d in sorted((e.get("detail_poches") or {}).items())
+        if q != e.get("poche"))
+
+    return (f"🚨 Risque engagé à {pct:.0f} % — {nom}{etiquette}",
             f"<b>{nom}</b> (compte {compte}) — {e['positions']} position(s)\n"
-            f"Risque engagé <b>{e['risque_total']:.2f} €</b> sur un plafond de "
-            f"{e['plafond']:.2f} €\n"
+            f"Risque engagé{poche} <b>{e['risque_total']:.2f} €</b> sur un "
+            f"plafond de {e['plafond']:.2f} €{autres}\n"
             f"Marge restante : <b>{restant:.2f} €</b>\n\n"
             f"{soupape}\n\n"
             "Un ordre refusé pour dépassement ne produit aucune notification : "
@@ -489,7 +563,7 @@ def main() -> int:
         if e["pct"] is None:
             print(f"    {v.upper()}")
         else:
-            print(f"    {e['pct']:.1f} % du plafond "
+            print(f"    {e['pct']:.1f} % du plafond [{e.get('poche')}] "
                   f"({e['risque_total']:.2f} / {e['plafond']:.2f}) — "
                   f"{e['candidats']} candidat(s), {v}")
 

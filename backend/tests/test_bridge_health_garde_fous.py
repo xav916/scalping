@@ -34,6 +34,8 @@ _REGLAGES = {
     "MAX_DAILY_LOSS_PCT": 3.0,
     "MAX_OPEN_POSITIONS": 3,
     "MAX_RISQUE_ENGAGE_PCT": 6.0,
+    # Poche de l'or, ouverte le 2026-08-28.
+    "MAX_RISQUE_ENGAGE_OR_PCT": 14.0,
     "MARGE_LIBRE_MIN_PCT": 30.0,
     "DEVIATION_POINTS": 20,
     "TRAIL_DISTANCE_POINTS": 0,
@@ -119,6 +121,24 @@ def test_la_porte_de_bruit_DESARMEE_se_voit():
     instruments qu'il laisse passer. Ça doit se voir."""
     g = _appeler_health(EQUILIBRE_MARGE_SIGMA=0.0)["garde_fous"]
     assert g["equilibre_marge_sigma"] == 0.0
+
+
+def test_les_DEUX_poches_de_risque_se_lisent_a_distance():
+    """6 % hors or + 14 % pour l'or seul (2026-08-28).
+
+    ⛔ Publier la seule poche des 6 % ferait lire « plafond a 6 % » sur un
+    compte qui en autorise 20 au total. Un garde-fou desserre qu'on ne peut
+    pas lire est exactement ce que ce fichier existe pour empecher.
+    """
+    g = _appeler_health()["garde_fous"]
+    assert g["max_risque_engage_pct"] == 6.0
+    assert g["max_risque_engage_or_pct"] == 14.0
+
+
+def test_la_poche_de_l_or_DESARMEE_se_voit():
+    """`0` = l'or retombe dans les 6 % communs. Ca doit se voir."""
+    g = _appeler_health(MAX_RISQUE_ENGAGE_OR_PCT=0.0)["garde_fous"]
+    assert g["max_risque_engage_or_pct"] == 0.0
 
 
 def test_un_plafond_desserre_se_VOIT():

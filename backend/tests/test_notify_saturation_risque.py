@@ -343,3 +343,115 @@ def test_le_cron_et_la_commande_a_la_demande_partagent_LE_MEME_seuil(monkeypatch
     que rien ne le dise.
     """
     assert _defaut_python(monkeypatch) == _defaut_enveloppe()
+
+
+# --------------------------------------------------------------------------
+# Deux poches : 6 % hors or, 14 % pour l'or seul (2026-08-28)
+# --------------------------------------------------------------------------
+#
+# ⛔ Le piège que ces tests ferment : avec un plafond unique de 20 %, une poche
+# d'or PLEINE se lirait « 35 % du plafond » et la sonde se tairait. Ce serait
+# le refus silencieux qu'elle existe pour rendre visible — sous une mesure qui
+# a l'air d'une mesure.
+
+
+def _or(**kw):
+    """Position or, calibrée pour 20 € de risque : profit 4 € pour 4 points de
+    mouvement (k = 1), stop à 20 points de l'entrée."""
+    base = dict(symbol="XAUUSD", price_open=4450.0, price_current=4454.0,
+                sl=4430.0, profit=4.0, ticket=90)
+    base.update(kw)
+    return _pos(**base)
+
+
+def test_la_poche_de_l_or_SATUREE_ne_se_dilue_pas_dans_le_forex(s):
+    """3 ors à 20 € = 60 € sur 14 % de 552 € (77,28 €) ⇒ 78 %, saturé.
+
+    Le total (60 €) rapporté aux 20 % (110,40 €) donnerait 54 % : silencieux.
+    """
+    positions = [_or(ticket=t) for t in (91, 92, 93)]
+    e = s.evaluer(positions, equity=552.0, plafond_pct=6.0, marge_min_r=1.0,
+                  plafond_or_pct=14.0)
+    assert e["poche"] == "or"
+    assert e["pct"] == pytest.approx(77.6, abs=0.5)
+    assert s.verdict(e, 72.0) == "sature"
+
+
+def test_le_forex_VIDE_ne_sauve_pas_une_poche_or_pleine(s):
+    """Non-fongibilité, vue depuis la sonde : la poche vide est rapportée à
+    part, jamais fondue dans le pourcentage annoncé."""
+    e = s.evaluer([_or(ticket=t) for t in (91, 92, 93)], 552.0, 6.0, 1.0,
+                  plafond_or_pct=14.0)
+    assert e["detail_poches"]["hors_or"]["risque"] == 0.0
+    assert e["detail_poches"]["or"]["risque"] == pytest.approx(60.0, abs=0.5)
+
+
+def test_c_est_la_poche_la_PLUS_saturee_qui_est_annoncee(s):
+    """Un forex à 88 % et un or à 26 % : c'est le forex qui refusera."""
+    positions = [_pos(ticket=1), _pos(ticket=2), _pos(ticket=3),
+                 _pos(ticket=4), _or(ticket=91)]
+    e = s.evaluer(positions, equity=552.0, plafond_pct=6.0, marge_min_r=1.0,
+                  plafond_or_pct=14.0)
+    assert e["poche"] == "hors_or"
+    assert e["pct"] > e["detail_poches"]["or"]["pct"]
+
+
+def test_l_ARGENT_compte_dans_la_poche_des_6_pct(s):
+    """`metal` aurait mis XAG avec XAU. Les 14 % sont pour l'or SEUL."""
+    e = s.evaluer([_or(symbol="XAGUSD", ticket=95)], 552.0, 6.0, 1.0,
+                  plafond_or_pct=14.0)
+    assert e["detail_poches"]["or"]["risque"] == 0.0
+    assert e["detail_poches"]["hors_or"]["risque"] == pytest.approx(20.0,
+                                                                    abs=0.5)
+
+
+def test_sans_poche_or_le_comportement_est_INCHANGE(s):
+    """`plafond_or_pct=0` (ou un vieux bridge qui ne publie rien) doit rendre
+    l'état d'avant : une seule poche, tout dedans."""
+    positions = [_pos(ticket=1), _or(ticket=91)]
+    avant = s.evaluer(positions, 552.0, 6.0, 1.0)
+    assert avant["multi_poches"] is False
+    assert avant["poche"] == "hors_or"
+    assert avant["risque_total"] == pytest.approx(7.67 + 20.0, abs=0.5)
+
+
+def test_une_position_NUE_rend_les_DEUX_poches_indecidables(s):
+    """Son risque n'est borné dans aucun budget : elle bloque tout, et la
+    sonde ne doit surtout pas publier un pourcentage sur l'autre poche."""
+    e = s.evaluer([_or(ticket=91), _pos(ticket=2, sl=0.0)], 552.0, 6.0, 1.0,
+                  plafond_or_pct=14.0)
+    assert e["indecidable"] is True
+    assert e["pct"] is None
+    assert s.verdict(e, 72.0) == "indecidable"
+
+
+def test_le_message_NOMME_la_poche_saturee(s):
+    """« 88 % du plafond » sur un compte à deux poches ne dit pas ce qui est
+    fermé — et l'or bouché n'appelle pas la même décision que le forex."""
+    e = s.evaluer([_or(ticket=t) for t in (91, 92, 93)], 552.0, 6.0, 1.0,
+                  plafond_or_pct=14.0)
+    e["login"] = 13137475
+    e["marge_min_r"] = 1.0
+    titre, corps = s._message("admin_live", e, "sature")
+    assert "[or]" in titre
+    assert "poche <b>or</b>" in corps
+    assert "Autre poche <b>hors_or</b>" in corps
+
+
+def test_la_regle_des_poches_est_LA_MEME_que_celle_du_bridge(s):
+    """⚠️ Règle dupliquée entre deux machines : elle doit être épinglée des
+    deux côtés sur les mêmes entrées, comme `sigma_journalier`."""
+    import types
+
+    src = (pathlib.Path(__file__).resolve().parents[2]
+           / "mt5-bridge" / "bridge.py").read_text(encoding="utf-8")
+    debut = src.index("def _poche_du_symbole(")
+    fin = src.index("# MT5 : POSITION_TYPE_BUY")
+    mod = types.ModuleType("bridge_poche")
+    mod.__dict__["_POCHE_OR"] = "or"
+    mod.__dict__["_POCHE_HORS_OR"] = "hors_or"
+    exec(compile(src[debut:fin], "bridge.py", "exec"), mod.__dict__)
+
+    for symbole in ("XAUUSD", "XAUEUR", "GOLD", "XAGUSD", "GBPUSD", "BTCUSD",
+                    "", None):
+        assert mod._poche_du_symbole(symbole) == s.poche_du_symbole(symbole)

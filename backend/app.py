@@ -2958,14 +2958,39 @@ def _formater_risque(mesures: list[dict]) -> str:
             continue
 
         pct = e["pct"]
-        total += e["risque_total"]
+        detail = e.get("detail_poches") or {}
+        # ⛔ Depuis le 28/08, `risque_total` ne décrit QUE la poche la plus
+        # tendue. Le sommer tel quel rendrait un total crédible et AMPUTÉ —
+        # exactement ce que le bloc « total impossible » plus bas refuse.
+        engage = (sum(d["risque"] for d in detail.values()) if detail
+                  else e["risque_total"])
+        total += engage
         puce = "🚨" if v == "sature" else "✅"
-        lignes += [
-            f"{puce} <b>{_eur(e['risque_total'])} €</b> engagés sur "
-            f"{_eur(e['plafond'])} € autorisés — <b>{pct:.0f} %</b>",
-            f"Marge restante : <b>{_eur(e['restant'])} €</b> · "
-            f"{e['positions']} position(s)",
-        ]
+        if e.get("multi_poches"):
+            # Deux budgets qui ne se prêtent RIEN : un pourcentage unique ne
+            # dirait pas lequel est fermé, et l'or bouché n'appelle pas la
+            # même décision que le forex bouché.
+            lignes.append(
+                f"{puce} <b>{_eur(engage)} €</b> engagés · poche la plus "
+                f"tendue : <b>{_html.escape(str(e.get('poche')))}</b> à "
+                f"<b>{pct:.0f} %</b>")
+            for q, d in sorted(detail.items()):
+                if d["pct"] is None:
+                    lignes.append(f"· <b>{_html.escape(q)}</b> : "
+                                  f"{_eur(d['risque'])} € — plafond désarmé")
+                else:
+                    lignes.append(
+                        f"· <b>{_html.escape(q)}</b> : {_eur(d['risque'])} € "
+                        f"sur {_eur(d['plafond'])} € ({d['pct']:.0f} %) — "
+                        f"reste {_eur(d['plafond'] - d['risque'])} €")
+            lignes.append(f"{e['positions']} position(s)")
+        else:
+            lignes += [
+                f"{puce} <b>{_eur(e['risque_total'])} €</b> engagés sur "
+                f"{_eur(e['plafond'])} € autorisés — <b>{pct:.0f} %</b>",
+                f"Marge restante : <b>{_eur(e['restant'])} €</b> · "
+                f"{e['positions']} position(s)",
+            ]
         if e.get("candidats"):
             lignes.append(
                 f"🔓 La soupape d'équilibre peut libérer "

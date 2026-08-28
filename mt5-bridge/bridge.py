@@ -130,6 +130,19 @@ MAX_RISQUE_ENGAGE_PCT = float(os.getenv("MAX_RISQUE_ENGAGE_PCT", "6.0"))
 # Des stops tres serres autorisent beaucoup de positions a risque constant —
 # c'est precisement le cas ou la marge sature sans que le risque ne bouge.
 MARGE_LIBRE_MIN_PCT = float(os.getenv("MARGE_LIBRE_MIN_PCT", "30.0"))
+# ─── Deux POCHES de risque, jamais fongibles (2026-08-28) ──────────────────
+# Demande de Xavier : porter le risque cumule autorise de 6 % a 20 %, mais
+# **pas en un seul reservoir**. Les 6 % d'origine restent a tout ce qui n'est
+# pas de l'or, et 14 % supplementaires sont reserves a l'OR SEUL, pour lui
+# laisser du mouvement sans que le reste du portefeuille en profite.
+#
+# ⛔ Non fongibles dans les DEUX sens : l'or ne peut pas manger le budget du
+# forex, et le forex ne peut pas manger celui de l'or. Un reservoir unique de
+# 20 % aurait aussi autorise 20 % de forex — ce n'est pas ce qui est demande,
+# et ca n'a jamais ete mesure.
+#
+# 0 = l'or retombe dans la poche commune : l'etat exact d'avant le 28/08.
+MAX_RISQUE_ENGAGE_OR_PCT = float(os.getenv("MAX_RISQUE_ENGAGE_OR_PCT", "14.0"))
 
 # ─── Remontee du stop a l'EQUILIBRE pour liberer du risque (2026-08-23) ───
 # Quand la porte des 6 % refuserait un ordre, on remonte a l'entree le stop de
@@ -629,14 +642,24 @@ def _check_safety_gates(mt5_symbol: str, direction: str,
     # retenu et son stop qu'il faut juger, pas ceux qu'on souhaitait.
     if lots is not None and sl is not None and entry is not None:
         specs = mt5.symbol_info(mt5_symbol)
-        ouvert, non_bornables = _risque_engage(positions, mt5.symbol_info)
+        # ─── Deux poches depuis le 2026-08-28 : l'or a la sienne ──────────
+        # L'ordre demande n'est juge que contre SA poche, et le budget de
+        # l'autre ne lui est jamais pretable — meme vide. C'est toute la
+        # difference avec un reservoir unique de 20 %.
+        or_separe = MAX_RISQUE_ENGAGE_OR_PCT > 0
+        poche = _poche_du_symbole(mt5_symbol) if or_separe else _POCHE_HORS_OR
+        plafond_pct = (MAX_RISQUE_ENGAGE_OR_PCT if poche == _POCHE_OR
+                       else MAX_RISQUE_ENGAGE_PCT)
+        totaux, non_bornables = _risque_engage_par_poche(
+            positions, mt5.symbol_info, or_separe=or_separe)
+        ouvert = totaux[poche]
         nouveau = (_risque_realise(entry, sl, lots, specs.point,
                                    specs.trade_tick_value)
                    if specs is not None else None)
 
         ok_risque, motif = _controle_risque_engage(
             ouvert, non_bornables, nouveau, float(info.equity),
-            MAX_RISQUE_ENGAGE_PCT)
+            plafond_pct, poche=poche)
 
         # ─── Dernier recours : libérer du risque plutôt que refuser ───────
         # Demandé explicitement le 2026-08-23. Plutôt que de renoncer au
@@ -652,10 +675,19 @@ def _check_safety_gates(mt5_symbol: str, direction: str,
         # qu'on puisse un jour la JUGER au lieu d'y croire.
         if (not ok_risque and EQUILIBRE_AUTO_ENABLED and not non_bornables
                 and nouveau is not None and float(info.equity) > 0):
-            plafond = float(info.equity) * MAX_RISQUE_ENGAGE_PCT / 100.0
+            plafond = float(info.equity) * plafond_pct / 100.0
             manque = (ouvert + nouveau) - plafond
+            # ⛔ Seules les positions de LA MEME poche liberent le budget qui
+            # manque ici : remonter le stop d'un forex ne rend pas un euro a
+            # l'or. Les chercher partout ferait deplacer des stops vivants
+            # pour un refus qui tiendrait quand meme.
+            memes_poche = [
+                p for p in positions
+                if not or_separe
+                or _poche_du_symbole(getattr(p, "symbol", None)) == poche
+            ]
             candidats = _candidats_equilibre(
-                positions, mt5.symbol_info, EQUILIBRE_MARGE_R,
+                memes_poche, mt5.symbol_info, EQUILIBRE_MARGE_R,
                 # La porte de BRUIT, en ecarts-types journaliers : le seuil en
                 # R seul vaut 1,07 σ sur EUR/GBP et 0,24 σ sur USD/JPY, donc
                 # aucune valeur ne peut etre bonne partout. Volatilite
@@ -674,14 +706,16 @@ def _check_safety_gates(mt5_symbol: str, direction: str,
                 # stops deplaces ne dit rien du risque reellement libere :
                 # un clamp a pu laisser du risque, un ordre a pu echouer.
                 positions = mt5.positions_get() or []
-                ouvert, non_bornables = _risque_engage(positions,
-                                                       mt5.symbol_info)
+                totaux, non_bornables = _risque_engage_par_poche(
+                    positions, mt5.symbol_info, or_separe=or_separe)
+                ouvert = totaux[poche]
                 ok_risque, motif = _controle_risque_engage(
                     ouvert, non_bornables, nouveau, float(info.equity),
-                    MAX_RISQUE_ENGAGE_PCT)
+                    plafond_pct, poche=poche)
                 logger.info(
                     f"equilibre: {len(faits)}/{len(retenus)} stop(s) deplace(s), "
-                    f"risque engage -> {ouvert:.2f} / plafond {plafond:.2f} — "
+                    f"risque engage [{poche}] -> {ouvert:.2f} / plafond "
+                    f"{plafond:.2f} — "
                     f"ordre {'ACCEPTE' if ok_risque else 'toujours refuse'}")
 
         if not ok_risque:
@@ -1982,6 +2016,10 @@ def health():
             # Plafond par le RISQUE plutot que par le nombre (2026-08-20).
             # 0 = desarme, seul le compteur agit alors.
             "max_risque_engage_pct": MAX_RISQUE_ENGAGE_PCT,
+            # Poche reservee a l'OR SEUL (2026-08-28). 0 = l'or retombe dans
+            # la poche ci-dessus. Les deux budgets ne se pretent RIEN : la
+            # sonde de saturation doit donc les mesurer separement.
+            "max_risque_engage_or_pct": MAX_RISQUE_ENGAGE_OR_PCT,
             "marge_libre_min_pct": MARGE_LIBRE_MIN_PCT,
             # Lisible a distance : sans ca, savoir si ce mecanisme est arme
             # demanderait une session RDP.
@@ -2315,6 +2353,21 @@ def _risque_realise(entry: float, sl: float, lots: float,
     return (distance / point) * tick_value * lots
 
 
+_POCHE_OR = "or"
+_POCHE_HORS_OR = "hors_or"
+
+
+def _poche_du_symbole(symbole: str) -> str:
+    """Dans quelle poche de risque ce symbole compte-t-il ? (2026-08-28)
+
+    ⚠️ Volontairement PAS `_asset_class_for_symbol` : celle-ci rend `metal`,
+    qui verserait l'ARGENT (XAG) dans la poche de l'or. Les 14 % sont demandes
+    pour l'or SEUL — l'argent, comme tout le reste, reste sur les 6 %.
+    """
+    s = (symbole or "").upper()
+    return _POCHE_OR if ("XAU" in s or "GOLD" in s) else _POCHE_HORS_OR
+
+
 # MT5 : POSITION_TYPE_BUY == 0, POSITION_TYPE_SELL == 1. Ecrit en clair pour
 # que ce bloc reste executable SANS le module MetaTrader5 — les tests en
 # extraient les fonctions du source et les lancent seules.
@@ -2380,26 +2433,49 @@ def _risque_position(p, info) -> float | None:
         return None
 
 
+def _risque_engage_par_poche(positions, specs,
+                             or_separe: bool = True) -> tuple[dict, list]:
+    """Somme des risques ouverts, VENTILEE par poche (2026-08-28).
+
+    Rend `({poche: total}, tickets_non_bornables)`. Les deux poches sont
+    TOUJOURS presentes, a 0.0 si vides : un `.get()` sur une cle absente
+    rendrait `None`, et un total absent finirait par se lire comme un total
+    nul — le meme zero-qui-passe-pour-une-mesure que `_risque_realise` refuse.
+
+    `or_separe=False` verse l'or dans la poche commune : c'est l'etat d'avant
+    le 28/08, et ce que produit `MAX_RISQUE_ENGAGE_OR_PCT=0`.
+
+    ⛔ Les positions NON BORNABLES (sans stop) restent rendues a part et sans
+    poche : leur risque est infini, il ne se range dans aucun budget. Elles
+    bloquent les deux poches, pas seulement la leur.
+    """
+    totaux = {_POCHE_HORS_OR: 0.0, _POCHE_OR: 0.0}
+    non_bornables = []
+    for p in positions or []:
+        symbole = getattr(p, "symbol", None)
+        r = _risque_position(p, specs(symbole))
+        if r is None:
+            non_bornables.append(getattr(p, "ticket", "?"))
+            continue
+        totaux[_poche_du_symbole(symbole) if or_separe else _POCHE_HORS_OR] += r
+    return totaux, non_bornables
+
+
 def _risque_engage(positions, specs) -> tuple[float, list]:
-    """Somme des risques des positions ouvertes.
+    """Somme des risques des positions ouvertes, TOUTES poches confondues.
 
     Rend `(total, tickets_non_bornables)`. `specs` est une fonction
     `symbole -> symbol_info`, injectee pour rester testable sans MT5.
     """
-    total = 0.0
-    non_bornables = []
-    for p in positions or []:
-        r = _risque_position(p, specs(getattr(p, "symbol", None)))
-        if r is None:
-            non_bornables.append(getattr(p, "ticket", "?"))
-        else:
-            total += r
-    return total, non_bornables
+    totaux, non_bornables = _risque_engage_par_poche(positions, specs,
+                                                     or_separe=False)
+    return totaux[_POCHE_HORS_OR], non_bornables
 
 
 def _controle_risque_engage(risque_ouvert: float, non_bornables: list,
                             risque_nouveau: float | None, equity: float,
-                            plafond_pct: float) -> tuple[bool, str]:
+                            plafond_pct: float,
+                            poche: str = "") -> tuple[bool, str]:
     """Le plafond porte sur le RISQUE TOTAL, pas sur le nombre de positions.
 
     Rend `(ok, raison)`. `plafond_pct <= 0` desarme la porte.
@@ -2423,8 +2499,11 @@ def _controle_risque_engage(risque_ouvert: float, non_bornables: list,
     plafond = equity * plafond_pct / 100.0
     total = risque_ouvert + risque_nouveau
     if total > plafond:
+        # `poche` nomme le budget refuse : sans elle, un refus a 6 % et un
+        # refus a 14 % s'ecrivent pareil et on ne sait pas lequel a mordu.
+        ou = f" [{poche}]" if poche else ""
         return False, (
-            f"Risque engage {total:.2f} > {plafond:.2f} "
+            f"Risque engage{ou} {total:.2f} > {plafond:.2f} "
             f"({plafond_pct}% de {equity:.2f}) : {risque_ouvert:.2f} deja en "
             f"jeu + {risque_nouveau:.2f} demande"
         )
