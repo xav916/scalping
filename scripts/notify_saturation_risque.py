@@ -192,24 +192,28 @@ def sigma_journalier(clotures) -> float | None:
     return sigma if sigma > 0 else None
 
 
+# Nommés UN PAR UN, jamais par classe d'actif : « métal » embarquerait le
+# platine et le palladium, que personne n'a demandé à financer sur ce budget.
+_SYMBOLES_OR_ARGENT = ("XAU", "GOLD", "XAG", "SILVER")
+
+
 def poche_du_symbole(symbole: str) -> str:
-    """Poche de risque du symbole : l'or d'un côté, tout le reste de l'autre.
+    """Poche de risque : or et argent d'un côté, tout le reste de l'autre.
 
     ⚠️ **Règle DUPLIQUÉE depuis `bridge.py::_poche_du_symbole`** — même raison
     que `sigma_journalier` : les deux tournent sur des machines différentes et
     ne peuvent pas partager de code à l'exécution. Toute modification ici doit
     être répercutée là-bas ; un test épingle les deux sur les mêmes entrées.
-
-    ⛔ L'ARGENT (XAG) n'est PAS de l'or : les 14 % sont réservés à l'or seul.
     """
     s = (symbole or "").upper()
-    return "or" if ("XAU" in s or "GOLD" in s) else "hors_or"
+    return ("or_argent" if any(m in s for m in _SYMBOLES_OR_ARGENT)
+            else "autres")
 
 
 def evaluer(positions: list, equity: float, plafond_pct: float,
             marge_min_r: float, sigmas=None,
             marge_min_sigma: float = 0.0,
-            plafond_or_pct: float = 0.0) -> dict:
+            plafond_metaux_pct: float = 0.0) -> dict:
     """Somme les risques et compte ce que la soupape pourrait libérer.
 
     ⛔ `indecidable` dès qu'une position est nue, non mesurable, ou que
@@ -218,26 +222,27 @@ def evaluer(positions: list, equity: float, plafond_pct: float,
 
     ## Deux poches depuis le 2026-08-28
 
-    Le bridge borne séparément l'or (14 %) et le reste (6 %), et **ne prête
-    rien de l'une à l'autre**. Un pourcentage unique sur 20 % afficherait 35 %
-    là où la poche de l'or est PLEINE : le blocage redeviendrait exactement ce
-    que cette sonde existe pour empêcher — un refus silencieux.
+    Le bridge borne séparément les métaux — or **et argent** — à 14 % et le
+    reste à 6 %, et **ne prête rien de l'une à l'autre**. Un pourcentage
+    unique sur 20 % afficherait 35 % là où la poche des métaux est PLEINE : le
+    blocage redeviendrait exactement ce que cette sonde existe pour empêcher —
+    un refus silencieux.
 
     ⇒ On mesure chaque poche et on remonte **la plus saturée**. Les clés
     historiques (`pct`, `plafond`, `risque_total`, `restant`, `candidats`,
     `liberable`) décrivent donc cette poche-là, nommée par `poche`.
 
-    `plafond_or_pct <= 0` ⇒ une seule poche : l'état d'avant, au bit près.
+    `plafond_metaux_pct <= 0` ⇒ une seule poche : l'état d'avant, au bit près.
     """
-    or_separe = plafond_or_pct > 0
-    poches = ("hors_or", "or") if or_separe else ("hors_or",)
+    or_separe = plafond_metaux_pct > 0
+    poches = ("autres", "or_argent") if or_separe else ("autres",)
     total = {q: 0.0 for q in poches}
     candidats = {q: 0 for q in poches}
     liberable = {q: 0.0 for q in poches}
     nues, non_mesurables = 0, 0
 
     for p in positions or []:
-        q = poche_du_symbole(p.get("symbol")) if or_separe else "hors_or"
+        q = poche_du_symbole(p.get("symbol")) if or_separe else "autres"
         m = mesurer_position(p)
         if m["nue"]:
             nues += 1
@@ -268,7 +273,7 @@ def evaluer(positions: list, equity: float, plafond_pct: float,
 
     equity_ok = equity is not None and equity > 0
     indecidable = bool(nues or non_mesurables or not equity_ok)
-    pcts = {q: (plafond_pct if q == "hors_or" else plafond_or_pct)
+    pcts = {q: (plafond_pct if q == "autres" else plafond_metaux_pct)
             for q in poches}
     plafonds = {q: (equity * pcts[q] / 100.0) if (equity_ok and pcts[q] > 0)
                 else None for q in poches}
@@ -401,9 +406,15 @@ def _lire_destination(dest) -> dict:
     gf = sante.get("garde_fous") or {}
     try:
         plafond_pct = float(gf.get("max_risque_engage_pct"))
-        # Poche de l'or (2026-08-28). Absente (vieux bridge) => 0, donc une
-        # seule poche : retro-compatible, et jamais un plafond invente.
-        plafond_or_pct = float(gf.get("max_risque_engage_or_pct", 0.0) or 0.0)
+        # Poche des metaux (2026-08-28). L'ancien nom est encore lu : entre le
+        # deploiement de l'EC2 et celui du VPS, le bridge publie encore
+        # `..._or_pct`, et ne lire que le nouveau nom ferait retomber la sonde
+        # a UNE poche EN SILENCE — donc a un pourcentage rassurant et faux.
+        # Absent des deux (vieux bridge) => 0, retro-compatible.
+        plafond_metaux_pct = float(
+            gf.get("max_risque_engage_or_argent_pct")
+            or gf.get("max_risque_engage_or_pct")
+            or 0.0)
         marge_min_r = float(gf.get("equilibre_marge_r", 1.0))
         # ⛔ Le bridge applique AUSSI cette porte depuis le 24/08. L'ignorer
         # faisait annoncer du budget liberable qui n'existait pas.
@@ -411,7 +422,7 @@ def _lire_destination(dest) -> dict:
         marge_min_sigma = float(gf.get("equilibre_marge_sigma", 0.0) or 0.0)
     except (TypeError, ValueError):
         return evaluation_illisible()
-    if plafond_pct <= 0 and plafond_or_pct <= 0:
+    if plafond_pct <= 0 and plafond_metaux_pct <= 0:
         # Porte desarmee des DEUX cotes : il n'y a pas de plafond a saturer.
         # Une seule des deux a zero laisse l'autre mesurable — donc dite.
         e = evaluation_illisible()
@@ -436,7 +447,7 @@ def _lire_destination(dest) -> dict:
 
     e = evaluer(positions, equity, plafond_pct, marge_min_r,
                 sigmas=_source_volatilite(dest), marge_min_sigma=marge_min_sigma,
-                plafond_or_pct=plafond_or_pct)
+                plafond_metaux_pct=plafond_metaux_pct)
     e["login"] = sante.get("login")
     e["marge_min_r"] = marge_min_r
     e["marge_min_sigma"] = marge_min_sigma

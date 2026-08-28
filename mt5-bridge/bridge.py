@@ -132,17 +132,29 @@ MAX_RISQUE_ENGAGE_PCT = float(os.getenv("MAX_RISQUE_ENGAGE_PCT", "6.0"))
 MARGE_LIBRE_MIN_PCT = float(os.getenv("MARGE_LIBRE_MIN_PCT", "30.0"))
 # ─── Deux POCHES de risque, jamais fongibles (2026-08-28) ──────────────────
 # Demande de Xavier : porter le risque cumule autorise de 6 % a 20 %, mais
-# **pas en un seul reservoir**. Les 6 % d'origine restent a tout ce qui n'est
-# pas de l'or, et 14 % supplementaires sont reserves a l'OR SEUL, pour lui
-# laisser du mouvement sans que le reste du portefeuille en profite.
+# **pas en un seul reservoir**. Les 6 % d'origine restent au reste du
+# portefeuille, et 14 % supplementaires sont reserves aux METAUX PRECIEUX
+# — or ET argent — pour leur laisser du mouvement.
 #
-# ⛔ Non fongibles dans les DEUX sens : l'or ne peut pas manger le budget du
-# forex, et le forex ne peut pas manger celui de l'or. Un reservoir unique de
-# 20 % aurait aussi autorise 20 % de forex — ce n'est pas ce qui est demande,
-# et ca n'a jamais ete mesure.
+# ⚠️ L'argent a rejoint cette poche le 28/08 (elle n'a tenu que l'or pendant
+# quelques heures), APRES mesure : un 0,01 lot d'argent risque ~11,80 EUR
+# (mediane de 262 ordres reels) contre ~7,71 EUR pour l'or et 2,50 a 3,00 EUR
+# pour du forex. Un seul trade argent consommait donc **le tiers** de la poche
+# des 6 % — l'equivalent de quatre trades forex.
 #
-# 0 = l'or retombe dans la poche commune : l'etat exact d'avant le 28/08.
-MAX_RISQUE_ENGAGE_OR_PCT = float(os.getenv("MAX_RISQUE_ENGAGE_OR_PCT", "14.0"))
+# ⛔ Non fongibles dans les DEUX sens : les metaux ne peuvent pas manger le
+# budget du reste, et le reste ne peut pas manger le leur. Un reservoir unique
+# de 20 % aurait aussi autorise 20 % de forex — ce n'est pas ce qui est
+# demande, et ca n'a jamais ete mesure.
+#
+# 0 = les metaux retombent dans la poche commune : l'etat d'avant le 28/08.
+# `MAX_RISQUE_ENGAGE_OR_PCT` reste accepte comme alias : renommer une variable
+# d'environnement sans la lire ferait retomber le reglage a son defaut EN
+# SILENCE, ce qui est exactement la panne qu'on ne verrait pas.
+MAX_RISQUE_ENGAGE_OR_ARGENT_PCT = float(
+    os.getenv("MAX_RISQUE_ENGAGE_OR_ARGENT_PCT")
+    or os.getenv("MAX_RISQUE_ENGAGE_OR_PCT")
+    or "14.0")
 
 # ─── Remontee du stop a l'EQUILIBRE pour liberer du risque (2026-08-23) ───
 # Quand la porte des 6 % refuserait un ordre, on remonte a l'entree le stop de
@@ -661,16 +673,17 @@ def _check_safety_gates(mt5_symbol: str, direction: str,
     # retenu et son stop qu'il faut juger, pas ceux qu'on souhaitait.
     if lots is not None and sl is not None and entry is not None:
         specs = mt5.symbol_info(mt5_symbol)
-        # ─── Deux poches depuis le 2026-08-28 : l'or a la sienne ──────────
+        # ─── Deux poches depuis le 2026-08-28 : les metaux ont la leur ────
         # L'ordre demande n'est juge que contre SA poche, et le budget de
         # l'autre ne lui est jamais pretable — meme vide. C'est toute la
         # difference avec un reservoir unique de 20 %.
-        or_separe = MAX_RISQUE_ENGAGE_OR_PCT > 0
-        poche = _poche_du_symbole(mt5_symbol) if or_separe else _POCHE_HORS_OR
-        plafond_pct = (MAX_RISQUE_ENGAGE_OR_PCT if poche == _POCHE_OR
-                       else MAX_RISQUE_ENGAGE_PCT)
+        poches_separees = MAX_RISQUE_ENGAGE_OR_ARGENT_PCT > 0
+        poche = (_poche_du_symbole(mt5_symbol) if poches_separees
+                 else _POCHE_AUTRES)
+        plafond_pct = (MAX_RISQUE_ENGAGE_OR_ARGENT_PCT
+                       if poche == _POCHE_OR_ARGENT else MAX_RISQUE_ENGAGE_PCT)
         totaux, non_bornables = _risque_engage_par_poche(
-            positions, mt5.symbol_info, or_separe=or_separe)
+            positions, mt5.symbol_info, poches_separees=poches_separees)
         ouvert = totaux[poche]
         nouveau = (_risque_realise(entry, sl, lots, specs.point,
                                    specs.trade_tick_value)
@@ -697,12 +710,12 @@ def _check_safety_gates(mt5_symbol: str, direction: str,
             plafond = float(info.equity) * plafond_pct / 100.0
             manque = (ouvert + nouveau) - plafond
             # ⛔ Seules les positions de LA MEME poche liberent le budget qui
-            # manque ici : remonter le stop d'un forex ne rend pas un euro a
-            # l'or. Les chercher partout ferait deplacer des stops vivants
+            # manque ici : remonter le stop d'un forex ne rend pas un euro aux
+            # metaux. Les chercher partout ferait deplacer des stops vivants
             # pour un refus qui tiendrait quand meme.
             memes_poche = [
                 p for p in positions
-                if not or_separe
+                if not poches_separees
                 or _poche_du_symbole(getattr(p, "symbol", None)) == poche
             ]
             candidats = _candidats_equilibre(
@@ -726,7 +739,7 @@ def _check_safety_gates(mt5_symbol: str, direction: str,
                 # un clamp a pu laisser du risque, un ordre a pu echouer.
                 positions = mt5.positions_get() or []
                 totaux, non_bornables = _risque_engage_par_poche(
-                    positions, mt5.symbol_info, or_separe=or_separe)
+                    positions, mt5.symbol_info, poches_separees=poches_separees)
                 ouvert = totaux[poche]
                 ok_risque, motif = _controle_risque_engage(
                     ouvert, non_bornables, nouveau, float(info.equity),
@@ -2097,10 +2110,11 @@ def health():
             # Plafond par le RISQUE plutot que par le nombre (2026-08-20).
             # 0 = desarme, seul le compteur agit alors.
             "max_risque_engage_pct": MAX_RISQUE_ENGAGE_PCT,
-            # Poche reservee a l'OR SEUL (2026-08-28). 0 = l'or retombe dans
-            # la poche ci-dessus. Les deux budgets ne se pretent RIEN : la
-            # sonde de saturation doit donc les mesurer separement.
-            "max_risque_engage_or_pct": MAX_RISQUE_ENGAGE_OR_PCT,
+            # Poche reservee a l'OR ET A L'ARGENT (2026-08-28). 0 = les
+            # metaux retombent dans la poche ci-dessus. Les deux budgets ne se
+            # pretent RIEN : la sonde de saturation doit donc les mesurer
+            # separement.
+            "max_risque_engage_or_argent_pct": MAX_RISQUE_ENGAGE_OR_ARGENT_PCT,
             "marge_libre_min_pct": MARGE_LIBRE_MIN_PCT,
             # Lisible depuis le 2026-08-28 : cette fenetre a valu 3 h 05 au
             # lieu de 5 min pendant des mois sans que rien ne l'expose.
@@ -2445,19 +2459,27 @@ def _risque_realise(entry: float, sl: float, lots: float,
     return (distance / point) * tick_value * lots
 
 
-_POCHE_OR = "or"
-_POCHE_HORS_OR = "hors_or"
+_POCHE_OR_ARGENT = "or_argent"
+_POCHE_AUTRES = "autres"
+
+# Nommes UN PAR UN, jamais par classe d'actif. `_asset_class_for_symbol` rend
+# `metal`, qui embarquerait aussi le platine et le palladium : deux
+# instruments que personne n'a demande a financer sur ce budget et qui
+# entreraient sans qu'aucune ligne ne change. La liste explicite, elle, ne
+# derive pas toute seule.
+_SYMBOLES_OR_ARGENT = ("XAU", "GOLD", "XAG", "SILVER")
 
 
 def _poche_du_symbole(symbole: str) -> str:
     """Dans quelle poche de risque ce symbole compte-t-il ? (2026-08-28)
 
-    ⚠️ Volontairement PAS `_asset_class_for_symbol` : celle-ci rend `metal`,
-    qui verserait l'ARGENT (XAG) dans la poche de l'or. Les 14 % sont demandes
-    pour l'or SEUL — l'argent, comme tout le reste, reste sur les 6 %.
+    Or et argent partagent les 14 %. Tout le reste — forex, energie, indices,
+    actions — partage les 6 %, d'ou `autres` : un nom qui ne peut pas mentir
+    puisqu'il se definit par complement.
     """
     s = (symbole or "").upper()
-    return _POCHE_OR if ("XAU" in s or "GOLD" in s) else _POCHE_HORS_OR
+    return (_POCHE_OR_ARGENT if any(m in s for m in _SYMBOLES_OR_ARGENT)
+            else _POCHE_AUTRES)
 
 
 # MT5 : POSITION_TYPE_BUY == 0, POSITION_TYPE_SELL == 1. Ecrit en clair pour
@@ -2526,7 +2548,7 @@ def _risque_position(p, info) -> float | None:
 
 
 def _risque_engage_par_poche(positions, specs,
-                             or_separe: bool = True) -> tuple[dict, list]:
+                             poches_separees: bool = True) -> tuple[dict, list]:
     """Somme des risques ouverts, VENTILEE par poche (2026-08-28).
 
     Rend `({poche: total}, tickets_non_bornables)`. Les deux poches sont
@@ -2534,14 +2556,15 @@ def _risque_engage_par_poche(positions, specs,
     rendrait `None`, et un total absent finirait par se lire comme un total
     nul — le meme zero-qui-passe-pour-une-mesure que `_risque_realise` refuse.
 
-    `or_separe=False` verse l'or dans la poche commune : c'est l'etat d'avant
-    le 28/08, et ce que produit `MAX_RISQUE_ENGAGE_OR_PCT=0`.
+    `poches_separees=False` verse les metaux dans la poche commune : c'est
+    l'etat d'avant le 28/08, et ce que produit
+    `MAX_RISQUE_ENGAGE_OR_ARGENT_PCT=0`.
 
     ⛔ Les positions NON BORNABLES (sans stop) restent rendues a part et sans
     poche : leur risque est infini, il ne se range dans aucun budget. Elles
     bloquent les deux poches, pas seulement la leur.
     """
-    totaux = {_POCHE_HORS_OR: 0.0, _POCHE_OR: 0.0}
+    totaux = {_POCHE_AUTRES: 0.0, _POCHE_OR_ARGENT: 0.0}
     non_bornables = []
     for p in positions or []:
         symbole = getattr(p, "symbol", None)
@@ -2549,7 +2572,8 @@ def _risque_engage_par_poche(positions, specs,
         if r is None:
             non_bornables.append(getattr(p, "ticket", "?"))
             continue
-        totaux[_poche_du_symbole(symbole) if or_separe else _POCHE_HORS_OR] += r
+        totaux[_poche_du_symbole(symbole)
+               if poches_separees else _POCHE_AUTRES] += r
     return totaux, non_bornables
 
 
@@ -2560,8 +2584,8 @@ def _risque_engage(positions, specs) -> tuple[float, list]:
     `symbole -> symbol_info`, injectee pour rester testable sans MT5.
     """
     totaux, non_bornables = _risque_engage_par_poche(positions, specs,
-                                                     or_separe=False)
-    return totaux[_POCHE_HORS_OR], non_bornables
+                                                     poches_separees=False)
+    return totaux[_POCHE_AUTRES], non_bornables
 
 
 def _controle_risque_engage(risque_ouvert: float, non_bornables: list,

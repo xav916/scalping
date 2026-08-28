@@ -371,8 +371,8 @@ def test_la_poche_de_l_or_SATUREE_ne_se_dilue_pas_dans_le_forex(s):
     """
     positions = [_or(ticket=t) for t in (91, 92, 93)]
     e = s.evaluer(positions, equity=552.0, plafond_pct=6.0, marge_min_r=1.0,
-                  plafond_or_pct=14.0)
-    assert e["poche"] == "or"
+                  plafond_metaux_pct=14.0)
+    assert e["poche"] == "or_argent"
     assert e["pct"] == pytest.approx(77.6, abs=0.5)
     assert s.verdict(e, 72.0) == "sature"
 
@@ -381,9 +381,9 @@ def test_le_forex_VIDE_ne_sauve_pas_une_poche_or_pleine(s):
     """Non-fongibilité, vue depuis la sonde : la poche vide est rapportée à
     part, jamais fondue dans le pourcentage annoncé."""
     e = s.evaluer([_or(ticket=t) for t in (91, 92, 93)], 552.0, 6.0, 1.0,
-                  plafond_or_pct=14.0)
-    assert e["detail_poches"]["hors_or"]["risque"] == 0.0
-    assert e["detail_poches"]["or"]["risque"] == pytest.approx(60.0, abs=0.5)
+                  plafond_metaux_pct=14.0)
+    assert e["detail_poches"]["autres"]["risque"] == 0.0
+    assert e["detail_poches"]["or_argent"]["risque"] == pytest.approx(60.0, abs=0.5)
 
 
 def test_c_est_la_poche_la_PLUS_saturee_qui_est_annoncee(s):
@@ -391,27 +391,48 @@ def test_c_est_la_poche_la_PLUS_saturee_qui_est_annoncee(s):
     positions = [_pos(ticket=1), _pos(ticket=2), _pos(ticket=3),
                  _pos(ticket=4), _or(ticket=91)]
     e = s.evaluer(positions, equity=552.0, plafond_pct=6.0, marge_min_r=1.0,
-                  plafond_or_pct=14.0)
-    assert e["poche"] == "hors_or"
-    assert e["pct"] > e["detail_poches"]["or"]["pct"]
+                  plafond_metaux_pct=14.0)
+    assert e["poche"] == "autres"
+    assert e["pct"] > e["detail_poches"]["or_argent"]["pct"]
 
 
-def test_l_ARGENT_compte_dans_la_poche_des_6_pct(s):
-    """`metal` aurait mis XAG avec XAU. Les 14 % sont pour l'or SEUL."""
+def test_l_ARGENT_compte_dans_la_poche_des_14_pct(s):
+    """Renverse le 28/08 sur mesure : 11,80 EUR de risque pour un 0,01 lot
+    d'argent, soit le tiers de la poche des 6 % a lui seul."""
     e = s.evaluer([_or(symbol="XAGUSD", ticket=95)], 552.0, 6.0, 1.0,
-                  plafond_or_pct=14.0)
-    assert e["detail_poches"]["or"]["risque"] == 0.0
-    assert e["detail_poches"]["hors_or"]["risque"] == pytest.approx(20.0,
-                                                                    abs=0.5)
+                  plafond_metaux_pct=14.0)
+    assert e["detail_poches"]["autres"]["risque"] == 0.0
+    assert e["detail_poches"]["or_argent"]["risque"] == pytest.approx(20.0,
+                                                                      abs=0.5)
+
+
+def test_le_PLATINE_reste_dans_la_poche_des_6_pct(s):
+    """⛔ Nommes un par un : filtrer sur « metal » embarquerait XPT et XPD."""
+    e = s.evaluer([_or(symbol="XPTUSD", ticket=96)], 552.0, 6.0, 1.0,
+                  plafond_metaux_pct=14.0)
+    assert e["detail_poches"]["or_argent"]["risque"] == 0.0
+    assert e["detail_poches"]["autres"]["risque"] == pytest.approx(20.0,
+                                                                   abs=0.5)
+
+
+def test_l_ANCIEN_nom_de_champ_est_encore_lu(s):
+    """⛔ Entre le deploiement de l'EC2 et celui du VPS, le bridge publie
+    encore `max_risque_engage_or_pct`. Ne lire que le nouveau nom ferait
+    retomber la sonde a UNE poche EN SILENCE — un pourcentage rassurant et
+    faux, exactement ce qu'elle existe pour empecher."""
+    import inspect
+    source = inspect.getsource(s._lire_destination)
+    assert "max_risque_engage_or_argent_pct" in source
+    assert "max_risque_engage_or_pct" in source
 
 
 def test_sans_poche_or_le_comportement_est_INCHANGE(s):
-    """`plafond_or_pct=0` (ou un vieux bridge qui ne publie rien) doit rendre
+    """`plafond_metaux_pct=0` (ou un vieux bridge qui ne publie rien) doit rendre
     l'état d'avant : une seule poche, tout dedans."""
     positions = [_pos(ticket=1), _or(ticket=91)]
     avant = s.evaluer(positions, 552.0, 6.0, 1.0)
     assert avant["multi_poches"] is False
-    assert avant["poche"] == "hors_or"
+    assert avant["poche"] == "autres"
     assert avant["risque_total"] == pytest.approx(7.67 + 20.0, abs=0.5)
 
 
@@ -419,7 +440,7 @@ def test_une_position_NUE_rend_les_DEUX_poches_indecidables(s):
     """Son risque n'est borné dans aucun budget : elle bloque tout, et la
     sonde ne doit surtout pas publier un pourcentage sur l'autre poche."""
     e = s.evaluer([_or(ticket=91), _pos(ticket=2, sl=0.0)], 552.0, 6.0, 1.0,
-                  plafond_or_pct=14.0)
+                  plafond_metaux_pct=14.0)
     assert e["indecidable"] is True
     assert e["pct"] is None
     assert s.verdict(e, 72.0) == "indecidable"
@@ -429,13 +450,13 @@ def test_le_message_NOMME_la_poche_saturee(s):
     """« 88 % du plafond » sur un compte à deux poches ne dit pas ce qui est
     fermé — et l'or bouché n'appelle pas la même décision que le forex."""
     e = s.evaluer([_or(ticket=t) for t in (91, 92, 93)], 552.0, 6.0, 1.0,
-                  plafond_or_pct=14.0)
+                  plafond_metaux_pct=14.0)
     e["login"] = 13137475
     e["marge_min_r"] = 1.0
     titre, corps = s._message("admin_live", e, "sature")
-    assert "[or]" in titre
-    assert "poche <b>or</b>" in corps
-    assert "Autre poche <b>hors_or</b>" in corps
+    assert "[or_argent]" in titre
+    assert "poche <b>or_argent</b>" in corps
+    assert "Autre poche <b>autres</b>" in corps
 
 
 def test_la_regle_des_poches_est_LA_MEME_que_celle_du_bridge(s):
@@ -445,13 +466,14 @@ def test_la_regle_des_poches_est_LA_MEME_que_celle_du_bridge(s):
 
     src = (pathlib.Path(__file__).resolve().parents[2]
            / "mt5-bridge" / "bridge.py").read_text(encoding="utf-8")
-    debut = src.index("def _poche_du_symbole(")
+    # On part des CONSTANTES, pas de la fonction seule : les injecter ici
+    # laisserait un renommage cote bridge passer inapercu, alors que c'est
+    # precisement ce que ce test doit attraper.
+    debut = src.index('_POCHE_OR_ARGENT = ')
     fin = src.index("# MT5 : POSITION_TYPE_BUY")
     mod = types.ModuleType("bridge_poche")
-    mod.__dict__["_POCHE_OR"] = "or"
-    mod.__dict__["_POCHE_HORS_OR"] = "hors_or"
     exec(compile(src[debut:fin], "bridge.py", "exec"), mod.__dict__)
 
-    for symbole in ("XAUUSD", "XAUEUR", "GOLD", "XAGUSD", "GBPUSD", "BTCUSD",
-                    "", None):
+    for symbole in ("XAUUSD", "XAUEUR", "GOLD", "XAGUSD", "SILVER",
+                    "XPTUSD", "GBPUSD", "BTCUSD", "", None):
         assert mod._poche_du_symbole(symbole) == s.poche_du_symbole(symbole)

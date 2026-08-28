@@ -354,8 +354,8 @@ def test_repondre_n_ecrit_RIEN(client, envois, mesure_bouchonnee, tmp_path,
 # --------------------------------------------------------------------------
 
 
-def _eval_deux_poches(hors_or=28.75, or_=60.0, plafond_hors_or=33.12,
-                      plafond_or=77.28, login=13137475, positions=7):
+def _eval_deux_poches(autres=28.75, metaux=60.0, plafond_autres=33.12,
+                      plafond_metaux=77.28, login=13137475, positions=7):
     """Ce que `_lire_destination` rend depuis que le bridge a deux budgets.
 
     ⛔ `risque_total` n'y décrit QUE la poche la plus tendue : c'est elle qui
@@ -363,12 +363,12 @@ def _eval_deux_poches(hors_or=28.75, or_=60.0, plafond_hors_or=33.12,
     serait un chiffre amputé de tout ce qui vit dans l'autre poche.
     """
     poches = {
-        "hors_or": {"risque": hors_or, "plafond": plafond_hors_or,
-                    "pct": 100.0 * hors_or / plafond_hors_or,
-                    "candidats": 0, "liberable": 0.0},
-        "or": {"risque": or_, "plafond": plafond_or,
-               "pct": 100.0 * or_ / plafond_or,
-               "candidats": 0, "liberable": 0.0},
+        "autres": {"risque": autres, "plafond": plafond_autres,
+                   "pct": 100.0 * autres / plafond_autres,
+                   "candidats": 0, "liberable": 0.0},
+        "or_argent": {"risque": metaux, "plafond": plafond_metaux,
+                      "pct": 100.0 * metaux / plafond_metaux,
+                      "candidats": 0, "liberable": 0.0},
     }
     q = max(poches, key=lambda k: poches[k]["pct"])
     return {
@@ -388,7 +388,7 @@ def test_les_DEUX_poches_sont_montrees_avec_leur_propre_plafond():
 
     texte = _formater_risque([_live(_eval_deux_poches(), "sature")])
 
-    assert "hors_or" in texte and "or" in texte, texte
+    assert "autres" in texte and "or_argent" in texte, texte
     assert "33,12" in texte and "77,28" in texte, texte
     # 28,75 / 33,12 = 87 % contre 60 / 77,28 = 78 % : c'est le forex qui mord.
     assert "87" in texte, texte

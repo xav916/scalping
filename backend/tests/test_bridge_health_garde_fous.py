@@ -36,8 +36,8 @@ _REGLAGES = {
     # Fenetre de dedup, publiee depuis le 2026-08-28.
     "DEDUP_WINDOW_SEC": 3600,
     "MAX_RISQUE_ENGAGE_PCT": 6.0,
-    # Poche de l'or, ouverte le 2026-08-28.
-    "MAX_RISQUE_ENGAGE_OR_PCT": 14.0,
+    # Poche de l'or ET de l'argent, ouverte le 2026-08-28.
+    "MAX_RISQUE_ENGAGE_OR_ARGENT_PCT": 14.0,
     "MARGE_LIBRE_MIN_PCT": 30.0,
     "DEVIATION_POINTS": 20,
     "TRAIL_DISTANCE_POINTS": 0,
@@ -135,13 +135,13 @@ def test_les_DEUX_poches_de_risque_se_lisent_a_distance():
     """
     g = _appeler_health()["garde_fous"]
     assert g["max_risque_engage_pct"] == 6.0
-    assert g["max_risque_engage_or_pct"] == 14.0
+    assert g["max_risque_engage_or_argent_pct"] == 14.0
 
 
-def test_la_poche_de_l_or_DESARMEE_se_voit():
-    """`0` = l'or retombe dans les 6 % communs. Ca doit se voir."""
-    g = _appeler_health(MAX_RISQUE_ENGAGE_OR_PCT=0.0)["garde_fous"]
-    assert g["max_risque_engage_or_pct"] == 0.0
+def test_la_poche_des_metaux_DESARMEE_se_voit():
+    """`0` = les metaux retombent dans les 6 % communs. Ca doit se voir."""
+    g = _appeler_health(MAX_RISQUE_ENGAGE_OR_ARGENT_PCT=0.0)["garde_fous"]
+    assert g["max_risque_engage_or_argent_pct"] == 0.0
 
 
 def test_un_plafond_desserre_se_VOIT():

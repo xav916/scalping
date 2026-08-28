@@ -364,33 +364,45 @@ def test_l_or_et_le_forex_ne_comptent_PAS_dans_la_meme_poche(m):
     ]
     totaux, nus = m._risque_engage_par_poche(positions, _specs)
     assert nus == []
-    assert totaux["hors_or"] == pytest.approx(8.90, abs=0.05)
-    assert totaux["or"] == pytest.approx(8.90, abs=0.05)
+    assert totaux["autres"] == pytest.approx(8.90, abs=0.05)
+    assert totaux["or_argent"] == pytest.approx(8.90, abs=0.05)
 
 
-def test_l_ARGENT_reste_dans_la_poche_des_6_pct(m):
-    """Les 14 % sont demandes pour l'OR. `_asset_class_for_symbol` aurait dit
-    `metal` et verse XAG avec XAU — c'est pour ca qu'on ne s'en sert pas."""
-    assert m._poche_du_symbole("XAGUSD") == "hors_or"
-    assert m._poche_du_symbole("XAUUSD") == "or"
-    assert m._poche_du_symbole("GOLD") == "or"
-    assert m._poche_du_symbole("") == "hors_or"
-    assert m._poche_du_symbole(None) == "hors_or"
+def test_l_ARGENT_partage_la_poche_des_14_pct(m):
+    """⚠️ Renverse le 28/08, quelques heures apres la pose, SUR MESURE : un
+    0,01 lot d'argent risque **11,80 EUR** (mediane de 262 ordres reels) contre
+    7,71 EUR pour l'or et 2,50 a 3,00 EUR pour du forex. Un seul trade argent
+    consommait donc le TIERS de la poche des 6 % — quatre trades forex."""
+    assert m._poche_du_symbole("XAGUSD") == "or_argent"
+    assert m._poche_du_symbole("SILVER") == "or_argent"
+    assert m._poche_du_symbole("XAUUSD") == "or_argent"
+    assert m._poche_du_symbole("GOLD") == "or_argent"
+    assert m._poche_du_symbole("") == "autres"
+    assert m._poche_du_symbole(None) == "autres"
+
+
+def test_le_PLATINE_ne_s_invite_PAS_dans_la_poche_des_metaux(m):
+    """⛔ La liste est nommee un par un, jamais par classe. Filtrer sur
+    `metal` embarquerait XPT et XPD sans qu'aucune ligne ne change — deux
+    instruments que personne n'a demande a financer sur ce budget."""
+    assert m._poche_du_symbole("XPTUSD") == "autres"
+    assert m._poche_du_symbole("XPDUSD") == "autres"
 
 
 def test_les_deux_poches_existent_TOUJOURS_meme_vides(m):
     """⛔ 0.0, jamais une cle absente : un `.get()` rendrait `None` et un
     total absent finit toujours par se lire comme un total nul."""
     totaux, _ = m._risque_engage_par_poche([], _specs)
-    assert totaux == {"hors_or": 0.0, "or": 0.0}
+    assert totaux == {"autres": 0.0, "or_argent": 0.0}
 
 
 def test_la_poche_de_l_or_desarmee_reverse_tout_dans_la_commune(m):
-    """`MAX_RISQUE_ENGAGE_OR_PCT=0` doit rendre l'etat EXACT d'avant le 28/08."""
+    """`MAX_RISQUE_ENGAGE_OR_ARGENT_PCT=0` rend l'etat EXACT d'avant le 28/08."""
     positions = [_Pos(1, "XAUUSD", 1.36073, 1.35183, 0.01)]
-    totaux, _ = m._risque_engage_par_poche(positions, _specs, or_separe=False)
-    assert totaux["or"] == 0.0
-    assert totaux["hors_or"] == pytest.approx(8.90, abs=0.05)
+    totaux, _ = m._risque_engage_par_poche(positions, _specs,
+                                           poches_separees=False)
+    assert totaux["or_argent"] == 0.0
+    assert totaux["autres"] == pytest.approx(8.90, abs=0.05)
 
 
 def test_une_position_NUE_n_appartient_a_aucune_poche(m):
@@ -399,7 +411,7 @@ def test_une_position_NUE_n_appartient_a_aucune_poche(m):
     positions = [_Pos(9, "XAUUSD", 4450.0, 0.0, 0.01)]
     totaux, nus = m._risque_engage_par_poche(positions, _specs)
     assert nus == [9]
-    assert totaux == {"hors_or": 0.0, "or": 0.0}
+    assert totaux == {"autres": 0.0, "or_argent": 0.0}
 
 
 def test_risque_engage_rend_toujours_le_TOTAL_toutes_poches(m):
@@ -416,8 +428,8 @@ def test_risque_engage_rend_toujours_le_TOTAL_toutes_poches(m):
 def test_le_refus_DIT_quelle_poche_a_mordu(m):
     """Un refus a 6 % et un refus a 14 % s'ecriraient pareil sans ca."""
     ok, raison = m._controle_risque_engage(70.0, [], 10.0, 552.0, 14.0,
-                                           poche="or")
-    assert ok is False and "[or]" in raison
+                                           poche="or_argent")
+    assert ok is False and "[or_argent]" in raison
 
 
 # ── Branchement : les fonctions pures ne disent rien si la porte les ignore ─
@@ -432,7 +444,7 @@ def test_l_OR_obtient_bien_ses_14_pct(bridge, monkeypatch):
     """Sur 552 € : 6 % = 33,12 € et 14 % = 77,28 €. Un ordre or a 50 € de
     risque etait REFUSE avant le 28/08 ; il passe maintenant."""
     monkeypatch.setattr(bridge, "MAX_RISQUE_ENGAGE_PCT", 6.0)
-    monkeypatch.setattr(bridge, "MAX_RISQUE_ENGAGE_OR_PCT", 14.0)
+    monkeypatch.setattr(bridge, "MAX_RISQUE_ENGAGE_OR_ARGENT_PCT", 14.0)
     _armer(bridge, monkeypatch)
     monkeypatch.setattr(bridge.mt5, "symbol_info", _specs_or)
     ok, raison = bridge._check_safety_gates(
@@ -443,7 +455,7 @@ def test_l_OR_obtient_bien_ses_14_pct(bridge, monkeypatch):
 def test_le_MEME_ordre_or_est_refuse_poche_desarmee(bridge, monkeypatch):
     """Preuve que c'est bien la poche qui l'a laisse passer, et rien d'autre."""
     monkeypatch.setattr(bridge, "MAX_RISQUE_ENGAGE_PCT", 6.0)
-    monkeypatch.setattr(bridge, "MAX_RISQUE_ENGAGE_OR_PCT", 0.0)
+    monkeypatch.setattr(bridge, "MAX_RISQUE_ENGAGE_OR_ARGENT_PCT", 0.0)
     _armer(bridge, monkeypatch)
     monkeypatch.setattr(bridge.mt5, "symbol_info", _specs_or)
     ok, raison = bridge._check_safety_gates(
@@ -453,7 +465,7 @@ def test_le_MEME_ordre_or_est_refuse_poche_desarmee(bridge, monkeypatch):
 
 def test_l_or_ne_deborde_PAS_au_dela_de_ses_14_pct(bridge, monkeypatch):
     """50 € deja engages en or + 50 € demandes = 100 € > 77,28 €."""
-    monkeypatch.setattr(bridge, "MAX_RISQUE_ENGAGE_OR_PCT", 14.0)
+    monkeypatch.setattr(bridge, "MAX_RISQUE_ENGAGE_OR_ARGENT_PCT", 14.0)
     monkeypatch.setattr(bridge, "MAX_OPEN_POSITIONS", 10)
     ouverte = _Pos(11, "XAUUSD", 4450.0, 4400.0, 0.01)
     ouverte.type, ouverte.time = 0, 0
@@ -462,7 +474,7 @@ def test_l_or_ne_deborde_PAS_au_dela_de_ses_14_pct(bridge, monkeypatch):
     ok, raison = bridge._check_safety_gates(
         "XAUUSD", "sell", lots=0.01, entry=4450.0, sl=4500.0)
     assert ok is False
-    assert "[or]" in raison
+    assert "[or_argent]" in raison
 
 
 def test_le_FOREX_ne_touche_PAS_au_budget_de_l_or(bridge, monkeypatch):
@@ -470,7 +482,7 @@ def test_le_FOREX_ne_touche_PAS_au_budget_de_l_or(bridge, monkeypatch):
     demandes = 35,60 € > 33,12 €. Le refus doit TENIR, alors que les 14 % de
     l'or sont vides et que le total (35,60 €) reste loin des 20 % (110,40 €)."""
     monkeypatch.setattr(bridge, "MAX_RISQUE_ENGAGE_PCT", 6.0)
-    monkeypatch.setattr(bridge, "MAX_RISQUE_ENGAGE_OR_PCT", 14.0)
+    monkeypatch.setattr(bridge, "MAX_RISQUE_ENGAGE_OR_ARGENT_PCT", 14.0)
     monkeypatch.setattr(bridge, "MAX_OPEN_POSITIONS", 10)
     monkeypatch.setattr(bridge, "EQUILIBRE_AUTO_ENABLED", False)
     ouvertes = []
@@ -482,14 +494,14 @@ def test_le_FOREX_ne_touche_PAS_au_budget_de_l_or(bridge, monkeypatch):
     ok, raison = bridge._check_safety_gates(
         "USDCAD", "buy", lots=0.01, entry=1.36073, sl=1.35183)
     assert ok is False
-    assert "[hors_or]" in raison
+    assert "[autres]" in raison
 
 
 def test_l_or_ouvert_n_empeche_pas_un_forex(bridge, monkeypatch):
     """L'autre sens : 50 € engages en or saturent 6 % a eux seuls. Le forex
     doit passer quand meme — sa poche, elle, est vide."""
     monkeypatch.setattr(bridge, "MAX_RISQUE_ENGAGE_PCT", 6.0)
-    monkeypatch.setattr(bridge, "MAX_RISQUE_ENGAGE_OR_PCT", 14.0)
+    monkeypatch.setattr(bridge, "MAX_RISQUE_ENGAGE_OR_ARGENT_PCT", 14.0)
     monkeypatch.setattr(bridge, "MAX_OPEN_POSITIONS", 10)
     ouverte = _Pos(31, "XAUUSD", 4450.0, 4400.0, 0.01)
     ouverte.type, ouverte.time = 0, 0
