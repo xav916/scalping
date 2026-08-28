@@ -124,7 +124,7 @@ MAX_OPEN_POSITIONS = int(os.getenv("MAX_OPEN_POSITIONS", "3"))
 # selon l'instrument et grandit avec l'equity.
 #
 # 0 = desarme (comportement d'avant, seul le compteur agit).
-MAX_RISQUE_ENGAGE_PCT = float(os.getenv("MAX_RISQUE_ENGAGE_PCT", "6.0"))
+MAX_RISQUE_ENGAGE_PCT = float(os.getenv("MAX_RISQUE_ENGAGE_PCT", "5.0"))
 # Plancher de marge libre, en % de l'equity. Second garde-fou, CONTRE UN AUTRE
 # DANGER : la marge protege de la liquidation, le risque protege de la perte.
 # Des stops tres serres autorisent beaucoup de positions a risque constant —
@@ -154,7 +154,7 @@ MARGE_LIBRE_MIN_PCT = float(os.getenv("MARGE_LIBRE_MIN_PCT", "30.0"))
 MAX_RISQUE_ENGAGE_OR_ARGENT_PCT = float(
     os.getenv("MAX_RISQUE_ENGAGE_OR_ARGENT_PCT")
     or os.getenv("MAX_RISQUE_ENGAGE_OR_PCT")
-    or "14.0")
+    or "15.0")
 
 # ─── Remontee du stop a l'EQUILIBRE pour liberer du risque (2026-08-23) ───
 # Quand la porte des 6 % refuserait un ordre, on remonte a l'entree le stop de

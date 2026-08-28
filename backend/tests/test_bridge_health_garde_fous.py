@@ -35,9 +35,9 @@ _REGLAGES = {
     "MAX_OPEN_POSITIONS": 3,
     # Fenetre de dedup, publiee depuis le 2026-08-28.
     "DEDUP_WINDOW_SEC": 3600,
-    "MAX_RISQUE_ENGAGE_PCT": 6.0,
+    "MAX_RISQUE_ENGAGE_PCT": 5.0,
     # Poche de l'or ET de l'argent, ouverte le 2026-08-28.
-    "MAX_RISQUE_ENGAGE_OR_ARGENT_PCT": 14.0,
+    "MAX_RISQUE_ENGAGE_OR_ARGENT_PCT": 15.0,
     "MARGE_LIBRE_MIN_PCT": 30.0,
     # Le garde-fou des positions NUES, publie le 2026-08-28.
     "SLTP_GUARD_ENABLED": True,
@@ -131,15 +131,15 @@ def test_la_porte_de_bruit_DESARMEE_se_voit():
 
 
 def test_les_DEUX_poches_de_risque_se_lisent_a_distance():
-    """6 % hors or + 14 % pour l'or seul (2026-08-28).
+    """5 % pour le reste + 15 % pour les metaux (2026-08-28, le soir).
 
     ⛔ Publier la seule poche des 6 % ferait lire « plafond a 6 % » sur un
     compte qui en autorise 20 au total. Un garde-fou desserre qu'on ne peut
     pas lire est exactement ce que ce fichier existe pour empecher.
     """
     g = _appeler_health()["garde_fous"]
-    assert g["max_risque_engage_pct"] == 6.0
-    assert g["max_risque_engage_or_argent_pct"] == 14.0
+    assert g["max_risque_engage_pct"] == 5.0
+    assert g["max_risque_engage_or_argent_pct"] == 15.0
 
 
 def test_la_poche_des_metaux_DESARMEE_se_voit():

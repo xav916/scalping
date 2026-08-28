@@ -510,3 +510,36 @@ def test_l_or_ouvert_n_empeche_pas_un_forex(bridge, monkeypatch):
     ok, raison = bridge._check_safety_gates(
         "GBPUSD", "buy", lots=0.01, entry=1.36073, sl=1.35183)
     assert ok is True, raison
+
+
+# ─── Les VALEURS des deux poches, pas seulement leur mecanique ────────────
+
+def test_les_defauts_des_deux_poches_sont_5_et_15():
+    """⛔ Tous les autres tests de ce fichier posent les pourcentages a la
+    main pour eprouver la MECANIQUE. Personne ne gardait les VALEURS — or ce
+    sont elles qui decident combien d'argent est expose, et elles n'existent
+    que sous forme de litteraux.
+
+    Historique, pour que le prochain changement soit une decision et non une
+    derive : 6 % global (20/08) -> 6 % hors or + 14 % or (28/08 matin) ->
+    **5 % + 15 %** (28/08 soir). Le total reste a 20 %.
+
+    ⚠️ Un `.env` peut surcharger ces defauts. Ce test garde ce que le CODE
+    promet quand personne ne dit rien — la valeur qui s'applique apres un
+    deploiement sur une machine neuve.
+    """
+    import re
+    src = _SRC.read_text(encoding="utf-8")
+
+    autres = re.search(
+        r'MAX_RISQUE_ENGAGE_PCT = float\(os\.getenv\("MAX_RISQUE_ENGAGE_PCT",\s*"([\d.]+)"\)\)',
+        src)
+    assert autres and float(autres.group(1)) == 5.0, (
+        "le defaut de la poche « autres » a change sans que ce test le dise")
+
+    metaux = re.search(r'or "([\d.]+)"\)', src)
+    assert metaux and float(metaux.group(1)) == 15.0, (
+        "le defaut de la poche « or_argent » a change sans que ce test le dise")
+
+    assert float(autres.group(1)) + float(metaux.group(1)) == 20.0, (
+        "le total des deux poches n'est plus 20 %")
