@@ -32,7 +32,6 @@ Usage :
 """
 from __future__ import annotations
 
-import html
 import json
 import os
 import sqlite3
@@ -186,7 +185,7 @@ def main() -> int:
               f"sorties {s}")
         if r["total"]:
             blocs.append(
-                f"<b>{html.escape(did)}</b> — {r['total']} activation(s), "
+                f"{did} — {r['total']} activation(s), "
                 f"{r['libere']:.2f} € libérés\n"
                 f"  objectif atteint : {s['objectif']}\n"
                 f"  sorti À L'ÉQUILIBRE : {s['a_l_equilibre']}   "
@@ -197,7 +196,7 @@ def main() -> int:
     if illisibles:
         _notifier("⚠️ Activations de la soupape : lecture impossible",
                   "Impossible de lire les activations sur : "
-                  f"<b>{html.escape(', '.join(illisibles))}</b>.\n\n"
+                  f"{', '.join(illisibles)}.\n\n"
                   "Ce n'est pas « aucune activation » — c'est « on ne sait "
                   "pas ».",
                   dedup=f"equilibre-illisible:{','.join(illisibles)}")
@@ -207,7 +206,7 @@ def main() -> int:
         return 0
 
     manque = max(0, N_MIN_JUGEMENT - total_global)
-    pied = (f"\n⛔ <b>Ne rien conclure</b> : {total_global} activation(s), il "
+    pied = (f"\n⛔ Ne rien conclure : {total_global} activation(s), il "
             f"en faudrait au moins {N_MIN_JUGEMENT}. Il en manque {manque}."
             if manque else
             f"\n✅ {total_global} activations : le seuil de {N_MIN_JUGEMENT} "

@@ -27,7 +27,6 @@ Usage :
 """
 from __future__ import annotations
 
-import html
 import json
 import os
 import sys
@@ -97,9 +96,9 @@ def _euros(v) -> str:
 
 
 def _bloc_compte(sante: dict, compte: dict) -> str:
-    devise = html.escape(str(compte.get("currency") or ""))
+    devise = str(compte.get("currency") or "")
     return (
-        f"Compte <b>{html.escape(str(compte.get('account') or 'IBKR'))}</b> · "
+        f"Compte {str(compte.get('account') or 'IBKR')} · "
         f"{'connecté' if sante.get('connected') else 'DÉCONNECTÉ'}\n"
         f"Valeur {_euros(compte.get('NetLiquidation'))} {devise} · "
         f"disponible {_euros(compte.get('AvailableFunds'))} {devise}"
@@ -108,7 +107,7 @@ def _bloc_compte(sante: dict, compte: dict) -> str:
 
 def _ligne_position(p: dict) -> str:
     taille = p.get("position") or p.get("size")
-    return (f"• <b>{html.escape(str(p.get('symbol')))}</b> {taille} "
+    return (f"• {str(p.get('symbol'))} {taille} "
             f"@ {p.get('avg_cost') or p.get('price') or '?'}")
 
 
@@ -162,7 +161,7 @@ def main() -> int:
         for p in ouvertes:
             lignes.append("🟢 OUVERTE " + _ligne_position(p))
         for c in fermees:
-            lignes.append(f"🔵 FERMÉE • <b>{html.escape(c.split('|')[0])}</b>")
+            lignes.append(f"🔵 FERMÉE • {c.split('|')[0]}")
         envoye = _notifier(
             "IBKR — mouvement de position",
             "\n".join(lignes),

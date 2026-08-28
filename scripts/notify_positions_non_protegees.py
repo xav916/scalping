@@ -28,7 +28,6 @@ Usage :
 """
 from __future__ import annotations
 
-import html
 import json
 import os
 import sys
@@ -179,13 +178,13 @@ def main() -> int:
     _ecrire_instantane(set(nues_maintenant))
 
     for n in confirmees:
-        sym = html.escape(str(n["symbole"]))
+        sym = str(n["symbole"])
         objectif = "objectif encore posé" if n["objectif_pose"] else "aucun objectif non plus"
         titre = f"🚨 Position SANS STOP — {sym}"
         corps = (
-            f"<b>{sym}</b> {html.escape(str(n['sens']))} "
-            f"taille {html.escape(str(n['taille']))}\n"
-            f"Destination : {html.escape(n['cle'].split(':')[0])}\n"
+            f"{sym} {str(n['sens'])} "
+            f"taille {str(n['taille'])}\n"
+            f"Destination : {n['cle'].split(':')[0]}\n"
             f"{objectif}\n\n"
             "Cette position court sans protection : une perte n'y est bornée "
             "par rien. Vérifier chez le courtier et reposer un stop, ou fermer."
@@ -197,7 +196,7 @@ def main() -> int:
         titre = "⚠️ Protection des positions : lecture impossible"
         corps = (
             "Impossible de vérifier les stops sur : "
-            f"<b>{html.escape(', '.join(illisibles))}</b>.\n\n"
+            f"{', '.join(illisibles)}.\n\n"
             "Ce n'est pas « aucune position nue » — c'est « on ne sait pas »."
         )
         _notifier(titre, corps, dedup=f"nue-illisible:{','.join(illisibles)}")

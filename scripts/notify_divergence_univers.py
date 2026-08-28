@@ -27,7 +27,6 @@ Usage :
 """
 from __future__ import annotations
 
-import html
 import json
 import os
 import sys
@@ -136,7 +135,7 @@ def main() -> int:
             _notifier(
                 f"⚠️ Univers {r['destination']} : bridge partiellement muet",
                 f"{len(r['muettes'])} paire(s) sans réponse du bridge :\n"
-                + ", ".join(html.escape(p) for p in r["muettes"])
+                + ", ".join(p for p in r["muettes"])
                 + "\n\nCe n'est PAS « ces paires sont refusées » : le bridge "
                   "n'a pas répondu. La divergence reste indéterminée.",
                 dedup=f"divergence-muet:{r['destination']}")
@@ -147,9 +146,9 @@ def main() -> int:
             _notifier(
                 f"⛔ {len(r['refusees'])} instruments jetés — {r['destination']}",
                 f"Le radar score et pousse ces paires ; le bridge ne sait pas "
-                f"les tracer :\n\n<b>"
-                + ", ".join(html.escape(p) for p in r["refusees"])
-                + f"</b>\n\n{len(r['refusees'])}/{r['attendues']} de l'univers "
+                f"les tracer :\n\n"
+                + ", ".join(p for p in r["refusees"])
+                + f"\n\n{len(r['refusees'])}/{r['attendues']} de l'univers "
                   f"({part:.0f} %) part à la poubelle après avoir consommé "
                   f"tout le scoring.\n\nSoit on complète la table de symboles "
                   f"du bridge, soit on retire ces paires de WATCHED_PAIRS — "

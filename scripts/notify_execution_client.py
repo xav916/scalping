@@ -32,7 +32,6 @@ Usage :
 """
 from __future__ import annotations
 
-import html
 import json
 import os
 import sqlite3
@@ -179,8 +178,8 @@ def main() -> int:
             if not soucis:
                 continue
             corps = (
-                f"<b>{html.escape(str(cl.get('email') or f'user:{uid}'))}</b>\n\n"
-                + "\n".join(f"• {html.escape(s)}" for s in soucis)
+                f"{str(cl.get('email') or f'user:{uid}')}\n\n"
+                + "\n".join(f"• {s}" for s in soucis)
                 + f"\n\nSur {FENETRE_J} jours : {etat['executes']} exécuté(s), "
                   f"{etat['echecs']} échec(s), "
                   f"{etat['jamais_recus']} jamais reçu(s).\n\n"

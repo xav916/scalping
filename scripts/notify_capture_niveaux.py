@@ -39,7 +39,6 @@ Usage :
 """
 from __future__ import annotations
 
-import html
 import json
 import os
 import sqlite3
@@ -144,20 +143,20 @@ def _decrire(ligne: dict) -> str:
     t = ligne["mt5_ticket"]
     pnl = ligne.get("pnl")
     montant = f"{pnl:+.2f} €" if pnl is not None else "montant inconnu"
-    tete = (f"<b>{html.escape(str(ligne['pair']))}</b> "
-            f"{html.escape(str(ligne.get('direction') or ''))} "
-            f"— ticket {t}, fermé en {html.escape(str(ligne.get('close_reason')))}"
+    tete = (f"{str(ligne['pair'])} "
+            f"{str(ligne.get('direction') or '')} "
+            f"— ticket {t}, fermé en {str(ligne.get('close_reason'))}"
             f", {montant}")
     if not ligne.get("niveaux_source"):
-        return (tete + "\n  ⛔ <b>aucun niveau retenu</b> — le stop réellement "
+        return (tete + "\n  ⛔ aucun niveau retenu — le stop réellement "
                 "porté à la clôture est perdu")
-    corps = (f"\n  stop retenu : <b>{ligne['sl_at_close']}</b>   "
+    corps = (f"\n  stop retenu : {ligne['sl_at_close']}   "
              f"(enregistré à l'ouverture : {ligne['stop_loss']})"
-             f"\n  objectif retenu : <b>{ligne['tp_at_close']}</b>   "
+             f"\n  objectif retenu : {ligne['tp_at_close']}   "
              f"(à l'ouverture : {ligne['take_profit']})"
-             f"\n  source : {html.escape(str(ligne['niveaux_source']))}")
+             f"\n  source : {str(ligne['niveaux_source'])}")
     if _ecart(ligne):
-        corps += ("\n  🔑 <b>le niveau avait BOUGÉ</b> — c'est précisément ce "
+        corps += ("\n  🔑 le niveau avait BOUGÉ — c'est précisément ce "
                   "que la base ne savait pas voir")
     else:
         corps += ("\n  niveau inchangé depuis l'ouverture sur ce trade : la "
@@ -201,8 +200,8 @@ def main() -> int:
         # ⛔ Une base illisible n'est PAS « aucune cloture ». Le dire, et ne
         # surtout pas avancer le curseur.
         _notifier("⚠️ Sonde capture des niveaux : base illisible",
-                  f"Impossible de lire <code>{html.escape(DB)}</code> : "
-                  f"{html.escape(str(e))}.\n\nCe n'est pas « aucune clôture », "
+                  f"Impossible de lire {DB} : "
+                  f"{str(e)}.\n\nCe n'est pas « aucune clôture », "
                   "c'est « on ne sait pas ».",
                   dedup="capture-niveaux-illisible")
         return 1
@@ -236,11 +235,11 @@ def main() -> int:
                  "⛔ Capture des niveaux : ça NE marche PAS")
         intro = (
             "Première clôture depuis le déploiement du 25/08. Le bridge doit "
-            "retenir le stop et l'objectif <b>réellement portés</b> par la "
+            "retenir le stop et l'objectif réellement portés par la "
             "position, pas ceux notés à l'ouverture — MT5 les efface à la "
             "seconde où elle ferme.\n\n")
         pied = ("\n\nÀ partir de maintenant la sonde se tait, sauf si une "
-                "clôture arrive <b>sans</b> niveaux retenus."
+                "clôture arrive sans niveaux retenus."
                 if ok else
                 "\n\n⛔ À corriger : sans cette capture, toute analyse de "
                 "sortie repart sur des niveaux faux dans 44 % des cas.")
@@ -251,7 +250,7 @@ def main() -> int:
         _notifier(
             f"⛔ {len(manquantes)} clôture(s) sans niveaux retenus",
             "Le bridge n'a pas retenu le stop réellement porté. Le niveau est "
-            "<b>définitivement perdu</b> pour ces positions — MT5 ne le "
+            "définitivement perdu pour ces positions — MT5 ne le "
             "rendra jamais.\n\n"
             + "\n\n".join(_decrire(l) for l in manquantes[:5])
             + "\n\nCauses probables : bridge redémarré juste avant la clôture, "

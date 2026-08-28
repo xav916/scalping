@@ -49,7 +49,6 @@ Usage :
 """
 from __future__ import annotations
 
-import html
 import json
 import os
 import sqlite3
