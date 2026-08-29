@@ -359,6 +359,24 @@ def _cost_rejection(setup, dest) -> str | None:
     if getattr(dest, "bridge_type", "mt5") == "mt5" and _jeton_derogation_restant():
         return None
 
+    # Exemption NOMMEE, par couple (destination, paire) — 2026-08-29.
+    #
+    # ⛔ Pas un seuil global : relever `EDGE_COST_MAX_SHARE` aurait ouvert
+    # toutes les routes, dont le 5 min crypto de Kraken dont les frais ont ete
+    # mesures a 2,6x l'edge. Ce qu'on assume doit se lire ligne par ligne.
+    #
+    # ⚠️ Une exemption ne rend pas un trade rentable : elle decide de
+    # l'envoyer SANS que la question soit tranchee. Le detail chiffre de ce
+    # que chaque couple coute est dans `config.settings`.
+    try:
+        from config.settings import COST_GATE_EXEMPT_PAIRS
+        couple = f"{getattr(dest, 'destination_id', '')}:{setup.pair}"
+        if couple in COST_GATE_EXEMPT_PAIRS:
+            logger.info("porte de cout exemptee pour %s (exemption nommee)", couple)
+            return None
+    except Exception:  # noqa: BLE001 — un reglage illisible n'exempte rien
+        pass
+
     from backend.services.cost_model import cost_in_r, exceeds_edge
 
     risk_money = None

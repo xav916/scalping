@@ -626,6 +626,29 @@ try:
 except Exception:
     EXTERNAL_SIGNAL_TOKENS = {}
 
+# ─── Exemptions NOMMEES de la porte de cout (2026-08-29) ──────────────────
+# Format : "destination:PAIRE,destination:PAIRE". Vide par defaut.
+#
+# ⛔ Une exemption par COUPLE, jamais un seuil global. Relever
+# `EDGE_COST_MAX_SHARE` aurait ouvert toutes les destinations, dont le 5 min
+# crypto de Kraken dont les frais ont ete mesures a 2,6x l'edge. Ce qu'on
+# assume ici doit se lire ligne par ligne.
+#
+# ⚠️ CE QUE CELA COUTE, mesure le 29/08 pour `admin_kraken:XAU/USD` :
+#     cout de base (spread + frais, aller-retour)  0,101 R
+#     portage sur 96 h (detention pire cas)        0,581 R
+#     total                                        0,682 R = 6,2x l'edge (0,11 R)
+# Le terme dominant n'est PAS le spread mais l'hypothese de detention de 96 h,
+# faute de mediane mesuree sur cette route. Exempter ne rend pas le trade
+# rentable : cela decide de l'envoyer SANS que la question soit tranchee.
+#
+# 🔑 A retirer des qu'une mediane de detention existe sur ces couples — c'est
+# la mesure, pas l'exemption, qui doit finir par decider.
+_raw_exempt = os.getenv("COST_GATE_EXEMPT_PAIRS", "")
+COST_GATE_EXEMPT_PAIRS = frozenset(
+    x.strip() for x in _raw_exempt.split(",") if x.strip()
+)
+
 RESEARCH_BENCH_GATE_ENABLED = os.getenv("RESEARCH_BENCH_GATE_ENABLED", "").lower() in ("1", "true", "yes")
 
 PAC_EXCLUDED_TICKETS = frozenset(

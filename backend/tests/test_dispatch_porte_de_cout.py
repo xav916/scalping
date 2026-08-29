@@ -440,3 +440,76 @@ def test_destination_refusee_par_la_porte_absente_de_executing_destinations(
     )
 
     assert telegram_service._executing_destinations(setup) == []
+
+
+# ─── Exemption NOMMEE, par couple (destination, paire) — 2026-08-29 ──────
+
+def test_un_couple_EXEMPTE_passe_la_porte_de_cout(monkeypatch):
+    """Demande le 29/08 pour l'or sur Kraken. ⚠️ Ce que ca coute, mesure :
+    cout de base 0,101 R + portage 96 h 0,581 R = **6,2x l'edge** (0,11 R).
+    Le terme dominant n'est pas le spread mais l'hypothese de detention, faute
+    de mediane mesuree.
+
+    Une exemption ne rend pas le trade rentable : elle decide de l'envoyer
+    SANS que la question soit tranchee.
+    """
+    import config.settings as reglages
+    from backend.services.cost_model import CostModel
+    from backend.services.mt5_bridge import _cost_rejection
+
+    setup = _setup_factice()
+    setup.pair = "XAU/USD"
+    setup.horizon = "4h"
+    modele = CostModel(proportional_rate_per_leg=0.0005, funding_interval_hours=1.0)
+    dest = _dest_factice("admin_kraken", modele, edge=0.110, auto_exec=True)
+
+    monkeypatch.setattr(reglages, "COST_GATE_EXEMPT_PAIRS", frozenset())
+    assert _cost_rejection(setup, dest) == "fees_exceed_edge"
+
+    monkeypatch.setattr(reglages, "COST_GATE_EXEMPT_PAIRS",
+                        frozenset({"admin_kraken:XAU/USD"}))
+    assert _cost_rejection(setup, dest) is None
+
+
+def test_l_exemption_ne_DEBORDE_pas_sur_les_autres_couples(monkeypatch):
+    """⛔ Le point du choix : un seuil global aurait ouvert toutes les routes,
+    dont le 5 min crypto de Kraken dont les frais ont ete mesures a 2,6x
+    l'edge. L'exemption se lit ligne par ligne."""
+    import config.settings as reglages
+    from backend.services.cost_model import CostModel
+    from backend.services.mt5_bridge import _cost_rejection
+
+    modele = CostModel(proportional_rate_per_leg=0.0005, funding_interval_hours=1.0)
+    monkeypatch.setattr(reglages, "COST_GATE_EXEMPT_PAIRS",
+                        frozenset({"admin_kraken:XAU/USD"}))
+
+    # Meme destination, AUTRE paire.
+    autre = _setup_factice()
+    autre.pair = "ETH/USD"
+    autre.horizon = "4h"
+    dest_k = _dest_factice("admin_kraken", modele, edge=0.110, auto_exec=True)
+    assert _cost_rejection(autre, dest_k) == "fees_exceed_edge"
+
+    # Meme paire, AUTRE destination.
+    or_live = _setup_factice()
+    or_live.pair = "XAU/USD"
+    or_live.horizon = "4h"
+    dest_l = _dest_factice("admin_live", modele, edge=0.110, auto_exec=True)
+    assert _cost_rejection(or_live, dest_l) == "fees_exceed_edge"
+
+
+def test_un_reglage_ILLISIBLE_n_exempte_RIEN(monkeypatch):
+    """⛔ Fail-closed : une exemption qu'on ne sait pas lire ne s'applique pas."""
+    import config.settings as reglages
+    from backend.services.cost_model import CostModel
+    from backend.services.mt5_bridge import _cost_rejection
+
+    monkeypatch.delattr(reglages, "COST_GATE_EXEMPT_PAIRS", raising=False)
+    setup = _setup_factice()
+    setup.pair = "XAU/USD"
+    setup.horizon = "4h"
+    dest = _dest_factice("admin_kraken",
+                         CostModel(proportional_rate_per_leg=0.0005,
+                                   funding_interval_hours=1.0),
+                         edge=0.110, auto_exec=True)
+    assert _cost_rejection(setup, dest) == "fees_exceed_edge"
