@@ -39,22 +39,25 @@ def _isolated_db(tmp_path, monkeypatch):
                 post_entry_sl REAL, post_entry_tp REAL, post_entry_size REAL,
                 post_entry_alarm TEXT, mt5_ticket TEXT, is_auto INTEGER,
                 context_macro TEXT, signal_id TEXT, fill_price REAL,
-                slippage_pips REAL, close_reason TEXT, user_id INTEGER
+                slippage_pips REAL, close_reason TEXT, user_id INTEGER,
+                destination_id TEXT
             )
             """
         )
     yield db_path
 
 
-def _insert_trade(db_path: Path, pair: str, pnl: float, closed_at: str | None = None):
+def _insert_trade(db_path: Path, pair: str, pnl: float, closed_at: str | None = None,
+                  destination: str | None = None):
     closed_at = closed_at or datetime.now(timezone.utc).isoformat()
     with sqlite3.connect(db_path) as c:
         c.execute(
             """
-            INSERT INTO personal_trades (pair, status, pnl, is_auto, closed_at, close_reason)
-            VALUES (?, 'CLOSED', ?, 1, ?, ?)
+            INSERT INTO personal_trades (pair, status, pnl, is_auto, closed_at,
+                                         close_reason, destination_id)
+            VALUES (?, 'CLOSED', ?, 1, ?, ?, ?)
             """,
-            (pair, pnl, closed_at, "SL" if pnl < 0 else "TP1"),
+            (pair, pnl, closed_at, "SL" if pnl < 0 else "TP1", destination),
         )
 
 
@@ -459,3 +462,200 @@ def test_le_defaut_est_90_jours():
         r'"PAIR_PNL_REGULATOR_MAX_AGE_DAYS",\s*"(\d+)"\)\)',
         src.read_text(encoding="utf-8"))
     assert trouve and int(trouve.group(1)) == 90
+
+
+# --- La separation par destination (2026-08-29, second volet) ------------
+#
+# ⛔ Le plancher d'age borne les degats dans le TEMPS. Il ne dit toujours pas
+# de QUEL compte on parle : la fenetre melangeait demo, reel et anciens
+# courtiers dans un seul verdict, et une pause s'appliquait partout.
+#
+# 🔑 Le contrat est celui de `pair_admission_state` : `destination` NULL =
+# portee globale, une ligne par destination la precise. L'heritage va du
+# particulier vers le global, et **jamais l'inverse**.
+
+
+def test_la_fenetre_ne_voit_QUE_la_destination_demandee(_isolated_db):
+    from backend.services import pair_pnl_regulator
+
+    _insert_trade(_isolated_db, "XAG/USD", -500.0, destination="admin_legacy")
+    _insert_trade(_isolated_db, "XAG/USD", +10.0, destination="admin_live")
+
+    reel = pair_pnl_regulator.compute_window_metrics(
+        "XAG/USD", 30, destination="admin_live")
+    assert reel["n"] == 1 and reel["sum_pnl"] == 10.0
+
+    demo = pair_pnl_regulator.compute_window_metrics(
+        "XAG/USD", 30, destination="admin_legacy")
+    assert demo["n"] == 1 and demo["sum_pnl"] == -500.0
+
+
+def test_sans_destination_la_fenetre_reste_celle_d_avant(_isolated_db):
+    """Le comportement historique doit survivre intact : c'est lui que lisent
+    le tableau de bord et le backfill d'admission."""
+    from backend.services import pair_pnl_regulator
+
+    _insert_trade(_isolated_db, "XAG/USD", -500.0, destination="admin_legacy")
+    _insert_trade(_isolated_db, "XAG/USD", +10.0, destination="admin_live")
+    _insert_trade(_isolated_db, "XAG/USD", -1.0)  # ancienne ligne sans destination
+
+    m = pair_pnl_regulator.compute_window_metrics("XAG/USD", 30)
+    assert m["n"] == 3
+    assert m["sum_pnl"] == -491.0
+
+
+def test_les_trades_SANS_destination_ne_comptent_pour_AUCUN_compte(_isolated_db):
+    """⛔ Le cas de l'argent : les trades de l'ancien compte demo portent
+    `destination_id` NULL. Ils ne doivent etre attribues a personne — surtout
+    pas au compte reel."""
+    from backend.services import pair_pnl_regulator
+
+    _insert_trade(_isolated_db, "XAG/USD", -500.0)  # ancien compte demo
+    m = pair_pnl_regulator.compute_window_metrics(
+        "XAG/USD", 30, destination="admin_live")
+    assert m["n"] == 0
+
+
+def test_l_EA_des_clients_sort_quand_une_destination_est_nommee(_isolated_db):
+    """⚠️ Les trades de l'EA viennent des comptes des clients Premium. Les
+    compter dans le verdict d'admin_live referait, entre comptes, l'erreur
+    qu'on corrige entre courtiers."""
+    from backend.services import ea_closed_trades_service, pair_pnl_regulator
+
+    ea_closed_trades_service._ensure_schema()
+    quand = datetime.now(timezone.utc).isoformat()
+    with sqlite3.connect(_isolated_db) as c:
+        c.execute(
+            """
+            INSERT INTO ea_closed_trades (user_id, pair, direction,
+                entry_price, exit_price, pnl, mt5_ticket, closed_at, reported_at)
+            VALUES (2, 'XAG/USD', 'sell', 1.0, 1.0, -300.0, 777, ?, ?)
+            """,
+            (quand, quand),
+        )
+    _insert_trade(_isolated_db, "XAG/USD", +5.0, destination="admin_live")
+
+    cible = pair_pnl_regulator.compute_window_metrics(
+        "XAG/USD", 30, destination="admin_live")
+    assert cible["n"] == 1 and cible["sum_pnl"] == 5.0
+
+    tout = pair_pnl_regulator.compute_window_metrics("XAG/USD", 30)
+    assert tout["n"] == 2
+
+
+# -- L'heritage des pauses -----------------------------------------------
+
+
+def test_une_pause_GLOBALE_bloque_toutes_les_destinations(_isolated_db):
+    """⛔ LE test fail-closed. Toutes les pauses posees avant le 29/08/2026 ont
+    `destination` NULL : separer les comptes ne doit en relacher aucune."""
+    from backend.services import pair_pnl_regulator
+
+    pair_pnl_regulator.apply_pause("XAG/USD", "ev_negative", -50.0, 30)
+
+    assert pair_pnl_regulator.is_paused("XAG/USD") is True
+    assert pair_pnl_regulator.is_paused("XAG/USD", "admin_live") is True
+    assert pair_pnl_regulator.is_paused("XAG/USD", "admin_kraken") is True
+
+
+def test_une_pause_par_compte_ne_condamne_PAS_les_autres(_isolated_db):
+    from backend.services import pair_pnl_regulator
+
+    pair_pnl_regulator.apply_pause("XAG/USD", "ev_negative", -50.0, 30,
+                                   destination="admin_legacy")
+
+    assert pair_pnl_regulator.is_paused("XAG/USD", "admin_legacy") is True
+    assert pair_pnl_regulator.is_paused("XAG/USD", "admin_live") is False
+    assert pair_pnl_regulator.is_paused("XAG/USD") is False
+
+
+def test_lever_la_pause_d_un_compte_ne_leve_PAS_la_globale(_isolated_db):
+    """⛔ Sans portee exacte, `apply_resume` remonterait a la pause heritee et
+    ouvrirait tous les comptes d'un coup."""
+    from backend.services import pair_pnl_regulator
+
+    pair_pnl_regulator.apply_pause("XAG/USD", "ev_negative", -50.0, 30)
+
+    assert pair_pnl_regulator.apply_resume(
+        "XAG/USD", "essai", destination="admin_live") is False
+    assert pair_pnl_regulator.is_paused("XAG/USD", "admin_live") is True
+
+    assert pair_pnl_regulator.apply_resume("XAG/USD", "levee globale") is True
+    assert pair_pnl_regulator.is_paused("XAG/USD", "admin_live") is False
+
+
+def test_pas_de_doublon_quand_une_pause_globale_court_deja(_isolated_db):
+    """L'idempotence tient compte de l'heritage : le compte est deja bloque."""
+    from backend.services import pair_pnl_regulator
+
+    gid = pair_pnl_regulator.apply_pause("XAG/USD", "ev_negative", -50.0, 30)
+    assert pair_pnl_regulator.apply_pause(
+        "XAG/USD", "ev_negative", -50.0, 30, destination="admin_live") == gid
+
+
+# -- Bout en bout --------------------------------------------------------
+
+
+def test_un_compte_qui_saigne_ne_ferme_plus_l_autre(_isolated_db, monkeypatch,
+                                                    plancher):
+    """⛔ LE test central du second volet — le cas de l'argent, generalise.
+
+    La demo saigne, le reel non. Avant, un seul verdict fermait les deux.
+    """
+    import config.settings as st
+    from backend.services import pair_pnl_regulator
+
+    monkeypatch.setattr(st, "TRADING_CAPITAL", 650.0)
+    plancher(90)
+    for _ in range(12):
+        _insert_trade(_isolated_db, "XAG/USD", -20.0, destination="admin_legacy")
+    for _ in range(12):
+        _insert_trade(_isolated_db, "XAG/USD", +5.0, destination="admin_live")
+
+    assert pair_pnl_regulator.evaluate_pair(
+        "XAG/USD", destination="admin_legacy")["action"] == "pause"
+    assert pair_pnl_regulator.evaluate_pair(
+        "XAG/USD", destination="admin_live")["action"] == "keep_active"
+
+    assert pair_pnl_regulator.is_paused("XAG/USD", "admin_legacy") is True
+    assert pair_pnl_regulator.is_paused("XAG/USD", "admin_live") is False
+
+
+def test_une_pause_globale_EXPIREE_est_bien_levee_globalement(_isolated_db):
+    """⛔ En evaluant une destination, la pause trouvee peut etre la globale.
+    La lever au nom de cette destination seule la laisserait courir pour
+    toujours : plus rien ne viendrait la toucher."""
+    from backend.services import pair_pnl_regulator
+
+    pair_pnl_regulator.apply_pause("XAG/USD", "ev_negative", -50.0, 30)
+    passe = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    with sqlite3.connect(_isolated_db) as c:
+        c.execute("UPDATE auto_paused_pairs SET expires_at = ?", (passe,))
+
+    d = pair_pnl_regulator.evaluate_pair("XAG/USD", destination="admin_live")
+    assert d["action"] == "resume"
+    assert pair_pnl_regulator.get_active_pause("XAG/USD") is None
+    assert pair_pnl_regulator.is_paused("XAG/USD", "admin_kraken") is False
+
+
+def test_les_destinations_evaluees_viennent_des_DONNEES(_isolated_db):
+    """Une destination configuree mais jamais tradee n'a rien a juger ; une
+    destination retiree du registre peut encore porter une pause a lever."""
+    from backend.services import pair_pnl_regulator
+
+    _insert_trade(_isolated_db, "XAU/USD", +1.0, destination="admin_live")
+    pair_pnl_regulator.apply_pause("XAG/USD", "ev_negative", -50.0, 30,
+                                   destination="destination_disparue")
+
+    assert pair_pnl_regulator._destinations_actives() == [
+        "admin_live", "destination_disparue"]
+
+
+def test_la_porte_du_bridge_interroge_la_DESTINATION():
+    """⛔ La logique ci-dessus ne dirait rien si `_check_rejection` continuait
+    d'interroger la pause sans destination : un saignement sur la demo fermerait
+    encore le compte reel. C'est la lecon du detecteur de positions nues — une
+    logique correcte, jamais atteinte."""
+    src = (Path(__file__).resolve().parents[1] / "services" / "mt5_bridge.py"
+           ).read_text(encoding="utf-8")
+    assert "pair_pnl_regulator.is_paused(setup.pair, dest_id_pause)" in src

@@ -721,9 +721,15 @@ def _check_rejection(setup, dest=None) -> str | None:
             return "pair_not_whitelisted"
     # Auto-régulateur PnL : pause auto par pair quand sum_pnl < seuil sur
     # fenêtre glissante. Couvre le saignement chronique (cas XAG diffus).
+    #
+    # ⛔ La pause est interrogée POUR CETTE DESTINATION depuis le 29/08/2026.
+    # Une pause globale (`destination` NULL) bloque toujours tout le monde ;
+    # une pause posée sur un compte ne condamne plus les autres. Sans ce
+    # paramètre, un saignement sur la démo fermait le compte réel.
     try:
         from backend.services import pair_pnl_regulator
-        if pair_pnl_regulator.is_paused(setup.pair):
+        dest_id_pause = getattr(dest, "destination_id", None) if dest else None
+        if pair_pnl_regulator.is_paused(setup.pair, dest_id_pause):
             return "pair_auto_paused"
     except Exception as e:
         logger.debug(f"mt5_bridge: pair_pnl_regulator check failed: {e}")

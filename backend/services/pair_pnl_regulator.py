@@ -19,6 +19,12 @@ Sur fenêtre glissante de N derniers trades (default 30) :
   l'ancien compte démo MetaQuotes. Une paire dormante ne pouvait pas se défaire
   de son passé, faute de trader — le verdict et la donnée qui l'aurait révisé
   s'interdisaient mutuellement.
+- Portée par DESTINATION : chaque compte est jugé sur ses propres clôtures, et
+  une pause ne vaut que pour le sien. ⛔ Second volet du même défaut : le
+  plancher borne le passé dans le temps, il ne dit pas de quel compte on parle.
+  `destination` NULL = portée globale, et l'héritage va du particulier vers le
+  global — jamais l'inverse, sans quoi séparer les comptes relâcherait des
+  pauses en cours.
 
 Auto-resume : pas de smart resume basé sur V1 quiet (cf stop_loss_alerts)
 parce que le saignement chronique n'a pas de "rafale qui s'arrête" — on
@@ -81,10 +87,19 @@ def _ensure_schema() -> None:
                 pnl_pct REAL,
                 trades_in_window INTEGER,
                 resumed_at TEXT,
-                resumed_reason TEXT
+                resumed_reason TEXT,
+                destination TEXT
             )
             """
         )
+        # Migration des bases anterieures au 29/08/2026 : la colonne n'existait
+        # pas. Les lignes deja posees restent a NULL, donc de portee GLOBALE —
+        # elles continuent de bloquer toutes les destinations jusqu'a leur
+        # terme. ⛔ Un correctif de mesure ne doit relacher aucune pause en
+        # cours.
+        colonnes = {r[1] for r in c.execute("PRAGMA table_info(auto_paused_pairs)")}
+        if "destination" not in colonnes:
+            c.execute("ALTER TABLE auto_paused_pairs ADD COLUMN destination TEXT")
         c.execute(
             """
             CREATE INDEX IF NOT EXISTS idx_app_pair_active
@@ -194,16 +209,29 @@ def tickets_exclus_presents(pair: str) -> list[int]:
 
 
 def compute_window_metrics(pair: str, window_trades: int,
-                           max_age_days: int | None = None) -> dict[str, Any]:
-    """Retourne PnL agrégé multi-tenant sur les N derniers trades fermés.
+                           max_age_days: int | None = None,
+                           destination: str | None = None) -> dict[str, Any]:
+    """Retourne PnL agrégé sur les N derniers trades fermés.
 
-    Union de deux sources :
-    - ``personal_trades`` : trades historiques admin Xavier (is_auto=1)
+    Deux sources possibles :
+    - ``personal_trades`` : trades admin Xavier (is_auto=1)
     - ``ea_closed_trades`` : trades reportés par l'EA des users Premium
-      (Cédric + futurs, EA ≥ v1.04)
 
-    Le SQL UNION ALL puis ORDER BY closed_at DESC LIMIT N garantit qu'on
-    prend les N plus récents toutes sources confondues, multi-user.
+    ``destination`` **restreint la fenêtre à un compte**. Sans lui, le
+    comportement historique est conservé : union de toutes les sources et de
+    toutes les destinations.
+
+    ⛔ **Pourquoi cette restriction.** La fenêtre mélangeait démo, réel et
+    anciens courtiers dans un seul verdict. Le 29/08/2026, l'argent était tenu
+    en pause sur le compte **réel IC Markets** par 30 trades passés sur
+    l'ancien compte démo MetaQuotes. Le plancher d'âge borne les dégâts dans le
+    temps ; seule la séparation par destination répond à « ce compte-ci
+    saigne-t-il ? ».
+
+    ⚠️ Quand une destination est nommée, les trades de l'EA sont **écartés** :
+    ils viennent des comptes des clients Premium, qui ne sont pas cette
+    destination. Les agréger reviendrait à refaire, entre comptes, l'erreur
+    qu'on corrige entre courtiers.
     """
     _ensure_schema()
     # ea_closed_trades schema ensure aussi (idempotent)
@@ -224,19 +252,35 @@ def compute_window_metrics(pair: str, window_trades: int,
     filtre_age = " AND closed_at >= ?" if plancher else ""
     age = (plancher,) if plancher else ()
 
+    filtre_dest = " AND destination_id = ?" if destination else ""
+    dest = (destination,) if destination else ()
+    # ⛔ Nommer une destination écarte l'EA : voir la docstring. Le fragment
+    # d'UNION disparaît alors entièrement — le laisser avec un filtre neutre
+    # ferait rentrer par la fenêtre ce que la porte vient d'exclure.
+    bloc_ea = "" if destination else f"""
+            UNION ALL
+            SELECT pnl, closed_at, 'ea_' || user_id AS source FROM ea_closed_trades
+             WHERE pair = ?{filtre}{filtre_age}"""
+    params_ea = () if destination else (pair,) + ex + age
+    # Le decompte "ecartes par l'age" suit exactement le meme perimetre que la
+    # fenetre : meme destination, memes sources. Sinon il annoncerait des
+    # trades qui n'auraient de toute facon jamais compte.
+    bloc_ea_age = "" if destination else f"""
+                    UNION ALL
+                    SELECT closed_at FROM ea_closed_trades
+                     WHERE pair = ?{filtre} AND closed_at < ?"""
+    params_ea_age = () if destination else (pair,) + ex + (plancher,)
+
     with sqlite3.connect(_db_path()) as c:
         c.row_factory = sqlite3.Row
         rows = c.execute(
             f"""
             SELECT pnl, closed_at, 'admin' AS source FROM personal_trades
              WHERE pair = ? AND status = 'CLOSED'
-               AND is_auto = 1 AND pnl IS NOT NULL{filtre}{filtre_age}
-            UNION ALL
-            SELECT pnl, closed_at, 'ea_' || user_id AS source FROM ea_closed_trades
-             WHERE pair = ?{filtre}{filtre_age}
+               AND is_auto = 1 AND pnl IS NOT NULL{filtre}{filtre_age}{filtre_dest}{bloc_ea}
             ORDER BY closed_at DESC LIMIT ?
             """,
-            (pair,) + ex + age + (pair,) + ex + age + (window_trades,),
+            (pair,) + ex + age + dest + params_ea + (window_trades,),
         ).fetchall()
         # ⚠️ Une fenetre qui ecarte en silence est indiscernable d'une fenetre
         # qui n'a rien ecarte, et le chiffre affiche ne serait pas refaisable
@@ -248,14 +292,11 @@ def compute_window_metrics(pair: str, window_trades: int,
                 SELECT COUNT(*) FROM (
                     SELECT closed_at FROM personal_trades
                      WHERE pair = ? AND status = 'CLOSED'
-                       AND is_auto = 1 AND pnl IS NOT NULL{filtre}
-                       AND closed_at < ?
-                    UNION ALL
-                    SELECT closed_at FROM ea_closed_trades
-                     WHERE pair = ?{filtre} AND closed_at < ?
+                       AND is_auto = 1 AND pnl IS NOT NULL{filtre}{filtre_dest}
+                       AND closed_at < ?{bloc_ea_age}
                 )
                 """,
-                (pair,) + ex + (plancher,) + (pair,) + ex + (plancher,),
+                (pair,) + ex + dest + (plancher,) + params_ea_age,
             ).fetchone()[0]
     ecartes = tickets_exclus_presents(pair)
     n = len(rows)
@@ -265,6 +306,7 @@ def compute_window_metrics(pair: str, window_trades: int,
             "oldest_at": None, "newest_at": None,
             "by_source": {}, "excluded_tickets": ecartes,
             "plancher_age": plancher, "n_hors_age": n_hors_age,
+            "destination": destination,
         }
     sum_pnl = sum(r["pnl"] for r in rows)
     wins = sum(1 for r in rows if r["pnl"] > 0)
@@ -291,31 +333,77 @@ def compute_window_metrics(pair: str, window_trades: int,
         "excluded_tickets": ecartes,
         "plancher_age": plancher,
         "n_hors_age": n_hors_age,
+        "destination": destination,
     }
 
 
 # ─── Pause state ────────────────────────────────────────────────────────
 
 
-def get_active_pause(pair: str) -> dict[str, Any] | None:
-    """Retourne la pause active (resumed_at IS NULL) ou None."""
+def get_active_pause(pair: str, destination: str | None = None) -> dict[str, Any] | None:
+    """Retourne la pause active (resumed_at IS NULL) ou None.
+
+    🔑 **Héritage, comme `pair_admission_state`.** Une pause dont la
+    ``destination`` est NULL est de portée GLOBALE : elle vaut pour tous les
+    comptes. Interrogée pour une destination précise, cette fonction rend
+    d'abord la pause propre à ce compte, et à défaut la pause globale.
+
+    ⛔ L'ordre compte, et il est fail-CLOSED : séparer les destinations ne doit
+    relâcher aucune pause déjà posée. Toutes les lignes antérieures au
+    29/08/2026 ont ``destination`` à NULL et continuent donc de tout bloquer.
+    """
     _ensure_schema()
     with sqlite3.connect(_db_path()) as c:
         c.row_factory = sqlite3.Row
-        row = c.execute(
-            """
-            SELECT * FROM auto_paused_pairs
-             WHERE pair = ? AND resumed_at IS NULL
-             ORDER BY id DESC LIMIT 1
-            """,
-            (pair,),
-        ).fetchone()
+        if destination:
+            row = c.execute(
+                """
+                SELECT * FROM auto_paused_pairs
+                 WHERE pair = ? AND resumed_at IS NULL
+                   AND (destination = ? OR destination IS NULL)
+                 ORDER BY (destination IS NULL), id DESC LIMIT 1
+                """,
+                (pair, destination),
+            ).fetchone()
+        else:
+            row = c.execute(
+                """
+                SELECT * FROM auto_paused_pairs
+                 WHERE pair = ? AND resumed_at IS NULL AND destination IS NULL
+                 ORDER BY id DESC LIMIT 1
+                """,
+                (pair,),
+            ).fetchone()
     return dict(row) if row else None
 
 
-def is_paused(pair: str) -> bool:
-    """True si pair a une pause active non expirée."""
-    pause = get_active_pause(pair)
+def _pause_exacte(pair: str, destination: str | None) -> dict[str, Any] | None:
+    """La pause de CETTE portée précise, sans héritage.
+
+    ⛔ Sert à `apply_resume` : lever la pause d'un compte ne doit jamais lever
+    par ricochet la pause globale, qui protège tous les autres.
+    """
+    _ensure_schema()
+    with sqlite3.connect(_db_path()) as c:
+        c.row_factory = sqlite3.Row
+        if destination:
+            row = c.execute(
+                "SELECT * FROM auto_paused_pairs WHERE pair = ? AND resumed_at IS NULL"
+                " AND destination = ? ORDER BY id DESC LIMIT 1",
+                (pair, destination),
+            ).fetchone()
+        else:
+            row = c.execute(
+                "SELECT * FROM auto_paused_pairs WHERE pair = ? AND resumed_at IS NULL"
+                " AND destination IS NULL ORDER BY id DESC LIMIT 1",
+                (pair,),
+            ).fetchone()
+    return dict(row) if row else None
+
+
+def is_paused(pair: str, destination: str | None = None) -> bool:
+    """True si pair a une pause active non expirée sur cette destination."""
+    pause = get_active_pause(pair, destination)
     if not pause:
         return False
     try:
@@ -336,10 +424,16 @@ def list_active_pauses() -> list[dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
-def apply_pause(pair: str, reason: str, pnl_pct: float, trades_count: int) -> int:
-    """INSERT row pause. Idempotent : si déjà active, retourne l'id existant."""
+def apply_pause(pair: str, reason: str, pnl_pct: float, trades_count: int,
+                destination: str | None = None) -> int:
+    """INSERT row pause. Idempotent : si déjà active, retourne l'id existant.
+
+    ``destination=None`` pose une pause GLOBALE, opposable à tous les comptes.
+    L'idempotence tient compte de l'héritage : si une pause globale court déjà,
+    inutile d'en poser une par destination — le compte est déjà bloqué.
+    """
     _ensure_schema()
-    existing = get_active_pause(pair)
+    existing = get_active_pause(pair, destination)
     if existing:
         logger.debug(f"pair_pnl_regulator: {pair} already paused (id={existing['id']})")
         return existing["id"]
@@ -350,23 +444,29 @@ def apply_pause(pair: str, reason: str, pnl_pct: float, trades_count: int) -> in
         cur = c.execute(
             """
             INSERT INTO auto_paused_pairs
-                (pair, paused_at, expires_at, reason, pnl_pct, trades_in_window)
-            VALUES (?, ?, ?, ?, ?, ?)
+                (pair, paused_at, expires_at, reason, pnl_pct, trades_in_window,
+                 destination)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (pair, now.isoformat(), expires.isoformat(), reason, pnl_pct, trades_count),
+            (pair, now.isoformat(), expires.isoformat(), reason, pnl_pct,
+             trades_count, destination),
         )
         new_id = cur.lastrowid
     logger.warning(
-        f"pair_pnl_regulator: PAUSED {pair} pnl_pct={pnl_pct:.2f}% "
-        f"n={trades_count} until={expires.isoformat()}"
+        f"pair_pnl_regulator: PAUSED {pair}@{destination or 'GLOBAL'} "
+        f"pnl_pct={pnl_pct:.2f}% n={trades_count} until={expires.isoformat()}"
     )
     return new_id
 
 
-def apply_resume(pair: str, reason: str) -> bool:
-    """UPDATE row active : resumed_at + resumed_reason. Retourne True si effectif."""
+def apply_resume(pair: str, reason: str, destination: str | None = None) -> bool:
+    """UPDATE row active : resumed_at + resumed_reason. True si effectif.
+
+    ⛔ Vise la portée EXACTE, sans héritage : lever la pause d'un compte ne
+    doit pas lever la pause globale qui couvre tous les autres.
+    """
     _ensure_schema()
-    existing = get_active_pause(pair)
+    existing = _pause_exacte(pair, destination)
     if not existing:
         return False
     now = datetime.now(timezone.utc).isoformat()
@@ -380,7 +480,8 @@ def apply_resume(pair: str, reason: str) -> bool:
             (now, reason, existing["id"]),
         )
     logger.warning(
-        f"pair_pnl_regulator: RESUMED {pair} reason={reason} (was paused at {existing['paused_at']})"
+        f"pair_pnl_regulator: RESUMED {pair}@{destination or 'GLOBAL'} "
+        f"reason={reason} (was paused at {existing['paused_at']})"
     )
     return True
 
@@ -388,23 +489,25 @@ def apply_resume(pair: str, reason: str) -> bool:
 # ─── Decision logic ─────────────────────────────────────────────────────
 
 
-def evaluate_pair(pair: str) -> dict[str, Any]:
-    """Décide pour un pair : pause, resume, keep_paused, keep_active.
+def evaluate_pair(pair: str, destination: str | None = None) -> dict[str, Any]:
+    """Décide pour un (pair, destination) : pause, resume, keep_paused, keep_active.
 
-    Retourne {action, metrics, reason}.
+    Retourne {action, metrics, reason}. ``destination=None`` = portée globale,
+    comportement d'avant le 29/08/2026.
     """
     cfg = _config()
     if not cfg["enabled"]:
         return {"action": "disabled", "metrics": {}, "reason": "regulator off"}
 
-    metrics = compute_window_metrics(pair, cfg["window_trades"])
+    metrics = compute_window_metrics(pair, cfg["window_trades"],
+                                     destination=destination)
     pnl_pct = 100.0 * metrics["sum_pnl"] / cfg["capital"] if metrics["n"] > 0 else 0.0
     metrics["pnl_pct"] = round(pnl_pct, 2)
 
     # Pause active prioritaire sur tout autre check : un pair pausé sans
     # nouveaux trades doit rester pausé (cas froid). Le check no_data ne
     # s'applique que si pas de pause en cours.
-    pause = get_active_pause(pair)
+    pause = get_active_pause(pair, destination)
     now = datetime.now(timezone.utc)
 
     if pause:
@@ -414,7 +517,11 @@ def evaluate_pair(pair: str) -> dict[str, Any]:
             expires = now  # parse fail → consider expired
 
         if expires <= now:
-            apply_resume(pair, "expired_re_evaluate")
+            # ⛔ On lève la portée de la pause TROUVÉE, pas celle qu'on
+            # évaluait : une pause globale héritée doit être levée globalement,
+            # sinon elle survivrait à son terme sans que rien ne la touche.
+            apply_resume(pair, "expired_re_evaluate",
+                         destination=pause.get("destination"))
             return {
                 "action": "resume",
                 "metrics": metrics,
@@ -438,7 +545,8 @@ def evaluate_pair(pair: str) -> dict[str, Any]:
         }
 
     if pnl_pct < cfg["pause_threshold_pct"]:
-        apply_pause(pair, "ev_negative", pnl_pct, metrics["n"])
+        apply_pause(pair, "ev_negative", pnl_pct, metrics["n"],
+                    destination=destination)
         return {
             "action": "pause",
             "metrics": metrics,
@@ -446,6 +554,33 @@ def evaluate_pair(pair: str) -> dict[str, Any]:
         }
 
     return {"action": "keep_active", "metrics": metrics, "reason": "healthy"}
+
+
+def _destinations_actives() -> list[str]:
+    """Les comptes qui ont réellement des clôtures dans la fenêtre d'âge.
+
+    Lues dans les données, pas dans le registre : une destination configurée
+    mais jamais tradée n'a rien à juger, et une destination retirée du registre
+    peut encore porter une pause à lever. On y ajoute donc les destinations des
+    pauses en cours.
+    """
+    _ensure_schema()
+    plancher = _plancher_age()
+    filtre = " AND closed_at >= ?" if plancher else ""
+    args = (plancher,) if plancher else ()
+    with sqlite3.connect(_db_path()) as c:
+        rows = c.execute(
+            f"""
+            SELECT DISTINCT destination_id FROM personal_trades
+             WHERE status = 'CLOSED' AND is_auto = 1 AND pnl IS NOT NULL
+               AND destination_id IS NOT NULL{filtre}
+            UNION
+            SELECT DISTINCT destination FROM auto_paused_pairs
+             WHERE resumed_at IS NULL AND destination IS NOT NULL
+            """,
+            args,
+        ).fetchall()
+    return sorted(str(r[0]) for r in rows if r[0])
 
 
 def check_and_regulate() -> dict[str, Any]:
@@ -467,14 +602,27 @@ def check_and_regulate() -> dict[str, Any]:
     for p in list_active_pauses():
         pairs_to_check.add(p["pair"])
 
+    # ⛔ Une paire est jugée PAR COMPTE, pas en bloc. La fenêtre mélangeait
+    # démo, réel et anciens courtiers dans un seul verdict — c'est ainsi que
+    # l'argent s'est retrouvé bloqué sur le compte réel par des trades passés
+    # sur l'ancien compte démo.
+    #
+    # `None` reste dans la liste : c'est la portée GLOBALE, celle des pauses
+    # posées avant le 29/08/2026. Sans elle, plus personne ne viendrait les
+    # lever à leur terme.
+    portees: list[str | None] = [None] + _destinations_actives()
+
     decisions = []
     for pair in sorted(pairs_to_check):
-        try:
-            d = evaluate_pair(pair)
-            d["pair"] = pair
-            decisions.append(d)
-        except Exception:
-            logger.exception(f"pair_pnl_regulator: evaluate {pair} failed")
+        for portee in portees:
+            try:
+                d = evaluate_pair(pair, destination=portee)
+                d["pair"] = pair
+                d["destination"] = portee
+                decisions.append(d)
+            except Exception:
+                logger.exception(
+                    f"pair_pnl_regulator: evaluate {pair}@{portee} failed")
 
     summary = {
         "enabled": True,
