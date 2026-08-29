@@ -86,15 +86,31 @@ def is_market_open_for_destination(
 ) -> bool:
     """Variante destination-aware de :func:`is_market_open_for`.
 
-    Cas spécial `admin_kraken_stocks` : les xStocks Kraken (PF_*XUSD) trade
-    24/7 sur Kraken Futures, contrairement aux CFD IC Markets qui suivent
-    strictement les heures NYSE. Par défaut on garde le comportement
-    conservateur (NYSE strict pour cohérence avec Voie B CFD). Opt-in via
-    ``KRAKEN_STOCKS_ALLOW_24_7=true`` pour exploiter les 16h/j Kraken hors
-    NYSE, au prix d'un spread/liquidité dégradés hors heures principales.
+    ⛔ **Le LIEU décide, pas la paire.** Un perpétuel listé sur Kraken Futures
+    cote 24/7 quel que soit son sous-jacent : `PF_XAUUSD` y tourne le samedi,
+    alors que le CFD or de MT5 ferme le vendredi soir. Juger sur
+    `asset_class_for(pair)` répondait donc « marché fermé » pour de l'or sur
+    Kraken tout le week-end — un refus permanent, sur une place ouverte.
+
+    Constaté le 2026-08-29, en ouvrant l'or et l'argent sur Kraken : la même
+    erreur de principe venait d'être corrigée le jour même dans
+    `cote_en_continu`, qui gouverne la grille de séance. Les deux fonctions
+    posent la même question ; une seule y répondait bien.
+
+    ⇒ On délègue à `cote_en_continu`, qui exige DEUX conditions : un lieu qui
+    tourne en continu, et un sous-jacent qui ne dépend pas d'une bourse.
+
+    ⚠️ Le cas `admin_kraken_stocks` reste : ses xStocks SONT adossés à une
+    bourse, donc `cote_en_continu` répond False, et c'est bien
+    ``KRAKEN_STOCKS_ALLOW_24_7`` qui tranche — un opt-in assumé, au prix d'un
+    spread dégradé hors heures principales.
     """
     if destination_id == "admin_kraken_stocks" and asset_class_for(pair) == "equity":
         import os
         if os.getenv("KRAKEN_STOCKS_ALLOW_24_7", "false").lower() == "true":
+            return True
+    if destination_id:
+        from backend.services.destinations_registry import cote_en_continu
+        if cote_en_continu(destination_id):
             return True
     return is_market_open_for(pair, now)
