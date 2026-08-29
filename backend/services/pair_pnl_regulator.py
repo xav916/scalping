@@ -13,6 +13,12 @@ Sur fenêtre glissante de N derniers trades (default 30) :
 - Si pair pausée et expires_at < now → resume (laisse re-trader, ré-évaluera)
 - Sample minimum requis : MIN_SAMPLE trades (default 10) pour éviter
   faux positifs sur sample bias
+- Plancher d'âge : un trade clôturé il y a plus de MAX_AGE_DAYS (default 90)
+  ne compte plus. ⛔ Il n'y en avait AUCUN jusqu'au 29/08/2026 : l'argent était
+  tenu en pause sur le compte réel IC Markets par 30 trades de MAI passés sur
+  l'ancien compte démo MetaQuotes. Une paire dormante ne pouvait pas se défaire
+  de son passé, faute de trader — le verdict et la donnée qui l'aurait révisé
+  s'interdisaient mutuellement.
 
 Auto-resume : pas de smart resume basé sur V1 quiet (cf stop_loss_alerts)
 parce que le saignement chronique n'a pas de "rafale qui s'arrête" — on
@@ -99,6 +105,7 @@ def _config() -> dict[str, Any]:
         PAIR_PNL_REGULATOR_MIN_SAMPLE,
         PAIR_PNL_REGULATOR_PAUSE_THRESHOLD_PCT,
         PAIR_PNL_REGULATOR_PAUSE_DURATION_DAYS,
+        PAIR_PNL_REGULATOR_MAX_AGE_DAYS,
         TRADING_CAPITAL,
     )
     return {
@@ -107,11 +114,41 @@ def _config() -> dict[str, Any]:
         "min_sample": PAIR_PNL_REGULATOR_MIN_SAMPLE,
         "pause_threshold_pct": PAIR_PNL_REGULATOR_PAUSE_THRESHOLD_PCT,
         "pause_duration_days": PAIR_PNL_REGULATOR_PAUSE_DURATION_DAYS,
+        "max_age_days": PAIR_PNL_REGULATOR_MAX_AGE_DAYS,
         "capital": TRADING_CAPITAL,
     }
 
 
 # ─── Core metrics ───────────────────────────────────────────────────────
+
+
+def _plancher_age(max_age_days: int | None = None) -> str | None:
+    """Date ISO avant laquelle un trade ne compte plus, ou ``None`` si desarme.
+
+    ⛔ **Pourquoi ce plancher existe.** `compute_window_metrics` prenait les N
+    derniers trades sans jamais regarder leur age. Le 29/08/2026, l'argent
+    etait tenu en pause sur le compte reel IC Markets par 30 trades clotures
+    entre le 7 et le 12 MAI sur l'ancien compte demo MetaQuotes (tickets a
+    69 millions, `destination_id` NULL) — trois mois et demi, un autre
+    courtier, et la periode que le systeme lui-meme a declaree contaminee par
+    le bug de deduplication corrige le 04/08.
+
+    🔑 Et le verrou etait circulaire : la paire ne pouvait pas trader a cause
+    d'une mesure, et la mesure ne pouvait pas se rafraichir puisqu'elle ne
+    tradait pas. **Un passe mort ne peut pas etre revise par les faits.**
+
+    ⚠️ Ce que le plancher coute : une paire trop lente pour reunir
+    `min_sample` clotures dans la fenetre d'age n'est plus jugee du tout —
+    `keep_active` faute d'echantillon. C'est assume : « pas assez de preuves
+    recentes » est une reponse plus honnete que « coupable sur des preuves
+    perimees », et les rafales courtes restent couvertes par
+    `stop_loss_alerts`, qui ne regarde que la derniere heure.
+    """
+    if max_age_days is None:
+        max_age_days = _config()["max_age_days"]
+    if not max_age_days or max_age_days <= 0:
+        return None
+    return (datetime.now(timezone.utc) - timedelta(days=max_age_days)).isoformat()
 
 
 def _tickets_exclus() -> frozenset[int]:
@@ -156,7 +193,8 @@ def tickets_exclus_presents(pair: str) -> list[int]:
     return sorted(int(r[0]) for r in rows if r[0] is not None)
 
 
-def compute_window_metrics(pair: str, window_trades: int) -> dict[str, Any]:
+def compute_window_metrics(pair: str, window_trades: int,
+                           max_age_days: int | None = None) -> dict[str, Any]:
     """Retourne PnL agrégé multi-tenant sur les N derniers trades fermés.
 
     Union de deux sources :
@@ -179,20 +217,46 @@ def compute_window_metrics(pair: str, window_trades: int) -> dict[str, Any]:
     filtre = _filtre_exclusion(exclus)
     ex = tuple(exclus)
 
+    # ⛔ Le plancher d'age s'applique EN SQL, avant le LIMIT — meme raison que
+    # l'exclusion par ticket juste au-dessus. Filtrer apres coup rendrait une
+    # fenetre plus courte que `window_trades` en pretendant l'inverse.
+    plancher = _plancher_age(max_age_days)
+    filtre_age = " AND closed_at >= ?" if plancher else ""
+    age = (plancher,) if plancher else ()
+
     with sqlite3.connect(_db_path()) as c:
         c.row_factory = sqlite3.Row
         rows = c.execute(
             f"""
             SELECT pnl, closed_at, 'admin' AS source FROM personal_trades
              WHERE pair = ? AND status = 'CLOSED'
-               AND is_auto = 1 AND pnl IS NOT NULL{filtre}
+               AND is_auto = 1 AND pnl IS NOT NULL{filtre}{filtre_age}
             UNION ALL
             SELECT pnl, closed_at, 'ea_' || user_id AS source FROM ea_closed_trades
-             WHERE pair = ?{filtre}
+             WHERE pair = ?{filtre}{filtre_age}
             ORDER BY closed_at DESC LIMIT ?
             """,
-            (pair,) + ex + (pair,) + ex + (window_trades,),
+            (pair,) + ex + age + (pair,) + ex + age + (window_trades,),
         ).fetchall()
+        # ⚠️ Une fenetre qui ecarte en silence est indiscernable d'une fenetre
+        # qui n'a rien ecarte, et le chiffre affiche ne serait pas refaisable
+        # par un lecteur. Meme exigence que pour les tickets exclus.
+        n_hors_age = 0
+        if plancher:
+            n_hors_age = c.execute(
+                f"""
+                SELECT COUNT(*) FROM (
+                    SELECT closed_at FROM personal_trades
+                     WHERE pair = ? AND status = 'CLOSED'
+                       AND is_auto = 1 AND pnl IS NOT NULL{filtre}
+                       AND closed_at < ?
+                    UNION ALL
+                    SELECT closed_at FROM ea_closed_trades
+                     WHERE pair = ?{filtre} AND closed_at < ?
+                )
+                """,
+                (pair,) + ex + (plancher,) + (pair,) + ex + (plancher,),
+            ).fetchone()[0]
     ecartes = tickets_exclus_presents(pair)
     n = len(rows)
     if n == 0:
@@ -200,6 +264,7 @@ def compute_window_metrics(pair: str, window_trades: int) -> dict[str, Any]:
             "n": 0, "sum_pnl": 0.0, "wins": 0, "wr": 0.0,
             "oldest_at": None, "newest_at": None,
             "by_source": {}, "excluded_tickets": ecartes,
+            "plancher_age": plancher, "n_hors_age": n_hors_age,
         }
     sum_pnl = sum(r["pnl"] for r in rows)
     wins = sum(1 for r in rows if r["pnl"] > 0)
@@ -224,6 +289,8 @@ def compute_window_metrics(pair: str, window_trades: int) -> dict[str, Any]:
         "newest_at": rows[0]["closed_at"],
         "by_source": by_source,
         "excluded_tickets": ecartes,
+        "plancher_age": plancher,
+        "n_hors_age": n_hors_age,
     }
 
 

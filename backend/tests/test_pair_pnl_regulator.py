@@ -294,3 +294,168 @@ def test_un_seul_ticket_fait_basculer_la_pause(_isolated_db, exclure, monkeypatc
 
     exclure([1353960866])
     assert pair_pnl_regulator.evaluate_pair("XAU/USD")["action"] == "keep_active"
+
+
+# ─── Le plancher d'âge de la fenêtre (2026-08-29) ────────────────────────
+#
+# ⛔ `compute_window_metrics` n'avait AUCUN plancher : il notait une paire sur
+# ses N derniers trades, quelle que soit leur ancienneté. Le 29/08/2026,
+# l'argent était tenu en pause sur le compte réel IC Markets par 30 trades
+# clôturés entre le 7 et le 12 MAI sur l'ancien compte démo MetaQuotes —
+# un autre courtier, un autre compte, une période déclarée contaminée par le
+# bug de déduplication corrigé le 04/08.
+#
+# 🔑 Et le verrou était circulaire : la paire ne pouvait pas trader à cause
+# d'une mesure, et la mesure ne pouvait pas se rafraîchir puisqu'elle ne
+# tradait pas.
+
+
+@pytest.fixture
+def plancher(monkeypatch):
+    """Règle le plancher tel que le lit la fonction livrée."""
+    def _set(jours):
+        import config.settings as st
+        monkeypatch.setattr(st, "PAIR_PNL_REGULATOR_MAX_AGE_DAYS", jours)
+    return _set
+
+
+def test_un_trade_plus_vieux_que_le_plancher_ne_compte_plus(_isolated_db, plancher):
+    from backend.services import pair_pnl_regulator
+
+    plancher(90)
+    _insert_trade(_isolated_db, "XAG/USD", -500.0,
+                  (datetime.now(timezone.utc) - timedelta(days=110)).isoformat())
+    _insert_trade(_isolated_db, "XAG/USD", +10.0,
+                  (datetime.now(timezone.utc) - timedelta(days=2)).isoformat())
+
+    m = pair_pnl_regulator.compute_window_metrics("XAG/USD", 30)
+    assert m["n"] == 1
+    assert m["sum_pnl"] == 10.0
+
+
+def test_a_zero_le_plancher_est_DESARME(_isolated_db, plancher):
+    """0 = comportement d'avant le correctif, à l'identique."""
+    from backend.services import pair_pnl_regulator
+
+    plancher(0)
+    _insert_trade(_isolated_db, "XAG/USD", -500.0,
+                  (datetime.now(timezone.utc) - timedelta(days=1000)).isoformat())
+
+    m = pair_pnl_regulator.compute_window_metrics("XAG/USD", 30)
+    assert m["n"] == 1
+    assert m["plancher_age"] is None
+
+
+def test_le_plancher_s_applique_AVANT_le_limit(_isolated_db, plancher):
+    """⛔ Filtrer après coup rendrait une fenêtre plus courte que
+    `window_trades` en prétendant l'inverse — même piège que l'exclusion par
+    ticket. Ici : 3 vieux + 3 récents, fenêtre de 3. Le filtre passant avant,
+    la fenêtre doit contenir les 3 RÉCENTS, pas 0."""
+    from backend.services import pair_pnl_regulator
+
+    plancher(90)
+    for i in range(3):
+        _insert_trade(_isolated_db, "XAG/USD", -100.0,
+                      (datetime.now(timezone.utc) - timedelta(days=200 + i)).isoformat())
+    for i in range(3):
+        _insert_trade(_isolated_db, "XAG/USD", +5.0,
+                      (datetime.now(timezone.utc) - timedelta(days=i)).isoformat())
+
+    m = pair_pnl_regulator.compute_window_metrics("XAG/USD", 3)
+    assert m["n"] == 3
+    assert m["sum_pnl"] == 15.0
+
+
+def test_la_fenetre_dit_combien_l_age_a_ecarte(_isolated_db, plancher):
+    """⚠️ Une fenêtre qui écarte en silence est indiscernable d'une fenêtre
+    qui n'a rien écarté."""
+    from backend.services import pair_pnl_regulator
+
+    plancher(90)
+    for i in range(4):
+        _insert_trade(_isolated_db, "XAG/USD", -50.0,
+                      (datetime.now(timezone.utc) - timedelta(days=150 + i)).isoformat())
+    _insert_trade(_isolated_db, "XAG/USD", +5.0,
+                  (datetime.now(timezone.utc) - timedelta(days=1)).isoformat())
+
+    m = pair_pnl_regulator.compute_window_metrics("XAG/USD", 30)
+    assert m["n_hors_age"] == 4
+    assert m["plancher_age"] is not None
+
+
+def test_les_trades_des_users_premium_ont_le_meme_plancher(_isolated_db, plancher):
+    """Le filtre doit valoir des DEUX côtés de l'UNION — un plancher posé d'un
+    seul côté n'est pas un plancher."""
+    from backend.services import ea_closed_trades_service, pair_pnl_regulator
+
+    plancher(90)
+    ea_closed_trades_service._ensure_schema()
+    with sqlite3.connect(_isolated_db) as c:
+        for pnl, jours in ((-300.0, 200), (+20.0, 1)):
+            quand = (datetime.now(timezone.utc) - timedelta(days=jours)).isoformat()
+            c.execute(
+                """
+                INSERT INTO ea_closed_trades (user_id, pair, direction,
+                    entry_price, exit_price, pnl, mt5_ticket, closed_at, reported_at)
+                VALUES (2, 'XAG/USD', 'sell', 1.0, 1.0, ?, ?, ?, ?)
+                """,
+                (pnl, int(jours), quand, quand),
+            )
+
+    m = pair_pnl_regulator.compute_window_metrics("XAG/USD", 30)
+    assert m["n"] == 1
+    assert m["sum_pnl"] == 20.0
+
+
+def test_une_paire_DORMANTE_n_est_plus_mise_en_pause_sur_son_passe_mort(
+        _isolated_db, plancher, monkeypatch):
+    """⛔ LE test central — le cas de l'argent, reproduit à l'identique.
+
+    30 trades perdants clôturés il y a plus de trois mois, plus rien depuis.
+    Sans plancher, la paire est mise en pause et ne peut plus jamais se
+    défaire de ce verdict, faute de trader. Avec plancher, la fenêtre est vide
+    et le régulateur répond `no_data` : **inconnu, pas coupable.**
+    """
+    import config.settings as st
+    from backend.services import pair_pnl_regulator
+
+    monkeypatch.setattr(st, "TRADING_CAPITAL", 650.0)
+    for i in range(30):
+        _insert_trade(_isolated_db, "XAG/USD", -20.0,
+                      (datetime.now(timezone.utc) - timedelta(days=110 + i)).isoformat())
+
+    plancher(0)
+    assert pair_pnl_regulator.evaluate_pair("XAG/USD")["action"] == "pause"
+
+    with sqlite3.connect(_isolated_db) as c:
+        c.execute("DELETE FROM auto_paused_pairs")
+
+    plancher(90)
+    assert pair_pnl_regulator.evaluate_pair("XAG/USD")["action"] == "no_data"
+
+
+def test_une_pause_ACTIVE_n_est_pas_levee_par_le_plancher(_isolated_db, plancher):
+    """⚠️ Le plancher change ce qu'on MESURE, pas ce qui est déjà décidé. Une
+    pause en cours court jusqu'à son terme — sans quoi le correctif aurait
+    relâché d'un coup toutes les paires pausées en production."""
+    from backend.services import pair_pnl_regulator
+
+    _insert_trade(_isolated_db, "XAG/USD", -500.0,
+                  (datetime.now(timezone.utc) - timedelta(days=300)).isoformat())
+    pair_pnl_regulator.apply_pause("XAG/USD", "ev_negative", -80.0, 30)
+
+    plancher(90)
+    assert pair_pnl_regulator.evaluate_pair("XAG/USD")["action"] == "keep_paused"
+
+
+def test_le_defaut_est_90_jours():
+    """⚠️ Le défaut n'est pas neutre : il décide quelles paires restent
+    jugeables. 90 jours laisse largement le temps de réunir 30 clôtures à une
+    paire active, et écarte le passé d'un autre courtier."""
+    import re
+    src = Path(__file__).resolve().parents[2] / "config" / "settings.py"
+    trouve = re.search(
+        r'PAIR_PNL_REGULATOR_MAX_AGE_DAYS = int\(os\.getenv\('
+        r'"PAIR_PNL_REGULATOR_MAX_AGE_DAYS",\s*"(\d+)"\)\)',
+        src.read_text(encoding="utf-8"))
+    assert trouve and int(trouve.group(1)) == 90

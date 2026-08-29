@@ -401,6 +401,18 @@ PAIR_PNL_REGULATOR_WINDOW_TRADES = int(os.getenv("PAIR_PNL_REGULATOR_WINDOW_TRAD
 PAIR_PNL_REGULATOR_MIN_SAMPLE = int(os.getenv("PAIR_PNL_REGULATOR_MIN_SAMPLE", "10"))
 PAIR_PNL_REGULATOR_PAUSE_THRESHOLD_PCT = float(os.getenv("PAIR_PNL_REGULATOR_PAUSE_THRESHOLD_PCT", "-3.0"))
 PAIR_PNL_REGULATOR_PAUSE_DURATION_DAYS = int(os.getenv("PAIR_PNL_REGULATOR_PAUSE_DURATION_DAYS", "14"))
+# ⛔ Plancher d'age de la fenetre (2026-08-29). `compute_window_metrics` n'en
+# avait AUCUN : il notait une paire sur ses N derniers trades, quelle que soit
+# leur anciennete. L'argent a ainsi ete tenu en pause sur le compte reel
+# IC Markets par 30 trades clotures en MAI sur l'ancien compte demo MetaQuotes
+# — un autre courtier, un autre compte, et la periode declaree contaminee par
+# le bug de deduplication corrige le 04/08.
+#
+# 🔑 Le defaut n'etait pas propre a l'argent : TOUTE paire dormante est jugee
+# sur son passe mort, et ne peut pas s'en defaire puisqu'elle ne trade plus.
+#
+# 0 = desarme (comportement d'avant, aucun plancher).
+PAIR_PNL_REGULATOR_MAX_AGE_DAYS = int(os.getenv("PAIR_PNL_REGULATOR_MAX_AGE_DAYS", "90"))
 
 # Circuit breaker démotions PAC : bloque les auto-demotes si trop de demotions
 # dans une fenêtre glissante. Anti-cascade conçu suite à l'observation du

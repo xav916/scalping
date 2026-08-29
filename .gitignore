@@ -40,3 +40,8 @@ _macro_veto_analysis/
 # avec des résultats jetables qui changent à chaque scan.
 deep_dive_results.csv
 pre_screen_results.csv
+
+# Artefacts locaux d'outillage — jamais du code du projet
+.claude/worktrees/
+.omc/state/
+bridge.log
