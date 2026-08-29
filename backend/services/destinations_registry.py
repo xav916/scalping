@@ -193,7 +193,18 @@ DESTINATIONS: dict[str, Destination] = {
             key_env="KRAKEN_BRIDGE_API_KEY",
             key_header="X-Bridge-Key",
             sizing="live_balance",
-            asset_classes=frozenset({"crypto"}),
+            # ⚠️ `metal` ouvert le 2026-08-29 : Kraken cote de VRAIS perpetuels
+            # d'or et d'argent (`PF_XAUUSD`, `PF_XAGUSD`), verifies au
+            # catalogue — pas seulement du PAXG tokenise.
+            #
+            # ⛔ Cette ligne ne suffit PAS a les faire trader : la whitelist
+            # `KRAKEN_LIVE_WHITELIST_SYMBOLS` du bridge est la porte qui
+            # tranche. Deux portes, et n'en ouvrir qu'une ne se voit pas — le
+            # flux reste simplement refuse, en silence.
+            #
+            # ⚠️ Le SPOT (`admin_kraken_spot`) reste en crypto seule : il est
+            # long-only et sert BTC/ETH, les metaux n'y ont rien a faire.
+            asset_classes=frozenset({"crypto", "metal"}),
             max_notional_leverage=2.0,
             order_cooldown_sec=900,
             max_correlated_positions=1,
@@ -321,6 +332,16 @@ def ids() -> frozenset[str]:
 CLASSES_CONTINUES = frozenset({"crypto"})
 
 
+# Lieux de cotation qui tournent 24/7. ⚠️ Une place, pas une classe.
+BRIDGE_TYPES_CONTINUS = frozenset({"kraken", "kraken_spot", "binance"})
+
+# ⛔ ... mais le lieu ne suffit pas. `admin_kraken_stocks` partage le meme
+# `bridge_type` que les futures et sert des xStocks, qui suivent les horaires
+# de LEUR bourse. Le lieu rend le 24/7 possible ; un sous-jacent adosse a une
+# bourse le rend impossible. Les deux conditions, pas l'une des deux.
+CLASSES_LIEES_A_UNE_BOURSE = frozenset({"equity", "equity_index"})
+
+
 def cote_en_continu(destination_id: str | None) -> bool:
     """La destination ne liste que des instruments cotant 24/7.
 
@@ -344,7 +365,22 @@ def cote_en_continu(destination_id: str | None) -> bool:
     reste de garder la grille.
     """
     d = get(destination_id)
-    if d is None or not d.asset_classes:
+    if d is None:
+        return False
+    # ⛔ Le LIEU d'abord, la classe ensuite. Un perpetuel liste sur Kraken
+    # Futures cote 24/7 quel que soit son sous-jacent : `PF_XAUUSD` y tourne
+    # le week-end, contrairement au CFD or de MT5 qui ferme le vendredi.
+    #
+    # Derive de la seule `asset_classes`, cette fonction repondait False des
+    # qu'une destination melangeait les classes. En ouvrant `metal` sur
+    # `admin_kraken` le 29/08, elle est donc passee a False — et la grille de
+    # seance revenait, avec un multiplicateur de 0,0 le week-end : risque a
+    # zero, ordre jamais envoye, motif de rejet faux, et echec visible
+    # UNIQUEMENT le samedi. Exactement le defaut que cette docstring decrit,
+    # reintroduit par l'autre bout. Un test l'a attrape le jour meme.
+    if d.bridge_type in BRIDGE_TYPES_CONTINUS:
+        return not (d.asset_classes & CLASSES_LIEES_A_UNE_BOURSE)
+    if not d.asset_classes:
         return False
     return d.asset_classes <= CLASSES_CONTINUES
 

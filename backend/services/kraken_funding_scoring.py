@@ -182,7 +182,15 @@ _BASES_NON_CRYPTO = frozenset({
 })
 # Les classes que `asset_class_for` reconnait de facon FIABLE (par prefixe ou
 # liste explicite), contrairement a `forex` qui est son repli.
-_CLASSES_NON_CRYPTO = frozenset({"metal", "energy", "equity_index", "equity"})
+# ⚠️ `metal` RETIRE le 2026-08-29, quand l'or et l'argent ont ete ouverts sur
+# Kraken. La vraie question de cette fonction n'a jamais ete « est-ce de la
+# crypto ? » mais « Kraken cote-t-il un perpetuel pour cette paire ? ». Tant
+# que les metaux n'y etaient pas tradables, les deux se confondaient.
+#
+# Un perpetuel metal a un VRAI funding, et le refuser ici rendrait le cout de
+# portage incalculable — ce qui BLOQUE l'argent reel par la porte de cout.
+# Exclure ce qui ne sera jamais route vers Kraken suffit : les devises.
+_CLASSES_NON_CRYPTO = frozenset({"energy", "equity_index", "equity"})
 
 
 def _peut_etre_crypto(pair: str) -> bool:

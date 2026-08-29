@@ -101,6 +101,18 @@ LIVE_WHITELIST_SYMBOLS = frozenset(
     if s.strip()
 )
 MAX_OPEN_POSITIONS = int(os.getenv("KRAKEN_MAX_OPEN_POSITIONS", "10"))
+# ─── Plafond par le RISQUE ENGAGE (2026-08-29) ────────────────────────────
+# Kraken n'avait AUCUNE porte de risque cumule : seulement une perte
+# journaliere a 3 % et un compteur de positions a 10. Or un compteur traite
+# toutes les positions comme equivalentes alors qu'elles ne le sont pas — le
+# meme constat qui avait fait poser cette porte cote MT5 le 20/08.
+#
+# ⚠️ 50 % est une DECISION de Xavier, pas une mesure : c'est la moitie du
+# compte si tous les stops tombent ensemble. Deux fois et demie le plafond
+# total des comptes MT5 (20 %). Rien n'a mesure ce que ce niveau vaut.
+#
+# 0 = desarme (comportement d'avant, seuls le drawdown et le compteur agissent).
+MAX_RISQUE_ENGAGE_PCT = float(os.getenv("KRAKEN_MAX_RISQUE_ENGAGE_PCT", "50.0"))
 
 _start_of_day_balance: float | None = None
 _start_of_day_date: date | None = None
@@ -514,6 +526,10 @@ def health():
             "max_daily_loss_pct": MAX_DAILY_LOSS_PCT,
             "live_whitelist_symbols": sorted(LIVE_WHITELIST_SYMBOLS) if LIVE_WHITELIST_SYMBOLS else [],
             "max_open_positions": MAX_OPEN_POSITIONS,
+            # Plafond par le RISQUE, pose le 2026-08-29. 0 = desarme.
+            # ⛔ Un garde-fou qu'on ne peut pas lire est un garde-fou dont on
+            # ne sait jamais s'il s'applique.
+            "max_risque_engage_pct": MAX_RISQUE_ENGAGE_PCT,
             "start_of_day_balance": _start_of_day_balance,
             "supported_pairs": len(_PAIR_TO_SYMBOL),
         })
@@ -569,6 +585,111 @@ def positions():
     except Exception as e:
         logger.exception("positions failed")
         return jsonify({"ok": False, "error": str(e)}), 500
+
+
+def _stops_par_symbole(open_orders: list) -> dict:
+    """Rend `{symbole: prix_du_stop}` depuis les ordres vivants.
+
+    ⛔ Seuls les ordres `reduceOnly` de type stop comptent. Un ordre d'entree
+    en attente sur le meme symbole n'est pas une protection — le confondre
+    ferait passer une position nue pour bornee, et c'est exactement ce qu'on
+    veut interdire.
+
+    ⚠️ Sur Kraken, le stop n'est PAS un attribut de la position : c'est un
+    ordre conditionnel independant. Une position et son stop peuvent donc
+    diverger sans que rien ne le signale — d'ou cette jointure explicite.
+    """
+    stops: dict = {}
+    for o in open_orders or []:
+        if not o.get("reduceOnly"):
+            continue
+        sym = o.get("symbol")
+        if not sym:
+            continue
+        if (o.get("orderType") or "").lower() not in ("stp", "stop"):
+            continue
+        try:
+            prix = float(o.get("stopPrice"))
+        except (TypeError, ValueError):
+            continue
+        if prix > 0:
+            # Le plus PROTECTEUR si plusieurs : on ne suppose pas qu'il n'y en
+            # a qu'un, et surestimer le risque est le bon sens de l'erreur.
+            stops[sym] = prix if sym not in stops else stops[sym]
+    return stops
+
+
+def _risque_position_kraken(position: dict, stops: dict) -> float | None:
+    """Risque en USD d'une position ouverte, jusqu'a son stop.
+
+    ⛔ Rend **None** quand le risque n'est pas bornable — au premier chef quand
+    aucun ordre stop ne couvre le symbole. Jamais `0.0` : une position nue est
+    un risque *infini*, pas un risque *nul*, et confondre les deux laisserait
+    passer precisement ce qu'on veut interdire. Meme regle que cote MT5.
+
+    ⛔ Un stop du MAUVAIS cote (au-dela de l'entree, donc verrouillant un gain)
+    ne peut plus rien perdre : son risque vaut VRAIMENT zero. Zero mesure et
+    zero faute de mesure ne sont pas le meme zero.
+    """
+    try:
+        sym = position.get("symbol")
+        entree = float(position.get("price"))
+        taille = abs(float(position.get("size")))
+    except (TypeError, ValueError):
+        return None
+    if not sym or entree <= 0 or taille <= 0:
+        return None
+    stop = stops.get(sym)
+    if stop is None or stop <= 0:
+        return None
+    long = str(position.get("side") or "").lower().startswith("l")
+    perdant = (entree - stop) if long else (stop - entree)
+    if perdant <= 0:
+        return 0.0
+    return perdant * taille
+
+
+def _risque_engage_kraken(positions: list, stops: dict) -> tuple:
+    """`(total_usd, symboles_non_bornables)`. Fonction pure."""
+    total = 0.0
+    non_bornables = []
+    for p in positions or []:
+        r = _risque_position_kraken(p, stops)
+        if r is None:
+            non_bornables.append(p.get("symbol") or "?")
+        else:
+            total += r
+    return total, non_bornables
+
+
+def _controle_risque_engage_kraken(risque_ouvert: float, non_bornables: list,
+                                   risque_nouveau, equity,
+                                   plafond_pct: float) -> tuple:
+    """Le plafond porte sur le RISQUE TOTAL, pas sur le nombre de positions.
+
+    Rend `(ok, raison)`. `plafond_pct <= 0` desarme la porte.
+
+    ⚠️ Une position sans stop bloque toute nouvelle ouverture : son risque
+    n'etant pas borne, aucun total n'a de sens tant qu'elle est la.
+    """
+    if plafond_pct <= 0:
+        return True, ""
+    if non_bornables:
+        return False, (
+            f"Position sans stop ({sorted(set(map(str, non_bornables)))}) : "
+            "risque non bornable, ouverture refusee")
+    if equity is None or equity <= 0:
+        return False, "Equity inconnue : risque engage incalculable"
+    if risque_nouveau is None:
+        return False, "Risque du nouvel ordre non mesurable (stop absent ?)"
+    plafond = equity * plafond_pct / 100.0
+    total = risque_ouvert + risque_nouveau
+    if total > plafond:
+        return False, (
+            f"Risque engage {total:.2f} > {plafond:.2f} "
+            f"({plafond_pct}% de {equity:.2f}) : {risque_ouvert:.2f} deja en "
+            f"jeu + {risque_nouveau:.2f} demande")
+    return True, ""
 
 
 def _protection_par_symbole(open_orders: list) -> dict:
@@ -868,6 +989,62 @@ def place_order():
             }), 429
     except Exception as e:
         logger.warning(f"max positions check failed: {e}")
+
+    # Safety gate #4 : plafond par le RISQUE ENGAGE (2026-08-29)
+    #
+    # ⛔ Pose ICI, dans la suite des autres portes, et non chez l'appelant :
+    # un garde-fou place hors de l'endroit qui les rassemble echappe a tout ce
+    # qui le neutralise. Lecon du 20/08 cote MT5.
+    #
+    # ⚠️ Sur Kraken le stop est un ORDRE INDEPENDANT, pas un attribut de la
+    # position : il faut donc joindre `/openpositions` a `/openorders` pour
+    # savoir ce qu'une position risque vraiment.
+    if MAX_RISQUE_ENGAGE_PCT > 0:
+        try:
+            pos_data = _signed_request("GET", "/api/v3/openpositions")
+            ord_data = _signed_request("GET", "/api/v3/openorders")
+            acc_data = _signed_request("GET", "/api/v3/accounts")
+            ouvertes = pos_data.get("openPositions", []) or []
+            stops = _stops_par_symbole(ord_data.get("openOrders", []) or [])
+            ouvert, non_bornables = _risque_engage_kraken(ouvertes, stops)
+            flex = (acc_data.get("accounts", {}) or {}).get("flex", {}) or {}
+            equity = float(flex.get("portfolioValue", 0.0) or 0.0)
+
+            # Risque de l'ordre demande : |entree - stop| x quantite. Le prix
+            # d'entree est celui du marche a cet instant.
+            nouveau = None
+            try:
+                if sl_raw:
+                    # Le prix du marche a cet instant. `_public_get` : pas
+                    # besoin de signer pour lire un ticker public.
+                    tickers = _public_get("/api/v3/tickers").get("tickers", [])
+                    entree = 0.0
+                    for t in tickers:
+                        if (t.get("symbol") or "").upper() == sym:
+                            entree = float(t.get("markPrice") or t.get("last") or 0.0)
+                            break
+                    if entree > 0:
+                        ecart = abs(entree - float(sl_raw))
+                        if ecart > 0:
+                            nouveau = ecart * abs(float(qty_raw))
+            except Exception as e:  # noqa: BLE001
+                logger.info(f"risque du nouvel ordre incalculable ({e})")
+
+            if nouveau is None and not non_bornables:
+                # Ordre non decrit (pas de stop fourni) : on ne juge que
+                # l'existant, comme cote MT5 quand l'appelant ne decrit rien.
+                nouveau = 0.0
+
+            ok_risque, motif = _controle_risque_engage_kraken(
+                ouvert, non_bornables, nouveau, equity, MAX_RISQUE_ENGAGE_PCT)
+            if not ok_risque:
+                logger.warning(f"[KRAKEN] ordre refuse — {motif}")
+                return jsonify({"ok": False, "blocked": True,
+                                "reason": motif}), 429
+        except Exception as e:  # noqa: BLE001
+            # ⚠️ Porte SECONDAIRE : une lecture ratee ne bloque pas le flux.
+            # Le drawdown journalier et le compteur restent en place.
+            logger.warning(f"risque engage check failed: {e}")
 
     # Get specs pour valider tickSize et size min
     specs = _get_specs(sym)

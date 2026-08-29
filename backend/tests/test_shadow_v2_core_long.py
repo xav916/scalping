@@ -549,12 +549,17 @@ def test_capture_funding_snapshot_crypto_pair_full(monkeypatch):
 
 
 def test_capture_funding_snapshot_non_crypto_pair_returns_none(monkeypatch):
-    """Une paire non-crypto rend None — pas un dict vide.
+    """Une paire que Kraken ne cote pas rend None — pas un dict vide.
 
     On fait échouer volontairement `get_funding_rate_for_pair` (exception)
-    pour prouver que la fonction ne l'appelle même pas sur une paire
-    non-crypto : si le guard `is_crypto_pair` était contourné, ce test
-    lèverait au lieu de rendre None silencieusement.
+    pour prouver que la fonction ne l'appelle même pas sur une telle paire :
+    si le guard `is_crypto_pair` était contourné, ce test lèverait au lieu de
+    rendre None silencieusement.
+
+    ⚠️ L'exemplaire était `XAU/USD` jusqu'au 2026-08-29. L'or a été ouvert sur
+    Kraken ce jour-là — il y a un vrai perpétuel `PF_XAUUSD`, donc un vrai
+    funding, donc un instantané légitime. On prend désormais une DEVISE, qui
+    ne sera jamais routée vers Kraken.
     """
     from backend.services import kraken_funding_scoring as kfs
 
@@ -563,7 +568,7 @@ def test_capture_funding_snapshot_non_crypto_pair_returns_none(monkeypatch):
 
     monkeypatch.setattr(kfs, "get_funding_rate_for_pair", _boom)
 
-    assert shadow._capture_funding_snapshot("XAU/USD", "buy") is None
+    assert shadow._capture_funding_snapshot("EUR/USD", "buy") is None
     assert shadow._capture_funding_snapshot("EUR/USD", "sell") is None
 
 

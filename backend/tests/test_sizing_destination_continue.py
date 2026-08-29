@@ -193,3 +193,35 @@ def test_le_motif_de_refus_nomme_la_vraie_cause():
     stop_colle = SimpleNamespace(entry_price=0.3825, stop_loss=0.3825)
     distance_nulle = {"risk_money": 0.55, "capital": 98.7, "session_mult": 1.0}
     assert "stop" in raison_du_refus(distance_nulle, stop_colle)
+
+
+# ─── Le LIEU rend possible, l'actif adosse a une bourse rend impossible ───
+
+def test_kraken_reste_continu_APRES_l_ouverture_des_metaux():
+    """⛔ Le 2026-08-29, ouvrir `metal` sur `admin_kraken` a fait basculer
+    `cote_en_continu` a False : la fonction derivait du seul `asset_classes`
+    et repondait False des qu'une destination melangeait les classes.
+
+    Consequence, si ce test n'avait pas existe : la grille de seance revenait,
+    multiplicateur **0,0 le week-end**, risque a zero, ordre jamais envoye,
+    motif de rejet faux — et l'echec visible UNIQUEMENT le samedi. Exactement
+    le defaut que la docstring de la fonction decrit, reintroduit par l'autre
+    bout, le jour meme.
+
+    Un perpetuel `PF_XAUUSD` cote 24/7 sur Kraken, contrairement au CFD or de
+    MT5 qui ferme le vendredi soir. **Coter en continu est une propriete du
+    lieu**, pas du sous-jacent.
+    """
+    from backend.services import destinations_registry as registry
+    assert registry.cote_en_continu("admin_kraken") is True
+    assert "metal" in registry.DESTINATIONS["admin_kraken"].asset_classes
+
+
+def test_mais_les_xStocks_de_Kraken_ne_cotent_PAS_en_continu():
+    """⛔ Le lieu ne suffit pas : `admin_kraken_stocks` partage le meme
+    `bridge_type` que les futures et sert des actions tokenisees, qui suivent
+    les horaires de LEUR bourse. Le lieu rend le 24/7 possible ; un
+    sous-jacent adosse a une bourse le rend impossible."""
+    from backend.services import destinations_registry as registry
+    assert registry.cote_en_continu("admin_kraken_stocks") is False
+    assert registry.DESTINATIONS["admin_kraken_stocks"].bridge_type == "kraken"

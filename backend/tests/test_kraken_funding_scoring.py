@@ -26,8 +26,16 @@ class TestIsCryptoPair:
             assert is_crypto_pair(pair), f"{pair} should be crypto"
 
     def test_forex_not_crypto(self):
+        """⚠️ `XAU/USD` a QUITTE cette liste le 2026-08-29, quand l'or a ete
+        ouvert sur Kraken. Ce n'est pas un assouplissement : la fonction repond
+        « Kraken cote-t-il un perpetuel pour cette paire ? », et la reponse a
+        change parce que le PERIMETRE a change, pas parce que la regle s'est
+        relachee. Cf. `TestMetauxSurKraken` plus bas.
+
+        Ce qui reste exclu — devises et indices — est ce qui ne sera jamais
+        route vers Kraken."""
         assert not is_crypto_pair("EUR/USD")
-        assert not is_crypto_pair("XAU/USD")
+        assert not is_crypto_pair("GBP/USD")
         assert not is_crypto_pair("SPX")
 
     def test_unknown_pair_not_crypto(self):
@@ -407,3 +415,56 @@ class TestRealFundingNoLongerVetoesEveryBuy:
             new_score, meta = apply_kraken_funding("ETH/USD", "sell", 70.0)
         assert meta["multiplier"] == _SOFT_VETO_MULTIPLIER
         assert new_score < 70.0
+
+
+# ─── L'or et l'argent ouverts sur Kraken (2026-08-29) ────────────────────
+
+class TestMetauxSurKraken:
+    """Kraken cote de VRAIS perpetuels d'or et d'argent — verifie au catalogue
+    le 29/08 : `PF_XAUUSD` et `PF_XAGUSD` figurent parmi ses 294 instruments.
+
+    ⚠️ La question que pose vraiment `_peut_etre_crypto` n'a jamais ete « est-ce
+    de la crypto ? » mais « Kraken cote-t-il un perpetuel pour cette paire ? ».
+    Tant que les metaux n'y etaient pas tradables, les deux se confondaient.
+    """
+
+    def test_l_or_et_l_argent_peuvent_etre_derives(self):
+        """⛔ Les exclure rendrait leur funding — donc le cout de PORTAGE —
+        incalculable, ce qui bloque l'argent reel par la porte de cout. Un
+        perpetuel metal a un vrai funding."""
+        from backend.services.kraken_funding_scoring import _peut_etre_crypto
+        assert _peut_etre_crypto("XAU/USD") is True
+        assert _peut_etre_crypto("XAG/USD") is True
+
+    def test_les_DEVISES_restent_exclues(self):
+        """Le defaut d'origine : Kraken cote `PF_EURUSD`, donc `EUR/USD`
+        passait pour de la crypto et recevait le veto de funding."""
+        from backend.services.kraken_funding_scoring import _peut_etre_crypto
+        for paire in ("EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD"):
+            assert _peut_etre_crypto(paire) is False, paire
+
+    def test_energie_indices_et_actions_restent_exclus(self):
+        from backend.services.kraken_funding_scoring import _peut_etre_crypto
+        for paire in ("WTI/USD", "SPX", "AAPL"):
+            assert _peut_etre_crypto(paire) is False, paire
+
+    def test_un_altcoin_inconnu_reste_derivable(self):
+        """⛔ Fail-open sur l'inconnu : filtrer par `asset_class_for` aurait
+        recoupe 14 des 23 cryptos de l'univers Kraken."""
+        from backend.services.kraken_funding_scoring import _peut_etre_crypto
+        for paire in ("AVAX/USD", "PEPE/USD", "TIA/USD"):
+            assert _peut_etre_crypto(paire) is True, paire
+
+
+class TestDestinationKrakenAcceptelesMetaux:
+    def test_admin_kraken_accepte_metal(self):
+        from backend.services.destinations_registry import DESTINATIONS
+        assert "metal" in DESTINATIONS["admin_kraken"].asset_classes
+        assert "crypto" in DESTINATIONS["admin_kraken"].asset_classes
+
+    def test_le_SPOT_reste_en_crypto_seule(self):
+        """⛔ Il est long-only et sert BTC/ETH : les metaux n'y ont rien a
+        faire, et le bloc de reglages est partage avec les futures — une
+        edition distraite les aurait ouverts des deux cotes."""
+        from backend.services.destinations_registry import DESTINATIONS
+        assert DESTINATIONS["admin_kraken_spot"].asset_classes == frozenset({"crypto"})
