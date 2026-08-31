@@ -3,6 +3,8 @@
 Vérifie la dedup atomique en DB (UNIQUE constraint), le cycle complet
 (register → update → discard) et la purge.
 """
+import logging
+import sqlite3
 from pathlib import Path
 from unittest.mock import patch
 
@@ -225,3 +227,102 @@ def test_discard_libere_une_ligne_marquee_EN_ECHEC(db):
     mt5_pushes_service.update_push_result(*cle, ok=False, response={"error": "429"})
     mt5_pushes_service.discard_push(*cle)
     assert mt5_pushes_service.get_push(*cle) is None
+
+
+# ─── Le silence du 2026-08-26 ─────────────────────────────────────────
+
+
+def test_try_register_push_crie_quand_l_ecriture_echoue(db, caplog):
+    """⛔ Une erreur d'ecriture ne doit JAMAIS etre muette.
+
+    Constate le 2026-08-31 : `mt5_pushes` etait a ZERO ligne depuis le 26/08
+    pendant que des ordres partaient sur le compte reel. L'exception partait
+    en DEBUG, sous le niveau du serveur, et `try_register_push` renvoyait
+    `True` — le push partait donc sans qu'aucune ligne ne soit ecrite.
+
+    `discard_push` annoncait alors « 0 ligne(s) supprimee(s) », ce qui se lit
+    comme « deja liberee » ou « ligne confirmee protegee », jamais comme
+    « la ligne n'a jamais existe ».
+
+    ⛔ Le `True` est CONSERVE : le basculer en fail-closed bloquerait un ordre
+    reel des que la base tousse. C'est le silence qu'on corrige, pas le
+    compromis.
+    """
+    boom = sqlite3.OperationalError("database is locked")
+    with patch.object(mt5_pushes_service.sqlite3, "connect", side_effect=boom):
+        with caplog.at_level(
+            logging.DEBUG, logger="backend.services.mt5_pushes_service"
+        ):
+            ok = mt5_pushes_service.try_register_push(
+                "admin_live", "2026-08-31", "XAU/USD", "sell", "3421.50000"
+            )
+
+    assert ok is True, "fail-open conserve : ne jamais bloquer un ordre reel"
+    cris = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert cris, "l'echec d'ecriture doit etre journalise au moins en WARNING"
+    assert any("try_register_push" in r.getMessage() for r in cris)
+    assert any("database is locked" in r.getMessage() for r in cris)
+
+
+def test_update_et_discard_crient_aussi(db, caplog):
+    """Les deux autres ecritures de la table d'audit, meme regle."""
+    boom = sqlite3.OperationalError("database is locked")
+    with patch.object(mt5_pushes_service.sqlite3, "connect", side_effect=boom):
+        with caplog.at_level(
+            logging.DEBUG, logger="backend.services.mt5_pushes_service"
+        ):
+            mt5_pushes_service.update_push_result(
+                "admin_live", "2026-08-31", "XAU/USD", "sell", "3421.50000",
+                ok=True, response={"ticket": 1},
+            )
+            mt5_pushes_service.discard_push(
+                "admin_live", "2026-08-31", "XAU/USD", "sell", "3421.50000"
+            )
+
+    cris = {r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING}
+    assert any("update_push_result" in m for m in cris)
+    assert any("discard_push" in m for m in cris)
+
+
+# ─── Le DDL sort du chemin chaud ──────────────────────────────────────
+
+
+def test_le_schema_n_est_pas_paye_a_chaque_poussee(db):
+    """⛔ `CREATE TABLE`/`CREATE INDEX` sont du DDL.
+
+    En `journal_mode=delete` ils reclament un verrou EXCLUSIF qui doit
+    attendre TOUS les lecteurs, la ou un INSERT simple passe. Les payer a
+    chaque ordre mettait ce DDL sur le chemin chaud du dispatch, et c'est le
+    meilleur candidat pour l'exception avalee du 26/08.
+    """
+    appels = []
+    vrai = mt5_pushes_service._ensure_schema
+
+    def compte():
+        appels.append(1)
+        vrai()
+
+    with patch.object(mt5_pushes_service, "_ensure_schema", side_effect=compte):
+        for i in range(5):
+            mt5_pushes_service.try_register_push(
+                "admin_live", "2026-08-31", "XAU/USD", "sell", f"{3400 + i}.00000"
+            )
+
+    assert len(appels) == 1, f"DDL paye {len(appels)} fois pour 5 poussees"
+
+
+def test_le_schema_est_verifie_pour_CHAQUE_base(tmp_path):
+    """⛔ La memoire est indexee par CHEMIN, jamais par un booleen global.
+
+    Les tests — et un futur multi-tenant — basculent `_db_path` d'une base a
+    l'autre. Un drapeau unique aurait saute la creation du schema sur la
+    deuxieme base : table absente, et AUCUNE erreur au moment du basculement.
+    """
+    for nom in ("une.db", "deux.db"):
+        with patch.object(trade_log_service, "_DB_PATH", tmp_path / nom):
+            assert mt5_pushes_service.try_register_push(
+                "admin_live", "2026-08-31", "XAU/USD", "sell", "3421.50000"
+            ) is True
+            assert mt5_pushes_service.get_push(
+                "admin_live", "2026-08-31", "XAU/USD", "sell", "3421.50000"
+            ) is not None, f"schema absent sur {nom}"

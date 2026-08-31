@@ -73,6 +73,36 @@ def _ensure_schema() -> None:
         )
 
 
+# ⛔ Le schema n'est plus (re)verifie a CHAQUE poussee. `CREATE TABLE` et
+# `CREATE INDEX` sont du DDL : en `journal_mode=delete` ils reclament un verrou
+# EXCLUSIF qui doit attendre TOUS les lecteurs, la ou un INSERT simple passe.
+# Les payer par ordre mettait ce DDL sur le chemin chaud du dispatch.
+#
+# Constate le 2026-08-31 : `mt5_pushes` etait a ZERO ligne depuis le 26/08
+# pendant que des ordres partaient sur le compte reel. Le mecanisme est
+# reproduit — base verrouillee ⇒ `try_register_push` renvoie `True` sans rien
+# ecrire, puis `discard_push` annonce « 0 ligne(s) supprimee(s) ».
+#
+# ⛔ La memoire est indexee par CHEMIN, jamais par un booleen global : les
+# tests basculent `_db_path` d'une base temporaire a l'autre, et un drapeau
+# unique aurait saute la creation du schema sur la deuxieme base — table
+# absente, et AUCUNE erreur au moment du basculement.
+#
+# ⛔ Le chemin n'est memorise QUE si le DDL a reussi : un echec doit pouvoir
+# etre retente au cycle suivant, sinon une base momentanement verrouillee au
+# demarrage resterait sans schema pour toute la vie du process.
+_SCHEMAS_PRETS: set[str] = set()
+
+
+def _ensure_schema_once() -> None:
+    """``_ensure_schema()`` une fois par base et par process."""
+    chemin = _db_path()
+    if chemin in _SCHEMAS_PRETS:
+        return
+    _ensure_schema()
+    _SCHEMAS_PRETS.add(chemin)
+
+
 def source_du_setup(setup) -> str:
     """Fournisseur d'un setup — ``interne`` par défaut.
 
@@ -119,7 +149,7 @@ def try_register_push(
     fonctionnel).
     """
     try:
-        _ensure_schema()
+        _ensure_schema_once()
         with sqlite3.connect(_db_path()) as c:
             cur = c.execute(
                 """
@@ -142,7 +172,9 @@ def try_register_push(
             )
             return cur.rowcount > 0
     except Exception as e:
-        logger.debug(f"mt5_pushes: try_register_push failed: {e}")
+        logger.warning(
+            "mt5_pushes: try_register_push failed: %s: %s",
+            type(e).__name__, e)
         return True  # fallback safe
 
 
@@ -191,7 +223,9 @@ def update_push_result(
                 ),
             )
     except Exception as e:
-        logger.debug(f"mt5_pushes: update_push_result failed: {e}")
+        logger.warning(
+            "mt5_pushes: update_push_result failed: %s: %s",
+            type(e).__name__, e)
 
 
 def discard_push(
@@ -252,7 +286,9 @@ def discard_push(
                 "mt5_pushes: discard %s %s %s %s -> %d ligne(s) supprimee(s)",
                 destination_id, push_date, pair, direction, cur.rowcount or 0)
     except Exception as e:
-        logger.debug(f"mt5_pushes: discard_push failed: {e}")
+        logger.warning(
+            "mt5_pushes: discard_push failed: %s: %s",
+            type(e).__name__, e)
 
 
 def purge_old_pushes(retention_days: int = 30) -> int:
@@ -271,7 +307,9 @@ def purge_old_pushes(retention_days: int = 30) -> int:
             )
             return cur.rowcount or 0
     except Exception as e:
-        logger.debug(f"mt5_pushes: purge_old_pushes failed: {e}")
+        logger.warning(
+            "mt5_pushes: purge_old_pushes failed: %s: %s",
+            type(e).__name__, e)
         return 0
 
 
@@ -279,7 +317,7 @@ def get_push(destination_id: str, push_date: str, pair: str, direction: str,
              entry_price_5dp: str) -> dict[str, Any] | None:
     """La ligne de poussée, ou ``None``. Sert au diagnostic et aux tests."""
     try:
-        _ensure_schema()
+        _ensure_schema_once()
         with sqlite3.connect(_db_path()) as c:
             c.row_factory = sqlite3.Row
             r = c.execute(
@@ -290,5 +328,7 @@ def get_push(destination_id: str, push_date: str, pair: str, direction: str,
             ).fetchone()
         return dict(r) if r else None
     except Exception as e:  # noqa: BLE001
-        logger.debug(f"mt5_pushes: get_push failed: {e}")
+        logger.warning(
+            "mt5_pushes: get_push failed: %s: %s",
+            type(e).__name__, e)
         return None
