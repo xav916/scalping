@@ -120,6 +120,50 @@ def source_du_setup(setup) -> str:
     return valeur or "interne"
 
 
+def nom_du_motif(valeur) -> str | None:
+    """Le NOM du motif, quelle que soit la forme recue.
+
+    ⛔ `TradeSetup.pattern` est un `PatternDetection`, PAS une chaine. Les
+    trois appelants de `try_register_push` passent `getattr(setup, "pattern",
+    None)`, donc l'objet brut, et SQLite refuse de le lier :
+
+        ProgrammingError: Error binding parameter 8:
+        type 'PatternDetection' is not supported
+
+    L'exception partait dans le `except` qui renvoie `True` : le push partait,
+    et AUCUNE ligne n'etait ecrite. C'est la cause du zero absolu de
+    `mt5_pushes` du 26/08 au 31/08 — la colonne `pattern` a ete ajoutee le
+    26/08, date de la derniere ligne enregistree.
+
+    ⛔ La reduction se fait ICI, au point d'entree, jamais chez les appelants.
+    Les recopier trois fois garantit qu'un des trois l'oublie — c'est
+    exactement la lecon de `source_du_setup`, et elle vient de couter cinq
+    jours d'audit muet.
+
+    Le reste du code lit `setup.pattern.pattern.value` ; on accepte donc les
+    trois formes : l'objet, l'enumeration, la chaine.
+    """
+    if valeur is None:
+        return None
+    interne = getattr(valeur, "pattern", None)
+    if interne is not None:          # PatternDetection -> PatternType
+        valeur = interne
+    valeur = getattr(valeur, "value", valeur)  # PatternType -> str
+    return str(valeur)
+
+
+def _texte(valeur) -> str | None:
+    """Normalise un champ texte de la table d'audit.
+
+    Defense en profondeur : le motif n'etait pas le seul champ a risque. UN
+    SEUL parametre non-texte suffit a faire disparaitre la ligne entiere, et
+    avant le 31/08 il le faisait en silence.
+    """
+    if valeur is None:
+        return None
+    return str(getattr(valeur, "value", valeur))
+
+
 def try_register_push(
     destination_id: str,
     push_date: str,
@@ -165,8 +209,8 @@ def try_register_push(
                     direction,
                     entry_price_5dp,
                     datetime.now(timezone.utc).isoformat(),
-                    horizon,
-                    pattern,
+                    _texte(horizon),
+                    nom_du_motif(pattern),
                     source,
                 ),
             )

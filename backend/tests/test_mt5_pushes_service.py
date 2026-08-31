@@ -326,3 +326,98 @@ def test_le_schema_est_verifie_pour_CHAQUE_base(tmp_path):
             assert mt5_pushes_service.get_push(
                 "admin_live", "2026-08-31", "XAU/USD", "sell", "3421.50000"
             ) is not None, f"schema absent sur {nom}"
+
+
+# ─── Le motif est un OBJET, pas une chaine ────────────────────────────
+
+
+def _detection(nom: str = "momentum_down"):
+    from datetime import datetime, timezone
+
+    from backend.models.schemas import PatternDetection, PatternType
+
+    return PatternDetection(
+        pattern=PatternType(nom),
+        confidence=0.7,
+        description="diag",
+        detected_at=datetime.now(timezone.utc),
+    )
+
+
+def test_le_motif_objet_est_reduit_a_son_nom(db):
+    """⛔ `TradeSetup.pattern` est un `PatternDetection`, pas une chaine.
+
+    Les TROIS appelants de `try_register_push` passent `getattr(setup,
+    "pattern", None)` — donc l'objet brut. SQLite refuse de le lier :
+
+        ProgrammingError: Error binding parameter 8:
+        type 'PatternDetection' is not supported
+
+    L'exception partait dans le `except` qui renvoie `True`, et le push
+    partait sans qu'aucune ligne ne soit ecrite. C'est la cause du zero
+    absolu de `mt5_pushes` entre le 26/08 et le 31/08.
+
+    ⛔ La reduction se fait ICI, au point d'entree, jamais chez les
+    appelants : les recopier trois fois garantit qu'un des trois l'oublie —
+    la lecon deja tiree pour `source_du_setup`.
+    """
+    ok = mt5_pushes_service.try_register_push(
+        "admin_live", "2026-08-31", "XAU/USD", "sell", "3421.50000",
+        horizon="5min", pattern=_detection("momentum_down"), source="interne",
+    )
+    assert ok is True
+
+    ligne = mt5_pushes_service.get_push(
+        "admin_live", "2026-08-31", "XAU/USD", "sell", "3421.50000"
+    )
+    assert ligne is not None, "la ligne d'audit doit exister"
+    assert ligne["pattern"] == "momentum_down"
+
+
+def test_le_motif_deja_en_chaine_passe_inchange(db):
+    """Une chaine reste une chaine — pas de regression sur l'appelant sain."""
+    mt5_pushes_service.try_register_push(
+        "admin_live", "2026-08-31", "XAG/USD", "buy", "39.50000",
+        horizon="4h", pattern="range_bounce_up", source="interne",
+    )
+    ligne = mt5_pushes_service.get_push(
+        "admin_live", "2026-08-31", "XAG/USD", "buy", "39.50000"
+    )
+    assert ligne["pattern"] == "range_bounce_up"
+
+
+def test_un_horizon_enumere_ne_tue_pas_la_ligne(db):
+    """Defense en profondeur : le motif n'est pas le seul champ a risque.
+
+    Un seul parametre non-texte suffit a faire disparaitre la ligne entiere,
+    en silence avant le 31/08. Les champs texte sont normalises au meme
+    endroit.
+    """
+    import enum
+
+    class Horizon(str, enum.Enum):
+        QUATRE_H = "4h"
+
+    mt5_pushes_service.try_register_push(
+        "admin_live", "2026-08-31", "EUR/USD", "buy", "1.10000",
+        horizon=Horizon.QUATRE_H, pattern=_detection("breakout_up"),
+        source="interne",
+    )
+    ligne = mt5_pushes_service.get_push(
+        "admin_live", "2026-08-31", "EUR/USD", "buy", "1.10000"
+    )
+    assert ligne is not None
+    assert ligne["horizon"] == "4h"
+    assert ligne["pattern"] == "breakout_up"
+
+
+def test_les_trois_appelants_passent_bien_un_objet(db):
+    """Verrouille la forme reelle : `setup.pattern` EST un `PatternDetection`.
+
+    Si un jour le modele change et expose deja une chaine, ce test le dit —
+    et la normalisation devient inutile plutot que silencieusement fausse.
+    """
+    from backend.models.schemas import PatternDetection
+
+    assert isinstance(_detection(), PatternDetection)
+    assert not isinstance(_detection(), str)
