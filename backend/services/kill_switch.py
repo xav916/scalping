@@ -357,29 +357,60 @@ def _daily_loss_triggered(
     }
 
 
-def _daily_loss_par_destination() -> dict[str, bool]:
-    """Quels comptes RÉELS ont atteint leur plafond du jour.
+def _daily_loss_par_destination() -> dict[str, dict]:
+    """Où en est chaque compte RÉEL de son plafond du jour.
 
     Sert l'observabilité, pas la décision : c'est `is_active(destination_id=)`
     qui tranche. Un mécanisme qu'on ne peut pas compter, on ne peut que le
     croire — et le 02/09, personne n'a vu que le gel du compte réel avait
     aussi fermé la démo et Kraken.
+
+    ⚠️ `capital` et `seuil` sont là pour une raison précise : le solde vit
+    dans la MÉMOIRE du processus serveur. Un `docker exec` démarre un
+    interpréteur neuf, au cache vide — il ne peut donc pas dire quel seuil le
+    serveur applique vraiment. Sans cette sortie, le volet capital resterait
+    invérifiable en production, et c'est exactement ainsi qu'il était resté
+    inerte une heure après son déploiement.
+
+    `source` vaut ``live`` quand le solde du courtier est connu, ``configure``
+    quand on est retombé sur `TRADING_CAPITAL` — le seuil le plus serré.
     """
     try:
         from backend.services.destinations_registry import DESTINATIONS
         from backend.services import trade_log_service
+        from config.settings import DAILY_LOSS_LIMIT_PCT
     except Exception:
         return {}
-    sortie: dict[str, bool] = {}
+
+    try:
+        pnls = trade_log_service._pnl_du_jour_par_destination()
+    except Exception:
+        pnls = []
+
+    sortie: dict[str, dict] = {}
     for dest_id, d in DESTINATIONS.items():
         if not getattr(d, "reel", False):
             continue
+        ligne: dict = {}
         try:
-            sortie[dest_id] = trade_log_service.silent_mode_active_for_destination(
-                dest_id)
-        except Exception:
+            capital = trade_log_service._capital_du_plafond(dest_id)
+            from backend.services import sizing
+            connu = sizing.capital_reel_connu(dest_id)
+            # Le `'?'` non résolu pèse sur chaque compte réel : la vue doit
+            # montrer le même total que celui qui décide, sans quoi elle
+            # rassurerait sur un chiffre que personne n'utilise.
+            cumul = sum(p for _u, dest, p in pnls if dest in (dest_id, "?"))
+            ligne = {
+                "gele": trade_log_service.silent_mode_active_for_destination(dest_id),
+                "pnl_du_jour": round(cumul, 2),
+                "capital": round(capital, 2),
+                "seuil": round(-capital * DAILY_LOSS_LIMIT_PCT / 100, 2),
+                "source": "live" if connu else "configure",
+            }
+        except Exception as e:
             # Un compte illisible ne doit pas effacer les autres de la vue.
-            sortie[dest_id] = None
+            ligne = {"gele": None, "erreur": type(e).__name__}
+        sortie[dest_id] = ligne
     return sortie
 
 

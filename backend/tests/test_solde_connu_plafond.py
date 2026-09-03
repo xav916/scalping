@@ -131,3 +131,38 @@ async def test_le_job_ne_leve_jamais(monkeypatch):
         lambda: (_ for _ in ()).throw(RuntimeError("registre cassé")))
 
     assert await sizing.rafraichir_soldes_reels() == {}
+
+
+# ── La vue doit montrer le chiffre qui DÉCIDE ─────────────────────────────
+
+def test_la_vue_expose_le_seuil_REELLEMENT_applique(monkeypatch, tmp_path):
+    """Le solde vit en mémoire du serveur : sans cette sortie, invérifiable.
+
+    Un `docker exec` démarre un interpréteur neuf, au cache vide. C'est ainsi
+    que le volet capital est resté inerte une heure après son déploiement sans
+    que la mesure ne le révèle — elle mesurait le mauvais processus.
+    """
+    import sqlite3
+
+    from backend.services import kill_switch as ks
+    from backend.services import trade_log_service as t
+
+    chemin = tmp_path / "trades.db"
+    monkeypatch.setattr(t, "_DB_PATH", chemin, raising=False)
+    t._init_schema()
+    c = sqlite3.connect(chemin)
+    c.execute("""CREATE TABLE IF NOT EXISTS mt5_pushes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, destination_id TEXT,
+        bridge_response TEXT)""")
+    c.commit()
+    c.close()
+
+    sizing._cache_put("admin_live", 719.18)
+    vue = ks._daily_loss_par_destination()
+
+    assert vue["admin_live"]["capital"] == pytest.approx(719.18)
+    assert vue["admin_live"]["seuil"] == pytest.approx(-21.58, abs=0.01)
+    assert vue["admin_live"]["source"] == "live"
+    # Un compte dont le solde n'est pas connu doit le DIRE, pas afficher un
+    # capital d'apparence normale.
+    assert vue["admin_kraken"]["source"] == "configure"
