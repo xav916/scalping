@@ -306,6 +306,27 @@ def _cache_put(dest_id: str, capital: float) -> None:
     _BALANCE_CACHE[dest_id] = (capital, time.monotonic() + _BALANCE_TTL_SEC)
 
 
+def capital_reel_connu(dest_id: str) -> float | None:
+    """Solde réel de cette destination, si le cache le connaît ENCORE.
+
+    Exposé pour le plafond de perte journalière (2026-09-03), qui doit opposer
+    la perte du jour au capital que le compte porte vraiment — pas à la
+    constante `TRADING_CAPITAL`. Celle-ci valait 650 € pendant que le compte
+    réel en portait 719,18 : le « 3 % » en valait 2,7, et se resserrait à
+    chaque euro gagné.
+
+    ⚠️ Retourne ``None`` quand le cache est froid ou périmé (TTL 5 min), et
+    c'est volontaire : l'appelant doit alors retomber sur `TRADING_CAPITAL`,
+    qui donne le seuil le plus SERRÉ. Ne pas savoir combien porte un compte ne
+    doit jamais élargir son plafond.
+
+    ⚠️ Lecture seule et sans réseau — ce plafond est interrogé à chaque signal
+    et sur le chemin synchrone. C'est `refresh_destination_capital`, sur le
+    chemin async du dispatch, qui alimente ce cache.
+    """
+    return _cache_get(dest_id)
+
+
 async def refresh_destination_capital(dest) -> float | None:
     """Interroge ``/account`` du bridge et met le capital en cache.
 

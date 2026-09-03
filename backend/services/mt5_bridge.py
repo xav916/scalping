@@ -737,7 +737,16 @@ def _check_rejection(setup, dest=None) -> str | None:
         from backend.services import kill_switch
         # Passe le pair pour que les pauses per-pair (rafale chirurgicale)
         # soient prises en compte en plus des triggers globaux.
-        if kill_switch.is_active(pair=setup.pair):
+        #
+        # ⛔ La destination aussi, depuis le 2026-09-03 : le plafond de perte
+        # journalière ne doit juger que le compte qui a perdu. Le 02/09,
+        # −28,45 € sur le réel ont gelé la démo et Kraken de 11h35 à minuit —
+        # 3 490 signaux refusés sur des comptes qui n'avaient rien perdu.
+        # Même défaut de portée que `pair_pnl_regulator` avait le 29/08.
+        if kill_switch.is_active(
+                pair=setup.pair,
+                destination_id=getattr(dest, "destination_id", None) if dest
+                else None):
             # Sub-typing pour traçabilité dans les logs/rejections
             if kill_switch.is_pair_rafale_paused(setup.pair)[0]:
                 return "kill_switch_pair_paused"
@@ -1188,6 +1197,41 @@ async def _mirror_fill_to_live(setup, sz: dict, fill: dict, source_id: str) -> N
             direction=_direction_value(setup),
             confidence=getattr(setup, "confidence_score", None),
             reason_code=motif_horizon,
+            details={"horizon": getattr(setup, "horizon", None), "miroir": True},
+            user_id=None,
+            destination_id=cible.destination_id,
+        )
+        return
+
+    # ⛔ Le plafond de perte journalière de la CIBLE (2026-09-03).
+    #
+    # Depuis que le gel est par destination, la démo continue de trader quand
+    # le compte réel a atteint son plafond. Sans ce garde-fou, chaque fill
+    # démo rouvrirait une position sur le compte que le plafond venait de
+    # fermer : le gel chirurgical ouvrirait la porte que le gel global tenait
+    # fermée par accident. Les deux changements ne se séparent pas.
+    #
+    # Ce n'est pas une porte de DÉCISION rejouée — la docstring interdit de
+    # les rejouer, et c'est la bonne règle. C'est un garde-fou de SÉCURITÉ,
+    # de la même famille que les plafonds de lot et de marge que le bridge
+    # applique déjà, et que la copie n'a jamais eu vocation à contourner.
+    try:
+        from backend.services import kill_switch
+        gele = kill_switch.is_active(
+            pair=setup.pair, destination_id=cible.destination_id)
+    except Exception as e:
+        # Ne pas pouvoir lire le garde-fou n'est pas une autorisation : c'est
+        # de l'argent réel, et l'inverse ferait d'une panne de lecture une
+        # porte grande ouverte.
+        logger.warning(
+            f"miroir: kill_switch illisible ({e}) — copie refusée par prudence")
+        gele = True
+    if gele:
+        record_rejection(
+            pair=setup.pair,
+            direction=_direction_value(setup),
+            confidence=getattr(setup, "confidence_score", None),
+            reason_code="kill_switch",
             details={"horizon": getattr(setup, "horizon", None), "miroir": True},
             user_id=None,
             destination_id=cible.destination_id,

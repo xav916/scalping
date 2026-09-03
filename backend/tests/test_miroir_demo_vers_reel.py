@@ -249,3 +249,59 @@ async def test_une_exception_AVANT_tout_POST_libere_bien_la_reservation(
         _setup(), {"risk_money": 5.0}, {"ok": True, "ticket": 1}, "admin_legacy")
 
     assert appels["discard"] == 1
+
+
+# ── La porte dérobée ouverte par le gel par destination ───────────────
+
+@pytest.mark.asyncio
+async def test_le_miroir_ne_copie_pas_vers_un_compte_gele(env, monkeypatch):
+    """Le plafond journalier du compte RÉEL doit arrêter la copie.
+
+    Depuis que le gel est par destination (2026-09-03), la démo continue de
+    trader quand le réel a atteint son plafond. Or le miroir ne rejoue pas
+    les portes de DÉCISION : sans ce garde-fou, chaque fill démo rouvrirait
+    une position sur le compte que le plafond venait de fermer, et le
+    plafond ne protégerait plus rien.
+
+    C'est le garde-fou qui rend le gel chirurgical sûr : les deux vont
+    ensemble, retirer celui-ci rouvre la porte.
+    """
+    monkeypatch.setattr(
+        "backend.services.kill_switch.is_active",
+        lambda pair=None, destination_id=None: destination_id == "admin_live")
+
+    await mb._mirror_fill_to_live(
+        _setup(), {"risk_money": 3.25}, {"volume": 0.01}, "admin_legacy")
+
+    assert "url" not in env, "un compte gelé ne doit rien recevoir du miroir"
+
+
+@pytest.mark.asyncio
+async def test_le_miroir_copie_quand_le_reel_n_est_PAS_gele(env, monkeypatch):
+    """Le garde-fou ne doit pas fermer la vanne en permanence."""
+    monkeypatch.setattr(
+        "backend.services.kill_switch.is_active",
+        lambda pair=None, destination_id=None: False)
+
+    await mb._mirror_fill_to_live(
+        _setup(), {"risk_money": 3.25}, {"volume": 0.01}, "admin_legacy")
+
+    assert "live" in env["url"]
+
+
+@pytest.mark.asyncio
+async def test_un_kill_switch_illisible_ARRETE_la_copie(env, monkeypatch):
+    """Ne pas pouvoir lire le garde-fou n'est pas une autorisation.
+
+    Le doute doit fermer : c'est de l'argent réel, et l'inverse ferait d'une
+    panne de lecture une porte grande ouverte.
+    """
+    def _explose(pair=None, destination_id=None):
+        raise RuntimeError("état illisible")
+
+    monkeypatch.setattr("backend.services.kill_switch.is_active", _explose)
+
+    await mb._mirror_fill_to_live(
+        _setup(), {"risk_money": 3.25}, {"volume": 0.01}, "admin_legacy")
+
+    assert "url" not in env

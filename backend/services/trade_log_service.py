@@ -416,6 +416,127 @@ def silent_mode_active_any_user() -> bool:
     return any((r["pnl"] or 0) <= limit_usd for r in rows)
 
 
+def _capital_du_plafond(destination_id: str) -> float:
+    """Capital à opposer au plafond journalier de CETTE destination.
+
+    Le solde réel du compte quand on le connaît, `TRADING_CAPITAL` sinon.
+
+    ⚠️ Le repli n'est pas un détail : `TRADING_CAPITAL` est une constante
+    (650 €) pendant que le compte réel en portait 719,18 le 2026-09-03. Elle
+    donne donc le seuil le plus SERRÉ des deux, et c'est le sens prudent —
+    ignorer le solde d'un compte ne doit jamais ÉLARGIR son plafond.
+
+    ⛔ Seul un solde réellement résolu (`live` / `destination`) est retenu.
+    `sizing.destination_capital` retombe silencieusement sur `TRADING_CAPITAL`
+    sous l'étiquette ``global`` : accepter ce repli reviendrait à croire qu'on
+    a lu un solde alors qu'on a relu la constante.
+    """
+    try:
+        from backend.services import sizing
+        solde = sizing.capital_reel_connu(destination_id)
+        if solde and solde > 0:
+            return float(solde)
+    except Exception as e:  # pragma: no cover - défensif
+        logger.debug(f"plafond journalier[{destination_id}]: solde illisible ({e})")
+    return TRADING_CAPITAL
+
+
+def _pnl_du_jour_par_destination() -> list[tuple[str, str, float]]:
+    """``(user, destination_resolue, pnl)`` des trades fermés aujourd'hui.
+
+    La destination se résout comme dans `silent_mode_active_any_user` : la
+    COLONNE d'abord, la sous-requête `mt5_pushes` seulement en repli pour les
+    lignes antérieures à la migration du 2026-08-20. Un trade qu'on ne sait
+    rattacher à personne ressort sous ``'?'``.
+
+    ⚠️ Sous-requête corrélée et non jointure : un `LEFT JOIN` sur `LIKE`
+    pourrait apparier plusieurs pushes pour un même ticket et **gonfler la
+    somme**, donc déclencher le garde-fou à tort.
+    """
+    _init_schema()
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT t.user AS user,"
+            " COALESCE(t.destination_id,"
+            "   CASE WHEN t.mt5_ticket IS NULL THEN NULL ELSE ("
+            "     SELECT p.destination_id FROM mt5_pushes p"
+            "      WHERE p.bridge_response LIKE '%' || t.mt5_ticket || '%'"
+            "      ORDER BY p.id DESC LIMIT 1) END, '?') AS dest,"
+            " SUM(t.pnl) AS pnl"
+            " FROM personal_trades t"
+            " WHERE t.status='CLOSED' AND t.created_at >= ?"
+            " GROUP BY t.user, dest",
+            (date.today().isoformat() + "T00:00:00",),
+        ).fetchall()
+    return [(r["user"], r["dest"], r["pnl"] or 0.0) for r in rows]
+
+
+def silent_mode_active_for_destination(destination_id: str | None = None) -> bool:
+    """True si CE compte a atteint SON plafond de perte journalière.
+
+    Posé le 2026-09-03. Le 02/09 à 11h35 UTC, un stop sur `XAU/USD` portait le
+    cumul du compte réel à −28,45 € contre −19,50 € de plafond : le gel s'est
+    appliqué au réel, à la démo **et** à Kraken, qui n'avaient rien perdu.
+    3 490 signaux refusés en `kill_switch` jusqu'à minuit.
+
+    C'est le même défaut de portée que `pair_pnl_regulator` avait le 29/08 —
+    corrigé alors pour les pauses par paire, jamais pour le plafond journalier.
+
+    La cascade, et pourquoi elle penche du côté prudent :
+
+    - **destination absente** → portée globale d'avant. Les appelants qui ne
+      la fournissent pas (`binance_drawdown_breaker`, `promotion_engine`)
+      demandent « le système est-il gelé », pas « ce compte l'est-il ».
+    - **registre illisible** → portée globale. Sans registre on ne distingue
+      plus le réel du fictif ; se taire désarmerait le garde-fou en silence.
+    - **destination réelle** → jugée sur ses propres clôtures et son propre
+      solde.
+    - **destination connue et NON réelle** → jamais gelée. Prolonge le
+      correctif du 2026-08-20 : la démo perd de l'argent qui n'existe pas.
+    - **destination inconnue du registre** → portée globale. Une destination
+      qu'on ne sait pas nommer n'est pas une destination sûre.
+
+    ⚠️ Un trade dont la destination reste NON RÉSOLUE pèse sur **chaque**
+    compte réel. Quand on ne sait pas, on protège — l'inverse laisserait un
+    trade inconnu échapper au garde-fou.
+
+    ⛔ Rendre ce gel chirurgical OUVRE une porte dérobée : la démo continue de
+    trader pendant que le réel est gelé, et le miroir démo→réel ne rejoue pas
+    les portes de décision. C'est `_mirror_fill_to_live` qui la referme, en
+    interrogeant ce plafond POUR SA CIBLE. Les deux vont ensemble.
+    """
+    if not destination_id:
+        return silent_mode_active_any_user()
+
+    reelles = _destinations_reelles()
+    if not reelles:
+        logger.warning(
+            "plafond journalier: registre des destinations illisible — "
+            "portée globale conservée")
+        return silent_mode_active_any_user()
+
+    if destination_id not in reelles:
+        try:
+            from backend.services.destinations_registry import is_known
+            connue = is_known(destination_id)
+        except Exception:
+            connue = False
+        if connue:
+            return False
+        logger.warning(
+            f"plafond journalier: destination '{destination_id}' inconnue du "
+            "registre — portée globale par prudence")
+        return silent_mode_active_any_user()
+
+    limite = -_capital_du_plafond(destination_id) * DAILY_LOSS_LIMIT_PCT / 100
+    cumuls: dict[str, float] = {}
+    for user, dest, pnl in _pnl_du_jour_par_destination():
+        # `'?'` = non résolue : elle pèse sur tous les comptes réels.
+        if dest in (destination_id, "?"):
+            cumuls[user] = cumuls.get(user, 0.0) + pnl
+    return any(total <= limite for total in cumuls.values())
+
+
 # Backward compat
 def silent_mode_active() -> bool:
     return silent_mode_active_any_user()

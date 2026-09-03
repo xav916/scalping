@@ -327,8 +327,18 @@ def list_all_pair_pauses_raw() -> dict[str, dict]:
 # ─── Daily loss trigger (existant, inchangé) ───────────────────────────
 
 
-def _daily_loss_triggered() -> tuple[bool, dict]:
-    """True si AU MOINS UN user a depasse DAILY_LOSS_LIMIT_PCT aujourd'hui."""
+def _daily_loss_triggered(
+    destination_id: str | None = None,
+) -> tuple[bool, dict]:
+    """Le plafond de perte journaliere est-il atteint ?
+
+    Avec ``destination_id`` : pour CE compte seulement, juge sur ses propres
+    cloturés et son propre solde (2026-09-03). Sans : portée globale d'avant,
+    conservée pour les appelants qui demandent « le systeme est-il gele ».
+
+    Le 2026-09-02, faute de cette portée, −28,45 € sur le compte réel ont gelé
+    la démo et Kraken de 11h35 à minuit — 3 490 signaux refusés.
+    """
     try:
         from backend.services import trade_log_service
         from config.settings import DAILY_LOSS_LIMIT_PCT, TRADING_CAPITAL
@@ -336,13 +346,41 @@ def _daily_loss_triggered() -> tuple[bool, dict]:
         return False, {}
 
     try:
-        triggered = trade_log_service.silent_mode_active_any_user()
+        triggered = trade_log_service.silent_mode_active_for_destination(
+            destination_id)
     except Exception:
         triggered = False
     return triggered, {
         "daily_loss_limit_pct": DAILY_LOSS_LIMIT_PCT,
         "capital": TRADING_CAPITAL,
+        "destination_id": destination_id,
     }
+
+
+def _daily_loss_par_destination() -> dict[str, bool]:
+    """Quels comptes RÉELS ont atteint leur plafond du jour.
+
+    Sert l'observabilité, pas la décision : c'est `is_active(destination_id=)`
+    qui tranche. Un mécanisme qu'on ne peut pas compter, on ne peut que le
+    croire — et le 02/09, personne n'a vu que le gel du compte réel avait
+    aussi fermé la démo et Kraken.
+    """
+    try:
+        from backend.services.destinations_registry import DESTINATIONS
+        from backend.services import trade_log_service
+    except Exception:
+        return {}
+    sortie: dict[str, bool] = {}
+    for dest_id, d in DESTINATIONS.items():
+        if not getattr(d, "reel", False):
+            continue
+        try:
+            sortie[dest_id] = trade_log_service.silent_mode_active_for_destination(
+                dest_id)
+        except Exception:
+            # Un compte illisible ne doit pas effacer les autres de la vue.
+            sortie[dest_id] = None
+    return sortie
 
 
 # ─── Status + is_active (entry points pour callers) ────────────────────
@@ -382,12 +420,20 @@ def status() -> dict:
         "daily_loss_limit_pct": auto_meta.get("daily_loss_limit_pct"),
         "global_rafale_pause_active": global_active,
         "global_rafale_pause_info": global_info if global_active else None,
+        # Quel compte est gelé par SON plafond, et lesquels ne le sont pas.
+        # Sans cette ventilation, un gel par destination ne se constate
+        # nulle part : on ne verrait qu'un `active` global qui ne dit plus
+        # de quel compte il parle.
+        "daily_loss_par_destination": _daily_loss_par_destination(),
         "paused_pairs": paused_pairs,  # dict[pair, info] des pairs en pause
         "paused_pairs_count": len(paused_pairs),
     }
 
 
-def is_active(pair: str | None = None) -> bool:
+def is_active(
+    pair: str | None = None,
+    destination_id: str | None = None,
+) -> bool:
     """True si l'auto-exec doit etre gele.
 
     - Si ``pair`` fourni : True si manuel OU daily_loss OU global_rafale OU
@@ -395,11 +441,18 @@ def is_active(pair: str | None = None) -> bool:
     - Si ``pair`` None : True uniquement pour les triggers globaux
       (manuel / daily_loss / global_rafale). Les per-pair pauses ne
       coupent PAS le système globalement.
+    - Si ``destination_id`` fourni : le plafond de perte journalière ne juge
+      que CE compte (2026-09-03). Le switch manuel et la rafale GLOBALE, eux,
+      restent globaux — une coupure décidée à la main ne se négocie pas par
+      compte, et une rafale globale n'aurait plus de sens amputée.
+
+    ⚠️ Sans ``destination_id`` la portée reste celle d'avant : les appelants
+    qui ne le passent pas ne voient aucun changement.
     """
     state = _load_state()
     if state.get("manual_enabled"):
         return True
-    auto_daily, _ = _daily_loss_triggered()
+    auto_daily, _ = _daily_loss_triggered(destination_id)
     if auto_daily:
         return True
     global_active, _ = is_global_rafale_paused()
