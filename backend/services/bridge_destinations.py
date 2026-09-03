@@ -315,11 +315,21 @@ def _admin_legacy_destination() -> BridgeConfig | None:
         # `_mt5_expected_edge` pour la calibration et le choix de fenêtre.
         cost_model=_mt5_cost_model(),
         expected_edge_r=_mt5_expected_edge(),
-        # Le compte de demonstration dimensionne sur le capital du compte REEL
-        # (2026-08-06). Sa raison d'etre est de refleter ce que le reel ferait :
-        # calculer sur son propre solde (652 EUR contre 415) produirait des
-        # tailles differentes, donc des trades non comparables.
-        capital_mirror="admin_live",
+        # ⛔ MIROIR DE CAPITAL RETIRE le 2026-09-04, sur demande.
+        #
+        # La demo dimensionnait sur le solde du compte REEL (`capital_mirror`).
+        # Mesure le 04/09 : 750,50 EUR au lieu de ses 569,01, soit +32 % — elle
+        # tradait a la taille du compte reel avec de l'argent qui n'existe pas.
+        #
+        # La raison d'origine (2026-08-06) etait de rendre les deux series
+        # comparables. Elle tombe avec le miroir de trades : les comptes
+        # decident desormais chacun pour soi, et une demo qui copie le reel
+        # n'est de toute facon PAS un echantillon independant — le banc d'essai
+        # et les calculs DSR/PBO travaillaient sur deux series correlees par
+        # construction.
+        #
+        # `capital_mirror` reste un dispositif generique et teste : c'est son
+        # cablage sur `admin_legacy` qui est retire, pas le mecanisme.
     )
 
 

@@ -1081,7 +1081,13 @@ def _jeton_derogation_restant() -> bool:
 def _mirror_active() -> bool:
     """Le compte de démonstration pilote-t-il le compte réel ?
 
-    Relu à chaque appel pour rester coupable sans redémarrage.
+    ⛔ Désarmé le 2026-09-04 : les deux comptes décident chacun pour soi.
+
+    ⚠️ Relu à chaque appel, mais la valeur vient de l'environnement et est
+    figée à l'import de `config.settings` : **basculer ce drapeau dans le
+    `.env` exige un redémarrage**. L'ancienne docstring promettait le
+    contraire — un lecteur pressé aurait cru le miroir coupé alors qu'il
+    tournait encore.
     """
     try:
         from config.settings import MIRROR_DEMO_TO_LIVE_ENABLED

@@ -535,8 +535,12 @@ HOLDING_WORST_CASE_HOURS = float(os.getenv("HOLDING_WORST_CASE_HOURS", "96"))
 # les 8 fills du démo ce jour-là, ZÉRO aurait pu être copié — le compte réel
 # avait une marge libre négative toute la journée. Le miroir supprime la
 # divergence de DÉCISION, jamais celle de CAPACITÉ.
+# ⛔ Defaut passe a `false` le 2026-09-04 : les deux comptes decident chacun
+# pour soi. Le defaut compte autant que le `.env` de prod — un environnement
+# neuf (reprise, poste d'un futur Premium, test de persistance) heriterait de
+# l'ancien `true` et rebrancherait le miroir sans que personne l'ait demande.
 MIRROR_DEMO_TO_LIVE_ENABLED = os.getenv(
-    "MIRROR_DEMO_TO_LIVE_ENABLED", "true"
+    "MIRROR_DEMO_TO_LIVE_ENABLED", "false"
 ).strip().lower() in ("1", "true", "yes", "on")
 
 # Nombre de pushes `admin_legacy` pendant lesquels le filtre de patterns ET
