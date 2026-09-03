@@ -65,3 +65,25 @@ def rate_limit_on():
     yield limiter
     limiter.enabled = False
     limiter.reset()
+
+
+@pytest.fixture(autouse=True)
+def soldes_caches_isoles():
+    """Vide les caches de soldes entre chaque test.
+
+    `sizing._cache_put` alimente deux dictionnaires de MODULE : celui du
+    sizing (5 min) et le « dernier solde connu » qu'oppose le plafond de perte
+    journalière (1 h, posé le 2026-09-03). Sans ce nettoyage, un solde écrit
+    par un test de sizing survit à celui-ci et déplace le SEUIL du plafond
+    dans les tests suivants — `test_dispatch_porte_de_cout` est tombé ainsi,
+    en suite seulement, jamais isolé.
+
+    ⚠️ Le symptôme est traître : le test qui échoue n'est pas celui qui
+    pollue, et l'ordre d'exécution décide lequel tombe.
+    """
+    from backend.services import sizing
+    sizing._BALANCE_CACHE.clear()
+    sizing._SOLDE_CONNU.clear()
+    yield
+    sizing._BALANCE_CACHE.clear()
+    sizing._SOLDE_CONNU.clear()

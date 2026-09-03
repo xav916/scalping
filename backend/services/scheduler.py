@@ -871,6 +871,29 @@ def start_scheduler() -> AsyncIOScheduler:
         replace_existing=True,
     )
 
+    # Soldes réels des comptes, toutes les 2 min. Alimente le « dernier solde
+    # connu » qu'oppose le plafond de perte journalière (2026-09-03).
+    #
+    # ⛔ Sans ce job, le solde n'était renseigné que lorsqu'un setup allait
+    # jusqu'au dimensionnement — donc jamais les jours où toutes les portes
+    # refusent, et ce sont précisément les jours où le plafond compte. Mesuré
+    # en prod juste après déploiement : les trois comptes rendaient `None`, le
+    # plafond retombait sur les 650 € de `TRADING_CAPITAL` et le volet capital
+    # était inerte. Une logique correcte qu'aucun chemin n'atteint ne protège
+    # rien — la leçon du détecteur de positions nues.
+    #
+    # 2 min contre 60 min de rétention : le solde doit rester STABLE sous le
+    # plafond, sinon le seuil oscillerait au gré des péremptions.
+    from backend.services import sizing as _sizing
+    _scheduler.add_job(
+        _sizing.rafraichir_soldes_reels,
+        "interval",
+        minutes=2,
+        id="soldes_reels_refresh",
+        name="Soldes réels des comptes (plafond journalier)",
+        replace_existing=True,
+    )
+
     # Alertes rafales de stops loss : toutes les 5 min, surveille les
     # SL auto-exec de la derniere heure. Envoie Telegram si >= 5 SL global
     # (cooldown 30 min) ou >= 3 SL meme pattern (cooldown 30 min par pattern).

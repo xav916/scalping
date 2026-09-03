@@ -85,8 +85,10 @@ def _capital_cache(monkeypatch, **soldes):
 
     import backend.services.sizing as sizing
 
-    frais = {d: (s, time.monotonic() + 300) for d, s in soldes.items()}
-    monkeypatch.setattr(sizing, "_BALANCE_CACHE", frais, raising=False)
+    frais = {d: (s, time.monotonic() + 3600) for d, s in soldes.items()}
+    # `_SOLDE_CONNU` et non `_BALANCE_CACHE` : c'est le cache LONG que le
+    # plafond interroge, celui du sizing périmant en 5 min.
+    monkeypatch.setattr(sizing, "_SOLDE_CONNU", frais, raising=False)
 
 
 # ── 1. La portée : un compte ne condamne plus les autres ───────────────────
@@ -178,7 +180,7 @@ def test_cache_froid_retombe_sur_le_capital_CONFIGURE(base, monkeypatch):
     """
     import backend.services.sizing as sizing
     t, chemin = base
-    monkeypatch.setattr(sizing, "_BALANCE_CACHE", {}, raising=False)
+    monkeypatch.setattr(sizing, "_SOLDE_CONNU", {}, raising=False)
     _ajouter(chemin, -20.50, 1010, "admin_live")
 
     assert t.silent_mode_active_for_destination("admin_live") is True

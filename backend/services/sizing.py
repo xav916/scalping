@@ -301,9 +301,70 @@ def _cache_get(dest_id: str) -> float | None:
     return None
 
 
+# Dernier solde connu, pour le PLAFOND DE PERTE JOURNALIERE seulement.
+#
+# Le cache de sizing perime en 5 min et n'est alimente que sur le chemin du
+# dispatch. Mesure le 2026-09-03 juste apres deploiement : `capital_reel_connu`
+# rendait `None` pour les trois comptes -- le plafond retombait donc toujours
+# sur les 650 EUR de `TRADING_CAPITAL`, et le volet capital etait inerte.
+#
+# Une echeance SEPAREE et plus longue, parce que les deux usages n'ont pas les
+# memes exigences : dimensionner un ordre demande un solde frais, opposer un
+# plafond demande un solde STABLE. A 5 min, le seuil aurait oscille entre
+# -19,50 et -21,58 EUR selon l'instant du signal -- un garde-fou de risque ne
+# doit pas dependre de l'heure a laquelle on le regarde.
+#
+# ⚠️ Bornee quand meme : un solde de plusieurs heures peut ELARGIR le plafond
+# a tort. Au-dela, on retombe sur la constante, qui est le seuil le plus serre.
+_SOLDE_CONNU_TTL_SEC = 3600.0
+_SOLDE_CONNU: dict[str, tuple[float, float]] = {}
+
+
 def _cache_put(dest_id: str, capital: float) -> None:
     import time
-    _BALANCE_CACHE[dest_id] = (capital, time.monotonic() + _BALANCE_TTL_SEC)
+    maintenant = time.monotonic()
+    _BALANCE_CACHE[dest_id] = (capital, maintenant + _BALANCE_TTL_SEC)
+    # Alimente aussi le plafond : les deux chemins (dispatch et job de fond)
+    # passent ici, et aucun n'a besoin de le savoir.
+    _SOLDE_CONNU[dest_id] = (capital, maintenant + _SOLDE_CONNU_TTL_SEC)
+
+
+async def rafraichir_soldes_reels() -> dict[str, float | None]:
+    """Interroge le solde des comptes REELS, hors du chemin du dispatch.
+
+    Sans ce job, le solde n'etait connu que lorsqu'un setup allait jusqu'au
+    dimensionnement -- donc jamais les jours ou toutes les portes refusent, et
+    ce sont precisement les jours ou le plafond compte. Une logique correcte
+    qu'aucun chemin n'atteint ne protege rien.
+
+    ⚠️ La demo est ecartee : le plafond ne la vise pas, l'interroger ne
+    servirait qu'a faire du bruit reseau.
+
+    ⚠️ Ne leve jamais et n'abandonne jamais les autres comptes sur un compte
+    muet : c'est le mode de defaillance qui avait bloque Kraken des mois.
+    """
+    resultats: dict[str, float | None] = {}
+    try:
+        from backend.services import bridge_destinations, destinations_registry
+        cibles = [
+            d for d in bridge_destinations.admin_destinations()
+            if destinations_registry.is_real_money(
+                getattr(d, "destination_id", None))
+        ]
+    except Exception as e:
+        logger.warning(f"soldes reels: destinations illisibles ({e})")
+        return {}
+
+    for dest in cibles:
+        dest_id = getattr(dest, "destination_id", "")
+        try:
+            resultats[dest_id] = await refresh_destination_capital(dest)
+        except Exception as e:
+            logger.warning(
+                f"soldes reels[{dest_id}]: /account injoignable "
+                f"({type(e).__name__}) — dernier solde connu conserve")
+            resultats[dest_id] = None
+    return resultats
 
 
 def capital_reel_connu(dest_id: str) -> float | None:
@@ -321,10 +382,15 @@ def capital_reel_connu(dest_id: str) -> float | None:
     doit jamais élargir son plafond.
 
     ⚠️ Lecture seule et sans réseau — ce plafond est interrogé à chaque signal
-    et sur le chemin synchrone. C'est `refresh_destination_capital`, sur le
-    chemin async du dispatch, qui alimente ce cache.
+    et sur le chemin synchrone. Ce sont `refresh_destination_capital` (chemin
+    du dispatch) et `rafraichir_soldes_reels` (job de fond) qui l'alimentent,
+    tous deux via `_cache_put`.
     """
-    return _cache_get(dest_id)
+    import time
+    hit = _SOLDE_CONNU.get(dest_id)
+    if hit and hit[1] > time.monotonic():
+        return hit[0]
+    return None
 
 
 async def refresh_destination_capital(dest) -> float | None:
