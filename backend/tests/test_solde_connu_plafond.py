@@ -66,20 +66,24 @@ def test_un_compte_jamais_vu_ne_rend_rien():
 # ── Le job qui alimente le cache ──────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_le_job_ne_rafraichit_que_les_comptes_REELS(monkeypatch):
-    """Interroger la démo ne sert à rien : son plafond ne la vise pas."""
+async def test_le_job_rafraichit_AUSSI_la_demo(monkeypatch):
+    """Depuis le 04/09, la démo lit son propre solde et non celui du réel.
+
+    Elle était écartée tant qu'elle empruntait le capital du réel via
+    `capital_mirror` : son solde propre ne servait à rien. Ce miroir retiré,
+    l'oublier ici la ferait retomber sur `TRADING_CAPITAL` les jours sans
+    dimensionnement — autonomie à moitié faite, et silencieuse.
+    """
     vus: list[str] = []
 
     class _D:
         def __init__(self, i):
             self.destination_id = i
+            self.bridge_url = f"http://{i}"
 
     monkeypatch.setattr(
         "backend.services.bridge_destinations.admin_destinations",
         lambda: [_D("admin_live"), _D("admin_legacy"), _D("admin_kraken")])
-    monkeypatch.setattr(
-        "backend.services.destinations_registry.is_real_money",
-        lambda i: i in ("admin_live", "admin_kraken"))
 
     async def _faux(dest):
         vus.append(dest.destination_id)
@@ -89,8 +93,30 @@ async def test_le_job_ne_rafraichit_que_les_comptes_REELS(monkeypatch):
 
     await sizing.rafraichir_soldes_reels()
 
-    assert sorted(vus) == ["admin_kraken", "admin_live"]
-    assert "admin_legacy" not in vus
+    assert sorted(vus) == ["admin_kraken", "admin_legacy", "admin_live"]
+
+
+@pytest.mark.asyncio
+async def test_une_destination_sans_bridge_est_ignoree(monkeypatch):
+    """Pas d'URL, rien à interroger — inutile de tenter un appel réseau."""
+    vus: list[str] = []
+
+    class _D:
+        def __init__(self, i, url=None):
+            self.destination_id = i
+            self.bridge_url = url
+
+    monkeypatch.setattr(
+        "backend.services.bridge_destinations.admin_destinations",
+        lambda: [_D("admin_live", "http://live"), _D("orpheline", None)])
+
+    async def _faux(dest):
+        vus.append(dest.destination_id)
+        return 500.0
+
+    monkeypatch.setattr(sizing, "refresh_destination_capital", _faux)
+    await sizing.rafraichir_soldes_reels()
+    assert vus == ["admin_live"]
 
 
 @pytest.mark.asyncio
@@ -103,12 +129,11 @@ async def test_un_bridge_injoignable_n_empeche_pas_les_autres(monkeypatch):
     class _D:
         def __init__(self, i):
             self.destination_id = i
+            self.bridge_url = f"http://{i}"
 
     monkeypatch.setattr(
         "backend.services.bridge_destinations.admin_destinations",
         lambda: [_D("admin_live"), _D("admin_kraken")])
-    monkeypatch.setattr(
-        "backend.services.destinations_registry.is_real_money", lambda i: True)
 
     async def _faux(dest):
         if dest.destination_id == "admin_live":

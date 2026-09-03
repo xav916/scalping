@@ -337,22 +337,25 @@ async def rafraichir_soldes_reels() -> dict[str, float | None]:
     ce sont precisement les jours ou le plafond compte. Une logique correcte
     qu'aucun chemin n'atteint ne protege rien.
 
-    ⚠️ La demo est ecartee : le plafond ne la vise pas, l'interroger ne
-    servirait qu'a faire du bruit reseau.
+    ⚠️ **La demo est incluse depuis le 2026-09-04**, alors que le plafond ne la
+    vise pas. La raison a change : en retirant `capital_mirror`, la demo a
+    cesse d'emprunter le solde du reel et lit desormais le SIEN. Sans ce
+    rafraichissement elle retomberait sur `TRADING_CAPITAL` (650 EUR contre ses
+    569) les jours ou aucun setup n'atteint le dimensionnement — l'autonomie
+    serait a moitie faite, et invisible.
 
     ⚠️ Ne leve jamais et n'abandonne jamais les autres comptes sur un compte
     muet : c'est le mode de defaillance qui avait bloque Kraken des mois.
     """
     resultats: dict[str, float | None] = {}
     try:
-        from backend.services import bridge_destinations, destinations_registry
+        from backend.services import bridge_destinations
         cibles = [
             d for d in bridge_destinations.admin_destinations()
-            if destinations_registry.is_real_money(
-                getattr(d, "destination_id", None))
+            if getattr(d, "bridge_url", None)
         ]
     except Exception as e:
-        logger.warning(f"soldes reels: destinations illisibles ({e})")
+        logger.warning(f"soldes: destinations illisibles ({e})")
         return {}
 
     for dest in cibles:
@@ -361,7 +364,7 @@ async def rafraichir_soldes_reels() -> dict[str, float | None]:
             resultats[dest_id] = await refresh_destination_capital(dest)
         except Exception as e:
             logger.warning(
-                f"soldes reels[{dest_id}]: /account injoignable "
+                f"soldes[{dest_id}]: /account injoignable "
                 f"({type(e).__name__}) — dernier solde connu conserve")
             resultats[dest_id] = None
     return resultats
