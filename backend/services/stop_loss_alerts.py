@@ -88,20 +88,62 @@ def _db_path() -> str:
     return str(_DB_PATH)
 
 
+def _destinations_demo() -> frozenset[str]:
+    """Destinations qui n'engagent PAS d'argent reel, lues dans le registre."""
+    try:
+        from backend.services.destinations_registry import DESTINATIONS
+        return frozenset(k for k, d in DESTINATIONS.items()
+                         if not getattr(d, "reel", False))
+    except Exception:
+        return frozenset()
+
+
 def _fetch_recent_sl(since_iso: str, until_iso: str) -> list[dict[str, Any]]:
-    """Retourne les trades auto-exec fermés en SL sur la fenêtre."""
+    """Trades auto-exec fermes en SL sur la fenetre — ARGENT REEL seulement.
+
+    ⛔ **Les destinations de demonstration sont exclues** (2026-09-04). Cette
+    requete n'avait aucun filtre, et son verdict pose des pauses qui
+    s'appliquent aux DEUX comptes :
+
+        kill_switch.set_pair_rafale_pause(pair)     -> la paire, partout
+        kill_switch.set_global_rafale_pause(...)    -> TOUT, partout
+
+    ⇒ trois stops sur la DEMO en une heure mettaient la paire en pause sur le
+    compte REEL. Mesure sur 90 jours : la demo seule a franchi le seuil des
+    3 SL/h **8 fois**, celui des 5 SL/h **6 fois**.
+
+    🔑 Un banc d'essai qui peut geler le compte qu'il est cense preparer n'est
+    pas un banc d'essai. Second chemin demo -> reel de la journee, apres
+    l'admission (`fcdf6c0`).
+
+    ⚠️ Destination NULLE = reelle : lignes anterieures a la migration du
+    20/08, un residu. Meme regle que l'admission et le plafond journalier.
+    """
+    demos = _destinations_demo()
     with sqlite3.connect(_db_path()) as c:
+        colonnes = {r[1] for r in c.execute("PRAGMA table_info(personal_trades)")}
+        if demos and "destination_id" in colonnes:
+            trous = ",".join("?" * len(demos))
+            portee = f" AND COALESCE(destination_id, '?') NOT IN ({trous})"
+            args: tuple = tuple(sorted(demos))
+        else:
+            # Sans colonne ou sans registre, aucune information de destination
+            # n'est disponible : filtrer est impossible. Le repli se DIT —
+            # silencieux, il ferait croire le disjoncteur assaini.
+            if not demos:
+                logger.warning("rafale: registre illisible — portee NON filtree")
+            portee, args = "", ()
         rows = c.execute(
-            """
+            f"""
             SELECT id, pair, direction, signal_pattern, pnl, closed_at
               FROM personal_trades
              WHERE status = 'CLOSED'
                AND close_reason = 'SL'
                AND is_auto = 1
                AND closed_at >= ?
-               AND closed_at <= ?
+               AND closed_at <= ?{portee}
             """,
-            (since_iso, until_iso),
+            (since_iso, until_iso) + args,
         ).fetchall()
     return [
         {
