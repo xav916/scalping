@@ -162,7 +162,8 @@ def _tickets_exclus() -> frozenset[int]:
     return tickets_exclus()
 
 
-def _query_trades_pnl(pair: str, direction: str, since_utc: str) -> list[dict]:
+def _query_trades_pnl(pair: str, direction: str, since_utc: str,
+                      destination: Optional[str] = None) -> list[dict]:
     """Trades fermés PnL depuis since (personal_trades admin + ea_closed_trades users).
 
     Query splittée pour être robuste si l'une des tables est absente (tests isolated
@@ -177,6 +178,34 @@ def _query_trades_pnl(pair: str, direction: str, since_utc: str) -> list[dict]:
     exclus = _tickets_exclus()
     filtre = filtre_sql(exclus)
     ex = tuple(exclus)
+    # ⛔ PORTEE (2026-09-04). Sans elle, `check_demotion(pair, dir,
+    # 'admin_live')` jugeait le compte REEL sur TOUS les trades — demo
+    # comprise — et retrogradait `admin_live` sur une mauvaise semaine de
+    # DEMONSTRATION. Troisieme chemin demo -> reel de la journee, apres
+    # l'admission (`fcdf6c0`) et le disjoncteur de rafale.
+    #
+    # ⚠️ Une destination nommee ecarte AUSSI `ea_closed_trades` : ces trades
+    # viennent des comptes des clients Premium, et les imputer au verdict
+    # d'`admin_live` referait entre comptes l'erreur qu'on corrige entre
+    # courtiers. Meme regle que `_fetch_real_trades_for_pair`.
+    portee, portee_args, inclure_ea = "", (), True
+    if destination:
+        try:
+            with sqlite3.connect(_db_path()) as _c:
+                _cols = {r[1] for r in _c.execute(
+                    "PRAGMA table_info(personal_trades)")}
+        except Exception:
+            _cols = set()
+        if "destination_id" in _cols:
+            portee, portee_args, inclure_ea = (
+                " AND destination_id = ?", (destination,), False)
+        else:
+            # Repli JOURNALISE : silencieux, il ferait croire le verdict
+            # cantonne a un compte alors qu'il les melange tous.
+            logger.warning(
+                "promotion_engine: colonne `destination_id` absente — "
+                "verdict de %s calcule sur TOUTES les destinations", destination)
+
     rows: list[dict] = []
     # 1. personal_trades (admin Xavier + admin_legacy/live si sync)
     try:
@@ -186,16 +215,20 @@ def _query_trades_pnl(pair: str, direction: str, since_utc: str) -> list[dict]:
                 f"""
                 SELECT pnl, closed_at, close_reason FROM personal_trades
                  WHERE pair = ? AND direction = ? AND status = 'CLOSED'
-                   AND is_auto = 1 AND pnl IS NOT NULL AND closed_at >= ?{filtre}
+                   AND is_auto = 1 AND pnl IS NOT NULL
+                   AND closed_at >= ?{portee}{filtre}
                 ORDER BY closed_at DESC
                 """,
-                (pair, direction, since_utc) + ex,
+                (pair, direction, since_utc) + portee_args + ex,
             ).fetchall()
             rows.extend(dict(x) for x in r)
     except Exception as e:
         logger.debug(f"_query_trades_pnl personal_trades error: {e}")
 
-    # 2. ea_closed_trades (users Premium via EA MQL5)
+    # 2. ea_closed_trades (users Premium via EA MQL5) — portee GLOBALE seule
+    if not inclure_ea:
+        rows.sort(key=lambda r: r.get("closed_at") or "", reverse=True)
+        return rows
     try:
         with sqlite3.connect(_db_path()) as c:
             c.row_factory = sqlite3.Row
@@ -451,7 +484,8 @@ def check_demotion(pair: str, direction: str, destination: str) -> Optional[dict
     state = pac.get_current_state(pair, direction, destination)
     if state != pac.STATE_AUTO_EXEC:
         return None
-    trades = _query_trades_pnl(pair, direction, _iso_since(7))
+    trades = _query_trades_pnl(pair, direction, _iso_since(7),
+                               destination=destination)
     m = _compute_metrics(trades)
 
     if destination == "admin_legacy":
