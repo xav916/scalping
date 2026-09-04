@@ -623,15 +623,33 @@ def _patterns_autorises(setup, dest):
     soit exactement l'inverse de l'intention.
     """
     horizon = getattr(setup, "horizon", None)
+    base = None
     if horizon and isinstance(MT5_BRIDGE_PATTERN_OVERRIDES, dict):
         par_paire = MT5_BRIDGE_PATTERN_OVERRIDES.get(getattr(setup, "pair", None))
         if isinstance(par_paire, dict):
             liste = par_paire.get(horizon)
             if isinstance(liste, (list, tuple, set, frozenset)) and liste:
-                return set(liste)
-    if dest is not None and getattr(dest, "allowed_patterns", None) is not None:
-        return dest.allowed_patterns
-    return MT5_BRIDGE_ALLOWED_PATTERNS
+                base = set(liste)
+    if base is None and dest is not None             and getattr(dest, "allowed_patterns", None) is not None:
+        base = set(dest.allowed_patterns)
+    if base is None:
+        base = set(MT5_BRIDGE_ALLOWED_PATTERNS)
+
+    # ⛔ Couche ADDITIVE par destination, appliquee EN DERNIER (2026-09-04).
+    #
+    # Elle existe parce que `MT5_BRIDGE_PATTERN_OVERRIDES` est GLOBALE et rend
+    # la main AVANT la couche destination : y ajouter un motif pour ouvrir un
+    # horizon sur la demo l'ouvrirait aussi sur le COMPTE REEL. C'est le seul
+    # chemin qui ouvre l'un sans toucher a l'autre.
+    #
+    # 🔑 Additive et non substitutive : elle ne peut RIEN retirer. Une liste
+    # qui remplace ferme des portes par omission — la premiere version
+    # obligeait a recopier `range_bounce`, faute de quoi la demo cessait de
+    # trader ses motifs existants.
+    extras = getattr(dest, "extra_patterns", None) if dest is not None else None
+    if extras:
+        base |= set(extras)
+    return base
 
 
 def _check_rejection(setup, dest=None) -> str | None:

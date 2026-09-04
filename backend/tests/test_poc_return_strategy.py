@@ -154,12 +154,12 @@ def test_le_motif_n_atteint_PAS_le_compte_reel(monkeypatch):
     monkeypatch.setattr(mb, "MT5_BRIDGE_URL", "http://demo", raising=False)
     monkeypatch.setattr(mb, "MT5_BRIDGE_API_KEY", "cle", raising=False)
     monkeypatch.setattr(
-        st, "MT5_BRIDGE_LEGACY_ALLOWED_PATTERNS",
+        st, "MT5_BRIDGE_LEGACY_EXTRA_PATTERNS",
         frozenset({"poc_return_up", "poc_return_down"}), raising=False)
 
     demo = bd._admin_legacy_destination()
     assert demo is not None
-    assert "poc_return_up" in demo.allowed_patterns
+    assert "poc_return_up" in demo.extra_patterns
 
     # Le réel n'a pas de surcharge : il retombe sur la liste globale, qui ne
     # contient pas le nouveau motif.
@@ -175,8 +175,8 @@ def test_sans_variable_le_demo_ne_change_pas(monkeypatch):
     monkeypatch.setattr(mb, "MT5_BRIDGE_ENABLED", True, raising=False)
     monkeypatch.setattr(mb, "MT5_BRIDGE_URL", "http://demo", raising=False)
     monkeypatch.setattr(mb, "MT5_BRIDGE_API_KEY", "cle", raising=False)
-    monkeypatch.setattr(st, "MT5_BRIDGE_LEGACY_ALLOWED_PATTERNS", None,
+    monkeypatch.setattr(st, "MT5_BRIDGE_LEGACY_EXTRA_PATTERNS", None,
                         raising=False)
 
     demo = bd._admin_legacy_destination()
-    assert demo.allowed_patterns is None, "sans déclaration, la règle globale s'applique"
+    assert demo.extra_patterns is None, "sans déclaration, rien n'est ouvert"
