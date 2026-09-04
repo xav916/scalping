@@ -70,25 +70,63 @@ def _perte(chemin, pnl, ticket, destination="admin_live", user="admin"):
 # ── 1. Le palier : une autorisation ne vaut que pour sa tranche ───────────
 
 @pytest.mark.parametrize("cumul, attendu", [
-    (0.0, 0),        # rien perdu
-    (-10.0, 0),      # sous le plafond
-    (-19.49, 0),     # juste sous
-    (-19.50, 1),     # pile dessus : franchi
-    (-32.27, 1),     # le cas réel du 04/09
-    (-39.00, 2),     # deuxième plafond consommé
-    (-58.51, 3),
+    (0.0, False),        # rien perdu
+    (-10.0, False),      # sous le plafond
+    (-19.49, False),     # juste sous
+    (-19.50, True),      # pile dessus : franchi
+    (-32.27, True),      # le cas réel du 04/09
 ])
-def test_le_palier_compte_les_plafonds_consommes(cumul, attendu):
+def test_le_franchissement_se_lit_sans_ambiguite(cumul, attendu):
     from backend.services import plafond_arbitrage as a
-    assert a.palier_de(cumul, -19.50) == attendu
+    assert a.franchi(cumul, -19.50) is attendu
 
 
 def test_un_seuil_absurde_ne_franchit_jamais():
     """Un seuil nul ou positif est une anomalie de calcul, pas une porte
     ouverte — mais il ne doit pas non plus inventer un franchissement."""
     from backend.services import plafond_arbitrage as a
-    assert a.palier_de(-100.0, 0.0) == 0
-    assert a.palier_de(-100.0, 19.50) == 0
+    assert a.franchi(-100.0, 0.0) is False
+    assert a.franchi(-100.0, 19.50) is False
+
+
+def test_une_autorisation_couvre_UN_plafond_de_plus_pas_la_journee():
+    """Accordée à −32,27 € avec un plafond de −21,54 € : tient jusqu'à
+    −53,81 €, pas un euro au-delà."""
+    from backend.services import plafond_arbitrage as a
+    ligne = {"pnl_au_moment": -32.27, "seuil": -21.54}
+
+    assert a.couvre(ligne, -40.00) is True
+    assert a.couvre(ligne, -53.80) is True
+    assert a.couvre(ligne, -53.81) is False
+    assert a.couvre(ligne, -300.00) is False
+
+
+def test_une_autorisation_sans_ancrage_ne_couvre_RIEN():
+    """Une ligne incomplète ne peut pas valoir permis de trader."""
+    from backend.services import plafond_arbitrage as a
+    assert a.couvre({}, -40.0) is False
+    assert a.couvre({"pnl_au_moment": -32.27, "seuil": None}, -40.0) is False
+
+
+def test_une_DERIVE_du_capital_ne_ressuscite_PAS_une_autorisation(base):
+    """⛔ Le défaut vu en sondant la production le 04/09.
+
+    Au redémarrage, le capital retombe sur `TRADING_CAPITAL` (650 €) le temps
+    que le solde réel (717,93 €) revienne : le plafond glisse de −21,54 à
+    −19,50 €. La première version divisait la perte par ce plafond mouvant —
+    la tranche se déplaçait donc toute seule, et une autorisation périmée
+    pouvait se retrouver à couvrir une perte qu'elle n'avait jamais couverte.
+    """
+    t, a, chemin = base
+
+    # Autorisation donnée tôt, sur une petite perte et un plafond large.
+    a.ouvrir_demande("admin_live", -21.60, -21.54)
+    a.repondre(a.CONTINUER)
+
+    # La perte s'aggrave bien au-delà de ce que cette autorisation couvrait
+    # (−21,60 + −21,54 = −43,14), et le plafond s'est resserré entre-temps.
+    assert a.doit_bloquer("admin_live", -60.00, -19.50) is True, (
+        "une autorisation ancrée à −21,60 € ne peut pas couvrir −60 €")
 
 
 # ── 2. Fermé par défaut : l'intervalle d'arbitrage BLOQUE ─────────────────
@@ -145,7 +183,7 @@ def test_repondre_CONTINUER_debloque(base):
 
 # ── 3. L'autorisation ne déborde pas de sa tranche ────────────────────────
 
-def test_un_CONTINUER_ne_vaut_QUE_pour_son_palier(base):
+def test_un_CONTINUER_ne_vaut_QUE_pour_sa_tranche(base):
     """⛔ « continue » à −32 € n'autorise pas −300 €.
 
     Sans cette borne, une seule réponse dans la journée désarmerait le plafond
@@ -157,13 +195,33 @@ def test_un_CONTINUER_ne_vaut_QUE_pour_son_palier(base):
     a.repondre(a.CONTINUER)
     assert t.silent_mode_active_for_destination("admin_live") is False
 
-    # La perte s'aggrave et consomme un deuxième plafond.
-    _perte(chemin, -15.00, 1002)
-    assert t.silent_mode_active_for_destination("admin_live") is True, (
-        "au palier suivant, la question doit être reposée")
+    # Encore −10 € : on reste DANS la tranche autorisée (−32,27 + −19,50
+    # = −51,77). Reposer la question ici serait harceler pour rien.
+    _perte(chemin, -10.00, 1002)
+    assert t.silent_mode_active_for_destination("admin_live") is False
 
-    en_attente = a.demandes_en_attente()
-    assert any(d["palier"] == 2 for d in en_attente)
+    # −25 € de plus : la tranche est dépassée, la question doit revenir.
+    _perte(chemin, -25.00, 1003)
+    assert t.silent_mode_active_for_destination("admin_live") is True, (
+        "au-delà de la tranche autorisée, la question doit être reposée")
+    assert a.demandes_en_attente(), "une nouvelle demande doit être ouverte"
+
+
+def test_un_GELER_ne_repose_PAS_la_question_a_chaque_perte(base):
+    """Xavier a tranché : on ne le redérange pas jusqu'à minuit.
+
+    ⚠️ Sans cette règle, chaque nouvelle perte rouvrirait une tranche et
+    reposerait la question — un gel accepté deviendrait une source de bruit,
+    et c'est ainsi qu'une alerte cesse d'être lue.
+    """
+    t, a, chemin = base
+    _perte(chemin, -32.27, 1001)
+    t.silent_mode_active_for_destination("admin_live")
+    a.repondre(a.GELER)
+
+    _perte(chemin, -50.00, 1002)
+    assert t.silent_mode_active_for_destination("admin_live") is True
+    assert a.demandes_en_attente() == [], "aucune question de plus"
 
 
 def test_un_continue_sans_demande_n_autorise_RIEN(base):

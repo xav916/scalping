@@ -52,7 +52,7 @@ def arbitrage(tmp_path, monkeypatch):
 
     from backend.services import plafond_arbitrage as a
     a._init_schema()
-    a.ouvrir_demande("admin_live", 1, -32.27, -21.54)
+    a.ouvrir_demande("admin_live", -32.27, -21.54)
     return a
 
 

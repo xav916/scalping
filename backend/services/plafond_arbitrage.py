@@ -16,11 +16,17 @@ explicitement enregistré débloque. L'inverse ferait d'une panne — scheduler
 mort, Telegram muet, disque plein — une autorisation de trader, et c'est de
 l'argent réel.
 
-🔑 **Le palier.** Répondre « continue » à −32 € n'autorise pas −300 €. Le
-palier vaut ``int(cumul / limite)`` : il passe à 2 au deuxième plafond
-consommé, aucune ligne d'arbitrage n'existe pour ce palier, et la question est
-reposée. Une autorisation vaut pour la tranche où elle a été donnée, jamais
-pour la journée.
+🔑 **La tranche.** Répondre « continue » à −32 € n'autorise pas −300 €. Une
+autorisation est **ancrée sur la perte à laquelle elle a été donnée** et couvre
+un plafond de plus : accordée à −32,27 € avec un plafond de −21,54 €, elle
+tient jusqu'à −53,81 €, puis la question est reposée.
+
+⛔ Elle n'est PAS un `int(cumul / plafond)`. Cette première version a été
+sondée en production le 04/09 et montrait son défaut : au redémarrage le
+capital retombe sur `TRADING_CAPITAL` (650 €) le temps que le solde réel
+(717,93 €) revienne, et le plafond glisse de −21,54 à −19,50 €. Un
+dénominateur qui bouge déplace la tranche, donc peut faire **ressurgir une
+autorisation périmée**. L'ancrage supprime la question.
 
 ⛔ **La ligne naît AVANT le message.** `doit_bloquer()` l'insère au moment
 exact du dépassement, sans réseau ; le job scheduler ne fait que livrer la
@@ -85,17 +91,33 @@ def _aujourdhui() -> str:
     return datetime.now(timezone.utc).date().isoformat()
 
 
-def palier_de(cumul: float, limite: float) -> int:
-    """Combien de fois le plafond est consommé. 0 = pas encore franchi.
-
-    ``limite`` est négative (−21,54 €). À −32,27 € le palier vaut 1 ; il
-    passera à 2 à −43,08 €, et la question sera reposée.
-    """
+def franchi(cumul: float, limite: float) -> bool:
+    """Le plafond est-il franchi ? ``limite`` est négative (−21,54 €)."""
     if not limite or limite >= 0:
-        return 0
-    if cumul > limite:
-        return 0
-    return max(1, int(cumul / limite))
+        return False
+    return cumul <= limite
+
+
+def couvre(ligne: dict[str, Any], cumul: float) -> bool:
+    """Une autorisation couvre-t-elle encore la perte actuelle ?
+
+    🔑 **Ancrée sur le moment où elle a été donnée**, jamais recalculée. Un
+    `CONTINUER` accordé à −32,27 € avec un plafond de −21,54 € couvre jusqu'à
+    −53,81 € : une tranche de plus, et pas un euro au-delà.
+
+    ⛔ La première version divisait la perte courante par le plafond courant.
+    Sondée en production le 04/09, elle a montré son défaut : au redémarrage le
+    capital retombe sur `TRADING_CAPITAL` (650 €) avant que le solde réel
+    (717,93 €) ne soit rechargé, et le plafond passe de −21,54 à −19,50 €. Un
+    dénominateur qui bouge déplace la tranche — donc peut faire **ressurgir une
+    autorisation périmée** sur une perte qu'elle n'a jamais couverte. Ancrer la
+    borne dans la ligne supprime la question.
+    """
+    depart = ligne.get("pnl_au_moment")
+    seuil = ligne.get("seuil")
+    if depart is None or seuil is None:
+        return False
+    return cumul > float(depart) + float(seuil)
 
 
 # ── Lecture / écriture d'état ─────────────────────────────────────────────
@@ -114,16 +136,32 @@ def etat_courant(destination_id: str, palier: int,
         return None
 
 
-def ouvrir_demande(destination_id: str, palier: int, cumul: float,
-                   seuil: float) -> bool:
-    """Crée la ligne d'arbitrage si elle n'existe pas. True si elle est neuve.
+def lignes_du_jour(destination_id: str) -> list[dict[str, Any]]:
+    try:
+        _init_schema()
+        with _conn() as c:
+            rows = c.execute(
+                "SELECT * FROM plafond_arbitrage WHERE destination_id=? "
+                "AND jour=? ORDER BY palier",
+                (destination_id, _aujourdhui())).fetchall()
+        return [dict(r) for r in rows]
+    except Exception as e:  # pragma: no cover - défensif
+        logger.warning(f"arbitrage: lignes illisibles ({e})")
+        return []
 
-    Idempotent par clé primaire : `doit_bloquer` est appelé des centaines de
-    fois par jour (570 le 04/09), et ré-ouvrir la demande à chaque appel
-    rejouerait la question sans fin.
+
+def ouvrir_demande(destination_id: str, cumul: float, seuil: float,
+                   palier: int | None = None) -> bool:
+    """Ouvre une tranche d'arbitrage. True si une ligne a été créée.
+
+    ⚠️ Le `palier` n'est plus DÉDUIT d'un calcul : c'est un simple numéro
+    d'ordre dans la journée. Le déduire d'une division par le plafond le
+    rendait sensible aux variations de capital — voir `couvre()`.
     """
     try:
         _init_schema()
+        if palier is None:
+            palier = len(lignes_du_jour(destination_id)) + 1
         with _conn() as c:
             cur = c.execute(
                 "INSERT OR IGNORE INTO plafond_arbitrage "
@@ -172,23 +210,32 @@ def doit_bloquer(destination_id: str, cumul: float, seuil: float) -> bool:
     rejuge pas le dépassement : elle dit qui, de l'arbitrage ou du défaut,
     l'emporte.
 
-    Tout ce qui n'est pas un `CONTINUER` enregistré bloque — y compris une
-    base illisible. C'est de l'argent réel : une panne de lecture ne peut pas
-    valoir autorisation.
+    Tout ce qui n'est pas un `CONTINUER` couvrant bloque — y compris une base
+    illisible. C'est de l'argent réel : une panne de lecture ne peut pas valoir
+    autorisation.
+
+    L'ordre des quatre lectures n'est pas indifférent :
+
+    1. un `GELER` explicite l'emporte sur tout — Xavier a tranché, on ne le
+       redérange pas jusqu'à minuit ;
+    2. un `CONTINUER` qui **couvre encore** la perte débloque ;
+    3. une question déjà en attente bloque, sans en poser une seconde ;
+    4. sinon la perte a franchi une tranche neuve : on ouvre, et on bloque.
     """
-    palier = palier_de(cumul, seuil)
-    if palier <= 0:  # pragma: no cover - appelant fautif
+    if not franchi(cumul, seuil):  # pragma: no cover - appelant fautif
         return False
 
-    ouvrir_demande(destination_id, palier, cumul, seuil)
+    lignes = lignes_du_jour(destination_id)
 
-    etat = etat_courant(destination_id, palier)
-    if etat is None:
-        logger.warning(
-            f"arbitrage[{destination_id}]: état introuvable — blocage par "
-            "prudence")
+    if any(l.get("etat") == GELER for l in lignes):
         return True
-    return etat.get("etat") != CONTINUER
+    if any(l.get("etat") == CONTINUER and couvre(l, cumul) for l in lignes):
+        return False
+    if any(l.get("etat") == EN_ATTENTE for l in lignes):
+        return True
+
+    ouvrir_demande(destination_id, cumul, seuil)
+    return True
 
 
 def repondre(decision: str, destination_id: str | None = None

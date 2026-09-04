@@ -414,14 +414,19 @@ def _daily_loss_par_destination() -> dict[str, dict]:
             # en attente d'un message jamais reçu passerait pour un gel normal.
             try:
                 from backend.services import plafond_arbitrage
-                palier = plafond_arbitrage.palier_de(cumul, seuil)
-                if palier > 0:
-                    etat = plafond_arbitrage.etat_courant(dest_id, palier) or {}
+                if plafond_arbitrage.franchi(cumul, seuil):
+                    lignes = plafond_arbitrage.lignes_du_jour(dest_id)
+                    derniere = lignes[-1] if lignes else {}
                     ligne["arbitrage"] = {
-                        "palier": palier,
-                        "etat": etat.get("etat"),
-                        "question_posee_le": etat.get("demande_le"),
-                        "repondu_le": etat.get("repondu_le"),
+                        "tranches": len(lignes),
+                        "etat": derniere.get("etat"),
+                        "accordee_a": derniere.get("pnl_au_moment"),
+                        "couvre_jusqua": (
+                            round(derniere["pnl_au_moment"] + derniere["seuil"], 2)
+                            if derniere.get("pnl_au_moment") is not None
+                            and derniere.get("seuil") is not None else None),
+                        "question_posee_le": derniere.get("demande_le"),
+                        "repondu_le": derniere.get("repondu_le"),
                     }
             except Exception as e:  # pragma: no cover - défensif
                 ligne["arbitrage"] = {"erreur": type(e).__name__}
