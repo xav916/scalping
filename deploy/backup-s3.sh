@@ -18,7 +18,12 @@ set -uo pipefail
 
 S3_BUCKET="${S3_BUCKET:-scalping-backups-xav}"
 DATA_DIR="/opt/scalping/data"
-TMP_DIR="$(mktemp -d /tmp/scalping-backup.XXXXXX)"
+# ⛔ `/var/tmp` et NON `/tmp` (2026-09-04). Sur cet EC2, `/tmp` est un tmpfs
+# de 1,9 Go monte en RAM : `backtest.db` y tient a 100 Mo pres, et la prochaine
+# croissance aurait recasse la sauvegarde sous une autre erreur. `/var/tmp`
+# vit sur le disque (16 Go). Decouvert parce que le controle de restauration
+# a echoue en ENOSPC avec 4,7 Go libres sur la racine.
+TMP_DIR="$(mktemp -d /var/tmp/scalping-backup.XXXXXX)"
 TIMESTAMP="$(date -u +%Y%m%d-%H%M%S)"
 log() { echo "[$(date -u +'%Y-%m-%d %H:%M:%S UTC')] $*"; }
 

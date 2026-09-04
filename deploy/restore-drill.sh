@@ -29,7 +29,12 @@ DATA_DIR="${DATA_DIR:-/opt/scalping/data}"
 # sauvegarde saine a donc ~1h30. La marge absorbe un decalage de cron ou une
 # nuit ratee isolee, sans laisser passer une panne installee.
 AGE_MAX_H="${AGE_MAX_H:-36}"
-TMP_DIR="$(mktemp -d /tmp/scalping-restore-drill.XXXXXX)"
+# ⛔ `/var/tmp` et NON `/tmp` (2026-09-04). Sur cet EC2, `/tmp` est un tmpfs
+# de 1,9 Go monte en RAM : `backtest.db` y tient a 100 Mo pres, et la prochaine
+# croissance aurait recasse la sauvegarde sous une autre erreur. `/var/tmp`
+# vit sur le disque (16 Go). Decouvert parce que le controle de restauration
+# a echoue en ENOSPC avec 4,7 Go libres sur la racine.
+TMP_DIR="$(mktemp -d /var/tmp/scalping-restore-drill.XXXXXX)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 log() { echo "[$(date -u +'%F %T UTC')] $*"; }
 
@@ -85,28 +90,44 @@ for db in trades.db backtest.db macro.db; do
 done
 log "  bases attendues : ${attendues[*]:-aucune}"
 
-aws s3 sync "s3://$S3_BUCKET/$recent/" "$TMP_DIR/" --quiet
+# ⛔ La completude se juge sur le LISTING S3, pas sur ce qu'on a reussi a
+# telecharger. La 1re version confondait les deux et a accuse la sauvegarde
+# d'etre incomplete alors que `backtest.db` etait bien sur S3 : c'est le
+# telechargement qui avait manque de place. **Une panne locale ne doit pas
+# etre imputee a la sauvegarde** — une alerte qui designe le mauvais coupable
+# fait perdre plus de temps qu'un silence.
+distant="$(aws s3 ls "s3://$S3_BUCKET/$recent/" | awk '{print $4}')"
 manquantes=()
 for db in "${attendues[@]}"; do
-    [ -f "$TMP_DIR/$db" ] || manquantes+=("$db")
+    grep -qx "$db" <<< "$distant" || manquantes+=("$db")
 done
 if [ ${#manquantes[@]} -gt 0 ]; then
-    alerter "Controle restauration ECHEC: sauvegarde INCOMPLETE ($recent) — manque: ${manquantes[*]}"
+    alerter "Controle restauration ECHEC: sauvegarde INCOMPLETE ($recent) — manque sur S3: ${manquantes[*]}"
     exit 1
 fi
 
 # ── 3. RESTAURABILITÉ ────────────────────────────────────────────────────
+# UNE base a la fois, effacee aussitot : le pic disque vaut la plus grosse
+# base et non leur somme. Un `aws s3 sync` global demandait 2,0 Go d'un coup.
 resultat=0
 for db in "${attendues[@]}"; do
     chemin="$TMP_DIR/$db"
+    if ! aws s3 cp "s3://$S3_BUCKET/$recent/$db" "$chemin" --no-progress >/dev/null 2>&1; then
+        log "  ECHEC $db : telechargement impossible (place disque ? reseau ?)"
+        log "         ⚠️ panne LOCALE — la sauvegarde S3, elle, existe"
+        resultat=1
+        continue
+    fi
     taille="$(stat -c%s "$chemin")"
     integrite="$(sqlite3 "$chemin" "PRAGMA integrity_check;" 2>&1 | head -1)"
     if [ "$integrite" != "ok" ]; then
         log "  ECHEC $db (${taille} o, integrite=$integrite)"
         resultat=1
-        continue
+    else
+        log "  OK    $db (${taille} o, integrite=ok)"
     fi
-    log "  OK    $db (${taille} o, integrite=ok)"
+    # `trades.db` est relu juste apres pour son CONTENU : on le garde.
+    [ "$db" = "trades.db" ] || rm -f "$chemin"
 done
 
 # ⚠️ `integrity_check` ne juge que la FORME. Une base vide, tronquee a la
