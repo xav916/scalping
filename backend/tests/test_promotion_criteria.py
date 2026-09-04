@@ -348,3 +348,20 @@ def test_le_bulletin_n_a_pas_de_caractere_qui_casse_le_HTML(base):
 def test_un_univers_vide_ne_plante_pas(base):
     from backend.services import promotion_criteria as pc
     assert isinstance(pc.bulletin_hebdomadaire([], "admin_legacy"), str)
+
+
+def test_le_bulletin_ne_repete_pas_le_meme_manque(base):
+    """« manque 37 cloturees et 37 cloturees » — vu dans le premier envoi réel.
+
+    Les portes « coût » et « incidents » réclament toutes deux des clôtures :
+    le manque est le MÊME, et le lister deux fois donne un message bâclé.
+    """
+    from backend.services import promotion_criteria as pc
+
+    _push(base, n=25)
+    _trade(base, n=3)
+    texte = pc.bulletin_hebdomadaire(["WTI/USD"], "admin_legacy")
+
+    assert texte.count("cloturees et") == 0 or "et 37 cloturees" not in texte
+    ligne = [l for l in texte.splitlines() if "WTI/USD" in l][0]
+    assert ligne.count("cloturees") <= 2, f"manque répété : {ligne}"

@@ -293,7 +293,11 @@ def _ce_qui_manque(r: dict[str, Any]) -> str:
     plus. Ce qui rend le bulletin utile, c'est de savoir COMBIEN il reste —
     et donc quand la reponse tombera.
     """
-    besoins = []
+    # ⚠️ Regroupe PAR UNITE, jamais par porte. Les portes « cout » et
+    # « incidents » reclament toutes deux des CLOTURES : les lister
+    # separement produisait « manque 37 cloturees et 37 cloturees », vu dans
+    # le premier bulletin envoye en vrai. Le manque est le MEME.
+    restes: dict[str, int] = {}
     for nom, porte in r["portes"].items():
         if porte["verdict"] != EN_ATTENTE:
             continue
@@ -308,8 +312,12 @@ def _ce_qui_manque(r: dict[str, Any]) -> str:
         else:
             acquis, unite = porte.get("n", 0), "cloturees"
         if acquis < requis:
-            besoins.append(f"{requis - acquis} {unite}")
-    return " et ".join(besoins) if besoins else "en cours"
+            # Le plus exigeant l'emporte : sinon on annoncerait une echeance
+            # plus proche que la realite.
+            restes[unite] = max(restes.get(unite, 0), requis - acquis)
+    if not restes:
+        return "en cours"
+    return " et ".join(f"{n} {u}" for u, n in restes.items())
 
 
 def bulletin_hebdomadaire(paires: list[str],
