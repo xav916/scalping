@@ -938,11 +938,69 @@ def _fetch_trades_for_pair(pair: str, window: int, direction: Optional[str] = No
     return pnls
 
 
-def _fetch_real_trades_for_pair(pair: str, window: int, direction: Optional[str] = None) -> list[float]:
-    """Union admin (personal_trades) + Premium (ea_closed_trades). Argent réel.
+def _colonne_destination_existe() -> bool:
+    """`personal_trades.destination_id` est-elle presente ?
+
+    Posee par la migration du 2026-08-20. Les bases anterieures — et les
+    schemas minimaux construits par certains tests — ne l'ont pas.
+    """
+    try:
+        with sqlite3.connect(_db_path()) as c:
+            cols = {r[1] for r in c.execute("PRAGMA table_info(personal_trades)")}
+        return "destination_id" in cols
+    except Exception:
+        return False
+
+
+def _destinations_demo() -> frozenset[str]:
+    """Identifiants des destinations qui n'engagent PAS d'argent reel.
+
+    Lu dans le registre (`Destination.reel`) plutot que recopie ici : c'est la
+    duplication d'une table de ce genre qui avait fait afficher « Demo » sur
+    des trades Kraken engageant de l'argent reel.
+    """
+    try:
+        from backend.services.destinations_registry import DESTINATIONS
+        return frozenset(k for k, d in DESTINATIONS.items()
+                         if not getattr(d, "reel", False))
+    except Exception:
+        return frozenset()
+
+
+def _fetch_real_trades_for_pair(pair: str, window: int,
+                                direction: Optional[str] = None,
+                                destination: Optional[str] = None) -> list[float]:
+    """Union admin (personal_trades) + Premium (ea_closed_trades). Argent RÉEL.
 
     Filtre optionnel par direction ('buy' ou 'sell'). Si direction None,
     agrège toutes directions confondues (= comportement pair-level).
+
+    ⛔ **LES DESTINATIONS DE DÉMONSTRATION SONT EXCLUES** (2026-09-04).
+
+    Cette requête n'avait AUCUN filtre de destination, alors que le verdict
+    qu'elle alimente commande une ligne GLOBALE :
+
+        if score["sample"] >= PROMOTE_MIN_SAMPLE and score["pnl_pct"] < -3.0:
+            set_state(pair, STATE_PAUSED, ...)      # les DEUX comptes
+
+    Une série perdante sur la démo pouvait donc mettre en pause une paire du
+    compte RÉEL. `XAU/USD buy` était à 7 clôtures du seuil de décidabilité,
+    sur un échantillon majoritairement démo, la démo en produisant ~16 par
+    mois. Ce qui protégeait — un score indéterminé sous 30 trades réels —
+    protégeait par ACCIDENT.
+
+    Même famille que `911b6b0` (29/08) sur `pair_pnl_regulator` : juger chaque
+    compte sur SES clôtures. Le régulateur avait été corrigé, l'admission
+    jamais.
+
+    ⚠️ ``destination`` nommée restreint à ce compte SEUL et écarte
+    `ea_closed_trades` : ces trades viennent des comptes des clients Premium,
+    et les agréger dans le verdict d'`admin_live` referait, entre comptes,
+    l'erreur qu'on corrige entre courtiers.
+
+    ⚠️ Une destination NULLE compte comme réelle : ce sont les lignes
+    antérieures à la migration du 20/08 — 11 sur 669 dans les 90 derniers
+    jours, un résidu. Les écarter perdrait de l'historique sans rien protéger.
     """
     _ensure_schema()
     from backend.services import ea_closed_trades_service as _eact
@@ -963,6 +1021,52 @@ def _fetch_real_trades_for_pair(pair: str, window: int, direction: Optional[str]
     filtre = filtre_sql(exclus)
     ex = tuple(exclus)
 
+    # Portée : soit une destination nommée, soit « tout l'argent réel ».
+    # ⛔ Construite en SQL et injectée AVANT le `LIMIT`, comme le filtre de
+    # tickets : appliquée en Python après coup, elle rendrait une fenêtre de
+    # moins de `window` trades — on noterait la paire sur 22 clôtures en
+    # croyant en avoir 30.
+    if not _colonne_destination_existe():
+        # ⚠️ Schema anterieur a la migration du 2026-08-20 : la colonne
+        # n'existe pas, donc AUCUNE information de destination n'est
+        # disponible. Filtrer serait impossible, et planter transformerait un
+        # vieux schema en panne totale.
+        #
+        # Le repli est coherent avec la regle « destination inconnue = reelle » :
+        # sans colonne, tous les trades sont inconnus. Mais il se DIT — un
+        # repli silencieux ferait croire le filtre actif alors qu'il ne
+        # filtre rien.
+        logger.warning(
+            "admission: colonne `destination_id` absente — portee NON filtree, "
+            "les trades de demonstration peuvent peser sur le verdict")
+        portee, portee_args, inclure_ea = "", (), True
+    elif destination is not None:
+        portee = " AND destination_id = ?"
+        portee_args: tuple = (destination,)
+        inclure_ea = False
+    else:
+        demos = _destinations_demo()
+        if demos:
+            trous = ",".join("?" * len(demos))
+            portee = (f" AND COALESCE(destination_id, '?') NOT IN ({trous})")
+            portee_args = tuple(sorted(demos))
+        else:
+            # Registre illisible : ne rien filtrer plutôt que tout écarter.
+            # Se taire ici rendrait le score vide, donc indécidable, donc
+            # `keep` — une paralysie silencieuse.
+            logger.warning("admission: registre illisible, portée non filtrée")
+            portee, portee_args = "", ()
+        inclure_ea = True
+
+    # L'UNION avec `ea_closed_trades` ne vaut que pour la portee GLOBALE :
+    # une destination nommee ne doit pas se voir imputer les trades des
+    # comptes clients.
+    union_ea = ("UNION ALL SELECT pnl, closed_at FROM ea_closed_trades "
+                f" WHERE pair = ? AND LOWER(direction) = ?{filtre}"
+                ) if inclure_ea else ""
+    union_ea_nodir = ("UNION ALL SELECT pnl, closed_at FROM ea_closed_trades "
+                      f" WHERE pair = ?{filtre}") if inclure_ea else ""
+
     with sqlite3.connect(_db_path()) as c:
         if direction is not None:
             # Filtre par direction sur toutes les sources
@@ -971,26 +1075,23 @@ def _fetch_real_trades_for_pair(pair: str, window: int, direction: Optional[str]
                 SELECT pnl, closed_at FROM personal_trades
                  WHERE pair = ? AND status = 'CLOSED'
                    AND is_auto = 1 AND pnl IS NOT NULL
-                   AND LOWER(direction) = ?{filtre}
-                UNION ALL
-                SELECT pnl, closed_at FROM ea_closed_trades
-                 WHERE pair = ? AND LOWER(direction) = ?{filtre}
+                   AND LOWER(direction) = ?{portee}{filtre}
+                {union_ea}
                 ORDER BY closed_at DESC LIMIT ?
                 """,
-                (pair, direction) + ex + (pair, direction) + ex + (window,),
+                (pair, direction) + portee_args + ex + ((pair, direction) + ex if inclure_ea else ()) + (window,),
             ).fetchall()
         else:
             rows = c.execute(
                 f"""
                 SELECT pnl, closed_at FROM personal_trades
                  WHERE pair = ? AND status = 'CLOSED'
-                   AND is_auto = 1 AND pnl IS NOT NULL{filtre}
-                UNION ALL
-                SELECT pnl, closed_at FROM ea_closed_trades
-                 WHERE pair = ?{filtre}
+                   AND is_auto = 1 AND pnl IS NOT NULL{portee}{filtre}
+                {union_ea_nodir}
                 ORDER BY closed_at DESC LIMIT ?
                 """,
-                (pair,) + ex + (pair,) + ex + (window,),
+                (pair,) + portee_args + ex
+                + ((pair,) + ex if inclure_ea else ()) + (window,),
             ).fetchall()
         for r in rows:
             pnls.append(float(r[0]))
