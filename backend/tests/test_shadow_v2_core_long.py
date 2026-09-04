@@ -25,6 +25,38 @@ from backend.services import shadow_v2_core_long as shadow
 # ─── Fixtures ──────────────────────────────────────────────────────────────
 
 
+@pytest.fixture(autouse=True)
+def _pas_de_reseau(monkeypatch):
+    """Coupe l'appel RÉSEAU que `run_shadow_log` fait pour les horizons 1 jour.
+
+    ⛔ Ce module appelait la VRAIE API Twelve Data. Pour les paires en `1d`,
+    `shadow_v2_core_long` va chercher ses bougies directement
+    (`price_service.fetch_candles`, interval='1day') — les cryptos passent par
+    là, et la suite entière déclenchait des `429 Too Many Requests`.
+
+    Conséquence mesurée les 03 et 04/09 :
+    `test_run_shadow_log_ne_score_qu_une_fois_par_bougie_reellement_nouvelle`
+    passait ISOLÉ et tombait EN SUITE, de façon intermittente. Trois
+    bisections `git stash` ont accusé trois changements innocents avant que
+    l'expérience décisive — désélectionner un seul test ajouté ailleurs — ne
+    montre que c'est le QUOTA de l'API, donc l'instant d'exécution, qui
+    décidait du verdict.
+
+    🔑 Un test dont le résultat dépend de l'humeur d'un service externe finit
+    par être ignoré, et masque alors un vrai rouge.
+
+    L'échec est SIMULÉ plutôt que remplacé par des bougies synthétiques : le
+    code traite déjà ce cas (`counts[pair] = 0`, on passe la paire), et
+    fabriquer des données ferait apparaître des setups que le test n'attend
+    pas. On isole la dépendance, on ne change pas ce qui est mesuré.
+    """
+    async def _indisponible(*a, **k):
+        raise RuntimeError("reseau coupe en test (fetch 1day)")
+
+    import backend.services.price_service as ps
+    monkeypatch.setattr(ps, "fetch_candles", _indisponible, raising=False)
+
+
 @pytest.fixture
 def temp_db(tmp_path, monkeypatch):
     """DB SQLite temporaire isolée pour chaque test."""
