@@ -871,6 +871,27 @@ def start_scheduler() -> AsyncIOScheduler:
         replace_existing=True,
     )
 
+    # Sonde de déploiement de l'horizon 1 jour, toutes les 30 min.
+    #
+    # 🔑 Elle a une FIN : elle annonce le premier setup 1 jour puis se tait
+    # définitivement. Une sonde qui répète devient du bruit — on a vu le 04/09
+    # ce que devient une alerte qu'on cesse de lire : la sauvegarde S3
+    # signalait son échec depuis cinq nuits, les messages arrivaient, personne
+    # ne les voyait plus.
+    #
+    # 30 min et non 5 : au rythme du 1 jour (~0,4 setup/paire/jour), le premier
+    # signal était attendu vers +5 h. Sonder plus souvent ne le ferait pas
+    # arriver plus tôt, ça ne ferait que des passages pour rien.
+    from backend.services import sonde_horizon_1d as _sonde_1d
+    _scheduler.add_job(
+        _sonde_1d.executer,
+        "interval",
+        minutes=30,
+        id="sonde_horizon_1d",
+        name="Sonde horizon 1 jour (s'éteint après réponse)",
+        replace_existing=True,
+    )
+
     # Bulletin hebdomadaire du banc d'essai démo, lundi 08h00 UTC (10h Paris).
     #
     # ⛔ Sans envoi, ce verdict resterait une commande à taper. On a vu le

@@ -131,10 +131,26 @@ async def test_le_debit_tient_sous_des_appels_SIMULTANES(limiteur):
     qu'il corrige.
     """
     seau = limiteur(par_minute=6000, plafond_attente=10)
+    debut = time.monotonic()
     resultats = await asyncio.gather(*[seau.acquerir() for _ in range(6200)])
+    ecoule = time.monotonic() - debut
 
     assert all(resultats), "toutes doivent finir par passer"
-    assert seau.jetons < 1.0, "la capacité ne doit pas avoir été dépassée"
+
+    # ⚠️ L'invariant se mesure sur le TEMPS ÉCOULÉ, pas sur les jetons
+    # restants. Ma première version affirmait `seau.jetons < 1.0` : vraie
+    # isolément, fausse en suite, parce qu'une machine chargée allonge le
+    # `gather` et laisse le seau se remplir pendant ce temps. L'assertion
+    # dépendait de l'horloge, pas du limiteur.
+    #
+    # 200 acquisitions au-delà de la capacité, à 100 jetons/s, ne peuvent pas
+    # prendre moins de ~2 s — et la charge ne peut que RALLONGER ce temps,
+    # jamais le raccourcir. Sans verrou, deux coroutines prendraient le même
+    # jeton et l'ensemble passerait instantanément.
+    minimum = (6200 - 6000) / (6000 / 60) * 0.8
+    assert ecoule >= minimum, (
+        f"passe en {ecoule:.2f}s, minimum theorique {minimum:.2f}s — "
+        "le limiteur n'a pas bride")
 
 
 @pytest.mark.asyncio
