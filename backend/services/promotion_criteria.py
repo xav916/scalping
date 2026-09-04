@@ -282,3 +282,105 @@ def evaluer_candidat(pair: str, destination: str = "admin_legacy",
         "verdict": verdict,
         "rentabilite": rentabilite,
     }
+
+
+# ─── Bulletin hebdomadaire ───────────────────────────────────────────────
+
+def _ce_qui_manque(r: dict[str, Any]) -> str:
+    """Le compte a rebours, pas juste l'etiquette.
+
+    « EN_ATTENTE » seul n'apprend rien et devient un bruit hebdomadaire de
+    plus. Ce qui rend le bulletin utile, c'est de savoir COMBIEN il reste —
+    et donc quand la reponse tombera.
+    """
+    besoins = []
+    for nom, porte in r["portes"].items():
+        if porte["verdict"] != EN_ATTENTE:
+            continue
+        requis = porte.get("requis")
+        if requis is None:
+            continue
+        # La mecanique compte des POUSSEES instrumentees, les deux autres des
+        # CLOTURES : annoncer le mauvais reste serait pire que se taire.
+        if nom == "mecanique":
+            acquis = porte.get("poussees_instrumentees", porte.get("n", 0))
+            unite = "poussees tracees"
+        else:
+            acquis, unite = porte.get("n", 0), "cloturees"
+        if acquis < requis:
+            besoins.append(f"{requis - acquis} {unite}")
+    return " et ".join(besoins) if besoins else "en cours"
+
+
+def bulletin_hebdomadaire(paires: list[str],
+                          destination: str = "admin_legacy") -> str:
+    """Texte du bulletin, SANS effet de bord — donc testable sans reseau.
+
+    ⚠️ Texte simple, sans `<` ni `>` : `send_sales_text` poste en HTML et
+    Telegram refuse le message ENTIER sur une balise mal formee. L'echec
+    serait silencieux.
+    """
+    groupes: dict[str, list[str]] = {"PROMOUVOIR": [], "REFUSER": [], "EN_ATTENTE": []}
+    requis_rentabilite = trades_requis()
+
+    for pair in sorted(paires):
+        r = evaluer_candidat(pair, destination)
+        n = r["n_clotures"]
+        if r["verdict"] == "PROMOUVOIR":
+            groupes["PROMOUVOIR"].append(f"• {pair} — {n} cloturees, les 3 portes OK")
+        elif r["verdict"] == "REFUSER":
+            motifs = [m for p in r["portes"].values() for m in p.get("motifs", [])]
+            groupes["REFUSER"].append(f"• {pair} — {motifs[0] if motifs else 'porte non franchie'}")
+        else:
+            groupes["EN_ATTENTE"].append(f"• {pair} — {n} cloturees, manque {_ce_qui_manque(r)}")
+
+    lignes = ["BANC D'ESSAI DEMO — bulletin hebdomadaire", ""]
+    if groupes["PROMOUVOIR"]:
+        lignes += [f"PRETES POUR LE REEL ({len(groupes['PROMOUVOIR'])})"]
+        lignes += groupes["PROMOUVOIR"]
+        lignes += ["", "  Pour promouvoir : ajouter la paire a",
+                   "  MT5_BRIDGE_LIVE_WHITELIST_PAIRS", ""]
+    if groupes["REFUSER"]:
+        lignes += [f"REFUSEES ({len(groupes['REFUSER'])})"] + groupes["REFUSER"] + [""]
+    if groupes["EN_ATTENTE"]:
+        lignes += [f"EN COURS ({len(groupes['EN_ATTENTE'])})"] + groupes["EN_ATTENTE"] + [""]
+    if not any(groupes.values()):
+        lignes += ["Aucune paire a evaluer.", ""]
+
+    # ⛔ Le garde-fou voyage AVEC le message. Un lecteur qui voit
+    # « PRETE POUR LE REEL » et un PnL sur la meme page fera le lien tout seul
+    # si rien ne l'en dissuade — et c'est exactement ainsi qu'on promeut du
+    # bruit.
+    lignes += [
+        "Ce verdict porte sur la MECANIQUE et le COUT : l'ordre part, le stop",
+        "est pose chez le courtier, les frais laissent de quoi travailler.",
+        f"Il ne dit RIEN de la rentabilite : il faudrait {requis_rentabilite} cloturees",
+        "par paire pour la mesurer, contre ~12 par mois disponibles.",
+    ]
+    return "\n".join(lignes)
+
+
+async def envoyer_bulletin_hebdomadaire() -> bool:
+    """Job scheduler : construit le bulletin et l'envoie sur le fil sales.
+
+    ⚠️ Le retour de l'envoi est JOURNALISE. Prouver qu'un message part ne
+    prouve pas qu'il arrive — le moniteur muet de juin l'a montre, et la
+    sauvegarde cassee cinq nuits l'a confirme dans l'autre sens.
+    """
+    import os
+
+    from backend.services import telegram_service
+
+    paires = [p.strip() for p in
+              os.getenv("MT5_BRIDGE_LEGACY_WHITELIST_PAIRS", "").split(",")
+              if p.strip()]
+    try:
+        texte = bulletin_hebdomadaire(paires)
+    except Exception:
+        logger.exception("bulletin promotion: construction impossible")
+        return False
+
+    envoye = await telegram_service.send_sales_text(texte, parse_mode=None)
+    logger.info("bulletin promotion: %d paire(s) evaluee(s), envoye=%s",
+                len(paires), envoye)
+    return bool(envoye)

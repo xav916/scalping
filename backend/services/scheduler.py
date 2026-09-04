@@ -871,6 +871,25 @@ def start_scheduler() -> AsyncIOScheduler:
         replace_existing=True,
     )
 
+    # Bulletin hebdomadaire du banc d'essai démo, lundi 08h00 UTC (10h Paris).
+    #
+    # ⛔ Sans envoi, ce verdict resterait une commande à taper. On a vu le
+    # 2026-09-04 ce que devient une information que personne ne va chercher :
+    # la sauvegarde S3 échouait depuis cinq nuits, l'alerte partait, arrivait,
+    # et se noyait. Ici le bulletin vient à Xavier.
+    #
+    # Hebdomadaire et non quotidien : les compteurs bougent de ~12 clôtures
+    # par mois et par paire. Un bulletin quotidien répéterait le même chiffre
+    # six fois sur sept — et deviendrait le bruit qu'il cherche à éviter.
+    from backend.services import promotion_criteria as _promo
+    _scheduler.add_job(
+        _promo.envoyer_bulletin_hebdomadaire,
+        CronTrigger(day_of_week="mon", hour=8, minute=0),
+        id="bulletin_promotion_hebdo",
+        name="Bulletin banc d'essai démo (hebdo)",
+        replace_existing=True,
+    )
+
     # Soldes réels des comptes, toutes les 2 min. Alimente le « dernier solde
     # connu » qu'oppose le plafond de perte journalière (2026-09-03).
     #

@@ -282,3 +282,69 @@ def test_un_melange_ancien_recent_juge_sur_les_mesurables(base):
     m = pc.evaluer_candidat("WTI/USD", "admin_legacy")["portes"]["mecanique"]
     assert m["verdict"] == "OK"
     assert m["poussees_instrumentees"] == 22
+
+
+# ── Le bulletin hebdomadaire ──────────────────────────────────────────────
+
+def test_le_bulletin_dit_CE_QUI_MANQUE_pas_seulement_en_attente(base):
+    """« EN_ATTENTE » sans le reste n'apprend rien : on veut le compte à rebours.
+
+    Sinon le bulletin devient un bruit hebdomadaire de plus — et on a vu cette
+    nuit ce que devient une information que personne ne va chercher.
+    """
+    from backend.services import promotion_criteria as pc
+
+    _push(base, n=25)
+    _trade(base, n=6)
+    texte = pc.bulletin_hebdomadaire(["WTI/USD"], "admin_legacy")
+
+    assert "WTI/USD" in texte
+    assert "34" in texte, "il manque 34 clôtures sur les 40 requises — dis-le"
+
+
+def test_le_bulletin_rappelle_que_la_rentabilite_n_est_PAS_le_critere(base):
+    """Le garde-fou doit voyager avec le message, pas rester dans le code.
+
+    Un lecteur qui voit « PROMOUVOIR » et « +197 € » sur la même ligne fera le
+    lien tout seul si personne ne l'en dissuade.
+    """
+    from backend.services import promotion_criteria as pc
+
+    _push(base, n=60)
+    _trade(base, n=60, entry=65.0, sl=64.6, pnl=3.0)
+    texte = pc.bulletin_hebdomadaire(["WTI/USD"], "admin_legacy")
+
+    assert "697" in texte, "le N requis doit figurer dans le message"
+    assert "rentab" in texte.lower()
+
+
+def test_le_bulletin_separe_les_verdicts(base):
+    from backend.services import promotion_criteria as pc
+
+    _push(base, n=60)
+    _trade(base, n=60, entry=65.0, sl=64.6)
+    _push(base, pair="XAG/USD", n=2)
+    _trade(base, pair="XAG/USD", n=2)
+    texte = pc.bulletin_hebdomadaire(["WTI/USD", "XAG/USD"], "admin_legacy")
+
+    assert "PRETES" in texte.upper() or "PRÊTES" in texte.upper()
+    assert "WTI/USD" in texte and "XAG/USD" in texte
+
+
+def test_le_bulletin_n_a_pas_de_caractere_qui_casse_le_HTML(base):
+    """`send_sales_text` poste en HTML : un `<` non échappé casse l'envoi.
+
+    Telegram refuse alors le message entier — et l'échec serait silencieux.
+    """
+    from backend.services import promotion_criteria as pc
+
+    _push(base, n=25)
+    _trade(base, n=25)
+    texte = pc.bulletin_hebdomadaire(["WTI/USD"], "admin_legacy")
+
+    assert "<" not in texte and ">" not in texte
+
+
+def test_un_univers_vide_ne_plante_pas(base):
+    from backend.services import promotion_criteria as pc
+    assert isinstance(pc.bulletin_hebdomadaire([], "admin_legacy"), str)
