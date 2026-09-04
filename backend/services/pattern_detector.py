@@ -239,6 +239,7 @@ def detect_patterns(candles: list[Candle], pair: str = "XAU/USD") -> list[Patter
     patterns.extend(_detect_mean_reversion(candles, pair))
     patterns.extend(_detect_engulfing(candles, pair))
     patterns.extend(_detect_pin_bar(candles, pair))
+    patterns.extend(_detect_poc_return(candles, pair))
 
     # Enrichir chaque pattern avec explication et fiabilité
     for p in patterns:
@@ -310,9 +311,35 @@ def calculate_trade_setup(
         PatternType.MEAN_REVERSION_UP,
         PatternType.ENGULFING_BULLISH,
         PatternType.PIN_BAR_UP,
+        PatternType.POC_RETURN_UP,
     )
     direction = TradeDirection.BUY if is_buy else TradeDirection.SELL
     entry = round(last.close, decimals)
+
+    # ⛔ Niveaux propres au retour au POC (2026-09-04). Le reste du fichier
+    # dérive le stop d'un `recent_low ± ATR` et la cible d'un R:R FIXE — ce qui
+    # est correct pour les motifs de forme, mais perdrait tout le contenu de
+    # cette stratégie : son stop et sa cible SONT le profil.
+    #
+    #     stop   sous le bas de la zone de valeur — sortir du prix d'équilibre
+    #            par le mauvais côté invalide la lecture
+    #     cible  le niveau de liquidité dans le sens du trade, là où les stops
+    #            s'accumulent et où le prix va souvent les chercher
+    #
+    # ⚠️ Repli sur le chemin générique si le profil est inexploitable, plutôt
+    # que de produire un setup dont les niveaux ne veulent rien dire.
+    niveaux_profil = _niveaux_poc(candles, entry, decimals)
+    if pattern.pattern in (PatternType.POC_RETURN_UP,
+                           PatternType.POC_RETURN_DOWN) and niveaux_profil:
+        stop_loss, take_profit_1, take_profit_2 = niveaux_profil
+        risk = abs(entry - stop_loss)
+        if risk <= 0:
+            return None
+        reward_1 = abs(take_profit_1 - entry)
+        reward_2 = abs(take_profit_2 - entry)
+        return _assembler_setup(
+            pair, pattern, entry, stop_loss, take_profit_1, take_profit_2,
+            risk, reward_1, reward_2, direction, decimals, is_simulated, now)
 
     atr_k = _atr_buffer_mult(atr, entry)
     if is_buy:
@@ -336,23 +363,44 @@ def calculate_trade_setup(
     reward_1 = abs(take_profit_1 - entry)
     reward_2 = abs(take_profit_2 - entry)
 
-    # Message en français — format adaptatif aux décimales
-    dir_label = "ACHAT" if is_buy else "VENTE"
+    return _assembler_setup(
+        pair, pattern, entry, stop_loss, take_profit_1, take_profit_2,
+        risk, reward_1, reward_2, direction, decimals, is_simulated, now)
+
+
+# ─── Détection de patterns individuels ────────────────────────────────
+
+
+# Tolérance du « retour au POC », en part de la zone de valeur. Le prix touche
+# rarement le POC au centime : sans marge, le signal n'existerait presque
+# jamais. 25 % de la demi-largeur garde le contact réel à la zone
+# d'accumulation sans accepter n'importe quel prix du range.
+POC_TOLERANCE_ZONE = 0.25
+
+# Sous 35 bougies, un profil TPO ne décrit pas encore une accumulation.
+POC_MIN_BOUGIES = 35
+
+
+def _assembler_setup(pair, pattern, entry, stop_loss, take_profit_1,
+                     take_profit_2, risk, reward_1, reward_2, direction,
+                     decimals, is_simulated, now) -> "TradeSetup":
+    """Construit le `TradeSetup` final — partagé par les deux chemins de niveaux.
+
+    Factorisé le 2026-09-04 : le motif « retour au POC » tire son stop et sa
+    cible du profil et non de l'ATR, mais tout ce qui suit (message, validité,
+    R:R, classe d'actif) doit rester STRICTEMENT identique. Recopier ce bloc
+    aurait garanti qu'un des deux finisse par diverger.
+    """
+    dir_label = "ACHAT" if direction == TradeDirection.BUY else "VENTE"
     pattern_label = _pattern_french_name(pattern.pattern)
     fmt = f".{decimals}f"
-
     message = (
         f"{dir_label} {pair} @ {entry:{fmt}} | "
         f"Pattern: {pattern_label} (confiance: {pattern.confidence:.0%}) | "
         f"SL: {stop_loss:{fmt}} | TP1: {take_profit_1:{fmt}} (R:R {reward_1/risk:.1f}) | "
         f"TP2: {take_profit_2:{fmt}} (R:R {reward_2/risk:.1f})"
     )
-
-    # Durée de validité : 15 min pour scalping 5min
     validity_minutes = 15
-    entry_time = now
-    expiry_time = now + timedelta(minutes=validity_minutes)
-
     return TradeSetup(
         pair=pair,
         direction=direction,
@@ -369,14 +417,99 @@ def calculate_trade_setup(
         message=message,
         timestamp=now,
         is_simulated=is_simulated,
-        entry_time=entry_time,
-        expiry_time=expiry_time,
+        entry_time=now,
+        expiry_time=now + timedelta(minutes=validity_minutes),
         validity_minutes=validity_minutes,
         asset_class=asset_class_for(pair),
     )
 
 
-# ─── Détection de patterns individuels ────────────────────────────────
+def _niveaux_poc(candles: list[Candle], entry: float,
+                 decimals: int) -> tuple[float, float, float] | None:
+    """``(stop, cible_1, cible_2)`` tirés du profil, ou ``None`` si inexploitable."""
+    from backend.services import market_profile as mp
+
+    zv = mp.zone_valeur(candles)
+    liq = mp.niveaux_liquidite(candles)
+    if zv is None:
+        return None
+    sens = mp.structure(candles)
+    marge = (zv[1] - zv[0]) * 0.10          # le stop respire sous la zone
+
+    if sens == "haussiere":
+        stop = zv[0] - marge
+        cible = liq.get("au_dessus")
+        if cible is None or cible <= entry or stop >= entry:
+            return None
+        # ⚠️ TP2 extrapolé, PAS un second niveau observé : au-delà de la
+        # liquidité identifiée, rien dans le profil ne dit où le prix irait.
+        cible_2 = entry + (cible - entry) * 1.6
+    elif sens == "baissiere":
+        stop = zv[1] + marge
+        cible = liq.get("en_dessous")
+        if cible is None or cible >= entry or stop <= entry:
+            return None
+        cible_2 = entry - (entry - cible) * 1.6
+    else:
+        return None
+    return (round(stop, decimals), round(cible, decimals), round(cible_2, decimals))
+
+
+def _detect_poc_return(candles: list[Candle], pair: str) -> list[PatternDetection]:
+    """Retour au POC dans le sens de la structure (2026-09-04).
+
+    Stratégie demandée par Xavier : « repère ta structure, tes niveaux de
+    liquidité, tes zones d'accumulation, ton POC ». Sa formulation donnait les
+    trois OBSERVATIONS mais aucune règle de décision — celle-ci est un choix
+    explicite, énoncé ici plutôt que dissimulé :
+
+        structure haussière + prix revenu sur le POC  ->  ACHAT
+        structure baissière + prix revenu sur le POC  ->  VENTE
+
+    Lecture : le POC est le prix d'équilibre, là où le marché a passé le plus
+    de temps. Y revenir pendant qu'une tendance est en place, c'est rejoindre
+    la zone d'accumulation avant de repartir dans le sens dominant.
+
+    ⛔ Une structure ``indecise`` ne produit RIEN. Sans elle, « le prix est
+    près du POC » décrit le marché la plupart du temps — par construction, le
+    POC est au milieu de ce que le prix a parcouru.
+    """
+    if len(candles) < POC_MIN_BOUGIES:
+        return []
+
+    from backend.services import market_profile as mp
+
+    sens = mp.structure(candles)
+    if sens == "indecise":
+        return []
+    poc = mp.poc(candles)
+    zv = mp.zone_valeur(candles)
+    if poc is None or zv is None:
+        return []
+
+    demi_largeur = (zv[1] - zv[0]) / 2
+    if demi_largeur <= 0:
+        return []
+    ecart = abs(candles[-1].close - poc)
+    if ecart > demi_largeur * POC_TOLERANCE_ZONE:
+        return []
+
+    haussier = sens == "haussiere"
+    # Confiance : d'autant plus haute que le prix colle au POC. Bornée à
+    # [0,55 ; 0,75] — ce motif n'a AUCUN historique, lui donner davantage
+    # serait une affirmation que rien ne soutient.
+    proximite = 1 - (ecart / (demi_largeur * POC_TOLERANCE_ZONE))
+    confiance = 0.55 + 0.20 * max(0.0, min(1.0, proximite))
+
+    return [PatternDetection(
+        pattern=PatternType.POC_RETURN_UP if haussier else PatternType.POC_RETURN_DOWN,
+        confidence=round(confiance, 2),
+        description=(
+            f"Retour au POC {poc:.4f} en structure {sens} "
+            f"(zone de valeur {zv[0]:.4f}-{zv[1]:.4f})"
+        ),
+        detected_at=datetime.now(timezone.utc),
+    )]
 
 
 def _detect_breakout(candles: list[Candle], pair: str) -> list[PatternDetection]:
@@ -757,5 +890,7 @@ def _pattern_french_name(pattern: PatternType) -> str:
         PatternType.ENGULFING_BEARISH: "Englobante baissiere",
         PatternType.PIN_BAR_UP: "Pin bar haussiere",
         PatternType.PIN_BAR_DOWN: "Pin bar baissiere",
+        PatternType.POC_RETURN_UP: "Retour au POC haussier",
+        PatternType.POC_RETURN_DOWN: "Retour au POC baissier",
     }
     return names.get(pattern, pattern.value)

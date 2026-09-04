@@ -127,25 +127,61 @@ def _fractales(candles: list[Candle],
     return sommets, creux
 
 
-def structure(candles: list[Candle]) -> str:
+# Déplacement minimal des sommets ET des creux, en part de l'amplitude
+# totale, pour qu'une tendance soit déclarée.
+#
+# ⛔ Sans ce seuil, la structure tranchait 8 fenêtres sur 8 sur trois ans de
+# BTC et ETH — un filtre qui ne filtre rien. La règle « dernier sommet plus
+# haut que le premier » est presque toujours vraie : sur 200 bougies, deux
+# extrêmes ne sont jamais exactement égaux. Le test « marché plat = indécis »
+# passait seulement parce qu'un marché plat ne produit AUCUNE fractale.
+#
+# Balayage sur 477 fenêtres de 200 bougies (BTC, ETH, SOL — 3 ans réels) :
+#
+#     seuil   part tranchée
+#     0,00        91,0 %      <- sans seuil : un filtre qui ne filtre pas
+#     0,10        79,2 %
+#     0,25        64,2 %      <- retenu
+#     0,40        43,8 %
+#     0,60        20,1 %
+#
+# ⚠️ Cette mesure dit à quelle FRÉQUENCE le filtre tranche, **pas s'il a
+# raison** : rien ici ne compare le verdict à ce que le marché a fait ensuite.
+# 0,25 est donc un réglage de sélectivité assumé, pas une validation. La
+# structure n'est par ailleurs qu'une des trois conditions — le retour au POC
+# et la cible de liquidité filtrent bien davantage.
+DEPLACEMENT_MIN = 0.25
+
+
+def structure(candles: list[Candle],
+              deplacement_min: float = DEPLACEMENT_MIN) -> str:
     """``"haussiere"``, ``"baissiere"`` ou ``"indecise"``.
 
-    Haussière = sommets ET creux montants. Baissière = les deux descendants.
+    Haussière = sommets ET creux montants, d'un déplacement SIGNIFICATIF.
 
-    ⚠️ Tout le reste est ``indecise``, et c'est la porte la plus importante du
-    module : sans elle, la stratégie prendrait position dans du bruit. Exiger
-    que les DEUX séries aillent dans le même sens est volontairement strict —
-    des sommets montants avec des creux descendants, c'est un élargissement,
-    pas une tendance.
+    ⚠️ ``indecise`` est la porte la plus importante du module : sans elle, la
+    stratégie prendrait position dans du bruit. Trois exigences cumulées :
+
+    1. Assez de sommets et de creux pour parler d'une série.
+    2. Les DEUX séries dans le même sens — des sommets montants avec des creux
+       descendants, c'est un élargissement, pas une tendance.
+    3. Un déplacement d'au moins ``deplacement_min`` de l'amplitude, sur les
+       deux séries. C'est ce point qui manquait : comparer deux extrêmes sans
+       exiger d'écart rend un verdict à chaque fois.
     """
     sommets, creux = _fractales(candles)
     if len(sommets) < 2 or len(creux) < 2:
         return "indecise"
-    hauts_montants = sommets[-1] > sommets[0]
-    bas_montants = creux[-1] > creux[0]
-    if hauts_montants and bas_montants:
+
+    amplitude = max(c.high for c in candles) - min(c.low for c in candles)
+    if amplitude <= 0:
+        return "indecise"
+
+    d_sommets = (sommets[-1] - sommets[0]) / amplitude
+    d_creux = (creux[-1] - creux[0]) / amplitude
+    if d_sommets >= deplacement_min and d_creux >= deplacement_min:
         return "haussiere"
-    if not hauts_montants and not bas_montants:
+    if d_sommets <= -deplacement_min and d_creux <= -deplacement_min:
         return "baissiere"
     return "indecise"
 

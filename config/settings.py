@@ -895,6 +895,25 @@ MT5_BRIDGE_ALLOWED_PATTERNS: frozenset[str] = frozenset(
     p.strip().lower() for p in _allowed_patterns_raw.split(",") if p.strip()
 )
 
+# Surcharge des motifs pour la seule DÉMONSTRATION (2026-09-04).
+#
+# Permet d'essayer une stratégie neuve sur `admin_legacy` sans qu'elle puisse
+# atteindre l'argent réel : `admin_live` n'a pas de surcharge et retombe sur la
+# liste globale ci-dessus.
+#
+# ⚠️ `None` (variable absente) ≠ ensemble vide. Absente, la règle globale
+# s'applique — le comportement ne change pas. Un ensemble vide bloquerait TOUT
+# sur la démo, soit l'inverse de l'intention.
+#
+# ⛔ `MT5_BRIDGE_PATTERN_OVERRIDES` (par paire × horizon) PRIME sur cette
+# surcharge. Les 11 paires whitelistées en ont toutes une — sauf `WTI/USD`.
+# C'est donc la seule paire où un motif neuf peut vivre en démo seule.
+_legacy_patterns_raw = os.getenv("MT5_BRIDGE_LEGACY_ALLOWED_PATTERNS", "").strip()
+MT5_BRIDGE_LEGACY_ALLOWED_PATTERNS: frozenset[str] | None = (
+    frozenset(p.strip().lower() for p in _legacy_patterns_raw.split(",") if p.strip())
+    if _legacy_patterns_raw else None
+)
+
 # Heures UTC à éviter (format "17-21" inclusif ou liste "17,18,19,20,21").
 # Le filtre compare l'heure d'entrée au moment du push, pas au moment où le
 # signal a été généré (cohérent avec le timing réel du fill).

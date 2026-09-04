@@ -430,6 +430,8 @@ _PATTERN_EXPLAIN_FR: dict[str, str] = {
     "range_bounce_down": "rejet sur résistance — le prix échoue à casser un plafond dans un range",
     "pin_bar_up": "pin bar haussière — rejet visible du bas, signal de retournement court terme",
     "pin_bar_down": "pin bar baissière — rejet visible du haut, signal de retournement court terme",
+    "poc_return_up": "retour au prix d'équilibre en tendance haussière — le marché revient sur la zone où il a passé le plus de temps avant de repartir vers le haut",
+    "poc_return_down": "retour au prix d'équilibre en tendance baissière — le marché revient sur la zone où il a passé le plus de temps avant de repartir vers le bas",
     # Ajoutés le 2026-08-04 : sans libellé, le repli affichait la valeur brute
     # `mean_reversion_up`, dont les underscores cassaient le Markdown et
     # faisaient perdre TOUT le message.

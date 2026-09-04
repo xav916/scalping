@@ -256,6 +256,24 @@ def _mt5_horizons(destination_id: str) -> frozenset[str] | None:
     return frozenset(base | LONG_HORIZONS)
 
 
+def _motifs_demo() -> "frozenset[str] | None":
+    """Motifs propres au compte de DEMONSTRATION, ou ``None``.
+
+    Pose le 2026-09-04 pour essayer une strategie neuve sur `admin_legacy`
+    sans qu'elle puisse atteindre l'argent reel : `admin_live` n'a pas de
+    surcharge et retombe sur `MT5_BRIDGE_ALLOWED_PATTERNS`.
+
+    ⚠️ Relu a chaque appel (et non fige a l'import) pour que les tests
+    puissent le patcher, comme le reste de ce module.
+
+    ⛔ `MT5_BRIDGE_PATTERN_OVERRIDES` (par paire x horizon) PRIME sur cette
+    surcharge. Les 11 paires whitelistees en ont toutes une — sauf `WTI/USD`.
+    C'est donc la seule paire ou un motif neuf peut vivre en demo seule.
+    """
+    from config import settings as st
+    return getattr(st, "MT5_BRIDGE_LEGACY_ALLOWED_PATTERNS", None)
+
+
 def _admin_legacy_destination() -> BridgeConfig | None:
     """Retourne la config admin legacy depuis l'env, ou ``None`` si absente.
 
@@ -296,6 +314,10 @@ def _admin_legacy_destination() -> BridgeConfig | None:
     )
 
     return BridgeConfig(
+        # Motifs propres à la DÉMO (2026-09-04) : permet d'essayer une
+        # stratégie neuve sans qu'elle puisse atteindre l'argent réel.
+        # `None` = pas de surcharge, la règle globale s'applique.
+        allowed_patterns=_motifs_demo(),
         destination_id="admin_legacy",
         user_id=None,
         bridge_url=mb.MT5_BRIDGE_URL.rstrip("/"),

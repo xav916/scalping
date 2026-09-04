@@ -70,6 +70,10 @@ class PatternType(str, Enum):
     ENGULFING_BEARISH = "engulfing_bearish"  # Englobante baissière
     PIN_BAR_UP = "pin_bar_up"            # Pin bar haussière
     PIN_BAR_DOWN = "pin_bar_down"        # Pin bar baissière
+    # Retour au POC dans le sens de la structure (2026-09-04). POC en TPO,
+    # pas en volume : Twelve Data rend `volume = 0` sur toutes les paires.
+    POC_RETURN_UP = "poc_return_up"       # Retour au POC, structure haussière
+    POC_RETURN_DOWN = "poc_return_down"   # Retour au POC, structure baissière
 
 
 class TradeDirection(str, Enum):
