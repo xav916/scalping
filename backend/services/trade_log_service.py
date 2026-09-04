@@ -472,7 +472,13 @@ def _pnl_du_jour_par_destination() -> list[tuple[str, str, float]]:
 
 
 def silent_mode_active_for_destination(destination_id: str | None = None) -> bool:
-    """True si CE compte a atteint SON plafond de perte journalière.
+    """True si CE compte doit être bloqué au titre du plafond journalier.
+
+    ⚠️ Depuis le 2026-09-04, franchir le plafond ne gèle plus automatiquement :
+    ça ouvre un **arbitrage** (`plafond_arbitrage`). Le compte est bloqué dès
+    le franchissement et le reste jusqu'à ce que Xavier réponde sur Telegram —
+    seul un `CONTINUER` enregistré débloque. Le retour de cette fonction reste
+    donc « faut-il bloquer », mais ce n'est plus « le plafond est-il franchi ».
 
     Posé le 2026-09-03. Le 02/09 à 11h35 UTC, un stop sur `XAU/USD` portait le
     cumul du compte réel à −28,45 € contre −19,50 € de plafond : le gel s'est
@@ -534,7 +540,23 @@ def silent_mode_active_for_destination(destination_id: str | None = None) -> boo
         # `'?'` = non résolue : elle pèse sur tous les comptes réels.
         if dest in (destination_id, "?"):
             cumuls[user] = cumuls.get(user, 0.0) + pnl
-    return any(total <= limite for total in cumuls.values())
+    if not any(total <= limite for total in cumuls.values()):
+        return False
+
+    # Dépassement constaté. Depuis le 2026-09-04, à la demande de Xavier, il ne
+    # gèle plus tout seul : il ouvre un ARBITRAGE. Le compte est bloqué dès cet
+    # instant et le reste tant que la réponse n'est pas arrivée sur Telegram —
+    # le blocage n'attend donc ni le message, ni le scheduler.
+    try:
+        from backend.services import plafond_arbitrage
+    except Exception as e:
+        # ⛔ Ne pas pouvoir arbitrer n'autorise rien : on retombe sur le gel
+        # d'avant, jamais sur le passage libre.
+        logger.warning(
+            f"plafond journalier: arbitrage indisponible ({e}) — gel conservé")
+        return True
+    return plafond_arbitrage.doit_bloquer(
+        destination_id, min(cumuls.values()), limite)
 
 
 # Backward compat

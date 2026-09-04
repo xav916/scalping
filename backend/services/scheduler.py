@@ -892,6 +892,24 @@ def start_scheduler() -> AsyncIOScheduler:
         replace_existing=True,
     )
 
+    # Arbitrage du plafond de perte journalier (2026-09-04).
+    #
+    # ⛔ Ce job ne DÉCIDE de rien : le blocage est déjà en vigueur dès le
+    # franchissement, posé par `silent_mode_active_for_destination`. Il ne fait
+    # que livrer la question à Xavier. C'est donc la pièce dont la panne est la
+    # plus sournoise — elle laisserait un compte bloqué sans que personne ne
+    # sache pourquoi. D'où la minute, et d'où `demande_le` qui n'avance que sur
+    # un envoi confirmé : tant que le message ne part pas, il est retenté.
+    from backend.services import plafond_arbitrage as _arbitrage
+    _scheduler.add_job(
+        _arbitrage.executer,
+        "interval",
+        minutes=1,
+        id="plafond_arbitrage",
+        name="Plafond journalier : pose la question à Xavier",
+        replace_existing=True,
+    )
+
     # Bulletin hebdomadaire du banc d'essai démo, lundi 08h00 UTC (10h Paris).
     #
     # ⛔ Sans envoi, ce verdict resterait une commande à taper. On a vu le

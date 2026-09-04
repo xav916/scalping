@@ -3089,7 +3089,11 @@ async def api_telegram_sales_webhook(request: Request):
     Commandes reconnues :
     - `recap`, `/recap`, `Recap` → le daily recap ;
     - `risque`, `/risque`, `risk`, `/risk` → le risque engagé cumulé à
-      l'instant t, par compte MT5 (2026-08-25).
+      l'instant t, par compte MT5 (2026-08-25) ;
+    - `gele` / `continue` → tranche l'arbitrage du plafond de perte journalier
+      (2026-09-04). ⚠️ **Les seules commandes qui ÉCRIVENT** : elles
+      débloquent un compte réel. Elles ne sont sûres que derrière le secret
+      Telegram et le filtre `chat_id` appliqués ci-dessous.
 
     Tout autre message est ignoré (no-op).
     """
@@ -3145,6 +3149,33 @@ async def api_telegram_sales_webhook(request: Request):
         sent = await send_sales_text(risque_text)
         return {"ok": True, "command": "risque", "sent": bool(sent),
                 "chars": len(risque_text)}
+
+    # ── Arbitrage du plafond journalier (2026-09-04) ──────────────────────
+    # ⚠️ Les commandes précédentes ne font que LIRE. Celles-ci décident sur de
+    # l'argent réel : elles ne sont sûres que parce que la route valide le
+    # secret Telegram ET filtre sur le `chat_id` de Xavier, plus haut. Ne
+    # jamais les déplacer sur un chemin qui n'a pas ces deux verrous.
+    decision = None
+    if mot in ("gele", "gèle", "geler", "/gele", "freeze"):
+        decision = "GELER"
+    elif mot in ("continue", "continuer", "/continue", "go"):
+        decision = "CONTINUER"
+
+    if decision:
+        from backend.services import plafond_arbitrage
+        try:
+            resultat = plafond_arbitrage.repondre(decision)
+            reponse = plafond_arbitrage.confirmation(resultat)
+        except Exception as e:
+            # ⛔ Se taire laisserait croire que la décision est passée, et le
+            # compte resterait bloqué sur un acquittement jamais reçu.
+            logger.exception("arbitrage plafond: réponse échouée")
+            resultat = {"applique": 0}
+            reponse = (f"Decision NON enregistree ({type(e).__name__}). "
+                       "Le compte reste bloque.")
+        sent = await send_sales_text(reponse, parse_mode=None)
+        return {"ok": True, "command": "arbitrage", "decision": decision,
+                "applique": resultat.get("applique", 0), "sent": bool(sent)}
 
     return {"ok": True, "command": None}
 

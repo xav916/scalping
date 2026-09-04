@@ -400,13 +400,31 @@ def _daily_loss_par_destination() -> dict[str, dict]:
             # montrer le même total que celui qui décide, sans quoi elle
             # rassurerait sur un chiffre que personne n'utilise.
             cumul = sum(p for _u, dest, p in pnls if dest in (dest_id, "?"))
+            seuil = -capital * DAILY_LOSS_LIMIT_PCT / 100
             ligne = {
                 "gele": trade_log_service.silent_mode_active_for_destination(dest_id),
                 "pnl_du_jour": round(cumul, 2),
                 "capital": round(capital, 2),
-                "seuil": round(-capital * DAILY_LOSS_LIMIT_PCT / 100, 2),
+                "seuil": round(seuil, 2),
                 "source": "live" if connu else "configure",
             }
+            # Depuis le 2026-09-04, un compte bloqué peut l'être parce qu'il
+            # ATTEND la réponse de Xavier, pas parce qu'on a décidé de le geler.
+            # Sans ce champ, les deux situations se ressemblent — et un blocage
+            # en attente d'un message jamais reçu passerait pour un gel normal.
+            try:
+                from backend.services import plafond_arbitrage
+                palier = plafond_arbitrage.palier_de(cumul, seuil)
+                if palier > 0:
+                    etat = plafond_arbitrage.etat_courant(dest_id, palier) or {}
+                    ligne["arbitrage"] = {
+                        "palier": palier,
+                        "etat": etat.get("etat"),
+                        "question_posee_le": etat.get("demande_le"),
+                        "repondu_le": etat.get("repondu_le"),
+                    }
+            except Exception as e:  # pragma: no cover - défensif
+                ligne["arbitrage"] = {"erreur": type(e).__name__}
         except Exception as e:
             # Un compte illisible ne doit pas effacer les autres de la vue.
             ligne = {"gele": None, "erreur": type(e).__name__}
