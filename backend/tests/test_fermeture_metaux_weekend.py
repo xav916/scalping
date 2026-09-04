@@ -1,10 +1,16 @@
-"""Fermer l'or et l'argent avant la cloture du vendredi soir.
+"""Fermer les positions avant la cloture du vendredi soir.
 
 Demande le 2026-08-28 a 21 h 08 UTC — treize minutes APRES la cloture de l'or,
 avec une position `XAUUSD sell` a +17,67 EUR qui passait le week-end faute de
 moyen de la fermer. Le bridge n'avait alors que `/kill`, qui ferme TOUT.
 
 > **Un interrupteur general n'est pas un outil de precision.**
+
+⚠️ **PORTEE ELARGIE le 2026-09-04**, a la demande de Xavier : on ferme
+desormais tout ce dont le marche ferme — forex, metaux, petrole, indices — et
+plus seulement l'or et l'argent. Le gap de week-end frappe le forex comme le
+metal. Le point 2 ci-dessous disait exactement l'inverse jusqu'a cette date ;
+c'est un renversement assume, pas une derive.
 
 ## Ce que ces tests verrouillent
 
@@ -13,13 +19,18 @@ moyen de la fermer. Le bridge n'avait alors que `/kill`, qui ferme TOUT.
    `cron.d` charge les `.bak` (mesure : 7 sauvegardes = 240 passages/h au lieu
    de 30). Un script qui ferme des positions reelles ne peut pas dependre de
    l'endroit d'ou on l'appelle pour savoir s'il a le droit de le faire.
-2. ⛔ **Seuls l'or et l'argent sont touches.** Le forex ouvert reste ouvert :
-   c'est toute la difference avec `/kill`.
-3. ⛔ **Un bridge muet ne vaut pas « aucun metal ouvert »** — il est compte
-   comme un echec, et le message le dit.
-4. ⛔ **Un refus du courtier est ANNONCE**, avec son retcode. Une position qui
+2. ⛔ **La CRYPTO reste ouverte** — son marche tourne le week-end, la fermer ne
+   protege d'aucun gap. C'est ce qui distingue encore ce script de `/kill`, et
+   ce qui l'empeche d'en redevenir un. On nomme ce qui est EXCLU, jamais ce
+   qui est inclus : une liste positive laisserait un jour passer un symbole
+   inconnu **le week-end**, ce qui est le mauvais cote du defaut.
+3. ⛔ **Ce qui reste ouvert est NOMME dans le message.** Une exclusion
+   silencieuse est une position qu'on croit fermee.
+4. ⛔ **Un bridge muet ne vaut pas « rien a fermer »** — il est compte comme un
+   echec, et le message le dit.
+5. ⛔ **Un refus du courtier est ANNONCE**, avec son retcode. Une position qui
    passe le week-end sans qu'on le sache est le pire des deux resultats.
-5. `DRY_RUN` ne ferme rien et n'envoie rien.
+6. `DRY_RUN` ne ferme rien et n'envoie rien.
 """
 from __future__ import annotations
 
@@ -82,22 +93,58 @@ def test_les_bornes_sont_INCLUSIVES(s):
     assert s.dans_la_fenetre(_quand(4, 20, 59), 1200, 1259) is True
 
 
-# ── ⛔ Or et argent SEULEMENT ──────────────────────────────────────────────
+# ── ⛔ Tout ce dont le marche FERME (elargi le 2026-09-04) ────────────────
 
-def test_seuls_les_metaux_sont_retenus(s):
+def test_on_ferme_TOUT_ce_dont_le_marche_ferme(s):
+    """Le forex et le petrole subissent le gap du week-end comme le metal."""
     positions = [_pos(1, "XAUUSD"), _pos(2, "XAGUSD"), _pos(3, "EURUSD"),
-                 _pos(4, "USDJPY"), _pos(5, "GOLD"), _pos(6, "XPTUSD")]
-    assert [p["ticket"] for p in s.metaux_ouverts(positions)] == [1, 2, 5]
+                 _pos(4, "USDJPY"), _pos(5, "GOLD"), _pos(6, "WTIUSD"),
+                 _pos(7, "GBPUSD")]
+    fermer, laissees = s.a_fermer(positions)
+
+    assert [p["ticket"] for p in fermer] == [1, 2, 3, 4, 5, 6, 7]
+    assert laissees == []
+
+
+def test_la_crypto_reste_OUVERTE(s):
+    """⛔ Son marche tourne le week-end : la fermer ne protege d'aucun gap et
+    lui coute deux jours de marche."""
+    positions = [_pos(1, "EURUSD"), _pos(2, "ETHUSD"), _pos(3, "BCHUSD"),
+                 _pos(4, "XAUUSD"), _pos(5, "BTCUSD")]
+    fermer, laissees = s.a_fermer(positions)
+
+    assert [p["ticket"] for p in fermer] == [1, 4]
+    assert [p["ticket"] for p in laissees] == [2, 3, 5]
+
+
+@pytest.mark.parametrize("symbole", ["AUDUSD", "USDCAD", "CADCHF", "AUDCAD"])
+def test_une_paire_forex_n_est_JAMAIS_prise_pour_de_la_crypto(s, symbole):
+    """⚠️ Le piege du `in` : « AUDUSD » contient AUD, et un jour un symbole
+    contiendra par accident un ticker crypto. D'ou `startswith`."""
+    assert s.traverse_le_weekend(symbole) is False
+
+
+@pytest.mark.parametrize("symbole", ["ETHUSD", "ETH/USD", "BTC_USD", "adausd"])
+def test_les_formes_du_symbole_crypto_sont_reconnues(s, symbole):
+    assert s.traverse_le_weekend(symbole) is True
 
 
 def test_aucune_position_ne_fait_pas_lever(s):
-    assert s.metaux_ouverts([]) == []
-    assert s.metaux_ouverts(None) == []
+    assert s.a_fermer([]) == ([], [])
+    assert s.a_fermer(None) == ([], [])
 
 
 def test_une_ligne_malformee_est_ignoree(s):
-    assert s.metaux_ouverts([None, "bruit", {"symbol": "XAUUSD"}]) == [
-        {"symbol": "XAUUSD"}]
+    fermer, laissees = s.a_fermer([None, "bruit", {"symbol": "XAUUSD"}])
+    assert fermer == [{"symbol": "XAUUSD"}]
+    assert laissees == []
+
+
+def test_un_symbole_ILLISIBLE_est_ferme_par_prudence(s):
+    """⛔ Ne pas savoir ce que c'est n'autorise pas a le laisser passer le
+    week-end : le defaut penche du cote ou l'on ferme."""
+    fermer, laissees = s.a_fermer([{"symbol": None}, {"symbol": ""}])
+    assert len(fermer) == 2 and laissees == []
 
 
 # ── Le message ─────────────────────────────────────────────────────────────
@@ -120,9 +167,9 @@ def test_un_ECHEC_est_annonce_avec_son_retcode(s):
     assert "ECHEC" in titre
 
 
-def test_aucun_metal_ouvert_se_dit_aussi(s):
+def test_aucune_position_a_fermer_se_dit_aussi(s):
     _, corps = s.message([], [], False)
-    assert "Aucune position or ou argent" in corps
+    assert "Aucune position a fermer" in corps
 
 
 def test_une_execution_FORCEE_le_dit(s):
@@ -135,7 +182,7 @@ def test_le_message_rappelle_ce_que_le_mecanisme_EST(s):
     """La gestion de sortie a mesure -0,329 R par trade sur l'or. Le rappeler
     la ou la fermeture est annoncee, c'est ce qui permettra de la juger."""
     _, corps = s.message([("admin_live", _pos(), {"ok": True})], [], False)
-    assert "0,329 R" in corps and "pre_weekend_metal" in corps
+    assert "0,329 R" in corps and "pre_weekend" in corps
 
 
 def test_le_corps_ne_porte_AUCUNE_balise(s):
@@ -180,25 +227,39 @@ def test_hors_fenetre_RIEN_n_est_ferme(s, monkeypatch):
     assert appels["notifs"] == []
 
 
-def test_dans_la_fenetre_le_metal_est_ferme(s, monkeypatch):
+def test_dans_la_fenetre_metal_ET_forex_sont_fermes(s, monkeypatch):
     monkeypatch.delenv("DRY_RUN", raising=False)
     monkeypatch.setattr(s, "dans_la_fenetre", lambda *a: True)
     monkeypatch.setattr(s, "DESTINATIONS_SURVEILLEES", ("admin_live",))
     appels = _armer(s, monkeypatch, [_pos(ticket=1357145568), _pos(9, "EURUSD")])
     assert s.main() == 0
-    assert [c["ticket"] for c in appels["fermetures"]] == [1357145568]
-    assert appels["fermetures"][0]["raison"] == "pre_weekend_metal"
+    assert [c["ticket"] for c in appels["fermetures"]] == [1357145568, 9]
+    assert appels["fermetures"][0]["raison"] == "pre_weekend"
 
 
-def test_le_FOREX_ouvert_reste_ouvert(s, monkeypatch):
-    """⛔ Toute la difference avec `/kill`, qui ferme tout."""
+def test_le_FOREX_est_desormais_ferme_LUI_AUSSI(s, monkeypatch):
+    """⚠️ RENVERSEMENT ASSUME du 2026-09-04.
+
+    Ce test garantissait l'inverse — « le forex ouvert reste ouvert » — parce
+    que le mecanisme ne visait que l'or et l'argent, et que toute sa raison
+    d'etre etait de ne PAS se comporter comme `/kill`. Xavier a demande le
+    04/09 de fermer les trades du vendredi soir : le gap de week-end frappe le
+    forex comme le metal.
+
+    ⛔ Il reste une difference de fond avec `/kill` : celui-ci ferme TOUT, y
+    compris la crypto dont le marche ne ferme pas. Ici la crypto reste
+    ouverte, et le message la nomme. C'est `test_la_crypto_reste_OUVERTE` qui
+    tient cette ligne, et c'est elle qui empeche ce script de redevenir un
+    interrupteur general.
+    """
     monkeypatch.delenv("DRY_RUN", raising=False)
     monkeypatch.setattr(s, "dans_la_fenetre", lambda *a: True)
     monkeypatch.setattr(s, "DESTINATIONS_SURVEILLEES", ("admin_live",))
     appels = _armer(s, monkeypatch,
-                    [_pos(1, "EURUSD"), _pos(2, "USDJPY"), _pos(3, "AUDUSD")])
+                    [_pos(1, "EURUSD"), _pos(2, "USDJPY"), _pos(3, "ETHUSD")])
     assert s.main() == 0
-    assert appels["fermetures"] == []
+    assert [c["ticket"] for c in appels["fermetures"]] == [1, 2], (
+        "le forex se ferme, la crypto non")
 
 
 def test_un_bridge_MUET_est_compte_comme_un_ECHEC(s, monkeypatch):

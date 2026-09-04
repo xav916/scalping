@@ -1,5 +1,16 @@
 #!/usr/bin/env python3
-"""Ferme les positions OR et ARGENT avant la cloture du vendredi soir.
+"""Ferme les positions avant la cloture du vendredi soir.
+
+⚠️ **PORTEE ELARGIE le 2026-09-04** : ce script ne ferme plus seulement l'or
+et l'argent, mais **tout ce dont le marche ferme** — forex, metaux, petrole,
+indices. Un gap de week-end frappe le forex et le petrole exactement comme le
+metal ; l'incident du gap WTI en est la preuve. Seules restent ouvertes les
+positions dont le marche tourne le week-end (crypto), et **le message les
+nomme** : une exclusion silencieuse est une position qu'on croit fermee.
+
+⚠️ Le NOM du fichier reste `fermer_metaux_*` par prudence de deploiement — le
+cron, le wrapper `.sh` et le chemin dans l'image y renvoient. Renommer un
+jour, hors vendredi.
 
 Demande le 2026-08-28, un vendredi a 21 h 08 UTC — treize minutes APRES la
 cloture de l'or, avec une position `XAUUSD sell` a +17,67 EUR qui passait le
@@ -70,7 +81,20 @@ TOKEN = os.environ.get("INFRA_NOTIFY_TOKEN",
 NOTIFY_URL = ("https://app.scalping-radar.online/api/admin/"
               f"notify-infra-telegram?token={TOKEN}&channel=sales")
 
-RAISON = "pre_weekend_metal"
+RAISON = "pre_weekend"
+
+# ⛔ Ce que l'on NE ferme PAS : les marches qui tournent le week-end. Les
+# fermer ne protegerait d'aucun gap — il n'y en a pas — et priverait la
+# position de deux jours de marche.
+#
+# ⚠️ Reglable, mais jamais vide par accident : une liste vide fermerait AUSSI
+# la crypto, et personne ne s'en apercevrait avant le lundi.
+TICKERS_WEEKEND = tuple(
+    t.strip().upper() for t in os.environ.get(
+        "FERMETURE_WEEKEND_EXCLUS",
+        "BTC,ETH,BCH,LTC,XRP,ADA,SOL,DOT,LINK,DOGE,BNB,XLM,AVAX,MATIC,UNI,"
+        "AAVE,ALGO,ATOM,TRX,SEI,ENS,HBAR,ARB,CRV,LDO,PAXG,MANA,ETHFI,SHIB"
+    ).split(",") if t.strip())
 
 
 # --------------------------------------------------------------------------
@@ -90,10 +114,38 @@ def dans_la_fenetre(maintenant: datetime, debut: int, fin: int) -> bool:
     return debut <= minutes <= fin
 
 
-def metaux_ouverts(positions) -> list[dict]:
-    """Les positions OR/ARGENT de la liste. Le reste n'est pas touche."""
-    return [p for p in (positions or [])
-            if isinstance(p, dict) and est_metal(p.get("symbol"))]
+def traverse_le_weekend(symbole: str | None) -> bool:
+    """Ce marche reste-t-il OUVERT pendant le week-end ?
+
+    ⛔ On nomme ce qui est EXCLU, jamais ce qui est inclus. Le 23/08, filtrer
+    par classe d'actif avait recoupe 14 des 23 cryptos sans que rien ne le
+    dise ; une liste positive aurait le meme defaut ici, mais en pire — elle
+    ferait passer une position le week-end au lieu d'en fermer une de trop.
+
+    ⚠️ `startswith` et non `in` : « AUDUSD » contient AUD, pas ADA, mais un
+    jour un symbole contiendra par accident un ticker crypto. Les symboles
+    crypto commencent par leur ticker (`ETHUSD`, `BCHUSD`).
+    """
+    s = (symbole or "").upper().replace("/", "").replace("_", "")
+    return any(s.startswith(t) for t in TICKERS_WEEKEND)
+
+
+def a_fermer(positions) -> tuple[list[dict], list[dict]]:
+    """``(a fermer, laissees ouvertes)``.
+
+    Depuis le 2026-09-04 on ferme **tout ce dont le marche ferme**, plus
+    seulement l'or et l'argent : le week-end, un gap frappe le forex et le
+    petrole exactement comme le metal — l'incident du gap WTI en temoigne.
+
+    ⛔ Les positions laissees ouvertes sont RENDUES, pas jetees : le message
+    les nomme. Une exclusion silencieuse est une position qu'on croit fermee.
+    """
+    fermer, laissees = [], []
+    for p in (positions or []):
+        if not isinstance(p, dict):
+            continue
+        (laissees if traverse_le_weekend(p.get("symbol")) else fermer).append(p)
+    return fermer, laissees
 
 
 def _eur(x) -> str:
@@ -103,7 +155,8 @@ def _eur(x) -> str:
         return "?"
 
 
-def message(fermees: list, echouees: list, forcee: bool) -> tuple[str, str]:
+def message(fermees: list, echouees: list, forcee: bool,
+            laissees: list | None = None) -> tuple[str, str]:
     """⚠️ TEXTE SIMPLE : l'endpoint passe le corps dans `html.escape`."""
     total = len(fermees) + len(echouees)
     lignes = []
@@ -111,10 +164,10 @@ def message(fermees: list, echouees: list, forcee: bool) -> tuple[str, str]:
         lignes += ["⚠️ Execution FORCEE, hors de la fenetre du vendredi soir.",
                    ""]
     if not total:
-        lignes.append("Aucune position or ou argent ouverte avant la cloture.")
+        lignes.append("Aucune position a fermer avant la cloture du week-end.")
     else:
-        lignes.append(f"{len(fermees)}/{total} position(s) metal fermee(s) "
-                      "avant la cloture du week-end.")
+        lignes.append(f"{len(fermees)}/{total} position(s) fermee(s) avant la "
+                      "cloture du week-end.")
     for d, p, r in fermees:
         lignes += ["",
                    f"✅ {p.get('symbol')} {p.get('type')} · {d}",
@@ -128,15 +181,26 @@ def message(fermees: list, echouees: list, forcee: bool) -> tuple[str, str]:
                    f"   ticket {p.get('ticket')} · {motif}"
                    + (f" (retcode {retcode})" if retcode else ""),
                    "   Elle passe le week-end : verifier a la main."]
+    # ⛔ Nommer ce qu'on a DELIBEREMENT laisse ouvert. Sans cette liste, une
+    # position crypto restee ouverte se lit comme un oubli — ou pire, on croit
+    # tout ferme et personne ne regarde.
+    if laissees:
+        lignes += ["",
+                   f"{len(laissees)} position(s) laissee(s) OUVERTE(S) : leur "
+                   "marche tourne le week-end, il n'y a pas de gap a eviter."]
+        for d, p in laissees:
+            lignes.append(f"   • {p.get('symbol')} {p.get('type')} · {d} · "
+                          f"ticket {p.get('ticket')}")
+
     if fermees:
         lignes += ["",
                    "Rappel : fermer systematiquement le vendredi est de la "
                    "gestion de sortie, la famille qui a mesure -0,329 R par "
                    "trade sur l'or. Chaque fermeture porte "
                    f"close-reason={RAISON} pour qu'on puisse la juger."]
-    titre = ("🔒 Metaux fermes avant le week-end" if fermees
-             else ("⛔ Fermeture metaux EN ECHEC" if echouees
-                   else "🔒 Aucun metal a fermer"))
+    titre = ("🔒 Positions fermees avant le week-end" if fermees
+             else ("⛔ Fermeture week-end EN ECHEC" if echouees
+                   else "🔒 Aucune position a fermer"))
     return titre, "\n".join(lignes)
 
 
@@ -206,7 +270,7 @@ def main() -> int:
         print(f"registre des destinations illisible : {exc}")
         return 1
 
-    fermees, echouees = [], []
+    fermees, echouees, laissees = [], [], []
     for did in DESTINATIONS_SURVEILLEES:
         dest = DESTINATIONS.get(did)
         if dest is None:
@@ -219,9 +283,11 @@ def main() -> int:
             echouees.append((did, {"symbol": "?", "type": "?", "ticket": "?"},
                              {"error": "positions illisibles"}))
             continue
-        metaux = metaux_ouverts(charge.get("positions"))
-        print(f"{did} : {len(metaux)} position(s) metal a fermer")
-        for p in metaux:
+        a_traiter, ouvertes = a_fermer(charge.get("positions"))
+        laissees += [(did, p) for p in ouvertes]
+        print(f"{did} : {len(a_traiter)} a fermer, {len(ouvertes)} laissee(s) "
+              "ouverte(s) (marche week-end)")
+        for p in a_traiter:
             if os.environ.get("DRY_RUN") == "1":
                 print(f"  [DRY_RUN] fermerait #{p.get('ticket')} "
                       f"{p.get('symbol')} ({_eur(p.get('profit'))})")
@@ -237,9 +303,13 @@ def main() -> int:
                 echouees.append((did, p, r))
 
     if not fermees and not echouees:
-        print("aucun metal ouvert — pas de message")
-        return 0
-    titre, corps = message(fermees, echouees, forcee)
+        # ⚠️ Silence seulement s'il n'y avait VRAIMENT rien. S'il reste des
+        # positions volontairement ouvertes, on le dit : croire tout ferme est
+        # le resultat le plus dangereux.
+        if not laissees:
+            print("aucune position a fermer — pas de message")
+            return 0
+    titre, corps = message(fermees, echouees, forcee, laissees)
     _notifier(titre, corps)
     return 0 if not echouees else 1
 
