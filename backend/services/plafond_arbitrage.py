@@ -314,8 +314,53 @@ def construire_question(demandes: list[dict[str, Any]]) -> str:
     return "\n".join(lignes)
 
 
+def etat_en_vigueur() -> dict[str, dict[str, Any]]:
+    """Ce qui est actuellement décidé, par compte réel dont le plafond est franchi.
+
+    Sert uniquement à répondre juste : sans lui, quelqu'un dont la décision EST
+    en vigueur s'entend dire « rien n'a été modifié », ce qui se lit comme
+    « ça n'a pas marché ».
+    """
+    sortie: dict[str, dict[str, Any]] = {}
+    try:
+        from backend.services import trade_log_service as t
+        for dest in t._destinations_reelles():
+            cumul, limite = t._cumul_et_limite(dest)
+            if cumul is None or cumul > limite:
+                continue
+            if any(l.get("etat") == GELER for l in lignes_du_jour(dest)):
+                sortie[dest] = {"etat": GELER}
+                continue
+            accord = autorisation_couvrante(dest, cumul)
+            if accord:
+                sortie[dest] = {"etat": CONTINUER, **accord}
+    except Exception as e:  # pragma: no cover - défensif
+        logger.warning(f"arbitrage: état en vigueur illisible ({e})")
+    return sortie
+
+
 def confirmation(resultat: dict[str, Any]) -> str:
     if not resultat.get("applique"):
+        # ⛔ Ne pas confondre « tu ne peux pas pré-autoriser » avec « c'est
+        # déjà fait ». Le 04/09, Xavier a renvoyé « continue » après une
+        # réponse déjà enregistrée et s'est entendu dire que rien n'avait été
+        # modifié et qu'on ne pré-autorise pas : exact, et trompeur — son
+        # compte était autorisé depuis 16:35. Un message juste sur le fond qui
+        # laisse conclure l'inverse du vrai est un défaut, pas un détail.
+        vigueur = etat_en_vigueur()
+        if vigueur:
+            lignes = ["Aucune demande en attente - ta decision est DEJA en "
+                      "vigueur.", ""]
+            for dest, v in sorted(vigueur.items()):
+                if v.get("etat") == CONTINUER:
+                    lignes.append(
+                        f"  {dest} : AUTORISE a trader, couvre jusqu'a "
+                        f"{v.get('couvre_jusqua')} EUR")
+                else:
+                    lignes.append(f"  {dest} : GELE jusqu'a minuit UTC")
+            lignes += ["", "Rien a changer. La question reviendra au plafond "
+                           "suivant."]
+            return "\n".join(lignes)
         return ("Aucun arbitrage en attente - rien n'a ete modifie.\n"
                 "Un « continue » ne s'enregistre pas d'avance : il faut un "
                 "plafond effectivement franchi.")

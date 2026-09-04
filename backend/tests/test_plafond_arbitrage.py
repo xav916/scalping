@@ -224,6 +224,39 @@ def test_un_GELER_ne_repose_PAS_la_question_a_chaque_perte(base):
     assert a.demandes_en_attente() == [], "aucune question de plus"
 
 
+def test_un_second_continue_dit_que_c_est_DEJA_en_vigueur(base):
+    """⛔ Le défaut vu le 04/09 : le message était juste et trompeur.
+
+    Xavier renvoie « continue » après une réponse déjà enregistrée. L'ancienne
+    version répondait « rien n'a été modifié — on ne pré-autorise pas », ce qui
+    se lit comme « ça n'a pas marché » alors que son compte tradait depuis
+    16:35. Un message exact sur le fond qui laisse conclure l'inverse du vrai
+    est un défaut.
+    """
+    t, a, chemin = base
+    _perte(chemin, -32.27, 1001)
+    t.silent_mode_active_for_destination("admin_live")
+    a.repondre(a.CONTINUER)
+
+    texte = a.confirmation(a.repondre(a.CONTINUER))
+
+    assert "DEJA en vigueur" in texte, texte
+    assert "AUTORISE" in texte and "admin_live" in texte, texte
+    assert "-51.77" in texte, "il doit dire jusqu'où ça tient"
+    assert "pre-autorise" not in texte and "pré-autorise" not in texte, (
+        "ce message-là ne s'applique pas ici")
+
+
+def test_un_second_gele_dit_que_le_compte_est_DEJA_gele(base):
+    t, a, chemin = base
+    _perte(chemin, -32.27, 1001)
+    t.silent_mode_active_for_destination("admin_live")
+    a.repondre(a.GELER)
+
+    texte = a.confirmation(a.repondre(a.GELER))
+    assert "DEJA en vigueur" in texte and "GELE" in texte, texte
+
+
 def test_un_continue_sans_demande_n_autorise_RIEN(base):
     """⛔ La porte la plus dangereuse du dispositif.
 
