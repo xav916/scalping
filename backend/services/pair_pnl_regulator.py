@@ -644,6 +644,27 @@ def evaluate_pair(pair: str, destination: str | None = None) -> dict[str, Any]:
         }
 
     if pnl_pct < cfg["pause_threshold_pct"]:
+        # ⛔ La portée GLOBALE ne POSE plus de pause depuis le 2026-09-04.
+        #
+        # Elle n'est gardée que pour LEVER à leur terme les pauses d'avant le
+        # 29/08 — c'est ce que dit `check_and_regulate`, et ce que le code ne
+        # faisait pas : `evaluate_pair(destination=None)` en créait aussi de
+        # nouvelles, sur une fenêtre qui MÉLANGE démo, réel et EA.
+        #
+        # Défaut latent, révélé le 04/09 par le passage au R : le WTI a été
+        # pausé globalement à −11,87 R — donc sur les DEUX comptes — alors que
+        # ni l'un ni l'autre ne franchit le seuil seul (réel −5,10 sur 5
+        # trades, démo −8,00 sur 30). Un compte se retrouvait bloqué par les
+        # pertes de l'autre : exactement le défaut de portée corrigé le 29/08,
+        # qui survivait par cette porte.
+        if destination is None:
+            return {
+                "action": "keep_active",
+                "metrics": metrics,
+                "reason": (f"pnl_pct {pnl_pct:.2f}% sous le seuil, mais la "
+                           "portée globale mélange les comptes : aucune pause "
+                           "posée — chaque destination est jugée séparément"),
+            }
         apply_pause(pair, "ev_negative", pnl_pct, metrics["n"],
                     destination=destination)
         return {

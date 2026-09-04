@@ -131,13 +131,16 @@ def test_evaluate_pair_pause_if_pnl_below_threshold(_isolated_db, monkeypatch):
     from backend.services import pair_pnl_regulator
     importlib.reload(pair_pnl_regulator)
 
-    # 15 trades, sum_pnl = -500€ → -5% sur 10000€ capital → < -3% → pause
+    # ⚠️ Une DESTINATION est nommée : depuis le 2026-09-04 la portée globale
+    # ne pose plus de pause (elle mélange les comptes). La production juge
+    # toujours par compte.
     for _ in range(15):
-        _insert_trade(_isolated_db, "XAG/USD", pnl=-33.33)
+        _insert_trade(_isolated_db, "XAG/USD", pnl=-33.33,
+                      destination="admin_live")
 
-    d = pair_pnl_regulator.evaluate_pair("XAG/USD")
+    d = pair_pnl_regulator.evaluate_pair("XAG/USD", destination="admin_live")
     assert d["action"] == "pause"
-    assert pair_pnl_regulator.is_paused("XAG/USD") is True
+    assert pair_pnl_regulator.is_paused("XAG/USD", "admin_live") is True
 
 
 def test_evaluate_pair_keep_paused_if_not_expired(_isolated_db):
@@ -175,7 +178,7 @@ def test_resume_clears_active_pause(_isolated_db):
 
 
 def _poser_ticket(db_path: Path, pair: str, pnl: float, ticket, jours: int = 0,
-                  risque: float = 10.0):
+                  risque: float = 10.0, destination: str = "admin_live"):
     """Insère un trade daté et TICKETÉ. `mt5_ticket` est en TEXTE ici, comme
     en production — le piège d'affinité SQLite se reproduit tel quel.
 
@@ -188,11 +191,12 @@ def _poser_ticket(db_path: Path, pair: str, pnl: float, ticket, jours: int = 0,
             """
             INSERT INTO personal_trades (pair, status, pnl, is_auto, closed_at,
                                          close_reason, mt5_ticket,
-                                         entry_price, stop_loss, size_lot)
-            VALUES (?, 'CLOSED', ?, 1, ?, ?, ?, ?, ?, ?)
+                                         entry_price, stop_loss, size_lot,
+                                         destination_id)
+            VALUES (?, 'CLOSED', ?, 1, ?, ?, ?, ?, ?, ?, ?)
             """,
             (pair, pnl, quand, "MANUAL" if pnl < 0 else "TP1", str(ticket),
-             100.0, 100.0 - risque, 0.01),
+             100.0, 100.0 - risque, 0.01, destination),
         )
 
 
@@ -309,7 +313,8 @@ def test_un_seul_ticket_fait_basculer_la_pause(_isolated_db, exclure, monkeypatc
         _poser_ticket(_isolated_db, "XAU/USD", +1.0, 900 + i, jours=i)
 
     exclure([])
-    assert pair_pnl_regulator.evaluate_pair("XAU/USD")["action"] == "pause"
+    assert pair_pnl_regulator.evaluate_pair(
+        "XAU/USD", destination="admin_live")["action"] == "pause"
 
     with sqlite3.connect(_isolated_db) as c:
         c.execute("DELETE FROM auto_paused_pairs")
@@ -444,10 +449,12 @@ def test_une_paire_DORMANTE_n_est_plus_mise_en_pause_sur_son_passe_mort(
     monkeypatch.setattr(st, "TRADING_CAPITAL", 650.0)
     for i in range(30):
         _insert_trade(_isolated_db, "XAG/USD", -20.0,
-                      (datetime.now(timezone.utc) - timedelta(days=110 + i)).isoformat())
+                      (datetime.now(timezone.utc) - timedelta(days=110 + i)).isoformat(),
+                      destination="admin_live")
 
     plancher(0)
-    assert pair_pnl_regulator.evaluate_pair("XAG/USD")["action"] == "pause"
+    assert pair_pnl_regulator.evaluate_pair(
+        "XAG/USD", destination="admin_live")["action"] == "pause"
 
     with sqlite3.connect(_isolated_db) as c:
         c.execute("DELETE FROM auto_paused_pairs")
@@ -731,10 +738,11 @@ def test_une_fenetre_VRAIMENT_perdante_en_R_pause_toujours(
 
     for i in range(15):                       # −1 R chacun, stops varies
         _insert_trade(_isolated_db, "XAG/USD", pnl=-20.0, risque=20.0,
+                      destination="admin_live",
                       closed_at=(datetime.now(timezone.utc)
                                  - timedelta(minutes=60 - i)).isoformat())
 
-    d = pair_pnl_regulator.evaluate_pair("XAG/USD")
+    d = pair_pnl_regulator.evaluate_pair("XAG/USD", destination="admin_live")
 
     # Bande large et non valeur exacte : la conversion passe par la taille de
     # contrat et le taux EUR/USD, qui ne sont pas le sujet de ce test.
@@ -807,8 +815,57 @@ def test_la_raison_de_la_pause_dit_les_DEUX_unites(_isolated_db, monkeypatch):
     monkeypatch.setattr(st, "TRADING_CAPITAL", 650.0)
     monkeypatch.setattr(st, "PAIR_PNL_REGULATOR_PAUSE_THRESHOLD_PCT", -10.0)
     for i in range(15):
-        _insert_trade(_isolated_db, "XAG/USD", pnl=-20.0, risque=20.0)
+        _insert_trade(_isolated_db, "XAG/USD", pnl=-20.0, risque=20.0,
+                      destination="admin_live")
 
-    d = pair_pnl_regulator.evaluate_pair("XAG/USD")
+    d = pair_pnl_regulator.evaluate_pair("XAG/USD", destination="admin_live")
     assert d["action"] == "pause"
     assert "en R" in d["reason"] and "euros" in d["reason"], d["reason"]
+
+
+def test_la_portee_GLOBALE_ne_pose_PLUS_de_pause(_isolated_db, monkeypatch):
+    """⛔ Le défaut latent révélé le 04/09 par le passage au R.
+
+    `check_and_regulate` garde la portée globale pour LEVER à leur terme les
+    pauses d'avant le 29/08 — c'est ce que dit son commentaire. Mais
+    `evaluate_pair(destination=None)` en créait aussi de NOUVELLES, sur une
+    fenêtre qui mélange démo, réel et EA. Le WTI s'est retrouvé pausé sur les
+    DEUX comptes à −11,87 R alors que ni l'un ni l'autre ne franchit le seuil
+    seul. Un compte bloqué par les pertes de l'autre : le défaut de portée du
+    29/08, qui survivait par cette porte.
+    """
+    import config.settings as st
+    from backend.services import pair_pnl_regulator
+
+    monkeypatch.setattr(st, "TRADING_CAPITAL", 650.0)
+    monkeypatch.setattr(st, "PAIR_PNL_REGULATOR_PAUSE_THRESHOLD_PCT", -10.0)
+
+    # Franchement perdante, et sans destination : portée globale.
+    for _ in range(15):
+        _insert_trade(_isolated_db, "WTI/USD", pnl=-20.0, risque=20.0)
+
+    d = pair_pnl_regulator.evaluate_pair("WTI/USD")          # destination=None
+
+    assert d["action"] == "keep_active", d["reason"]
+    assert "mélange les comptes" in d["reason"], d["reason"]
+    assert pair_pnl_regulator.is_paused("WTI/USD") is False
+
+
+def test_une_pause_GLOBALE_existante_est_toujours_LEVEE_a_son_terme(
+        _isolated_db, monkeypatch):
+    """⚠️ Le pendant : ne plus en poser ne doit pas empêcher d'en lever.
+
+    Sans ça, les pauses d'avant le 29/08 survivraient à leur date d'expiration
+    sans que rien ne vienne les toucher — plus personne ne les jugerait.
+    """
+    from backend.services import pair_pnl_regulator
+
+    pair_pnl_regulator.apply_pause("WTI/USD", "ev_negative", -12.0, 30)
+    with sqlite3.connect(_isolated_db) as c:
+        c.execute("UPDATE auto_paused_pairs SET expires_at = ? WHERE pair = ?",
+                  ((datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),
+                   "WTI/USD"))
+
+    d = pair_pnl_regulator.evaluate_pair("WTI/USD")
+    assert d["action"] == "resume", d["reason"]
+    assert pair_pnl_regulator.is_paused("WTI/USD") is False
