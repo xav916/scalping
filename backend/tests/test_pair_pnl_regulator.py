@@ -48,16 +48,28 @@ def _isolated_db(tmp_path, monkeypatch):
 
 
 def _insert_trade(db_path: Path, pair: str, pnl: float, closed_at: str | None = None,
-                  destination: str | None = None):
+                  destination: str | None = None, risque: float | None = 10.0):
+    """Un trade clôturé.
+
+    ``risque`` est la distance entrée→stop, en unités de prix. ⚠️ Elle n'était
+    pas posée avant le 2026-09-04 : le verdict se prenait en euros, la largeur
+    du stop ne comptait pas. Depuis, le régulateur juge en **R** — un trade
+    sans risque lisible n'est plus jugeable du tout, et `risque=None` sert
+    précisément à construire ce cas.
+    """
     closed_at = closed_at or datetime.now(timezone.utc).isoformat()
+    entree = 100.0
+    stop = None if risque is None else entree - risque
     with sqlite3.connect(db_path) as c:
         c.execute(
             """
             INSERT INTO personal_trades (pair, status, pnl, is_auto, closed_at,
-                                         close_reason, destination_id)
-            VALUES (?, 'CLOSED', ?, 1, ?, ?, ?)
+                                         close_reason, destination_id,
+                                         entry_price, stop_loss, size_lot)
+            VALUES (?, 'CLOSED', ?, 1, ?, ?, ?, ?, ?, ?)
             """,
-            (pair, pnl, closed_at, "SL" if pnl < 0 else "TP1", destination),
+            (pair, pnl, closed_at, "SL" if pnl < 0 else "TP1", destination,
+             entree, stop, 0.01),
         )
 
 
@@ -162,18 +174,25 @@ def test_resume_clears_active_pause(_isolated_db):
 # c'est exactement ce qui est arrivé à l'or le 2026-08-25.
 
 
-def _poser_ticket(db_path: Path, pair: str, pnl: float, ticket, jours: int = 0):
+def _poser_ticket(db_path: Path, pair: str, pnl: float, ticket, jours: int = 0,
+                  risque: float = 10.0):
     """Insère un trade daté et TICKETÉ. `mt5_ticket` est en TEXTE ici, comme
-    en production — le piège d'affinité SQLite se reproduit tel quel."""
+    en production — le piège d'affinité SQLite se reproduit tel quel.
+
+    ⚠️ `risque` (distance entrée→stop) est indispensable depuis le 2026-09-04 :
+    le verdict se prend en R, et un trade sans risque lisible n'est plus jugé.
+    """
     quand = (datetime.now(timezone.utc) - timedelta(days=jours)).isoformat()
     with sqlite3.connect(db_path) as c:
         c.execute(
             """
             INSERT INTO personal_trades (pair, status, pnl, is_auto, closed_at,
-                                         close_reason, mt5_ticket)
-            VALUES (?, 'CLOSED', ?, 1, ?, ?, ?)
+                                         close_reason, mt5_ticket,
+                                         entry_price, stop_loss, size_lot)
+            VALUES (?, 'CLOSED', ?, 1, ?, ?, ?, ?, ?, ?)
             """,
-            (pair, pnl, quand, "MANUAL" if pnl < 0 else "TP1", str(ticket)),
+            (pair, pnl, quand, "MANUAL" if pnl < 0 else "TP1", str(ticket),
+             100.0, 100.0 - risque, 0.01),
         )
 
 
@@ -659,3 +678,137 @@ def test_la_porte_du_bridge_interroge_la_DESTINATION():
     src = (Path(__file__).resolve().parents[1] / "services" / "mt5_bridge.py"
            ).read_text(encoding="utf-8")
     assert "pair_pnl_regulator.is_paused(setup.pair, dest_id_pause)" in src
+
+
+# ─── 🔑 Le verdict se prend en R, plus en euros (2026-09-04) ────────────────
+#
+# Mesuré sur l'or de la démo : la même fenêtre de 30 trades vaut −104,60 € —
+# soit −16 %, bien sous le seuil — et **+0,31 R**, c'est-à-dire plate. Tous les
+# lots à 0,01 ; ce qui variait était la distance au stop, d'un facteur 10,4
+# (8 à 84 points). Sommer des euros sur des trades de risques incomparables ne
+# mesure pas une espérance, ça mesure un mélange de largeurs de stop.
+
+def test_une_fenetre_NEGATIVE_en_euros_mais_PLATE_en_R_ne_pause_PAS(
+        _isolated_db, monkeypatch):
+    """🔑 Le cas exact de l'or : le verdict s'inverse avec l'unité.
+
+    Dix trades gagnants à stop serré, dix perdants à stop large. En euros la
+    somme est franchement négative ; en R elle est nulle. À talent égal, la
+    largeur du stop ne doit pas condamner la paire.
+    """
+    import config.settings as st
+    from backend.services import pair_pnl_regulator
+
+    monkeypatch.setattr(st, "TRADING_CAPITAL", 650.0)
+    monkeypatch.setattr(st, "PAIR_PNL_REGULATOR_PAUSE_THRESHOLD_PCT", -10.0)
+
+    for i in range(10):                       # +1 R chacun, stop serré
+        _insert_trade(_isolated_db, "XAU/USD", pnl=+10.0, risque=10.0,
+                      closed_at=(datetime.now(timezone.utc)
+                                 - timedelta(minutes=100 - i)).isoformat())
+    for i in range(10):                       # −1 R chacun, stop 8× plus large
+        _insert_trade(_isolated_db, "XAU/USD", pnl=-80.0, risque=80.0,
+                      closed_at=(datetime.now(timezone.utc)
+                                 - timedelta(minutes=50 - i)).isoformat())
+
+    d = pair_pnl_regulator.evaluate_pair("XAU/USD")
+
+    assert d["metrics"]["sum_pnl"] == -700.0, "franchement negatif en euros"
+    assert abs(d["metrics"]["somme_r"]) < 0.05, "mais plat en R"
+    assert d["action"] == "keep_active", (
+        "une paire plate en R ne doit pas etre mise en pause sur un artefact "
+        f"d'unite — verdict rendu : {d['reason']}")
+
+
+def test_une_fenetre_VRAIMENT_perdante_en_R_pause_toujours(
+        _isolated_db, monkeypatch):
+    """⛔ Le pendant : corriger l'unité ne doit pas désarmer le régulateur."""
+    import config.settings as st
+    from backend.services import pair_pnl_regulator
+
+    monkeypatch.setattr(st, "TRADING_CAPITAL", 650.0)
+    monkeypatch.setattr(st, "PAIR_PNL_REGULATOR_PAUSE_THRESHOLD_PCT", -10.0)
+
+    for i in range(15):                       # −1 R chacun, stops varies
+        _insert_trade(_isolated_db, "XAG/USD", pnl=-20.0, risque=20.0,
+                      closed_at=(datetime.now(timezone.utc)
+                                 - timedelta(minutes=60 - i)).isoformat())
+
+    d = pair_pnl_regulator.evaluate_pair("XAG/USD")
+
+    # Bande large et non valeur exacte : la conversion passe par la taille de
+    # contrat et le taux EUR/USD, qui ne sont pas le sujet de ce test.
+    assert -20.0 < d["metrics"]["somme_r"] < -12.0, d["metrics"]["somme_r"]
+    assert d["action"] == "pause", d["reason"]
+
+
+def test_le_chiffre_en_EUROS_reste_rendu(_isolated_db, monkeypatch):
+    """Les pauses posées avant le 04/09 l'ont été sur ce chiffre : le faire
+    disparaître les rendrait inexplicables."""
+    import config.settings as st
+    from backend.services import pair_pnl_regulator
+
+    monkeypatch.setattr(st, "TRADING_CAPITAL", 650.0)
+    for i in range(12):
+        _insert_trade(_isolated_db, "XAG/USD", pnl=-10.0, risque=10.0)
+
+    m = pair_pnl_regulator.evaluate_pair("XAG/USD")["metrics"]
+    assert m["sum_pnl"] == -120.0
+    assert m["pnl_pct_euros"] == round(100.0 * -120.0 / 650.0, 2)
+    assert m["pnl_pct"] != m["pnl_pct_euros"], "les deux unites diffèrent"
+
+
+def test_sans_risque_LISIBLE_la_paire_n_est_PAS_jugee(_isolated_db, monkeypatch):
+    """⛔ On ne retombe pas sur les euros : c'est la mesure qu'on disqualifie.
+
+    ⚠️ Ce que ça coûte est assumé — une paire dont les trades ne portent pas de
+    stop lisible n'est plus régulée. « Pas assez de preuves exploitables » est
+    plus honnête que « coupable sur une mesure fausse », et les rafales courtes
+    restent couvertes par `stop_loss_alerts`.
+    """
+    import config.settings as st
+    from backend.services import pair_pnl_regulator
+
+    monkeypatch.setattr(st, "TRADING_CAPITAL", 650.0)
+    monkeypatch.setattr(st, "PAIR_PNL_REGULATOR_PAUSE_THRESHOLD_PCT", -10.0)
+
+    for i in range(20):                       # aucun stop : illisible en R
+        _insert_trade(_isolated_db, "XAG/USD", pnl=-50.0, risque=None)
+
+    d = pair_pnl_regulator.evaluate_pair("XAG/USD")
+
+    assert d["metrics"]["n"] == 20
+    assert d["metrics"]["n_mesurables"] == 0
+    assert d["action"] == "keep_active"
+    assert "non mesurable" in d["reason"], d["reason"]
+
+
+def test_les_trades_non_mesurables_sont_DENOMBRES(_isolated_db):
+    """⚠️ Une fenêtre qui écarte en silence est indiscernable d'une fenêtre qui
+    n'a rien écarté — même exigence que pour les tickets exclus."""
+    from backend.services import pair_pnl_regulator
+
+    for i in range(6):
+        _insert_trade(_isolated_db, "XAG/USD", pnl=-10.0, risque=10.0)
+    for i in range(4):
+        _insert_trade(_isolated_db, "XAG/USD", pnl=-10.0, risque=None)
+
+    m = pair_pnl_regulator.compute_window_metrics("XAG/USD", 30)
+    assert m["n"] == 10
+    assert m["n_mesurables"] == 6
+    assert m["n_non_mesurables"] == 4
+
+
+def test_la_raison_de_la_pause_dit_les_DEUX_unites(_isolated_db, monkeypatch):
+    """Pour qu'un lecteur puisse refaire le calcul et voir ce qui a change."""
+    import config.settings as st
+    from backend.services import pair_pnl_regulator
+
+    monkeypatch.setattr(st, "TRADING_CAPITAL", 650.0)
+    monkeypatch.setattr(st, "PAIR_PNL_REGULATOR_PAUSE_THRESHOLD_PCT", -10.0)
+    for i in range(15):
+        _insert_trade(_isolated_db, "XAG/USD", pnl=-20.0, risque=20.0)
+
+    d = pair_pnl_regulator.evaluate_pair("XAG/USD")
+    assert d["action"] == "pause"
+    assert "en R" in d["reason"] and "euros" in d["reason"], d["reason"]

@@ -166,6 +166,57 @@ def _plancher_age(max_age_days: int | None = None) -> str | None:
     return (datetime.now(timezone.utc) - timedelta(days=max_age_days)).isoformat()
 
 
+def _somme_en_r(rows) -> tuple[float, int]:
+    """``(somme des R, nombre de trades mesurables)``.
+
+    🔑 **Pourquoi le R et non l'euro.** Mesuré le 2026-09-04 sur l'or de la
+    démo : la même fenêtre de 30 trades vaut **−104,60 €** — soit −16 %, bien
+    sous le seuil de pause — et **+0,31 R**, c'est-à-dire plate. Tous les lots
+    y étaient à 0,01 ; ce qui variait, c'était la distance au stop, **d'un
+    facteur 10,4** (8 à 84 points). Perdre 52 € sur un stop à 78 points, c'est
+    perdre 1 R, exactement comme perdre 15 € sur un stop à 21 points.
+
+    Sommer des euros sur des trades de risques incomparables ne mesure pas une
+    espérance : ça mesure un mélange de largeurs de stop. La paire aux stops
+    larges paraît coupable à talent égal — et c'est ainsi que l'or de la démo
+    s'est retrouvé en pause jusqu'au 17/09, et l'argent du réel le 29/08.
+
+    ⛔ Un trade dont le risque n'est pas lisible n'est PAS compté zéro : il est
+    écarté et **dénombré**. `ea_closed_trades` ne porte ni `stop_loss` ni
+    `size_lot` — aucun trade EA n'est donc mesurable. C'est sans effet sur le
+    mode par destination, qui exclut déjà l'EA de la fenêtre.
+
+    ⛔ **Le risque se convertit en EUROS avant la division.** Première version :
+    `pnl / (entrée − stop)` — des euros divisés par une distance en PRIX. Ça ne
+    tombe juste que pour l'or à 0,01 lot, par coïncidence (1 once, 1 $ ≈ 1 €).
+    Sondée sur la production avant déploiement, elle rendait **−69 R sur 30
+    trades de WTI** — soit 2,3 R perdus par trade, ce qui est impossible si le
+    stop tient — parce qu'à 0,1 lot une distance de 2,25 $ vaut 225 $ de
+    risque, pas 2,25. Elle aurait posé deux pauses fausses.
+
+    `risk_eur.calculer` porte déjà les tailles de contrat (100 onces sur l'or,
+    100 barils sur le WTI, 100 000 unités sur le forex) et le change. Une
+    seconde arithmétique du risque serait l'endroit exact où les deux chiffres
+    divergeraient sans que rien ne le dise.
+    """
+    from backend.services.risk_eur import calculer
+
+    somme, n = 0.0, 0
+    for r in rows:
+        try:
+            entree, stop, lot = r["entry_price"], r["stop_loss"], r["size_lot"]
+        except (KeyError, IndexError):
+            continue
+        if entree is None or stop is None or not lot:
+            continue
+        mesure = calculer(r["pair_mesure"], entree, stop, 0.0, lot)
+        if not mesure or mesure["risque_eur"] <= 0:
+            continue
+        somme += float(r["pnl"]) / mesure["risque_eur"]
+        n += 1
+    return somme, n
+
+
 def _tickets_exclus() -> frozenset[int]:
     """Délègue à `tickets_exclus` — cf. ce module pour la raison d'être."""
     from backend.services.tickets_exclus import tickets_exclus
@@ -259,7 +310,9 @@ def compute_window_metrics(pair: str, window_trades: int,
     # ferait rentrer par la fenêtre ce que la porte vient d'exclure.
     bloc_ea = "" if destination else f"""
             UNION ALL
-            SELECT pnl, closed_at, 'ea_' || user_id AS source FROM ea_closed_trades
+            SELECT pnl, closed_at, entry_price, NULL AS stop_loss,
+                   NULL AS size_lot, NULL AS pair_mesure,
+                   'ea_' || user_id AS source FROM ea_closed_trades
              WHERE pair = ?{filtre}{filtre_age}"""
     params_ea = () if destination else (pair,) + ex + age
     # Le decompte "ecartes par l'age" suit exactement le meme perimetre que la
@@ -275,12 +328,13 @@ def compute_window_metrics(pair: str, window_trades: int,
         c.row_factory = sqlite3.Row
         rows = c.execute(
             f"""
-            SELECT pnl, closed_at, 'admin' AS source FROM personal_trades
+            SELECT pnl, closed_at, entry_price, stop_loss, size_lot,
+                   ? AS pair_mesure, 'admin' AS source FROM personal_trades
              WHERE pair = ? AND status = 'CLOSED'
                AND is_auto = 1 AND pnl IS NOT NULL{filtre}{filtre_age}{filtre_dest}{bloc_ea}
             ORDER BY closed_at DESC LIMIT ?
             """,
-            (pair,) + ex + age + dest + params_ea + (window_trades,),
+            (pair, pair) + ex + age + dest + params_ea + (window_trades,),
         ).fetchall()
         # ⚠️ Une fenetre qui ecarte en silence est indiscernable d'une fenetre
         # qui n'a rien ecarte, et le chiffre affiche ne serait pas refaisable
@@ -303,6 +357,7 @@ def compute_window_metrics(pair: str, window_trades: int,
     if n == 0:
         return {
             "n": 0, "sum_pnl": 0.0, "wins": 0, "wr": 0.0,
+            "somme_r": 0.0, "n_mesurables": 0, "n_non_mesurables": 0,
             "oldest_at": None, "newest_at": None,
             "by_source": {}, "excluded_tickets": ecartes,
             "plancher_age": plancher, "n_hors_age": n_hors_age,
@@ -310,6 +365,7 @@ def compute_window_metrics(pair: str, window_trades: int,
         }
     sum_pnl = sum(r["pnl"] for r in rows)
     wins = sum(1 for r in rows if r["pnl"] > 0)
+    somme_r, n_mesurables = _somme_en_r(rows)
     # Breakdown par source (pour debug/dashboard : qui contribue combien)
     by_source: dict[str, dict[str, Any]] = {}
     for r in rows:
@@ -325,6 +381,9 @@ def compute_window_metrics(pair: str, window_trades: int,
     return {
         "n": n,
         "sum_pnl": round(sum_pnl, 2),
+        "somme_r": round(somme_r, 3),
+        "n_mesurables": n_mesurables,
+        "n_non_mesurables": n - n_mesurables,
         "wins": wins,
         "wr": round(100.0 * wins / n, 1),
         "oldest_at": rows[-1]["closed_at"],
@@ -501,7 +560,28 @@ def evaluate_pair(pair: str, destination: str | None = None) -> dict[str, Any]:
 
     metrics = compute_window_metrics(pair, cfg["window_trades"],
                                      destination=destination)
-    pnl_pct = 100.0 * metrics["sum_pnl"] / cfg["capital"] if metrics["n"] > 0 else 0.0
+
+    # ⚠️ Le verdict se prend en R depuis le 2026-09-04, plus en euros.
+    #
+    # `pnl_pct` garde exactement son SENS — « combien de % du capital cette
+    # paire aurait coûté » — mais chaque trade est ramené au risque prévu
+    # (`RISK_PER_TRADE_PCT`) avant d'être somme. Le seuil de −10 % n'a donc pas
+    # besoin d'être retraduit : c'est la mesure qui devient comparable, pas la
+    # borne qui bouge.
+    #
+    #     pnl_pct = somme(R) × risque_par_trade_%
+    #
+    # ⛔ L'ancien chiffre en euros reste calculé et RENDU (`pnl_pct_euros`) :
+    # c'est lui qui a servi de verdict pendant des semaines, et le faire
+    # disparaître rendrait les pauses passées inexplicables.
+    from config.settings import RISK_PER_TRADE_PCT
+
+    pnl_pct_euros = (100.0 * metrics["sum_pnl"] / cfg["capital"]
+                     if metrics["n"] > 0 else 0.0)
+    metrics["pnl_pct_euros"] = round(pnl_pct_euros, 2)
+
+    n_mes = metrics.get("n_mesurables", 0)
+    pnl_pct = metrics.get("somme_r", 0.0) * RISK_PER_TRADE_PCT
     metrics["pnl_pct"] = round(pnl_pct, 2)
 
     # Pause active prioritaire sur tout autre check : un pair pausé sans
@@ -544,13 +624,35 @@ def evaluate_pair(pair: str, destination: str | None = None) -> dict[str, Any]:
             "reason": f"sample too small (n={metrics['n']} < {cfg['min_sample']})",
         }
 
+    # ⛔ Le verdict se prend sur les trades MESURABLES en R. S'il n'y en a pas
+    # assez, on ne juge pas — on ne retombe PAS sur la somme en euros, qui est
+    # exactement la mesure qu'on vient de disqualifier.
+    #
+    # ⚠️ Ce que ça coûte, assumé : une paire dont les trades ne portent pas de
+    # stop lisible n'est plus régulée du tout. C'est le même arbitrage que le
+    # plancher d'âge — « pas assez de preuves exploitables » est une réponse
+    # plus honnête que « coupable sur une mesure fausse » — et les rafales
+    # courtes restent couvertes par `stop_loss_alerts`, qui ne regarde que la
+    # dernière heure.
+    if n_mes < cfg["min_sample"]:
+        return {
+            "action": "keep_active",
+            "metrics": metrics,
+            "reason": (f"risque non mesurable sur {metrics['n'] - n_mes} des "
+                       f"{metrics['n']} trades (n_mesurables={n_mes} < "
+                       f"{cfg['min_sample']}) — pas de verdict en R"),
+        }
+
     if pnl_pct < cfg["pause_threshold_pct"]:
         apply_pause(pair, "ev_negative", pnl_pct, metrics["n"],
                     destination=destination)
         return {
             "action": "pause",
             "metrics": metrics,
-            "reason": f"pnl_pct {pnl_pct:.2f}% < threshold {cfg['pause_threshold_pct']:.2f}%",
+            "reason": (f"pnl_pct {pnl_pct:.2f}% (en R : {metrics['somme_r']:+.2f} R "
+                       f"sur {n_mes} trades) < seuil "
+                       f"{cfg['pause_threshold_pct']:.2f}% "
+                       f"[euros : {pnl_pct_euros:.2f}%]"),
         }
 
     return {"action": "keep_active", "metrics": metrics, "reason": "healthy"}
