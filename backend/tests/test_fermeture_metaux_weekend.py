@@ -380,3 +380,152 @@ def test_DRY_RUN_ne_ferme_RIEN(s, monkeypatch):
     appels = _armer(s, monkeypatch, [_pos()])
     assert s.main() == 0
     assert appels["fermetures"] == [], "DRY_RUN a envoye un ordre de fermeture"
+
+
+# ── ⏰ Le PREAVIS d'une heure avant la cloture (2026-09-04) ────────────────
+#
+# Demande de Xavier : « recevoir un message telegram une heure avant la cloture
+# du weekend m'indiquant tous les trades en cours et ceux fermés que le cron
+# job a cloturé ». Les DEUX listes, dans le meme message — il lui reste une
+# heure pour agir a la main, il lui faut l'etat complet sous les yeux.
+
+def test_le_journal_retient_ce_que_le_cron_a_ferme(s, tmp_path):
+    """⛔ Sans trace, le preavis ne saurait dire QUE ce qu'il vient de fermer.
+
+    Le script passe toutes les 5 min ; celui de 20:00 n'a aucune memoire de
+    celui de 14:35. Le journal est ce qui rend la question repondable.
+    """
+    base = str(tmp_path / "j.db")
+    s.journaliser("admin_live", _au_seuil(42, "XAUUSD"),
+                  {"part": 0.41}, chemin=base)
+
+    lignes = s.fermetures_du_jour(chemin=base)
+    assert len(lignes) == 1
+    assert lignes[0]["ticket"] == "42"
+    assert lignes[0]["symbole"] == "XAUUSD"
+    assert round(lignes[0]["part"], 2) == 0.41
+
+
+def test_le_journal_ne_compte_pas_DEUX_FOIS_le_meme_ticket(s, tmp_path):
+    """Idempotent : deux passages sur le meme ticket ne font pas deux lignes."""
+    base = str(tmp_path / "j.db")
+    for _ in range(3):
+        s.journaliser("admin_live", _au_seuil(42), {"part": 0.41}, chemin=base)
+    assert len(s.fermetures_du_jour(chemin=base)) == 1
+
+
+def test_un_journal_ILLISIBLE_n_empeche_pas_de_fermer(s):
+    """⛔ Le journal sert a raconter, la fermeture sert a proteger.
+
+    Confondre les deux priorites ferait rater une sortie pour cause de disque
+    plein. `journaliser` avale donc son erreur, et le dit sur la sortie.
+    """
+    s.journaliser("admin_live", _au_seuil(42), {"part": 0.41},
+                  chemin="/chemin/qui/n/existe/pas/x.db")   # ne doit PAS lever
+
+
+def test_le_preavis_liste_les_DEUX_ensembles(s):
+    """🔑 Le coeur de la demande : en cours ET fermes, dans un seul message."""
+    deja = [{"symbole": "XAUUSD", "sens": "sell", "destination_id": "admin_live",
+             "ticket": "42", "part": 0.41, "profit": 17.67,
+             "ferme_le": "2026-09-04T18:20:11+00:00"}]
+    laissees = [("admin_live", _trop_tot(7, "EURUSD"), "9% du chemin seulement")]
+
+    _titre, corps = s.message([], [], False, laissees, deja)
+
+    assert "XAUUSD" in corps and "42" in corps and "18:20" in corps
+    assert "41%" in corps, "l'avancement au moment de la fermeture"
+    assert "EURUSD" in corps and "9%" in corps
+    assert "aujourd'hui" in corps
+
+
+def test_le_preavis_parle_MEME_sans_rien_avoir_ferme(s, monkeypatch):
+    """⛔ C'est le seul passage qui parle dans le silence.
+
+    Les ~100 autres passages du vendredi se taisent — sans quoi l'alerte
+    deviendrait du bruit, et le bruit ne se lit plus.
+    """
+    monkeypatch.setattr(s, "PREAVIS", True)
+    monkeypatch.delenv("DRY_RUN", raising=False)
+    monkeypatch.setattr(s, "dans_la_fenetre", lambda *a: True)
+    monkeypatch.setattr(s, "DESTINATIONS_SURVEILLEES", ("admin_live",))
+    monkeypatch.setattr(s, "fermetures_du_jour", lambda *a, **k: [])
+    appels = _armer(s, monkeypatch, [_trop_tot(1, "EURUSD")])
+
+    assert s.main() == 0
+    assert appels["fermetures"] == [], "rien ne doit etre ferme"
+    assert appels["notifs"], "le preavis doit PARLER"
+    assert "EURUSD" in appels["notifs"][0][1]
+
+
+def test_un_passage_ORDINAIRE_reste_MUET(s, monkeypatch):
+    """Le pendant du test precedent, et la raison pour laquelle il tient."""
+    monkeypatch.setattr(s, "PREAVIS", False)
+    monkeypatch.delenv("DRY_RUN", raising=False)
+    monkeypatch.setattr(s, "dans_la_fenetre", lambda *a: True)
+    monkeypatch.setattr(s, "DESTINATIONS_SURVEILLEES", ("admin_live",))
+    appels = _armer(s, monkeypatch, [_trop_tot(1, "EURUSD")])
+
+    assert s.main() == 0
+    assert appels["notifs"] == [], "un passage sans fermeture ne parle pas"
+
+
+def test_le_corps_du_preavis_ne_porte_AUCUNE_balise(s):
+    deja = [{"symbole": "XAUUSD", "sens": "sell", "destination_id": "admin_live",
+             "ticket": "42", "part": 0.41, "profit": 17.67,
+             "ferme_le": "2026-09-04T18:20:11+00:00"}]
+    _titre, corps = s.message([], [], False, [], deja)
+    assert "<" not in corps and ">" not in corps
+
+
+def test_main_JOURNALISE_vraiment_ce_qu_il_ferme(s, monkeypatch, tmp_path):
+    """⛔ Le branchement, pas la fonction.
+
+    `journaliser` peut etre parfait et n'etre jamais appele : c'est le trou
+    qu'avait le detecteur de positions nues. Sans ce test, retirer l'appel dans
+    `main()` ne casse rien — verifie le 04/09, la mutation passait inapercue —
+    et le preavis annoncerait « rien ferme aujourd'hui » un soir ou le cron
+    aurait ferme six positions.
+    """
+    base = str(tmp_path / "j.db")
+    monkeypatch.setattr(s, "JOURNAL", base)
+    monkeypatch.delenv("DRY_RUN", raising=False)
+    monkeypatch.setattr(s, "dans_la_fenetre", lambda *a: True)
+    monkeypatch.setattr(s, "DESTINATIONS_SURVEILLEES", ("admin_live",))
+    _armer(s, monkeypatch, [_au_seuil(4242, "XAUUSD")])
+
+    assert s.main() == 0
+
+    lignes = s.fermetures_du_jour(chemin=base)
+    assert [l["ticket"] for l in lignes] == ["4242"], (
+        "la fermeture doit avoir laisse une trace")
+
+
+def test_une_fermeture_ECHOUEE_n_est_PAS_journalisee(s, monkeypatch, tmp_path):
+    """Le journal dit ce qui EST ferme, pas ce qu'on esperait fermer.
+
+    Sinon le preavis annoncerait comme close une position qui passe le
+    week-end — le pire des deux resultats, deja nomme pour les echecs.
+    """
+    base = str(tmp_path / "j.db")
+    monkeypatch.setattr(s, "JOURNAL", base)
+    monkeypatch.delenv("DRY_RUN", raising=False)
+    monkeypatch.setattr(s, "dans_la_fenetre", lambda *a: True)
+    monkeypatch.setattr(s, "DESTINATIONS_SURVEILLEES", ("admin_live",))
+    _armer(s, monkeypatch, [_au_seuil(4242, "XAUUSD")], fermeture_ok=False)
+
+    assert s.main() == 1
+    assert s.fermetures_du_jour(chemin=base) == []
+
+
+def test_DRY_RUN_n_ecrit_RIEN_dans_le_journal(s, monkeypatch, tmp_path):
+    """Un essai a blanc qui laisserait une trace ferait mentir le preavis."""
+    base = str(tmp_path / "j.db")
+    monkeypatch.setattr(s, "JOURNAL", base)
+    monkeypatch.setenv("DRY_RUN", "1")
+    monkeypatch.setattr(s, "dans_la_fenetre", lambda *a: True)
+    monkeypatch.setattr(s, "DESTINATIONS_SURVEILLEES", ("admin_live",))
+    _armer(s, monkeypatch, [_au_seuil(4242, "XAUUSD")])
+
+    s.main()
+    assert s.fermetures_du_jour(chemin=base) == []

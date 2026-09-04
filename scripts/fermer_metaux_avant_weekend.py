@@ -91,11 +91,23 @@ FENETRE_FIN = int(os.environ.get("FERMETURE_METAUX_FIN_MIN", "1257"))     # 20:5
 SEUIL_AVANCEMENT = float(
     os.environ.get("FERMETURE_WEEKEND_AVANCEMENT_MIN", "0.3333333333"))
 
-# Le bilan de fin de journee : le SEUL passage qui parle meme sans fermeture,
-# pour nommer ce qui va traverser le week-end.
-# ⛔ Sans lui, tourner toutes les 5 minutes enverrait ~100 messages le
-# vendredi, et une alerte qu'on cesse de lire ne protege plus de rien.
-BILAN = os.environ.get("BILAN") == "1"
+# Le PREAVIS d'une heure avant la cloture (demande de Xavier le 04/09) : le
+# SEUL passage qui parle meme sans fermeture. Il dresse l'etat complet — ce qui
+# est encore ouvert, et ce que le cron a ferme depuis midi.
+#
+# ⛔ Sans cette condition, tourner toutes les 5 minutes enverrait ~100 messages
+# le vendredi, et une alerte qu'on cesse de lire ne protege plus de rien.
+#
+# ⚠️ `BILAN` reste accepte : c'est le nom pose quelques heures plus tot le meme
+# jour, et un reglage renomme sans alias est un cron qui devient muet en
+# silence.
+PREAVIS = os.environ.get("PREAVIS") == "1" or os.environ.get("BILAN") == "1"
+
+# Journal des fermetures du jour. ⛔ Le script ne sait nativement dire que ce
+# qu'il vient de fermer A L'INSTANT ; sans trace, le preavis de 20:00 ne
+# pourrait pas repondre a « qu'est-ce que le cron a ferme aujourd'hui ? ».
+JOURNAL = os.environ.get("FERMETURE_WEEKEND_JOURNAL",
+                         "/app/data/trades.db")
 
 TOKEN = os.environ.get("INFRA_NOTIFY_TOKEN",
                        "shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg")
@@ -195,6 +207,56 @@ def a_fermer(positions, seuil: float | None = None
     return fermer, laissees
 
 
+def _journal_init(chemin: str | None = None) -> None:
+    import sqlite3
+    with sqlite3.connect(chemin or JOURNAL) as c:
+        c.execute("""CREATE TABLE IF NOT EXISTS fermetures_weekend (
+            jour TEXT NOT NULL, destination_id TEXT NOT NULL,
+            ticket TEXT NOT NULL, symbole TEXT, sens TEXT, volume REAL,
+            part REAL, profit REAL, ferme_le TEXT,
+            PRIMARY KEY (jour, destination_id, ticket))""")
+
+
+def journaliser(did: str, p: dict, m: dict, chemin: str | None = None) -> None:
+    """Trace une fermeture reussie. Idempotent par (jour, destination, ticket).
+
+    ⛔ Ne JAMAIS laisser une erreur d'ecriture empecher la fermeture : le
+    journal sert a raconter, la fermeture sert a proteger. Confondre les deux
+    priorites ferait rater une sortie pour cause de disque plein.
+    """
+    import sqlite3
+    try:
+        _journal_init(chemin)
+        with sqlite3.connect(chemin or JOURNAL) as c:
+            c.execute(
+                "INSERT OR REPLACE INTO fermetures_weekend (jour, "
+                "destination_id, ticket, symbole, sens, volume, part, profit, "
+                "ferme_le) VALUES (?,?,?,?,?,?,?,?,?)",
+                (datetime.now(timezone.utc).date().isoformat(), did,
+                 str(p.get("ticket")), p.get("symbol"), p.get("type"),
+                 p.get("volume"), (m or {}).get("part"), p.get("profit"),
+                 datetime.now(timezone.utc).isoformat()))
+    except Exception as e:  # pragma: no cover - defensif
+        print(f"  (journal non ecrit pour #{p.get('ticket')} : {e})")
+
+
+def fermetures_du_jour(chemin: str | None = None) -> list[dict]:
+    """Ce que le cron a ferme aujourd'hui, le plus recent d'abord."""
+    import sqlite3
+    try:
+        _journal_init(chemin)
+        with sqlite3.connect(chemin or JOURNAL) as c:
+            c.row_factory = sqlite3.Row
+            rows = c.execute(
+                "SELECT * FROM fermetures_weekend WHERE jour = ? "
+                "ORDER BY ferme_le DESC",
+                (datetime.now(timezone.utc).date().isoformat(),)).fetchall()
+        return [dict(r) for r in rows]
+    except Exception as e:  # pragma: no cover - defensif
+        print(f"  (journal illisible : {e})")
+        return []
+
+
 def _eur(x) -> str:
     try:
         return f"{float(x):,.2f}".replace(",", " ").replace(".", ",") + " €"
@@ -203,7 +265,8 @@ def _eur(x) -> str:
 
 
 def message(fermees: list, echouees: list, forcee: bool,
-            laissees: list | None = None) -> tuple[str, str]:
+            laissees: list | None = None,
+            deja_fermees: list | None = None) -> tuple[str, str]:
     """⚠️ TEXTE SIMPLE : l'endpoint passe le corps dans `html.escape`."""
     total = len(fermees) + len(echouees)
     lignes = []
@@ -250,15 +313,31 @@ def message(fermees: list, echouees: list, forcee: bool,
                       "week-end : c'est la regle demandee — ne pas brader une "
                       "position a mi-chemin sous la contrainte d'une horloge.")
 
+    # ⚠️ Le PREAVIS d'une heure avant la cloture : l'etat COMPLET du jour, pas
+    # seulement ce que ce passage-ci a fait. Xavier a une heure pour agir a la
+    # main, il lui faut les deux listes sous les yeux.
+    if deja_fermees:
+        lignes += ["",
+                   f"Ferme(s) par le cron aujourd'hui : {len(deja_fermees)}"]
+        for f in deja_fermees:
+            part = f.get("part")
+            avance = f" a {part:.0%} du chemin" if part is not None else ""
+            lignes.append(
+                f"   ✔ {f.get('symbole')} {f.get('sens')} · "
+                f"{f.get('destination_id')} · ticket {f.get('ticket')}"
+                f"{avance} · {_eur(f.get('profit'))} "
+                f"· {str(f.get('ferme_le'))[11:16]} UTC")
+
     if fermees:
         lignes += ["",
                    "Rappel : fermer sur un critere de sortie reste de la "
                    "gestion de sortie, la famille qui a mesure -0,329 R par "
                    "trade sur l'or. Chaque fermeture porte "
                    f"close-reason={RAISON} pour qu'on puisse la juger."]
-    titre = ("🔒 Positions fermees avant le week-end" if fermees
-             else ("⛔ Fermeture week-end EN ECHEC" if echouees
-                   else "🔒 Aucune position a fermer"))
+    titre = ("⛔ Fermeture week-end EN ECHEC" if echouees
+             else ("🔒 Positions fermees avant le week-end" if fermees
+                   else ("⏰ Une heure avant la cloture du week-end"
+                         if PREAVIS else "🔒 Aucune position a fermer")))
     return titre, "\n".join(lignes)
 
 
@@ -360,11 +439,14 @@ def main() -> int:
             if ok and (r or {}).get("ok"):
                 print(f"  ferme #{p.get('ticket')} {p.get('symbol')} a {part}")
                 fermees.append((did, p, r, m))
+                # Trace APRES la fermeture reussie, jamais avant : le journal
+                # doit dire ce qui EST ferme, pas ce qu'on esperait fermer.
+                journaliser(did, p, m)
             else:
                 print(f"  ECHEC #{p.get('ticket')} {p.get('symbol')} : {r}")
                 echouees.append((did, p, r))
 
-    if not fermees and not echouees and not BILAN:
+    if not fermees and not echouees and not PREAVIS:
         # ⛔ Le script passe toutes les 5 minutes le vendredi apres-midi.
         # Parler a chaque passage pour dire « rien a fermer » produirait une
         # centaine de messages et tuerait l'attention — c'est exactement ce
@@ -373,10 +455,11 @@ def main() -> int:
         #
         # Le silence n'est donc PAS « rien a signaler » : c'est « rien de
         # nouveau ». Ce qui traverse le week-end est annonce par le passage
-        # de bilan (BILAN=1), une seule fois, en fin de journee.
+        # de preavis (PREAVIS=1), une heure avant la cloture.
         print(f"rien de ferme, {len(laissees)} en attente — pas de message")
         return 0
-    titre, corps = message(fermees, echouees, forcee, laissees)
+    titre, corps = message(fermees, echouees, forcee, laissees,
+                           fermetures_du_jour() if PREAVIS else None)
     _notifier(titre, corps)
     return 0 if not echouees else 1
 

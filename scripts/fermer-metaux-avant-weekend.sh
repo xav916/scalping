@@ -16,7 +16,7 @@
 #   fermer-metaux-avant-weekend.sh              -> ferme ce qui a franchi 1/3
 #   DRY_RUN=1 fermer-metaux-avant-weekend.sh    -> affiche, ne ferme rien
 #   FORCER=1 fermer-metaux-avant-weekend.sh     -> hors fenetre, et le DIT
-#   BILAN=1 fermer-metaux-avant-weekend.sh      -> parle meme sans fermeture
+#   PREAVIS=1 fermer-metaux-avant-weekend.sh    -> parle meme sans fermeture
 set -uo pipefail
 
 # ⛔ TOUTE variable posee par le cron doit etre transmise EXPLICITEMENT :
@@ -28,6 +28,7 @@ docker exec -i \
   -e PYTHONPATH=/app \
   -e "DRY_RUN=${DRY_RUN:-0}" \
   -e "FORCER=${FORCER:-0}" \
+  -e "PREAVIS=${PREAVIS:-0}" \
   -e "BILAN=${BILAN:-0}" \
   -e "FERMETURE_METAUX_DESTINATIONS=${FERMETURE_METAUX_DESTINATIONS:-admin_legacy,admin_live}" \
   -e "FERMETURE_METAUX_DEBUT_MIN=${FERMETURE_METAUX_DEBUT_MIN:-720}" \
