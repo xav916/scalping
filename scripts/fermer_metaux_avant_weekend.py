@@ -38,7 +38,7 @@ De la gestion de sortie systematique — la famille qui a mesure **-0,329 R par
 trade sur l'or**, et **+21 %** une fois desarmee. C'est une decision de
 Xavier, prise deux fois et maintenue apres que la mesure lui a ete rappelee.
 Chaque fermeture est journalisee avec sa raison pour qu'on puisse un jour la
-JUGER au lieu d'y croire : `close-reason = pre_weekend_metal`.
+JUGER au lieu d'y croire : `close-reason = pre_weekend`.
 
 Usage :
     python fermer_metaux_avant_weekend.py
