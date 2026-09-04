@@ -534,13 +534,8 @@ def silent_mode_active_for_destination(destination_id: str | None = None) -> boo
             "registre — portée globale par prudence")
         return silent_mode_active_any_user()
 
-    limite = -_capital_du_plafond(destination_id) * DAILY_LOSS_LIMIT_PCT / 100
-    cumuls: dict[str, float] = {}
-    for user, dest, pnl in _pnl_du_jour_par_destination():
-        # `'?'` = non résolue : elle pèse sur tous les comptes réels.
-        if dest in (destination_id, "?"):
-            cumuls[user] = cumuls.get(user, 0.0) + pnl
-    if not any(total <= limite for total in cumuls.values()):
+    cumul, limite = _cumul_et_limite(destination_id)
+    if cumul is None or cumul > limite:
         return False
 
     # Dépassement constaté. Depuis le 2026-09-04, à la demande de Xavier, il ne
@@ -555,8 +550,58 @@ def silent_mode_active_for_destination(destination_id: str | None = None) -> boo
         logger.warning(
             f"plafond journalier: arbitrage indisponible ({e}) — gel conservé")
         return True
-    return plafond_arbitrage.doit_bloquer(
-        destination_id, min(cumuls.values()), limite)
+    return plafond_arbitrage.doit_bloquer(destination_id, cumul, limite)
+
+
+def _cumul_et_limite(destination_id: str) -> tuple[float | None, float]:
+    """La perte du jour imputable à ce compte, et son plafond.
+
+    🔑 Extrait le 2026-09-04 pour que **la décision et l'ordre lisent le même
+    chiffre**. Le bridge a son propre plafond journalier ; pour lui dire qu'un
+    arbitrage l'autorise, `_build_order_payload` doit relire l'état — et deux
+    calculs du même cumul qui divergeraient seraient exactement la faille que
+    ce dispositif prétend fermer.
+
+    Rend ``(None, limite)`` quand aucune clôture n'est imputable au compte :
+    « rien à juger » n'est pas « zéro perte ».
+    """
+    limite = -_capital_du_plafond(destination_id) * DAILY_LOSS_LIMIT_PCT / 100
+    cumuls: dict[str, float] = {}
+    for user, dest, pnl in _pnl_du_jour_par_destination():
+        # `'?'` = non résolue : elle pèse sur tous les comptes réels.
+        if dest in (destination_id, "?"):
+            cumuls[user] = cumuls.get(user, 0.0) + pnl
+    if not cumuls:
+        return None, limite
+    return min(cumuls.values()), limite
+
+
+def arbitrage_actif_pour(destination_id: str | None) -> dict | None:
+    """L'autorisation de Xavier qui laisse CE compte trader malgré le plafond.
+
+    ``None`` dès que le moindre doute existe — pas de destination, plafond non
+    franchi, aucune réponse, réponse `GELER`, autorisation qui ne couvre plus,
+    lecture impossible. C'est ce ``None`` que le bridge lit comme « applique
+    ton propre garde-fou », donc le défaut sûr.
+
+    Sert à joindre un drapeau explicite à l'ordre : sans lui, le bridge
+    recalcule son drawdown dans son coin et annule la décision de Xavier — ce
+    qu'on a constaté le 04/09 à 16:44, l'ordre argent mourant au bridge alors
+    que le backend l'avait laissé passer.
+    """
+    if not destination_id:
+        return None
+    try:
+        if destination_id not in _destinations_reelles():
+            return None
+        cumul, limite = _cumul_et_limite(destination_id)
+        if cumul is None or cumul > limite:
+            return None
+        from backend.services import plafond_arbitrage
+        return plafond_arbitrage.autorisation_couvrante(destination_id, cumul)
+    except Exception as e:  # pragma: no cover - défensif
+        logger.warning(f"arbitrage actif illisible ({e}) — aucun drapeau joint")
+        return None
 
 
 # Backward compat

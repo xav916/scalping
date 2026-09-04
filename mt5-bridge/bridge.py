@@ -611,7 +611,9 @@ def _in_trading_hours() -> bool:
 def _check_safety_gates(mt5_symbol: str, direction: str,
                         lots: float | None = None,
                         entry: float | None = None,
-                        sl: float | None = None) -> tuple[bool, str]:
+                        sl: float | None = None,
+                        drawdown_arbitre: dict | None = None
+                        ) -> tuple[bool, str]:
     """Vérifie tous les garde-fous avant d'envoyer un ordre LIVE.
 
     Retourne (ok, reason). Si ok=False, 'reason' est la raison du blocage
@@ -653,11 +655,29 @@ def _check_safety_gates(mt5_symbol: str, direction: str,
                 f"{equity_retenue:.2f} au lieu de {info.equity:.2f}"
             )
         if current_loss >= loss_limit:
-            return False, (
-                f"Daily drawdown reached: loss={current_loss:.2f} "
-                f">= limit={loss_limit:.2f} ({MAX_DAILY_LOSS_PCT}% of "
-                f"{_start_of_day_balance:.2f})"
-            )
+            # ⚠️ Xavier peut lever CETTE porte, et elle seule, en repondant
+            # « continue » a l'arbitrage du backend (2026-09-04). Le drapeau
+            # n'arrive que si une autorisation couvre encore la perte du
+            # moment ; absent, la porte s'applique — c'est le defaut.
+            #
+            # ⛔ Trace en clair a chaque passage, comme les tickets exclus
+            # juste au-dessus : une protection affaiblie qui ne se voit pas
+            # dans les logs est une protection qu'on oublie d'avoir levee.
+            if drawdown_arbitre:
+                logger.warning(
+                    f"[DRAWDOWN LEVE PAR ARBITRAGE] loss={current_loss:.2f} "
+                    f">= limit={loss_limit:.2f} — autorisation accordee a "
+                    f"{drawdown_arbitre.get('accorde_a')} EUR, couvre jusqu'a "
+                    f"{drawdown_arbitre.get('couvre_jusqua')} EUR "
+                    f"(repondu {drawdown_arbitre.get('repondu_le')}). "
+                    "Les autres gardes-fous restent appliques."
+                )
+            else:
+                return False, (
+                    f"Daily drawdown reached: loss={current_loss:.2f} "
+                    f">= limit={loss_limit:.2f} ({MAX_DAILY_LOSS_PCT}% of "
+                    f"{_start_of_day_balance:.2f})"
+                )
 
     # Max positions ouvertes — garde-fou d'EMBALLEMENT, pas de risque : il ne
     # distingue pas 0,01 lot de forex (~5,5 EUR risques) de 0,01 lot d'or
@@ -3245,8 +3265,19 @@ def place_order():
 
 def _handle_live_order(*, data, pair, mt5_symbol, direction, lots, entry, sl, tp, sizing_mode, client_comment):
     """Extrait de place_order pour isoler les exceptions LIVE dans un try/except."""
+    # `drawdown_arbitre` : Xavier a repondu « continue » a l'arbitrage du
+    # plafond journalier cote backend (2026-09-04). Ne leve QUE la porte de
+    # drawdown, et seulement si l'autorisation couvre encore la perte.
+    arbitre = data.get("drawdown_arbitre") if isinstance(data, dict) else None
+    if arbitre is not None and not isinstance(arbitre, dict):
+        # ⛔ Un drapeau mal forme n'est pas une autorisation. Le lire comme
+        # vrai ferait d'une faute de frappe un permis de trader.
+        logger.warning(
+            f"drawdown_arbitre ignore: type inattendu {type(arbitre).__name__}")
+        arbitre = None
     ok_gate, reason = _check_safety_gates(
-        mt5_symbol, direction, lots=lots, entry=entry, sl=sl)
+        mt5_symbol, direction, lots=lots, entry=entry, sl=sl,
+        drawdown_arbitre=arbitre)
     if not ok_gate:
         logger.warning(f"[LIVE BLOCKED] {reason}")
         _db_log_order(

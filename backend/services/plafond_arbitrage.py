@@ -238,6 +238,29 @@ def doit_bloquer(destination_id: str, cumul: float, seuil: float) -> bool:
     return True
 
 
+def autorisation_couvrante(destination_id: str, cumul: float
+                           ) -> dict[str, Any] | None:
+    """L'autorisation en vigueur pour cette perte, ou ``None``.
+
+    ⛔ Un `GELER` du jour l'emporte et rend ``None`` même si un `CONTINUER`
+    plus ancien couvrait encore : Xavier a tranché dans l'autre sens depuis.
+    Lire les lignes sans cet ordre laisserait une vieille autorisation
+    survivre à un gel explicite.
+    """
+    lignes = lignes_du_jour(destination_id)
+    if any(l.get("etat") == GELER for l in lignes):
+        return None
+    for l in lignes:
+        if l.get("etat") == CONTINUER and couvre(l, cumul):
+            return {
+                "accorde_a": l.get("pnl_au_moment"),
+                "couvre_jusqua": round(
+                    float(l["pnl_au_moment"]) + float(l["seuil"]), 2),
+                "repondu_le": l.get("repondu_le"),
+            }
+    return None
+
+
 def repondre(decision: str, destination_id: str | None = None
              ) -> dict[str, Any]:
     """Applique ``GELER`` / ``CONTINUER`` aux demandes en attente.

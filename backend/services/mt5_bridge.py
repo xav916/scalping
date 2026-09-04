@@ -1445,6 +1445,27 @@ def _build_order_payload(setup, sz: dict, dest=None) -> dict:
         broker_sym = dest.symbol_map.get(setup.pair)
         if broker_sym:
             payload["broker_symbol"] = broker_sym
+
+    # Le bridge tient SON PROPRE plafond de perte journalier, calculé sur
+    # l'equity et le solde d'ouverture — il ignore tout de l'arbitrage du
+    # backend. Le 2026-09-04 à 16:44 on l'a vu annuler la décision de Xavier :
+    # il avait répondu « continue » à 16:35, le backend laissait passer, et
+    # l'ordre XAG/USD mourait au bridge sur « Daily drawdown reached ».
+    #
+    # ⛔ Le drapeau n'est joint QUE si une autorisation couvre encore la perte
+    # du moment. Absent, le bridge applique son garde-fou : c'est le défaut, et
+    # il est fermé. Il ne lève que cette porte-là — marge libre, risque engagé,
+    # max positions et heures de marché restent intactes.
+    if dest is not None and getattr(dest, "reel", False):
+        try:
+            from backend.services import trade_log_service
+            arbitre = trade_log_service.arbitrage_actif_pour(
+                getattr(dest, "destination_id", None))
+        except Exception as e:  # pragma: no cover - défensif
+            logger.warning(f"payload: arbitrage illisible ({e}) — aucun drapeau")
+            arbitre = None
+        if arbitre:
+            payload["drawdown_arbitre"] = arbitre
     return payload
 
 
