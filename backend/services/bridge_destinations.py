@@ -22,11 +22,14 @@ dans la fonction).
 """
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from typing import Any
 
 from backend.services.cost_model import CostModel
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -251,11 +254,50 @@ def _mt5_horizons(destination_id: str) -> frozenset[str] | None:
     de porte du tout.
     """
     base = _mt5_scalping_horizons()
-    if base is None or destination_id not in _mt5_long_horizon_routes():
+    if base is None:
         return base
-    from backend.services.horizon import LONG_HORIZONS
+    if destination_id in _mt5_long_horizon_routes():
+        from backend.services.horizon import LONG_HORIZONS
+        base = frozenset(base | LONG_HORIZONS)
+    return _restreindre_horizons(destination_id, base)
 
-    return frozenset(base | LONG_HORIZONS)
+
+# Une déclaration par route MT5 ; les autres destinations n'en ont pas.
+_VAR_HORIZONS_PAR_ROUTE = {
+    "admin_live": "MT5_BRIDGE_LIVE_ALLOWED_HORIZONS",
+    "admin_legacy": "MT5_BRIDGE_LEGACY_ALLOWED_HORIZONS",
+}
+
+
+def _restreindre_horizons(destination_id: str,
+                          base: frozenset[str]) -> frozenset[str]:
+    """Applique la déclaration par destination — en RESTRICTION seulement.
+
+    ⛔ Le résultat est l'INTERSECTION de ``base`` et de ce qui est déclaré.
+    Déclarer un horizon que la route ne sert pas ne l'ouvre PAS : sans cette
+    règle, une ligne de `.env` mal comprise ouvrirait un horizon sur l'argent
+    réel, soit l'inverse exact du but de ce découpage.
+
+    ⚠️ Intersection vide ⇒ on conserve ``base`` et on le DIT. Une route dont
+    tous les horizons sont fermés refuserait chaque push en
+    `horizon_not_allowed`, sans autre trace — le mode de défaillance du
+    kill-switch oublié (incident du 2026-07-13).
+    """
+    nom = _VAR_HORIZONS_PAR_ROUTE.get(destination_id)
+    if not nom:
+        return base
+    from config import settings as st
+    declares = getattr(st, nom, None)
+    if not declares:
+        return base
+    retenus = frozenset(base & frozenset(declares))
+    if not retenus:
+        logger.warning(
+            "%s: aucun horizon commun entre %s (%s) et les horizons servis "
+            "(%s) — déclaration IGNORÉE, base conservée",
+            destination_id, nom, sorted(declares), sorted(base))
+        return base
+    return retenus
 
 
 def _motifs_demo() -> "frozenset[str] | None":

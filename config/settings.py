@@ -914,6 +914,34 @@ MT5_BRIDGE_ALLOWED_PATTERNS: frozenset[str] = frozenset(
 # toucher au réel.
 #
 # ⚠️ Absente = rien n'est ouvert. Le défaut ne doit rien élargir.
+# Horizons servis par une route MT5, DÉCLARÉS PAR DESTINATION (2026-09-04).
+#
+# `MT5_LONG_HORIZON_ROUTES` est tout-ou-rien : une route reçoit 4h ET 1d
+# ensemble, ou aucun. Impossible d'ouvrir le 1 jour sur la démo sans l'ouvrir
+# sur le réel — et retirer `admin_live` de cette liste lui aurait coupé le 4h,
+# qu'il trade activement.
+#
+# ⛔ CES VARIABLES NE PEUVENT QUE RESTREINDRE. Le résultat est
+# l'INTERSECTION de ce que la route sert déjà et de ce qui est déclaré :
+# déclarer un horizon non servi ne l'ouvre pas. Sans cette règle, une ligne de
+# `.env` mal comprise ouvrirait un horizon sur l'argent réel — l'inverse exact
+# du but de ce découpage.
+#
+# ⚠️ Absente = comportement inchangé. Intersection vide = base conservée, avec
+# un WARNING : bloquer tous les pushes d'une route sans autre trace est le
+# mode de défaillance du kill-switch oublié.
+def _horizons_declares(nom: str) -> "frozenset[str] | None":
+    brut = os.getenv(nom, "").strip()
+    if not brut:
+        return None
+    return frozenset(h.strip().lower() for h in brut.split(",") if h.strip())
+
+
+MT5_BRIDGE_LIVE_ALLOWED_HORIZONS = _horizons_declares(
+    "MT5_BRIDGE_LIVE_ALLOWED_HORIZONS")
+MT5_BRIDGE_LEGACY_ALLOWED_HORIZONS = _horizons_declares(
+    "MT5_BRIDGE_LEGACY_ALLOWED_HORIZONS")
+
 _legacy_extra_raw = os.getenv("MT5_BRIDGE_LEGACY_EXTRA_PATTERNS", "").strip()
 MT5_BRIDGE_LEGACY_EXTRA_PATTERNS: frozenset[str] | None = (
     frozenset(p.strip().lower() for p in _legacy_extra_raw.split(",") if p.strip())
