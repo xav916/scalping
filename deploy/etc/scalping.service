@@ -1,0 +1,31 @@
+# Copie versionnée de /etc/systemd/system/scalping.service — extraite de la PROD le 2026-09-04.
+#
+# ⛔ Ce fichier vit HORS du dépôt sur le serveur. Les copies qui
+# traînaient dans /opt/scalping/deploy/ divergeaient TOUTES de ce qui
+# tourne, dataient d'avril ou mai, et l'une d'elles
+# (nginx-app-scalping-online.conf) ne correspondait à AUCUN fichier
+# actif — nginx charge scalping-app.conf et scalping.conf. Les
+# versionner aurait versionné de la fiction.
+#
+# ⚠️ Cette copie NE SE DÉPLOIE PAS toute seule : elle sert la reprise
+# après incident. Pour vérifier qu'elle est encore à jour :
+#     sudo md5sum /etc/systemd/system/scalping.service
+# et comparer au contenu ci-dessous.
+
+[Unit]
+Description=Scalping Radar - Outil d'aide a la decision
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/scalping
+ExecStartPre=-/usr/bin/docker rm -f scalping-radar
+ExecStartPre=-/usr/bin/mkdir -p /opt/scalping/data
+ExecStart=/usr/bin/docker run --name scalping-radar --env-file /opt/scalping/.env -v /opt/scalping/data:/app/data -v /var/log/scalping:/var/log/scalping:ro -v /opt/scalping/v2-assets:/app/frontend-react/dist/assets:ro -p 127.0.0.1:8000:8000 scalping-radar:latest
+ExecStop=/usr/bin/docker stop scalping-radar
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
