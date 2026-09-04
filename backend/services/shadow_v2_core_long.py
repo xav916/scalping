@@ -844,6 +844,71 @@ def _persist_setup(
             return False
 
 
+
+# ─── Bougies journalieres : cadencees, pas redemandees a chaque cycle ────
+
+# Une bougie journaliere change UNE FOIS PAR JOUR. Avant le 2026-09-04, ce
+# module la redemandait a chaque cycle — toutes les 3 minutes, pour 30 paires,
+# soit ~480 appels par paire et par jour la ou un seul suffirait.
+#
+# Mesure en prod avant correctif :
+#     refus 429             95 par 10 min   (~570 / heure)
+#     paires ignorees      502 en 6 heures
+#     appels interval=1day  30 par 10 min
+#
+# ⚠️ « Paire ignoree ce cycle » signifie que le radar N'A PAS VU ce marche.
+# 502 fois en six heures, en silence.
+#
+# 1 heure et non 24 : la bougie du JOUR se forme encore, et un cache fige sur
+# la journee gelerait la detection jusqu'au lendemain. A 1 h, on passe de ~480
+# appels quotidiens par paire a 24 — 20x moins — en gardant une lecture
+# fraiche a l'echelle d'une bougie journaliere.
+_TTL_1D_SEC = 3600.0
+_CACHE_1D: dict[str, tuple[list[Candle], float]] = {}
+
+
+async def _bougies_journalieres(pair: str) -> list[Candle]:
+    """60 bougies `1day` pour ``pair``, servies par le cache quand c'est possible.
+
+    Le cache sert DEUX buts, et le second compte autant que le premier :
+
+      1. moins d'appels — le quota revient au flux 5 min, celui qui trade ;
+      2. **amortir** les refus — un 429 ne fait plus disparaitre la paire tant
+         qu'une copie existe, meme perimee. Une copie d'il y a deux heures
+         vaut mieux qu'un marche invisible au radar.
+    """
+    import time
+
+    from backend.services.price_service import fetch_candles
+
+    hit = _CACHE_1D.get(pair)
+    if hit and hit[1] > time.monotonic():
+        return hit[0]
+
+    try:
+        bougies, _ = await fetch_candles(pair, interval="1day", outputsize=60)
+    except Exception as e:
+        if hit:
+            logger.warning(
+                "shadow: fetch Daily %s echoue (%s) — copie precedente servie",
+                pair, type(e).__name__)
+            return hit[0]
+        logger.warning(f"shadow: fetch Daily {pair} failed: {e}")
+        return []
+
+    # ⚠️ Une reponse VIDE avec un code 200 ne doit pas ecraser une copie
+    # utilisable : ce serait un succes apparent qui detruit de l'information.
+    if not bougies:
+        if hit:
+            logger.warning(
+                "shadow: fetch Daily %s rend 0 bougie — copie precedente servie", pair)
+            return hit[0]
+        return []
+
+    _CACHE_1D[pair] = (bougies, time.monotonic() + _TTL_1D_SEC)
+    return bougies
+
+
 async def run_shadow_log(
     h1_candles: dict[str, list[Candle]],
     cycle_at: datetime | None = None,
@@ -879,13 +944,9 @@ async def run_shadow_log(
         elif tf == "1d":
             # Fetch direct depuis Twelve Data — le scheduler V1 ne fournit
             # pas assez de H1 pour aggréger 30+ Daily (besoin 720 H1).
-            try:
-                from backend.services.price_service import fetch_candles
-                signal_candles, _ = await fetch_candles(
-                    pair, interval="1day", outputsize=60,
-                )
-            except Exception as e:
-                logger.warning(f"shadow: fetch Daily {pair} failed: {e}")
+            # ⚠️ CADENCE depuis le 2026-09-04, cf. `_bougies_journalieres`.
+            signal_candles = await _bougies_journalieres(pair)
+            if not signal_candles:
                 counts[pair] = 0
                 continue
         else:
