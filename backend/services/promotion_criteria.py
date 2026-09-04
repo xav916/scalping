@@ -110,7 +110,7 @@ def _porte_mecanique(poussees: list[sqlite3.Row]) -> dict[str, Any]:
         return {"verdict": EN_ATTENTE, "n": n, "requis": MIN_POUSSEES}
 
     acceptes = sum(1 for p in poussees if p["ok"])
-    sans_stop, erreurs = 0, []
+    sans_stop, instrumentees, erreurs = 0, 0, []
     for p in poussees:
         if not p["ok"]:
             continue
@@ -119,24 +119,61 @@ def _porte_mecanique(poussees: list[sqlite3.Row]) -> dict[str, Any]:
         except (ValueError, TypeError):
             erreurs.append("reponse illisible")
             continue
-        if not corps.get("sl_applied", False):
-            sans_stop += 1
+        # ⛔ L'ABSENCE DE TRACE N'EST PAS L'ABSENCE DU STOP.
+        #
+        # `sl_applied` n'existe dans les reponses du bridge que depuis le
+        # 2026-08-06. Une premiere version lisait « champ absent » comme
+        # « stop non pose » et condamnait ainsi WTI/USD (0 poussee
+        # instrumentee sur 54) et XAU/USD (12 sur 63) — deux paires saines,
+        # dont une qui trade sur le compte reel.
+        #
+        # Seul un `false` EXPLICITE compte comme un manquement. Le reste est
+        # non mesurable, et se dit.
+        if "sl_applied" in corps:
+            instrumentees += 1
+            if corps["sl_applied"] is False:
+                sans_stop += 1
         for cle in ("sl_error", "tp_error"):
             if corps.get(cle):
                 erreurs.append(f"{cle}={corps[cle]}")
 
     taux = acceptes / n
     details = {"n": n, "taux_acceptation": round(taux, 3),
+               "poussees_instrumentees": instrumentees,
                "stops_non_appliques": sans_stop, "erreurs": erreurs[:5]}
+
+    # ⛔ L'ORDRE COMPTE. Le taux d'acceptation se lit sur `ok`, colonne qui a
+    # toujours existe : il est mesurable meme quand la trace du stop manque.
+    # L'evaluer APRES la porte d'instrumentation laissait passer un symbole
+    # mal mappe (40 % de refus) sous l'etiquette « non mesurable ».
+    #
+    # 🔑 Un echec sur une dimension MESURABLE prime sur un « pas encore
+    # mesurable » ailleurs.
     motifs = []
     if taux < TAUX_ACCEPTATION_MIN:
         motifs.append(f"acceptation {taux:.0%} < {TAUX_ACCEPTATION_MIN:.0%}")
-    if sans_stop > STOPS_NON_APPLIQUES_MAX:
-        motifs.append(f"{sans_stop} ordre(s) sans stop chez le courtier")
     if erreurs:
         motifs.append(f"{len(erreurs)} erreur(s) SL/TP")
-    details["verdict"] = ECHEC if motifs else OK
-    details["motifs"] = motifs
+    if sans_stop > STOPS_NON_APPLIQUES_MAX:
+        motifs.append(f"{sans_stop} ordre(s) sans stop chez le courtier")
+    if motifs:
+        details["verdict"] = ECHEC
+        details["motifs"] = motifs
+        return details
+
+    # Rien de fautif dans ce qui est mesurable. Reste a savoir si le stop a pu
+    # etre verifie : trop peu de poussees instrumentees, on ne conclut pas.
+    # Le temps reglera ce cas seul, chaque nouvelle poussee portant la trace.
+    if instrumentees < MIN_POUSSEES:
+        details["verdict"] = EN_ATTENTE
+        details["requis"] = MIN_POUSSEES
+        details["motifs"] = [
+            f"seulement {instrumentees}/{n} poussee(s) portent la trace du "
+            f"stop (champ pose le 2026-08-06) — non mesurable"]
+        return details
+
+    details["verdict"] = OK
+    details["motifs"] = []
     return details
 
 

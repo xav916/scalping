@@ -50,12 +50,17 @@ def base(tmp_path, monkeypatch):
 
 
 def _push(chemin, pair="WTI/USD", dest="admin_legacy", ok=1,
-          sl_applied=True, tp_applied=True, sl_error=None, n=1):
+          sl_applied=True, tp_applied=True, sl_error=None, n=1,
+          instrumente=True):
     c = sqlite3.connect(chemin)
-    corps = json.dumps({"ok": bool(ok), "fill_price": 65.0, "volume": 0.01,
-                        "sl_applied": sl_applied, "tp_applied": tp_applied,
-                        "sl_error": sl_error, "tp_error": None,
-                        "protected": sl_applied, "ticket": 1})
+    champs = {"ok": bool(ok), "fill_price": 65.0, "volume": 0.01,
+              "sl_error": sl_error, "tp_error": None, "ticket": 1}
+    if instrumente:
+        # `sl_applied` n'existe dans les réponses que depuis le 2026-08-06 ;
+        # `instrumente=False` reproduit une poussée antérieure.
+        champs.update({"sl_applied": sl_applied, "tp_applied": tp_applied,
+                       "protected": sl_applied})
+    corps = json.dumps(champs)
     for _ in range(n):
         c.execute("INSERT INTO mt5_pushes (destination_id, pair, direction, "
                   "pushed_at, ok, bridge_response) VALUES (?,?,?,?,?,?)",
@@ -231,3 +236,49 @@ def test_une_paire_inconnue_ne_plante_pas(base):
     r = pc.evaluer_candidat("INCONNUE/USD", "admin_legacy")
     assert r["verdict"] == "EN_ATTENTE"
     assert r["n_clotures"] == 0
+
+
+# ── L'absence de trace n'est pas l'absence du stop ────────────────────────
+
+def test_des_poussees_SANS_la_trace_du_stop_ne_condamnent_pas(base):
+    """⛔ Le faux positif du 04/09, verrouillé.
+
+    `sl_applied` n'existe dans les réponses du bridge que depuis le 06/08. Une
+    première version lisait « champ absent » comme « stop non posé » et
+    condamnait WTI/USD (0 poussée instrumentée sur 54) et XAU/USD (12 sur 63)
+    — deux paires saines, dont une qui trade sur le compte RÉEL.
+    """
+    from backend.services import promotion_criteria as pc
+
+    _push(base, n=40, instrumente=False)
+    _trade(base, n=60)
+
+    m = pc.evaluer_candidat("WTI/USD", "admin_legacy")["portes"]["mecanique"]
+    assert m["verdict"] == "EN_ATTENTE", "non mesurable n'est pas fautif"
+    assert m["poussees_instrumentees"] == 0
+
+
+def test_un_stop_explicitement_FALSE_condamne_toujours(base):
+    """Le correctif ne doit pas désarmer la porte qu'il assouplit."""
+    from backend.services import promotion_criteria as pc
+
+    _push(base, n=25)
+    _push(base, n=1, sl_applied=False)
+    _trade(base, n=60)
+
+    m = pc.evaluer_candidat("WTI/USD", "admin_legacy")["portes"]["mecanique"]
+    assert m["verdict"] == "ECHEC"
+    assert m["stops_non_appliques"] == 1
+
+
+def test_un_melange_ancien_recent_juge_sur_les_mesurables(base):
+    """20 poussées instrumentées suffisent, même noyées dans de l'historique."""
+    from backend.services import promotion_criteria as pc
+
+    _push(base, n=30, instrumente=False)
+    _push(base, n=22, instrumente=True)
+    _trade(base, n=60)
+
+    m = pc.evaluer_candidat("WTI/USD", "admin_legacy")["portes"]["mecanique"]
+    assert m["verdict"] == "OK"
+    assert m["poussees_instrumentees"] == 22
