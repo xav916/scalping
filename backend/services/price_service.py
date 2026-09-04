@@ -58,8 +58,93 @@ _CANDLE_TTL_SEC = {
 _PRICE_TTL_SEC = int(os.getenv("PRICE_CACHE_TTL", "5"))
 
 # Limite de concurrence sur les appels Twelve Data : le plan Grow autorise
-# 55 req/min. 8 requêtes parallèles + un cycle de 200s = ~3 bursts/min → OK.
+# 55 req/min.
+#
+# ⛔ CE RAISONNEMENT NE SUFFIT PLUS (2026-09-04). « 8 requêtes parallèles + un
+# cycle de 200 s » était vrai avec moins de paires. L'univers a grandi — 29
+# paires x 2 intervalles + le shadow journalier — et la CONCURRENCE N'EST PAS
+# LE DEBIT : 8 requêtes en vol avec ~100 ms de latence, c'est jusqu'à 80
+# appels par seconde.
+#
+# Mesuré en prod :
+#     usage en régime          7 / 55     <- aucun dépassement en MOYENNE
+#     appels dans une minute 171          <- limite 55
+#     appels en UNE seconde   54
+#     paires ignorées        502 en 6 h
+#
+# Le débit moyen valait ~12/min. Tout le problème tenait à la concentration :
+# ~35 requêtes tirées en une à deux secondes, puis 178 s de silence.
 _TWELVEDATA_MAX_CONCURRENT = int(os.getenv("TWELVEDATA_MAX_CONCURRENT", "8"))
+
+# 50 et non 55 : une marge sous la limite du plan absorbe les réessais et les
+# appels faits hors de ce module. `0` désactive le limiteur (comportement
+# d'avant), pour pouvoir revenir en arrière sans redéploiement.
+_TWELVEDATA_MAX_PER_MIN = int(os.getenv("TWELVEDATA_MAX_PER_MIN", "50"))
+
+# ⛔ Plafond d'attente. Sans lui, une rafale de réessais ferait la queue
+# indéfiniment et un cycle pourrait dépasser son intervalle de 180 s — on
+# empilerait des cycles au lieu d'en rater un proprement.
+_TWELVEDATA_WAIT_MAX_SEC = float(os.getenv("TWELVEDATA_WAIT_MAX_SEC", "60"))
+
+
+class _SeauAJetons:
+    """Limiteur de débit à seau de jetons, sûr en concurrence.
+
+    Le seau part PLEIN : une rafale sous la capacité ne coûte aucune latence,
+    ce qui est le cas 90 % du temps. Au-delà, chaque jeton se regagne au
+    rythme ``par_minute / 60`` par seconde.
+
+    ``acquerir()`` rend ``False`` — sans attendre — quand l'attente
+    dépasserait ``plafond_attente``. Renoncer vite vaut mieux que faire
+    déborder un cycle sur le suivant.
+    """
+
+    def __init__(self, par_minute: int, plafond_attente: float):
+        self.par_minute = par_minute
+        self.plafond_attente = plafond_attente
+        self.jetons = float(par_minute)
+        self._dernier = time.monotonic()
+        self._verrou: asyncio.Lock | None = None
+
+    def _remplir(self) -> None:
+        maintenant = time.monotonic()
+        gagnes = (maintenant - self._dernier) * self.par_minute / 60.0
+        self.jetons = min(float(self.par_minute), self.jetons + gagnes)
+        self._dernier = maintenant
+
+    async def acquerir(self) -> bool:
+        if self.par_minute <= 0:
+            return True
+        if self._verrou is None:
+            # Paresseux comme le sémaphore : `asyncio.Lock()` veut une boucle.
+            self._verrou = asyncio.Lock()
+
+        # ⚠️ Le calcul de l'attente ET la consommation du jeton se font SOUS
+        # LE MEME VERROU. Les séparer laisserait deux coroutines consommer le
+        # même jeton — le limiteur laisserait alors passer plus que sa
+        # capacité, soit exactement le défaut qu'il corrige.
+        async with self._verrou:
+            self._remplir()
+            if self.jetons < 1.0:
+                manque = 1.0 - self.jetons
+                attente = manque * 60.0 / self.par_minute
+                if attente > self.plafond_attente:
+                    return False          # ⛔ on renonce SANS consommer
+                await asyncio.sleep(attente)
+                self._remplir()
+            self.jetons -= 1.0
+            return True
+
+
+_twelvedata_seau: "_SeauAJetons | None" = None
+
+
+def _get_seau() -> "_SeauAJetons":
+    global _twelvedata_seau
+    if _twelvedata_seau is None:
+        _twelvedata_seau = _SeauAJetons(
+            _TWELVEDATA_MAX_PER_MIN, _TWELVEDATA_WAIT_MAX_SEC)
+    return _twelvedata_seau
 
 # État interne (caches + semaphore).
 _candle_cache: dict[tuple[str, str], tuple[list[Candle], float]] = {}
@@ -202,6 +287,14 @@ async def fetch_current_price(pair: str) -> float | None:
     if not TWELVEDATA_API_KEY:
         return None
 
+    # ⛔ Le limiteur AVANT le semaphore : celui-ci borne la concurrence, celui-la
+    # le debit. Les deux sont necessaires, et ce n'est pas la meme chose — 8
+    # requetes en vol a 100 ms de latence font 80 appels/seconde.
+    if not await _get_seau().acquerir():
+        logger.warning(
+            "Twelve Data: debit sature, prix abandonne pour %s (attente > %ss)",
+            pair, _TWELVEDATA_WAIT_MAX_SEC)
+        return None
     async with _get_semaphore():
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
@@ -236,6 +329,17 @@ async def _fetch_twelvedata(
         logger.info("Pas de clé API Twelve Data configurée")
         return []
 
+    # ⛔ Le limiteur AVANT le semaphore : celui-ci borne la concurrence, celui-la
+    # le debit. Les deux sont necessaires, et ce n'est pas la meme chose — 8
+    # requetes en vol a 100 ms de latence font 80 appels/seconde.
+    if not await _get_seau().acquerir():
+        # ⚠️ Liste VIDE et non exception : l'appelant traite deja « pas de
+        # bougies » (il passe la paire pour ce cycle). Lever ferait remonter
+        # une saturation prevue comme une panne.
+        logger.warning(
+            "Twelve Data: debit sature, bougies abandonnees pour %s %s "
+            "(attente > %ss)", pair, interval, _TWELVEDATA_WAIT_MAX_SEC)
+        return []
     async with _get_semaphore():
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:

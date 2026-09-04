@@ -87,3 +87,23 @@ def soldes_caches_isoles():
     yield
     sizing._BALANCE_CACHE.clear()
     sizing._SOLDE_CONNU.clear()
+
+
+@pytest.fixture(autouse=True)
+def limiteur_debit_neuf():
+    """Remet le seau à jetons Twelve Data à zéro entre chaque test.
+
+    `price_service._twelvedata_seau` est un singleton de MODULE. Les tests qui
+    appellent `fetch_candles` ou `fetch_current_price` le vident, et ceux qui
+    suivent se voient alors refuser ou retarder — `test_run_shadow_log_empty_input`
+    et `test_e2e_no_data_pipeline` sont tombés ainsi, en suite seulement,
+    jamais isolés.
+
+    ⚠️ Troisième fois aujourd'hui que cet état global de module fait tomber un
+    test innocent : les caches de solde, le schéma d'admission, maintenant le
+    limiteur. La signature est toujours la même — vert isolé, rouge en suite.
+    """
+    from backend.services import price_service
+    price_service._twelvedata_seau = None
+    yield
+    price_service._twelvedata_seau = None
