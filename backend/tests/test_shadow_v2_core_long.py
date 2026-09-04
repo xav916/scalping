@@ -138,6 +138,22 @@ def test_ensure_schema_idempotent(temp_db):
 # ─── run_shadow_log ─────────────────────────────────────────────────────────
 
 
+def test_les_extras_n_ajoutent_QUE_du_1d_aux_paires_4h():
+    """⛔ Le pendant du test ci-dessus : ce que `extras` a le droit de faire.
+
+    Sans cette borne, la clé écartée de la comparaison deviendrait un angle
+    mort où n'importe quoi pourrait se glisser.
+    """
+    for pair, cfg in shadow.SHADOW_CONFIG.items():
+        for extra in cfg.get("extras", []):
+            assert cfg["tf"] == "4h", f"{pair}: extra sur un horizon non 4h"
+            assert extra["tf"] == "1d", f"{pair}: extra autre que 1d"
+            assert extra["system_id"] != cfg["system_id"], (
+                f"{pair}: system_id partagé — le second serait perdu en silence")
+            assert set(extra) <= {"tf", "system_id", "risk_pct", "patterns"}, (
+                f"{pair}: clé inattendue dans un extra")
+
+
 def test_run_shadow_log_empty_input(temp_db, monkeypatch):
     """Pas de candles → 0 nouveaux setups, pas d'exception.
 
@@ -806,26 +822,40 @@ _US_EQUITY_TECH_PAIRS = ("AAPL", "TSLA", "NVDA", "MSFT")
 
 def test_existing_pairs_config_unchanged_after_us_equities_addition():
     """Régression : XAU/XAG/WTI/ETH/XLI/XLK gardent EXACTEMENT leur config
-    d'avant l'ajout des actions US (patterns, system_id, risk_pct, tf)."""
-    assert shadow.SHADOW_CONFIG["XAU/USD"] == {
+    d'avant l'ajout des actions US (patterns, system_id, risk_pct, tf).
+
+    ⚠️ Mise à jour le 2026-09-04 : la clé ``extras`` a été ajoutée pour servir
+    un second horizon. Elle est écartée de la comparaison, mais **le contenu
+    protégé ne bouge pas** — l'horizon principal, les motifs, le `system_id` et
+    le risque sont toujours vérifiés au caractère près.
+
+    Écarter `extras` sans le dire aurait vidé ce test de son sens ; le
+    supprimer aurait retiré une protection qui a servi. Un test de régression
+    se met à jour, il ne se contourne pas.
+    """
+    def _sans_extras(pair):
+        return {k: v for k, v in shadow.SHADOW_CONFIG[pair].items()
+                if k != "extras"}
+
+    assert _sans_extras("XAU/USD") == {
         "tf": "4h",
         "patterns": shadow.CORE_LONG_PATTERNS,
         "system_id": "V2_CORE_LONG_XAUUSD_4H",
         "risk_pct": 0.005,
     }
-    assert shadow.SHADOW_CONFIG["XAG/USD"] == {
+    assert _sans_extras("XAG/USD") == {
         "tf": "4h",
         "patterns": shadow.CORE_LONG_PATTERNS,
         "system_id": "V2_CORE_LONG_XAGUSD_4H",
         "risk_pct": 0.003,
     }
-    assert shadow.SHADOW_CONFIG["WTI/USD"] == {
+    assert _sans_extras("WTI/USD") == {
         "tf": "4h",
         "patterns": shadow.WTI_OPTIMAL_PATTERNS,
         "system_id": "V2_WTI_OPTIMAL_WTIUSD_4H",
         "risk_pct": 0.003,
     }
-    assert shadow.SHADOW_CONFIG["ETH/USD"] == {
+    assert _sans_extras("ETH/USD") == {
         "tf": "1d",
         # Élargi le 2026-08-08 : + range_bounce_up, pour sortir des
         # 1,31 setup/semaine qui rendaient la route Kraken inerte.
@@ -833,13 +863,13 @@ def test_existing_pairs_config_unchanged_after_us_equities_addition():
         "system_id": "V2_CORE_LONG_ETHUSD_1D",
         "risk_pct": 0.0025,
     }
-    assert shadow.SHADOW_CONFIG["XLI"] == {
+    assert _sans_extras("XLI") == {
         "tf": "1d",
         "patterns": shadow.TIGHT_LONG_PATTERNS,
         "system_id": "V2_TIGHT_LONG_XLI_1D",
         "risk_pct": 0.004,
     }
-    assert shadow.SHADOW_CONFIG["XLK"] == {
+    assert _sans_extras("XLK") == {
         "tf": "1d",
         "patterns": shadow.WTI_OPTIMAL_PATTERNS,
         "system_id": "V2_WTI_OPTIMAL_XLK_1D",

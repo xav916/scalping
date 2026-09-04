@@ -103,7 +103,13 @@ def limiteur_debit_neuf():
     test innocent : les caches de solde, le schéma d'admission, maintenant le
     limiteur. La signature est toujours la même — vert isolé, rouge en suite.
     """
-    from backend.services import price_service
+    from backend.services import price_service, shadow_v2_core_long
     price_service._twelvedata_seau = None
+    # ⚠️ QUATRIEME etat global de module a polluer la suite le meme jour :
+    # caches de solde, schema d'admission, limiteur, et maintenant le cache
+    # des bougies journalieres. Toujours la meme signature — vert isole,
+    # rouge en suite, et le test qui tombe n'est jamais celui qui pollue.
+    shadow_v2_core_long._CACHE_1D.clear()
     yield
     price_service._twelvedata_seau = None
+    shadow_v2_core_long._CACHE_1D.clear()

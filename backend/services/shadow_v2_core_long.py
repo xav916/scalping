@@ -99,18 +99,27 @@ SHADOW_CONFIG: dict[str, dict[str, Any]] = {
         "patterns": CORE_LONG_PATTERNS,
         "system_id": "V2_CORE_LONG_XAUUSD_4H",
         "risk_pct": 0.005,  # maxDD 6y modéré 53%
+        # Horizon 1 jour ajoute le 2026-09-04 : ADDITIF, le 4h
+        # ci-dessus continue de servir le compte reel.
+        "extras": [{"tf": "1d", "system_id": "V2_CORE_LONG_XAUUSD_1D"}],
     },
     "XAG/USD": {
         "tf": "4h",
         "patterns": CORE_LONG_PATTERNS,
         "system_id": "V2_CORE_LONG_XAGUSD_4H",
         "risk_pct": 0.003,  # maxDD 6y élevé 124%
+        # Horizon 1 jour ajoute le 2026-09-04 : ADDITIF, le 4h
+        # ci-dessus continue de servir le compte reel.
+        "extras": [{"tf": "1d", "system_id": "V2_CORE_LONG_XAGUSD_1D"}],
     },
     "WTI/USD": {
         "tf": "4h",
         "patterns": WTI_OPTIMAL_PATTERNS,
         "system_id": "V2_WTI_OPTIMAL_WTIUSD_4H",
         "risk_pct": 0.003,  # maxDD 5.5y élevé 123%, driver politique
+        # Horizon 1 jour ajoute le 2026-09-04 : ADDITIF, le 4h
+        # ci-dessus continue de servir le compte reel.
+        "extras": [{"tf": "1d", "system_id": "V2_WTI_OPTIMAL_WTIUSD_1D"}],
     },
     "ETH/USD": {
         "tf": "1d",
@@ -185,6 +194,12 @@ SHADOW_CONFIG: dict[str, dict[str, Any]] = {
             "patterns": FOREX_MEASURE_PATTERNS,
             "system_id": f"V2_MEASURE_{pair.replace('/', '')}_4H",
             "risk_pct": 0.0025,  # ⚠️ par analogie avec ETH, NON mesuré
+            # Horizon 1 jour ajouté le 2026-09-04 : ADDITIF — le 4h ci-dessus
+            # continue de servir le compte réel, qui le trade activement.
+            "extras": [{
+                "tf": "1d",
+                "system_id": f"V2_MEASURE_{pair.replace('/', '')}_1D",
+            }],
         }
         for pair in (
             "EUR/JPY", "GBP/JPY", "EUR/GBP", "USD/JPY", "AUD/USD",
@@ -389,6 +404,58 @@ SHADOW_CONFIG: dict[str, dict[str, Any]] = {
     # ⚠️ XLI et XLK RESTENT : « non tranches » (p = 0,243 et 0,239 sur vingt
     # ans) n'est pas « negatif », et ils sont en journalier.
 }
+
+
+def _configs_par_horizon() -> list[tuple[str, dict[str, Any]]]:
+    """``[(paire, cfg), ...]`` — un element par (paire, horizon) servi.
+
+    `SHADOW_CONFIG` n'acceptait qu'un horizon par paire. Les 12 paires de la
+    whitelist demo y sont declarees en 4h — celui que le compte REEL trade
+    activement. Les passer en 1 jour aurait REMPLACE leur 4h et casse ce flux.
+
+    Les horizons supplementaires sont donc ADDITIFS, sous la cle ``extras``,
+    et l'horizon principal vient toujours EN PREMIER :
+
+        "XAU/USD": {"tf": "4h", ..., "extras": [{"tf": "1d", "system_id": ...}]}
+
+    ⚠️ Un extra HERITE de ce qu'il ne declare pas (motifs, risque). Redeclarer
+    ces champs partout garantirait qu'un des deux finisse par diverger — la
+    lecon de `source_du_setup` et de `_assembler_setup`.
+
+    ⛔ Le `system_id`, lui, NE s'herite PAS et doit etre UNIQUE. `shadow_setups`
+    porte un `UNIQUE (system_id, bar_timestamp)` : deux horizons qui le
+    partageraient se recouvriraient, l'insertion du second echouerait EN
+    SILENCE, et on croirait mesurer deux series en n'en ayant qu'une. La
+    verification leve plutot que d'ecrire une configuration qui perd des
+    donnees sans le dire.
+    """
+    sorties: list[tuple[str, dict[str, Any]]] = []
+    vus: dict[str, str] = {}
+
+    def _enregistrer(pair: str, cfg: dict[str, Any]) -> None:
+        sid = cfg.get("system_id")
+        if not sid:
+            raise ValueError(
+                f"shadow: {pair}/{cfg.get('tf')} sans system_id — "
+                "il ne s'herite pas, il doit etre declare")
+        if sid in vus:
+            raise ValueError(
+                f"shadow: system_id '{sid}' partage par {vus[sid]} et "
+                f"{pair}/{cfg.get('tf')} — UNIQUE(system_id, bar_timestamp) "
+                "ferait disparaitre le second en silence")
+        vus[sid] = f"{pair}/{cfg.get('tf')}"
+        sorties.append((pair, cfg))
+
+    for pair, cfg in SHADOW_CONFIG.items():
+        principal = {k: v for k, v in cfg.items() if k != "extras"}
+        _enregistrer(pair, principal)
+        for extra in cfg.get("extras", []):
+            fusionne = {**principal, **extra}
+            fusionne.pop("extras", None)
+            fusionne["system_id"] = extra.get("system_id")
+            _enregistrer(pair, fusionne)
+    return sorties
+
 
 # Liste des paires à observer (dérivé de SHADOW_CONFIG)
 SHADOW_PAIRS: list[str] = list(SHADOW_CONFIG.keys())
@@ -929,7 +996,9 @@ async def run_shadow_log(
     cycle_at = cycle_at or datetime.now(timezone.utc)
 
     counts: dict[str, int] = {}
-    for pair, cfg in SHADOW_CONFIG.items():
+    # ⚠️ Une paire peut apparaitre PLUSIEURS fois — une par horizon servi.
+    # `counts` est donc cumule par paire, pas ecrase.
+    for pair, cfg in _configs_par_horizon():
         tf = cfg["tf"]
         pair_patterns = cfg["patterns"]
 
@@ -938,7 +1007,7 @@ async def run_shadow_log(
         if tf == "4h":
             h1 = h1_candles.get(pair, [])
             if len(h1) < 30:
-                counts[pair] = 0
+                counts.setdefault(pair, 0)
                 continue
             signal_candles = aggregate_to_h4(h1)
         elif tf == "1d":
@@ -947,15 +1016,15 @@ async def run_shadow_log(
             # ⚠️ CADENCE depuis le 2026-09-04, cf. `_bougies_journalieres`.
             signal_candles = await _bougies_journalieres(pair)
             if not signal_candles:
-                counts[pair] = 0
+                counts.setdefault(pair, 0)
                 continue
         else:
             logger.warning(f"shadow: timeframe non supporté pour {pair}: {tf}")
-            counts[pair] = 0
+            counts.setdefault(pair, 0)
             continue
 
         if len(signal_candles) < 30:
-            counts[pair] = 0
+            counts.setdefault(pair, 0)
             continue
 
         n_new = 0
@@ -1135,7 +1204,7 @@ async def run_shadow_log(
                         f"(veto matched: {veto_eval.get('rules_matched')})"
                     )
 
-        counts[pair] = n_new
+        counts[pair] = counts.get(pair, 0) + n_new
 
     return counts
 
