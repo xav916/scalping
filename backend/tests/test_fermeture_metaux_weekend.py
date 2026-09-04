@@ -52,10 +52,34 @@ def s():
     return mod
 
 
-def _pos(ticket=1, symbol="XAUUSD", type_="sell", profit=17.67, volume=0.01):
-    return {"ticket": ticket, "symbol": symbol, "type": type_,
-            "volume": volume, "profit": profit, "price_open": 4475.2,
-            "price_current": 4454.5, "sl": 4538.64, "tp": 4361.01}
+def _pos(ticket=1, symbol="XAUUSD", type_="sell", profit=17.67, volume=0.01,
+         part=None, tp=4361.01):
+    """Une position ouverte.
+
+    ``part`` fixe la fraction du chemin DEJA parcourue vers l'objectif — c'est
+    elle qui decide desormais si la position se ferme. Le prix courant en est
+    deduit, pour que le jeu d'essai dise la meme chose que la regle.
+    """
+    entree = 4475.2
+    p = {"ticket": ticket, "symbol": symbol, "type": type_,
+         "volume": volume, "profit": profit, "price_open": entree,
+         "price_current": 4454.5, "sl": 4538.64, "tp": tp}
+    if part is not None and tp:
+        vente = str(type_).lower().startswith("s")
+        distance = (entree - tp) if vente else (tp - entree)
+        acquis = part * distance
+        p["price_current"] = entree - acquis if vente else entree + acquis
+    return p
+
+
+def _au_seuil(ticket=1, symbol="XAUUSD", **kw):
+    """Une position qui a franchi le tiers — donc a fermer."""
+    return _pos(ticket, symbol, part=0.40, **kw)
+
+
+def _trop_tot(ticket=1, symbol="XAUUSD", **kw):
+    """Une position sous le tiers — donc a garder."""
+    return _pos(ticket, symbol, part=0.10, **kw)
 
 
 def _quand(jour: int, heure: int, minute: int) -> datetime:
@@ -95,26 +119,90 @@ def test_les_bornes_sont_INCLUSIVES(s):
 
 # ── ⛔ Tout ce dont le marche FERME (elargi le 2026-09-04) ────────────────
 
-def test_on_ferme_TOUT_ce_dont_le_marche_ferme(s):
-    """Le forex et le petrole subissent le gap du week-end comme le metal."""
-    positions = [_pos(1, "XAUUSD"), _pos(2, "XAGUSD"), _pos(3, "EURUSD"),
-                 _pos(4, "USDJPY"), _pos(5, "GOLD"), _pos(6, "WTIUSD"),
-                 _pos(7, "GBPUSD")]
+def test_on_ferme_TOUT_ce_dont_le_marche_ferme_SI_le_seuil_est_atteint(s):
+    """Le forex et le petrole subissent le gap du week-end comme le metal —
+    mais seules les positions assez avancees sont fermees."""
+    positions = [_au_seuil(1, "XAUUSD"), _au_seuil(2, "XAGUSD"),
+                 _au_seuil(3, "EURUSD"), _au_seuil(4, "USDJPY"),
+                 _au_seuil(5, "GOLD"), _au_seuil(6, "WTIUSD"),
+                 _au_seuil(7, "GBPUSD")]
     fermer, laissees = s.a_fermer(positions)
 
-    assert [p["ticket"] for p in fermer] == [1, 2, 3, 4, 5, 6, 7]
+    assert [p["ticket"] for p, _m in fermer] == [1, 2, 3, 4, 5, 6, 7]
     assert laissees == []
 
 
 def test_la_crypto_reste_OUVERTE(s):
     """⛔ Son marche tourne le week-end : la fermer ne protege d'aucun gap et
     lui coute deux jours de marche."""
-    positions = [_pos(1, "EURUSD"), _pos(2, "ETHUSD"), _pos(3, "BCHUSD"),
-                 _pos(4, "XAUUSD"), _pos(5, "BTCUSD")]
+    positions = [_au_seuil(1, "EURUSD"), _au_seuil(2, "ETHUSD"),
+                 _au_seuil(3, "BCHUSD"), _au_seuil(4, "XAUUSD"),
+                 _au_seuil(5, "BTCUSD")]
     fermer, laissees = s.a_fermer(positions)
 
-    assert [p["ticket"] for p in fermer] == [1, 4]
-    assert [p["ticket"] for p in laissees] == [2, 3, 5]
+    assert [p["ticket"] for p, _m in fermer] == [1, 4]
+    assert [p["ticket"] for p, _m in laissees] == [2, 3, 5]
+    assert all("week-end" in motif for _p, motif in laissees)
+
+
+# ── 🔑 La regle du TIERS (2026-09-04) ─────────────────────────────────────
+
+def test_sous_le_TIERS_on_ATTEND(s):
+    """🔑 Le coeur de la demande : « sinon attendre ».
+
+    ⛔ La position traverse le week-end plutot que d'etre bradee a mi-chemin
+    sous la contrainte d'une horloge. C'est un risque de gap assume, pas un
+    oubli — et le motif le dit.
+    """
+    fermer, laissees = s.a_fermer([_trop_tot(1, "XAUUSD")])
+
+    assert fermer == []
+    assert len(laissees) == 1
+    assert "10% du chemin" in laissees[0][1], laissees[0][1]
+
+
+def test_PILE_au_tiers_ca_ferme(s):
+    """⛔ Le seuil est inclusif, et doit le rester a la limite EXACTE.
+
+    Sans l'epsilon importe de la sonde des paliers, `4475,2 - 114,19/3` puis
+    la soustraction rendent 0,33333315 au lieu de 0,3333333 : une position
+    pile au tiers ne declencherait pas, a cause d'une erreur de
+    representation a une magnitude de 4 475.
+    """
+    fermer, laissees = s.a_fermer([_pos(1, "XAUUSD", part=1 / 3)])
+
+    assert [p["ticket"] for p, _m in fermer] == [1], laissees
+
+
+def test_le_seuil_est_reglable(s):
+    """La regle est un reglage, pas une constante enfouie."""
+    p = _pos(1, "XAUUSD", part=0.25)
+    assert s.a_fermer([p], seuil=0.20)[0] != []
+    assert s.a_fermer([p], seuil=0.50)[0] == []
+
+
+def test_une_position_SANS_objectif_reste_ouverte_et_le_DIT(s):
+    """⛔ On ne decide pas dans le noir.
+
+    Sans objectif, « un tiers du chemin » n'a aucun sens : la regle de Xavier
+    ne peut pas s'appliquer. On garde la position et on NOMME la raison —
+    la confondre avec « pas assez avancee » ferait passer une donnee cassee
+    pour un choix de trading.
+    """
+    fermer, laissees = s.a_fermer([_pos(1, "XAUUSD", tp=0)])
+
+    assert fermer == []
+    assert "non mesurable" in laissees[0][1], laissees[0][1]
+
+
+def test_un_objectif_du_MAUVAIS_COTE_n_est_pas_pris_pour_un_avancement(s):
+    """⚠️ Mesure d'aout : 14 % des TP stockes etaient du mauvais cote de
+    l'entree reelle. Un tel TP donnerait une part negative ou absurde."""
+    fermer, laissees = s.a_fermer(
+        [_pos(1, "XAUUSD", type_="sell", tp=4600.0)])
+
+    assert fermer == []
+    assert "non mesurable" in laissees[0][1], laissees[0][1]
 
 
 @pytest.mark.parametrize("symbole", ["AUDUSD", "USDCAD", "CADCHF", "AUDCAD"])
@@ -135,16 +223,17 @@ def test_aucune_position_ne_fait_pas_lever(s):
 
 
 def test_une_ligne_malformee_est_ignoree(s):
-    fermer, laissees = s.a_fermer([None, "bruit", {"symbol": "XAUUSD"}])
-    assert fermer == [{"symbol": "XAUUSD"}]
-    assert laissees == []
+    fermer, laissees = s.a_fermer([None, "bruit", _au_seuil(1, "XAUUSD")])
+    assert [p["ticket"] for p, _m in fermer] == [1]
 
 
-def test_un_symbole_ILLISIBLE_est_ferme_par_prudence(s):
-    """⛔ Ne pas savoir ce que c'est n'autorise pas a le laisser passer le
-    week-end : le defaut penche du cote ou l'on ferme."""
+def test_un_symbole_ILLISIBLE_ne_ferme_PAS_a_l_aveugle(s):
+    """⛔ Un symbole qu'on ne sait pas nommer n'a pas non plus de prix
+    exploitable : il ressort « non mesurable », pas ferme d'office. On garde,
+    et on le dit — decider sans mesure serait le vrai danger."""
     fermer, laissees = s.a_fermer([{"symbol": None}, {"symbol": ""}])
-    assert len(fermer) == 2 and laissees == []
+    assert fermer == []
+    assert all("non mesurable" in motif for _p, motif in laissees)
 
 
 # ── Le message ─────────────────────────────────────────────────────────────
@@ -231,7 +320,8 @@ def test_dans_la_fenetre_metal_ET_forex_sont_fermes(s, monkeypatch):
     monkeypatch.delenv("DRY_RUN", raising=False)
     monkeypatch.setattr(s, "dans_la_fenetre", lambda *a: True)
     monkeypatch.setattr(s, "DESTINATIONS_SURVEILLEES", ("admin_live",))
-    appels = _armer(s, monkeypatch, [_pos(ticket=1357145568), _pos(9, "EURUSD")])
+    appels = _armer(s, monkeypatch,
+                    [_au_seuil(1357145568), _au_seuil(9, "EURUSD")])
     assert s.main() == 0
     assert [c["ticket"] for c in appels["fermetures"]] == [1357145568, 9]
     assert appels["fermetures"][0]["raison"] == "pre_weekend"
@@ -256,7 +346,8 @@ def test_le_FOREX_est_desormais_ferme_LUI_AUSSI(s, monkeypatch):
     monkeypatch.setattr(s, "dans_la_fenetre", lambda *a: True)
     monkeypatch.setattr(s, "DESTINATIONS_SURVEILLEES", ("admin_live",))
     appels = _armer(s, monkeypatch,
-                    [_pos(1, "EURUSD"), _pos(2, "USDJPY"), _pos(3, "ETHUSD")])
+                    [_au_seuil(1, "EURUSD"), _au_seuil(2, "USDJPY"),
+                     _au_seuil(3, "ETHUSD")])
     assert s.main() == 0
     assert [c["ticket"] for c in appels["fermetures"]] == [1, 2], (
         "le forex se ferme, la crypto non")
@@ -277,7 +368,7 @@ def test_un_refus_du_courtier_rend_un_code_d_echec(s, monkeypatch):
     monkeypatch.delenv("DRY_RUN", raising=False)
     monkeypatch.setattr(s, "dans_la_fenetre", lambda *a: True)
     monkeypatch.setattr(s, "DESTINATIONS_SURVEILLEES", ("admin_live",))
-    appels = _armer(s, monkeypatch, [_pos()], fermeture_ok=False)
+    appels = _armer(s, monkeypatch, [_au_seuil()], fermeture_ok=False)
     assert s.main() == 1
     assert "NON FERMEE" in appels["notifs"][0][1]
 
