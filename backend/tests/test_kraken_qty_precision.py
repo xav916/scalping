@@ -17,7 +17,7 @@ import pathlib
 import pytest
 
 _BRIDGE = (pathlib.Path(__file__).resolve().parents[2]
-           / "kraken-futures-bridge" / "bridge.py")
+           / "kraken-bridge" / "bridge.py")
 
 
 def _charger():

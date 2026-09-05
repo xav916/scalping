@@ -553,13 +553,96 @@ def account():
             "available_margin_usd": float(flex.get("availableMargin", 0.0)),
             "initial_margin_usd": float(flex.get("initialMargin", 0.0)),
             "maintenance_margin_usd": float(flex.get("maintenanceMargin", 0.0)),
-            "unrealized_pnl_usd": float(flex.get("unrealizedFunding", 0.0)),
+            # ⛔ Ce champ lisait `unrealizedFunding` sous le nom de P&L latent :
+            # deux grandeurs sans rapport, l'une a cinq zeros devant. Personne
+            # ne le consommait encore — c'etait un piege arme, pas un degat.
+            "unrealized_pnl_usd": float(flex.get("unrealizedPnl", 0.0)),
+            "unrealized_funding_usd": float(flex.get("unrealizedFunding", 0.0)),
             "raw_flex": flex,
             "raw_cash": accounts.get("cash", {}),
         })
     except Exception as e:
         logger.exception("account failed")
         return jsonify({"ok": False, "error": str(e)}), 500
+
+
+_EPOQUE_UNIX = "1970-01-01"
+
+
+def ouvertures_par_symbole(fills: list, positions: list) -> dict:
+    """Rend ``{symbole: date d'ouverture ISO | None}`` pour chaque position vivante.
+
+    ⛔ **Kraken ne sait pas dire quand une position a ete ouverte.**
+    `/api/v3/openpositions` rend `fillTime = 1970-01-01T00:00:00.000Z` pour
+    TOUTES les positions. Le bridge recopiait cette valeur telle quelle.
+
+    Une date fausse est pire qu'une date absente : un age calcule depuis 1970
+    vaut ~490 000 heures, ce qui fait passer toute position pour eternelle
+    aupres d'une porte de duree, et empoisonne toute mediane de detention sans
+    rien signaler. Meme famille que `entry_price=0` cote reel — **`None`,
+    jamais une valeur qui a l'air vraie.**
+
+    🔑 La donnee existe dans `/api/v3/fills`, qui porte de vrais horodatages.
+    On rejoue donc les executions du symbole, du plus ancien au plus recent, en
+    suivant le net signe : l'ouverture est le fill qui a fait passer le net de
+    zero (ou du sens contraire) au sens actuel. Un renfort ne rajeunit pas la
+    position ; un passage par zero, ou un retournement, redemarre l'horloge.
+
+    ⛔ **La reconstruction doit S'ACCORDER avec la position reelle.** L'historique
+    des fills est borne : si le net reconstruit ne retrouve ni le sens ni la
+    taille de la position ouverte, l'ouverture est hors fenetre et on rend
+    `None` — jamais une date empruntee a la mauvaise position.
+    """
+    lisibles: list = []
+    for f in fills or []:
+        try:
+            sym = f.get("symbol")
+            t = f.get("fillTime") or f.get("fill_time")
+            taille = float(f.get("size") or 0)
+            sens = -1.0 if str(f.get("side", "")).lower() == "sell" else 1.0
+            if not sym or not t or not taille:
+                continue
+            # ⛔ L'epoque Unix n'est pas une date, c'est un trou.
+            if str(t).startswith(_EPOQUE_UNIX):
+                continue
+            lisibles.append((str(t), sym, sens * taille))
+        except (TypeError, ValueError):
+            continue
+    # Kraken rend les executions du plus RECENT au plus ancien.
+    lisibles.sort(key=lambda x: x[0])
+
+    net: dict = {}
+    ouvert_depuis: dict = {}
+    for t, sym, delta in lisibles:
+        avant = net.get(sym, 0.0)
+        apres = avant + delta
+        if avant == 0.0 or (avant > 0) != (apres > 0):
+            # Ouverture, reouverture apres un passage a plat, ou retournement.
+            ouvert_depuis[sym] = t
+        if abs(apres) < 1e-12:
+            apres = 0.0
+            ouvert_depuis.pop(sym, None)
+        net[sym] = apres
+
+    sortie: dict = {}
+    for p in positions or []:
+        sym = p.get("symbol")
+        if not sym:
+            continue
+        try:
+            taille = abs(float(p.get("size") or 0))
+        except (TypeError, ValueError):
+            sortie[sym] = None
+            continue
+        signe = -1.0 if str(p.get("side", "")).lower() == "short" else 1.0
+        attendu = signe * taille
+        reconstruit = net.get(sym)
+        accorde = (
+            reconstruit is not None
+            and abs(reconstruit - attendu) <= max(1e-6, abs(attendu) * 1e-6)
+        )
+        sortie[sym] = ouvert_depuis.get(sym) if accorde else None
+    return sortie
 
 
 @app.route("/positions", methods=["GET"])
@@ -571,15 +654,36 @@ def positions():
         if data.get("result") != "success":
             return jsonify({"ok": False, "error": "kraken response not success", "raw": data}), 503
         raw_positions = data.get("openPositions", []) or []
+
+        # ⛔ L'age se RECONSTRUIT depuis les fills : Kraken rend l'epoque Unix
+        # dans `fillTime`. Lecture non bloquante — ne pas savoir depuis quand
+        # une position est ouverte ne doit jamais empecher de la LIRE. Un echec
+        # ici rend `fill_time: null`, et les positions sortent quand meme.
+        ouvertures: dict = {}
+        try:
+            hist = _signed_request("GET", "/api/v3/fills")
+            if hist.get("result") == "success":
+                ouvertures = ouvertures_par_symbole(
+                    hist.get("fills", []) or [], raw_positions)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("positions: age indisponible (fills injoignables) : %s", e)
+
         cleaned = []
         for p in raw_positions:
+            sym = p.get("symbol")
             cleaned.append({
-                "symbol": p.get("symbol"),
+                "symbol": sym,
                 "side": p.get("side"),  # "long" ou "short"
                 "size": float(p.get("size", 0.0)),
                 "price": float(p.get("price", 0.0)),
                 "unrealizedFunding": float(p.get("unrealizedFunding", 0.0)),
-                "fillTime": p.get("fillTime"),
+                # ⚠️ Le P&L latent etait JETE ici alors que Kraken le rend.
+                "unrealized_pnl_usd": float(p.get("unrealizedPnl", 0.0)),
+                # ⛔ Reconstruit, et `None` quand il ne l'est pas. La valeur
+                # brute de Kraken (`fillTime`) vaut 1970 pour tout le monde :
+                # elle n'est plus servie, meme pas sous son nom d'origine, pour
+                # qu'aucun appelant ne puisse la prendre pour une date.
+                "fill_time": ouvertures.get(sym),
             })
         return jsonify({"ok": True, "count": len(cleaned), "positions": cleaned})
     except Exception as e:
