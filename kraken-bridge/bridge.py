@@ -556,8 +556,15 @@ def account():
             # ⛔ Ce champ lisait `unrealizedFunding` sous le nom de P&L latent :
             # deux grandeurs sans rapport, l'une a cinq zeros devant. Personne
             # ne le consommait encore — c'etait un piege arme, pas un degat.
-            "unrealized_pnl_usd": float(flex.get("unrealizedPnl", 0.0)),
-            "unrealized_funding_usd": float(flex.get("unrealizedFunding", 0.0)),
+            #
+            # ⚠️ Et le corriger en `unrealizedPnl` ne suffisait pas : Kraken
+            # n'expose PAS cette cle sur le compte flex. Charge du 05/09 :
+            #     pnl               -0,0302178   (latent MOINS le funding)
+            #     totalUnrealized   -0,0299323   <- le P&L latent des positions
+            #     unrealizedFunding +0,0002855
+            "unrealized_pnl_usd": flottant_ou_none(flex, "totalUnrealized", "unrealizedPnl"),
+            "unrealized_funding_usd": flottant_ou_none(flex, "unrealizedFunding"),
+            "pnl_net_usd": flottant_ou_none(flex, "pnl"),
             "raw_flex": flex,
             "raw_cash": accounts.get("cash", {}),
         })
@@ -567,6 +574,24 @@ def account():
 
 
 _EPOQUE_UNIX = "1970-01-01"
+
+
+def flottant_ou_none(source: dict, *cles: str):
+    """Premiere cle PRESENTE, en flottant — et ``None`` si aucune n'y est.
+
+    ⛔ `float(d.get(k, 0.0))` transforme une absence en **zero**. Sur un P&L,
+    zero se lit « le compte est a l'equilibre » quand la verite est « je ne
+    sais pas ». C'est la faute exacte de `entry_price=0` cote reel, et celle
+    que je viens de commettre en corrigeant ce champ : Kraken n'expose pas
+    `unrealizedPnl` sur le compte flex, donc le defaut s'appliquait toujours.
+    """
+    for c in cles:
+        if c in source:
+            try:
+                return float(source[c])
+            except (TypeError, ValueError):
+                return None
+    return None
 
 
 def ouvertures_par_symbole(fills: list, positions: list) -> dict:
@@ -677,8 +702,9 @@ def positions():
                 "size": float(p.get("size", 0.0)),
                 "price": float(p.get("price", 0.0)),
                 "unrealizedFunding": float(p.get("unrealizedFunding", 0.0)),
-                # ⚠️ Le P&L latent etait JETE ici alors que Kraken le rend.
-                "unrealized_pnl_usd": float(p.get("unrealizedPnl", 0.0)),
+                # ⚠️ Le P&L latent etait JETE ici alors que Kraken le rend
+                # — et `None` s'il ne le rend pas, jamais un zero.
+                "unrealized_pnl_usd": flottant_ou_none(p, "unrealizedPnl"),
                 # ⛔ Reconstruit, et `None` quand il ne l'est pas. La valeur
                 # brute de Kraken (`fillTime`) vaut 1970 pour tout le monde :
                 # elle n'est plus servie, meme pas sous son nom d'origine, pour
@@ -1313,6 +1339,128 @@ def place_order():
         # recalage a bien eu lieu.
         "stops_source": stops_source,
     })
+
+
+@app.route("/position/close", methods=["POST"])
+@require_bridge_key
+def position_close():
+    """Ferme UNE position, et elle seule.
+
+    ⛔ Avant le 05/09, ce bridge ne savait fermer que `/kill` : annuler tous les
+    ordres et solder tout le compte. Fermer une ligne obligeait a fermer les
+    autres. **Un interrupteur general n'est pas un outil de precision.**
+    Meme route que celle posee sur les deux bridges MT5 le 28/08, jamais
+    propagee ici — un correctif ne se propage pas seul aux routes jumelles.
+
+    Corps : ``{"symbol": "PF_XLMUSD"}`` ou ``{"pair": "XLM/USD"}``, plus une
+    ``raison`` libre qui suit la fermeture jusqu'au journal — c'est elle qui
+    distinguera plus tard une fermeture automatique d'une fermeture a la main.
+
+    ⛔ **La position est cherchee CHEZ LE COURTIER, et sa taille vient de lui.**
+    Une taille fournie par l'appelant peut sur-fermer — donc RETOURNER la
+    position — ou sous-fermer en silence. `reduceOnly` borne le degat, il ne
+    l'evite pas. Symbole introuvable ⇒ **404**, jamais « ferme ce qui y
+    ressemble ».
+
+    ⛔ **Le stop est un ordre independant sur Kraken.** Fermer la position le
+    laisse vivant, et `/openorders` annoncerait une protection pour une
+    position qui n'existe plus. On annule donc les ordres `reduceOnly` du
+    symbole — **APRES** la fermeture, jamais avant : si la fermeture echoue et
+    que le stop est deja annule, la position reste ouverte et NUE. Ce serait
+    l'incident du 2026-08-05 provoque par son propre remede.
+    """
+    corps = request.get_json(silent=True) or {}
+    raison = str(corps.get("raison") or corps.get("reason") or "non precisee")
+
+    symbole = corps.get("symbol")
+    if not symbole and corps.get("pair"):
+        symbole = _resolve_symbol(str(corps["pair"]))
+        if not symbole:
+            return jsonify({"ok": False, "error": "unsupported pair " + str(corps["pair"]),
+                            "raison": raison}), 400
+    if not symbole:
+        return jsonify({"ok": False, "error": "symbol ou pair requis",
+                        "raison": raison}), 400
+    symbole = str(symbole)
+
+    try:
+        pos_data = _signed_request("GET", "/api/v3/openpositions")
+        if pos_data.get("result") != "success":
+            return jsonify({"ok": False, "error": "kraken response not success",
+                            "raison": raison}), 503
+
+        cible = None
+        for p in pos_data.get("openPositions", []) or []:
+            if p.get("symbol") == symbole:
+                cible = p
+                break
+        if cible is None:
+            logger.info("position/close : %s introuvable chez le courtier (raison=%s)",
+                        symbole, raison)
+            return jsonify({"ok": False, "error": "position introuvable",
+                            "symbol": symbole, "raison": raison}), 404
+
+        taille = abs(float(cible.get("size") or 0.0))
+        if taille <= 0:
+            return jsonify({"ok": False, "error": "taille nulle chez le courtier",
+                            "symbol": symbole, "raison": raison}), 404
+        sens_fermeture = "sell" if str(cible.get("side", "")).lower() == "long" else "buy"
+
+        envoi = _signed_request("POST", "/api/v3/sendorder", {
+            "orderType": "mkt",
+            "symbol": symbole,
+            "side": sens_fermeture,
+            "size": taille,
+            "reduceOnly": "true",
+        })
+        statut = (envoi.get("sendStatus") or {}).get("status")
+        if envoi.get("result") != "success" or statut not in ("placed", "filled",
+                                                              "partiallyFilled"):
+            logger.error("position/close : fermeture REFUSEE pour %s (raison=%s) : %s",
+                         symbole, raison, envoi)
+            # ⛔ On ne touche a AUCUN ordre : la position reste ouverte, donc
+            # elle doit rester protegee.
+            return jsonify({"ok": False, "error": "fermeture refusee par le courtier",
+                            "symbol": symbole, "raison": raison, "raw": envoi}), 502
+
+        # La position est fermee : ses ordres conditionnels n'ont plus d'objet.
+        annules, echecs = [], []
+        try:
+            ord_data = _signed_request("GET", "/api/v3/openorders")
+            for o in (ord_data.get("openOrders", []) or []):
+                if o.get("symbol") != symbole or not o.get("reduceOnly"):
+                    continue
+                oid = o.get("order_id") or o.get("orderId")
+                if not oid:
+                    continue
+                try:
+                    _signed_request("POST", "/api/v3/cancelorder", {"order_id": oid})
+                    annules.append(oid)
+                except Exception as e:  # noqa: BLE001
+                    echecs.append({"order_id": oid, "erreur": str(e)})
+        except Exception as e:  # noqa: BLE001
+            # ⚠️ Un orphelin qui subsiste est un defaut de proprete, pas un
+            # risque : il est `reduceOnly`, il ne peut RIEN ouvrir. La
+            # fermeture, elle, a bien eu lieu — on ne la declare pas ratee.
+            echecs.append({"order_id": None, "erreur": str(e)})
+            logger.warning("position/close : ordres orphelins sur %s : %s", symbole, e)
+
+        logger.info("position/close : %s ferme %s @ mkt (raison=%s), %d ordre(s) annule(s)",
+                    symbole, taille, raison, len(annules))
+        return jsonify({
+            "ok": True,
+            "symbol": symbole,
+            "side_ferme": str(cible.get("side")),
+            "size": taille,
+            "raison": raison,
+            "order_id": (envoi.get("sendStatus") or {}).get("order_id"),
+            "ordres_annules": annules,
+            "ordres_non_annules": echecs,
+        })
+    except Exception as e:
+        logger.exception("position/close failed")
+        return jsonify({"ok": False, "error": str(e), "symbol": symbole,
+                        "raison": raison}), 500
 
 
 @app.route("/kill", methods=["POST"])

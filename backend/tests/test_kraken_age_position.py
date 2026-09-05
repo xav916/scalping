@@ -204,3 +204,55 @@ def test_fills_injoignables_LAISSE_les_positions_lisibles(bridge, monkeypatch):
     assert ligne["symbol"] == "PF_XLMUSD"
     assert ligne["fill_time"] is None, "âge inconnu, pas âge invente"
     assert ligne["size"] == 82.0
+
+
+# ── Le P&L latent : le bon champ, et None quand il manque ─────────────
+#
+# ⛔ Kraken n'expose PAS `unrealizedPnl` sur le compte flex. Charge reelle du
+# 05/09 :
+#     pnl                -0,0302178      (net : latent MOINS le funding)
+#     totalUnrealized    -0,0299323      <- le P&L latent des positions
+#     unrealizedFunding  +0,0002855
+# Le bridge lisait `unrealizedFunding` sous le nom de P&L. Le corriger en
+# `unrealizedPnl` ne suffisait pas : la cle n'existe pas, et `float(get(k, 0.0))`
+# rendait alors **0,0** — un zero qui a l'air vrai, la faute meme qu'on corrige.
+
+def test_le_pnl_du_compte_lit_totalUnrealized(bridge, monkeypatch):
+    flex = {"totalUnrealized": -0.0299323, "unrealizedFunding": 0.0002855,
+            "pnl": -0.0302178, "availableMargin": 105.4, "portfolioValue": 107.1,
+            "initialMargin": 1.72, "maintenanceMargin": 0.86, "balanceValue": 107.2}
+    monkeypatch.setattr(bridge, "_signed_request",
+                        lambda m, c, *a, **k: {"result": "success",
+                                               "accounts": {"flex": flex, "cash": {}}})
+    monkeypatch.setattr(bridge, "require_bridge_key", lambda f: f)
+    bridge.app.config["TESTING"] = True
+    d = bridge.app.test_client().get("/account", headers={"X-Bridge-Key": "x"}).get_json()
+
+    assert d["unrealized_pnl_usd"] == pytest.approx(-0.0299323)
+    assert d["unrealized_funding_usd"] == pytest.approx(0.0002855)
+    assert d["unrealized_pnl_usd"] != d["unrealized_funding_usd"], (
+        "⛔ le P&L et le funding sont deux grandeurs, pas deux noms de la meme")
+
+
+def test_un_pnl_absent_rend_None_et_PAS_zero(bridge, monkeypatch):
+    """⛔ Zero se lit « le compte est a l'equilibre ». Absent se lit « je ne
+    sais pas ». Les confondre, c'est le meme defaut que `entry_price=0`."""
+    flex = {"unrealizedFunding": 0.0002855, "availableMargin": 105.4,
+            "portfolioValue": 107.1, "initialMargin": 1.72,
+            "maintenanceMargin": 0.86, "balanceValue": 107.2}
+    monkeypatch.setattr(bridge, "_signed_request",
+                        lambda m, c, *a, **k: {"result": "success",
+                                               "accounts": {"flex": flex, "cash": {}}})
+    monkeypatch.setattr(bridge, "require_bridge_key", lambda f: f)
+    bridge.app.config["TESTING"] = True
+    d = bridge.app.test_client().get("/account", headers={"X-Bridge-Key": "x"}).get_json()
+
+    assert d["unrealized_pnl_usd"] is None
+
+
+def test_un_pnl_de_position_absent_rend_None(bridge, monkeypatch):
+    pos = [{"symbol": "PF_XLMUSD", "side": "long", "size": 82.0, "price": 0.18,
+            "unrealizedFunding": 0.0}]
+    c = _client(bridge, monkeypatch, _reponses(pos, []))
+    ligne = c.get("/positions", headers={"X-Bridge-Key": "x"}).get_json()["positions"][0]
+    assert ligne["unrealized_pnl_usd"] is None
