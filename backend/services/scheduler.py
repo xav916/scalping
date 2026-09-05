@@ -46,6 +46,7 @@ from config.settings import (
     MACRO_SCORING_ENABLED,
     MATAF_POLL_INTERVAL,
     WATCHED_PAIRS,
+    univers_a_analyser,
 )
 
 logger = logging.getLogger(__name__)
@@ -97,6 +98,18 @@ async def run_analysis_cycle() -> None:
     """Exécute un cycle complet : récupération, analyse, détection de patterns, notification."""
     global _latest_overview, _latest_candles_by_pair, _latest_h1_candles_by_pair, _last_cycle_at
 
+    # ⛔ L'univers est fige UNE SEULE FOIS pour tout le cycle. Les resultats
+    # de `asyncio.gather` sont indexes par POSITION (`results[1 + i]`) : deux
+    # lectures differentes de l'univers dans le meme cycle decaleraient
+    # silencieusement toutes les paires suivantes — le meme piege que la
+    # coroutine vide de `CANDLE_5MIN_SKIP_PAIRS` ci-dessous.
+    #
+    # 🔑 C'est l'UNION du global et des portees par plateforme (2026-09-06) :
+    # il faut analyser une paire pour produire son signal, meme si une seule
+    # destination la recevra. Le scope se joue au ROUTAGE, dans
+    # `resolve_destinations`, jamais ici.
+    univers = univers_a_analyser()
+
     logger.info("Démarrage du cycle d'analyse...")
     cycle_started_at = datetime.now(timezone.utc)
     _last_cycle_at = cycle_started_at
@@ -119,7 +132,7 @@ async def run_analysis_cycle() -> None:
         async def _pas_de_bougies():
             return ([], False)
 
-        for pair in WATCHED_PAIRS:
+        for pair in univers:
             if pair.upper() in CANDLE_5MIN_SKIP_PAIRS:
                 fetch_tasks.append(_pas_de_bougies())
             else:
@@ -130,26 +143,26 @@ async def run_analysis_cycle() -> None:
         # Exception SHADOW_PAIRS (XAU/XAG/WTI) : 200 H1 pour aggréger ≥30 H4 fermés
         # (gate run_shadow_log). 1 requête Twelve Data quel que soit l'outputsize
         # → coût quota inchangé.
-        for pair in WATCHED_PAIRS:
+        for pair in univers:
             outputsize_h1 = 200 if pair in _SHADOW_PAIRS else 50
             fetch_tasks.append(fetch_candles(pair, interval="1h", outputsize=outputsize_h1))
 
         results = await asyncio.gather(*fetch_tasks)
 
         economic_events = results[0]
-        n = len(WATCHED_PAIRS)
+        n = len(univers)
 
         # Bougies 5min
         all_candles = {}
         simulated_pairs = {}
-        for i, pair in enumerate(WATCHED_PAIRS):
+        for i, pair in enumerate(univers):
             candles, is_simulated = results[1 + i]
             all_candles[pair] = candles
             simulated_pairs[pair] = is_simulated
 
         # Bougies 1h (pour MTF + volatilité)
         h1_candles = {}
-        for i, pair in enumerate(WATCHED_PAIRS):
+        for i, pair in enumerate(univers):
             try:
                 cs, _sim = results[1 + n + i]
                 h1_candles[pair] = cs
@@ -162,13 +175,13 @@ async def run_analysis_cycle() -> None:
         # ATR 14 sur 15 dernières bougies vs baseline 35 antérieures.
         volatility_data = [
             _compute_vol_from_candles(h1_candles.get(pair, []), pair)
-            for pair in WATCHED_PAIRS
+            for pair in univers
         ]
 
         # Analyser les tendances pour chaque paire
         trends = [
             analyze_trend(pair, vol, economic_events)
-            for pair in WATCHED_PAIRS
+            for pair in univers
             for vol in volatility_data
             if vol.pair == pair
         ]
@@ -182,7 +195,7 @@ async def run_analysis_cycle() -> None:
         vol_map = {v.pair: v for v in volatility_data}
         trend_map = {t.pair: t for t in trends}
 
-        for pair in WATCHED_PAIRS:
+        for pair in univers:
             candles = all_candles.get(pair, [])
             all_candles_flat.extend(candles)
 

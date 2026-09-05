@@ -90,6 +90,10 @@ class BridgeConfig:
     symbol_map: dict[str, str] | None = None
     extra_pairs_allowed: frozenset[str] = frozenset()
     excluded_pairs: frozenset[str] = frozenset()
+    # Portée de l'univers pour CETTE plateforme (2026-09-06). Vide = pas de
+    # portée déclarée, la destination hérite de l'univers commun — c'est ce qui
+    # rend la migration neutre. Non vide = STRICT : elle ne reçoit que ça.
+    watched_pairs: frozenset[str] = frozenset()
     # None = hérite du global. frozenset() = pas de filtre pattern.
     allowed_patterns: frozenset[str] | None = None
     # Motifs AJOUTÉS à ceux résolus par la cascade — jamais retirés.
@@ -774,6 +778,41 @@ def _est_externe(setup: Any) -> bool:
     return bool(src) and src != "interne"
 
 
+def paire_dans_la_portee(dest: Any, pair: Any) -> bool:
+    """Cette paire fait-elle partie de l'univers de CETTE plateforme ?
+
+    ⚠️ Portée VIDE = pas de portée déclarée ⇒ **True**, la destination hérite de
+    l'univers commun. C'est ce qui rend la migration strictement neutre : sans
+    ce défaut, déployer couperait toutes les destinations d'un coup. Une
+    plateforme devient stricte le jour où on lui déclare une portée.
+
+    ⛔ En revanche, dès qu'une portée existe, elle est STRICTE : une paire
+    absente n'atteint pas la plateforme. C'est le sens qui compte pour de
+    l'argent réel — on nomme ce qui est autorisé, on ne soustrait pas ce qui ne
+    l'est pas. (L'inverse vaut pour FERMER une position, où c'est l'exclusion
+    qu'on nomme : le défaut sûr n'est pas le même quand on ouvre et quand on
+    ferme.)
+    """
+    portee = getattr(dest, "watched_pairs", None) or frozenset()
+    if not portee:
+        # Repli sur les reglages, par identifiant. C'est ce qui scope les
+        # destinations UTILISATEURS sans toucher a leur constructeur, et ce qui
+        # garantit une seule source de verite : un builder qui oublierait de
+        # porter la portee ne creerait pas une plateforme silencieusement
+        # non scopee.
+        try:
+            from config.settings import WATCHED_PAIRS_PAR_DESTINATION as _portees
+            portee = _portees.get(str(getattr(dest, "destination_id", "")), frozenset())
+        except Exception:  # noqa: BLE001 — un reglage illisible ne scope RIEN
+            portee = frozenset()
+    if not portee:
+        return True
+    if not pair:
+        return False
+    p = str(pair).strip().upper()
+    return any(p == str(x).strip().upper() for x in portee)
+
+
 def resolve_destinations(setup: Any) -> list[BridgeConfig]:
     """Liste toutes les destinations vers lesquelles ce setup doit être poussé.
 
@@ -830,6 +869,19 @@ def resolve_destinations(setup: Any) -> list[BridgeConfig]:
                 and classe in admin_ibkr.allowed_asset_classes):
             destinations.append(admin_ibkr)
     destinations.extend(_user_destinations(setup))
+
+    # ⛔ La portée par plateforme s'applique ICI, sur TOUTES les destinations —
+    # admin comme utilisateurs. Une porte posée d'un seul côté n'est pas une
+    # porte : c'est ainsi que 14 cryptos sur 23 se faisaient jeter chaque nuit
+    # (2026-08-23), et que le miroir contournait le gel journalier.
+    #
+    # Le filtre vit dans le RÉSOLVEUR, jamais chez l'appelant : un appelant peut
+    # oublier, un résolveur non. Même motif que le verrou d'argent réel juste
+    # en dessous.
+    paire_du_setup = getattr(setup, "pair", None)
+    destinations = [d for d in destinations
+                    if paire_dans_la_portee(d, paire_du_setup)]
+
     if externe:
         # ⛔ Un setup venu d'un bot externe n'atteint JAMAIS l'argent réel.
         # Le verrou est ICI, dans le résolveur, jamais chez l'appelant : un

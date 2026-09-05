@@ -77,6 +77,69 @@ WATCHED_PAIRS = _liste_env(
     "BTC/USD,ETH/USD,XAG/USD,WTI/USD,SPX,NDX",
 )
 
+# ─── Portée de l'univers PAR PLATEFORME (2026-09-06) ──────────────────
+#
+# `WATCHED_PAIRS` ci-dessus reste l'univers COMMUN. Une destination peut en
+# plus déclarer le sien : `WATCHED_PAIRS_ADMIN_KRAKEN="SUI/USD,AVAX/USD"`.
+#
+# Pourquoi : mesuré le 06/09, le radar surveillait 29 paires quand Kraken en
+# cote 276. Élargir pour Kraken revenait à élargir pour TOUT LE MONDE, donc
+# pour l'argent réel MT5 — puis à re-soustraire destination par destination.
+# Un refus par soustraction se maintient N fois, et la destination qui n'a pas
+# le bon filtre hérite de la paire **en silence**.
+#
+# 🔑 DEUX portées, à ne jamais confondre — c'est le piège du 04/09,
+# « portée à l'écriture ≠ portée à la lecture » :
+#   - l'ANALYSE porte sur l'UNION (il faut analyser une paire pour produire son
+#     signal) — c'est `univers_a_analyser()` ;
+#   - le ROUTAGE porte sur la portée de CHAQUE plateforme — c'est
+#     `bridge_destinations.paire_dans_la_portee`, appelé dans le résolveur.
+#
+# ⚠️ Une portée ABSENTE hérite du global. C'est délibéré : sans ce défaut,
+# déployer ce changement couperait toutes les destinations d'un coup. Une
+# plateforme devient stricte le jour où on lui déclare une portée, jamais
+# avant. Un réglage VIDE (`WATCHED_PAIRS_X=`) se lit donc « pas de portée »,
+# et non « portée vide » — qui, elle, couperait la plateforme.
+def lire_portees_par_destination(destination_ids) -> dict:
+    """`{destination_id: frozenset(paires)}` pour celles qui en déclarent une."""
+    sorties: dict = {}
+    for did in destination_ids or ():
+        nom = "WATCHED_PAIRS_" + str(did).upper().replace("-", "_")
+        brut = os.getenv(nom, "")
+        paires = [x for x in _liste_env(nom, "") if x] if brut.strip() else []
+        if paires:
+            sorties[str(did)] = frozenset(paires)
+    return sorties
+
+
+# Destinations connues à la lecture des réglages. Les destinations utilisateurs
+# se scopent par le même nom (`WATCHED_PAIRS_USER_42`), résolu à la volée.
+_DESTINATIONS_SCOPABLES = (
+    "admin_legacy", "admin_live", "admin_kraken", "admin_kraken_spot",
+    "admin_kraken_stocks", "admin_binance", "admin_ibkr_us",
+)
+WATCHED_PAIRS_PAR_DESTINATION = lire_portees_par_destination(_DESTINATIONS_SCOPABLES)
+
+
+def univers_a_analyser() -> list:
+    """Les paires que le radar doit analyser : le global, PUIS les ajouts.
+
+    ⛔ C'est bien une UNION : une paire déclarée pour la seule Kraken doit être
+    analysée, sinon aucun signal n'existe pour elle. Le fait qu'elle n'atteigne
+    que Kraken se joue au ROUTAGE, pas ici.
+
+    L'ordre est stable — le global d'abord, dans son ordre, puis les ajouts
+    triés. Un univers dont l'ordre bouge d'un cycle à l'autre rend les journaux
+    incomparables et le budget d'API imprévisible.
+    """
+    vues = list(WATCHED_PAIRS)
+    connues = set(vues)
+    ajouts = set()
+    for paires in (WATCHED_PAIRS_PAR_DESTINATION or {}).values():
+        ajouts |= {p for p in paires if p not in connues}
+    return vues + sorted(ajouts)
+
+
 # Asset class per pair (used for UI filtering, scoring mapping, bridge routing).
 # "forex" = forex majors/crosses
 # "metal" = precious metals (XAU, XAG)
