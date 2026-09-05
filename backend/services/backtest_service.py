@@ -302,8 +302,20 @@ async def check_open_trades() -> None:
         cur = c.execute("SELECT * FROM trades WHERE outcome='OPEN'")
         open_trades = cur.fetchall()
 
+    # ⛔ UNE sonde par PAIRE, jamais par ligne. Le 05/09, 593 lignes OPEN ne
+    # portaient que 23 marches : boucler sur les lignes redemandait le meme
+    # prix des dizaines de fois par passage, et brulait a lui seul le quota
+    # Twelve Data (~34 appels/min, marche ferme). Le cache prix (TTL 5 s) n'y
+    # peut rien : parcourir 593 lignes en serie prend plus d'une minute, la
+    # copie a donc expire avant qu'on revienne sur la meme paire.
+    # 🔑 Effet de bord souhaitable : toutes les lignes d'une paire sont
+    # jugees sur le MEME prix. Une sonde est un instantane.
+    prix_par_paire: dict[str, float | None] = {}
+    for pair in dict.fromkeys(row["pair"] for row in open_trades):
+        prix_par_paire[pair] = await fetch_current_price(pair)
+
     for row in open_trades:
-        current = await fetch_current_price(row["pair"])
+        current = prix_par_paire.get(row["pair"])
         if current is None:
             continue
         outcome, rr = _evaluate(row, current)
