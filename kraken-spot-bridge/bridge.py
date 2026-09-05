@@ -1,6 +1,7 @@
 """Kraken Spot bridge — trading BTC/ETH au comptant (long-only) pour scalping-radar.
 
-Fork du kraken-futures-bridge (2026-08-02). API Kraken Spot est différente de
+Fork du bridge Kraken Futures (`kraken-bridge/`, 2026-08-02). API Kraken Spot
+est différente de
 Kraken Futures sur tous les points critiques :
 - Endpoint : api.kraken.com/0/private/* (vs futures.kraken.com/derivatives/api/v3/*)
 - Auth : HMAC-SHA512(urlpath + SHA256(nonce + POST body), base64_decode(secret))
@@ -594,7 +595,7 @@ def symbols():
 def place_order():
     """Place un ordre market BUY (long-only) + démarre watcher SL/TP.
 
-    Payload JSON attendu (miroir kraken-futures-bridge) :
+    Payload JSON attendu (miroir du bridge Kraken Futures) :
     {
       "pair": "BTC/USD",
       "direction": "buy",      # obligatoirement "buy" — spot = long-only

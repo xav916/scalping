@@ -1,4 +1,4 @@
-"""Client HTTP pour pousser un setup vers le kraken-futures-bridge.
+"""Client HTTP pour pousser un setup vers le bridge Kraken Futures.
 
 Créé 2026-08-02 comme alternative à binance_bridge_client après blocker AMF
 Futures France sur Binance mainnet. Kraken Futures est régulé Ireland/EU

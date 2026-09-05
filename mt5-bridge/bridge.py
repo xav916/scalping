@@ -1043,7 +1043,7 @@ def _send_market_order(
         # deux réussissent ou échouent ensemble, d'où sl_applied == tp_applied
         # ici (contrairement à Kraken où SL et TP sont deux ordres distincts
         # qui peuvent échouer indépendamment — cf. sl_order_id/tp_order_id
-        # dans kraken-futures-bridge/bridge.py).
+        # dans kraken-bridge/bridge.py).
         sl_applied = sltp_result["ok"]
         tp_applied = sltp_result["ok"]
         if sltp_result["ok"] is not True:

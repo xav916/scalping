@@ -34,7 +34,7 @@ Deux conclusions structurent tout le reste :
    **autre formule**, pas une adaptation.
 2. **Kraken Futures est déjà mesurable, sans toucher au bridge.**
    `/openorders` rend `stopPrice`, `reduceOnly` et `orderType` par ordre.
-   `_protection_par_symbole` (`kraken-futures-bridge/bridge.py:513`) réduit ça
+   `_protection_par_symbole` (`kraken-bridge/bridge.py`) réduit ça
    à un booléen pour son propre usage, mais la charge brute porte le prix.
 
 ## 3. La forme unique du calcul
