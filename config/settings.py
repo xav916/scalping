@@ -202,6 +202,20 @@ SLTP_GUARD_AUTO_PROTECT_ENABLED = os.getenv(
 # calibré par le scoring, c'est un filet qui borne une perte qui serait
 # sinon illimitée.
 SLTP_GUARD_EMERGENCY_SL_PCT = float(os.getenv("SLTP_GUARD_EMERGENCY_SL_PCT", "1.0"))
+# Même garde-fou, côté Kraken (2026-09-06). Drapeau SÉPARÉ : les deux places
+# n'ont ni le même risque ni le même historique, et armer l'une ne doit jamais
+# armer l'autre par surprise.
+#
+# ⚠️ La DISTANCE, elle, reste partagée (`SLTP_GUARD_EMERGENCY_SL_PCT`) : c'est
+# une seule décision — « de combien borne-t-on un risque infini » — et lui
+# donner deux sources de vérité, c'est se garantir qu'elles divergeront.
+#
+# Doublé côté bridge par KRAKEN_SLTP_GUARD_ENABLED + KRAKEN_SLTP_GUARD_ACTIVATED_AT,
+# ce dernier vide valant fail-closed : sans date d'armement, aucune position
+# n'est éligible, même avec les deux drapeaux à vrai.
+KRAKEN_SLTP_GUARD_AUTO_PROTECT_ENABLED = os.getenv(
+    "KRAKEN_SLTP_GUARD_AUTO_PROTECT_ENABLED", "false"
+).lower() in ("1", "true", "yes", "on")
 # Le min_confidence Live peut être plus strict que Demo pour limiter le risque
 # capital réel (default = même valeur que Demo = MT5_BRIDGE_MIN_CONFIDENCE).
 MT5_BRIDGE_LIVE_MIN_CONFIDENCE = float(os.getenv("MT5_BRIDGE_LIVE_MIN_CONFIDENCE", os.getenv("MT5_BRIDGE_MIN_CONFIDENCE", "90")))

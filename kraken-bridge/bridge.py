@@ -114,6 +114,72 @@ MAX_OPEN_POSITIONS = int(os.getenv("KRAKEN_MAX_OPEN_POSITIONS", "10"))
 # 0 = desarme (comportement d'avant, seuls le drawdown et le compteur agissent).
 MAX_RISQUE_ENGAGE_PCT = float(os.getenv("KRAKEN_MAX_RISQUE_ENGAGE_PCT", "50.0"))
 
+# ─── Garde-fou : poser un stop d'urgence sur une position NUE ─────────
+#
+# Meme politique que les bridges MT5 (armee le 2026-08-28), et meme double
+# verrou. Deux drapeaux INDEPENDANTS doivent etre vrais pour qu'un stop parte,
+# et c'est le BRIDGE qui applique la regle d'eligibilite — pas l'orchestrateur.
+# Meme si celui-ci est bogue ou mal configure, le bridge refuse seul de toucher
+# une position anterieure a l'armement.
+SLTP_GUARD_ENABLED = os.getenv("KRAKEN_SLTP_GUARD_ENABLED", "").lower() in ("1", "true", "yes")
+SLTP_GUARD_ACTIVATED_AT = os.getenv("KRAKEN_SLTP_GUARD_ACTIVATED_AT", "").strip()
+SLTP_GUARD_FROZEN_SYMBOLS = frozenset(
+    x.strip().upper() for x in os.getenv("KRAKEN_SLTP_GUARD_FROZEN_SYMBOLS", "").split(",")
+    if x.strip()
+)
+
+
+def _iso_en_epoch(t):
+    """ISO 8601 -> epoch, ou None si illisible. `None` ne vaut jamais zero."""
+    if not t:
+        return None
+    try:
+        from datetime import datetime, timezone
+        d = datetime.fromisoformat(str(t).replace("Z", "+00:00"))
+        if d.tzinfo is None:
+            d = d.replace(tzinfo=timezone.utc)
+        return d.timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
+def garde_fou_eligible(symbole, ouverture_iso):
+    """Cette position peut-elle recevoir un stop AUTOMATIQUE ? `(bool, motif)`.
+
+    Quatre verrous, chacun suffisant seul pour refuser :
+
+    1. le garde-fou est desarme (`KRAKEN_SLTP_GUARD_ENABLED`) ;
+    2. le symbole est explicitement gele (`KRAKEN_SLTP_GUARD_FROZEN_SYMBOLS`) ;
+    3. l'armement n'est pas date (`KRAKEN_SLTP_GUARD_ACTIVATED_AT` vide) —
+       on ne sait alors pas ce qui lui est anterieur, donc **rien** n'est
+       eligible. Vide = fail-closed, meme avec `enabled=true` ;
+    4. la position est ouverte AVANT (ou a) l'armement — elle reste gelee pour
+       toujours, un simple redemarrage ne doit pas la rendre eligible.
+
+    ⛔ Une ouverture INDATABLE refuse aussi. C'est le sens sur lequel se
+    tromper : cote MT5, le decalage d'heure serveur faisait passer une position
+    ouverte jusqu'a 3 h AVANT l'armement pour posterieure — fail-OPEN sur un
+    garde-fou, l'exact inverse de son role.
+
+    🔑 Sur Kraken, cette regle n'etait pas applicable avant le 05/09 :
+    `openpositions` rendait `fillTime = 1970-01-01` pour toutes les positions.
+    L'age reconstruit depuis les fills est ce qui rend ce verrou opposable.
+    """
+    if not SLTP_GUARD_ENABLED:
+        return False, "garde-fou desarme (KRAKEN_SLTP_GUARD_ENABLED)"
+    if str(symbole or "").upper() in SLTP_GUARD_FROZEN_SYMBOLS:
+        return False, "symbole explicitement gele (KRAKEN_SLTP_GUARD_FROZEN_SYMBOLS)"
+    arme = _iso_en_epoch(SLTP_GUARD_ACTIVATED_AT)
+    if arme is None:
+        return False, "KRAKEN_SLTP_GUARD_ACTIVATED_AT non defini — armement indatable"
+    ouverture = _iso_en_epoch(ouverture_iso)
+    if ouverture is None:
+        return False, "ouverture indatable — age non reconstruit depuis les fills"
+    if ouverture <= arme:
+        return False, "position ouverte avant (ou a) l'armement du garde-fou"
+    return True, "OK"
+
+
 _start_of_day_balance: float | None = None
 _start_of_day_date: date | None = None
 _nonce_lock = threading.Lock()
@@ -532,6 +598,11 @@ def health():
             "max_risque_engage_pct": MAX_RISQUE_ENGAGE_PCT,
             "start_of_day_balance": _start_of_day_balance,
             "supported_pairs": len(_PAIR_TO_SYMBOL),
+            # Publie d'abord, arme ensuite — dans cet ordre, sinon l'armement
+            # n'est pas verifiable.
+            "sltp_guard_enabled": SLTP_GUARD_ENABLED,
+            "sltp_guard_activated_at": SLTP_GUARD_ACTIVATED_AT or None,
+            "sltp_guard_frozen_symbols": sorted(SLTP_GUARD_FROZEN_SYMBOLS),
         })
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 503
@@ -1437,6 +1508,44 @@ def position_sltp():
         long = str(cible.get("side") or "").lower().startswith("l")
         sens_protection = "sell" if long else "buy"
 
+        # ⛔ La porte du garde-fou ne s'applique qu'aux appels qui se DECLARENT
+        # automatiques. Un deplacement demande explicitement — une sortie a
+        # l'equilibre, une reparation a la main — reste libre : c'est un
+        # appelant qui sait ce qu'il fait, pas une machine qui decide seule.
+        if corps.get("garde_fou"):
+            ouverture = None
+            try:
+                hist = _signed_request("GET", "/api/v3/fills")
+                if hist.get("result") == "success":
+                    ouverture = ouvertures_par_symbole(
+                        hist.get("fills", []) or [], [cible]).get(symbole)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("garde-fou : age illisible pour %s : %s", symbole, e)
+            eligible, motif = garde_fou_eligible(symbole, ouverture)
+            if not eligible:
+                logger.warning("[GARDE-FOU] refus %s — %s", symbole, motif)
+                return jsonify({"ok": False, "exclu": True, "motif": motif,
+                                "symbol": symbole, "raison": raison}), 403
+            # Deja protegee : ne rien poser, et le dire. Reposer un second stop
+            # sur une position deja bornee n'ajoute pas de protection, mais
+            # ajoute un ordre a annuler.
+            deja = False
+            try:
+                od = _signed_request("GET", "/api/v3/openorders")
+                for o in (od.get("openOrders", []) or []):
+                    if o.get("symbol") != symbole or not o.get("reduceOnly"):
+                        continue
+                    genre = str(o.get("orderType") or "").lower()
+                    if genre == "stp" or ("stop" in genre and "profit" not in genre):
+                        deja = True
+                        break
+            except Exception as e:  # noqa: BLE001
+                logger.warning("garde-fou : ordres illisibles pour %s : %s", symbole, e)
+            if deja:
+                logger.info("[GARDE-FOU] %s deja protegee, rien a faire", symbole)
+                return jsonify({"ok": True, "deja_protegee": True,
+                                "symbol": symbole, "raison": raison})
+
         specs = _get_specs(symbole) or {}
         tick = float(specs.get("tickSize", 0.01) or 0.01)
 
@@ -1777,6 +1886,9 @@ if __name__ == "__main__":
     logger.info(f"  LIVE_WHITELIST_SYMBOLS   : {sorted(LIVE_WHITELIST_SYMBOLS) if LIVE_WHITELIST_SYMBOLS else 'ALL ALLOWED'}")
     logger.info(f"  MAX_OPEN_POSITIONS       : {MAX_OPEN_POSITIONS}")
     logger.info(f"  Supported pairs          : {len(_PAIR_TO_SYMBOL)}")
+    logger.info(f"  SLTP_GUARD_ENABLED       : {SLTP_GUARD_ENABLED}")
+    logger.info(f"  SLTP_GUARD_ACTIVATED_AT  : {SLTP_GUARD_ACTIVATED_AT or '(vide => fail-closed)'}")
+    logger.info(f"  SLTP_GUARD_FROZEN        : {sorted(SLTP_GUARD_FROZEN_SYMBOLS)}")
     try:
         _refresh_specs_cache()
     except Exception as e:
