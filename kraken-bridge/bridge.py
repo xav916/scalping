@@ -1463,35 +1463,125 @@ def position_close():
                         "raison": raison}), 500
 
 
+def _annuler_ordres(ordres: list) -> tuple:
+    """Annule chaque ordre, un par un. Rend `(annules, echecs)`.
+
+    ⛔ Jamais `cancelallorders` : cette route confond les deux familles
+    d'ordres, celle qui OUVRE du risque et celle qui le BORNE. Les annuler
+    ensemble, c'est desarmer les stops des positions qu'on n'a pas encore
+    reussi a fermer.
+
+    ⛔ L'echec d'une annulation n'interrompt pas les autres : un ordre orphelin
+    qui subsiste est un defaut de proprete, pas un risque — il est `reduceOnly`
+    ou deja sans objet.
+    """
+    annules, echecs = [], []
+    for o in ordres or []:
+        oid = o.get("order_id") or o.get("orderId")
+        if not oid:
+            continue
+        try:
+            _signed_request("POST", "/api/v3/cancelorder", {"order_id": oid})
+            annules.append(oid)
+        except Exception as e:  # noqa: BLE001
+            echecs.append({"order_id": oid, "erreur": str(e)})
+            logger.warning("kill : annulation refusee pour %s : %s", oid, e)
+    return annules, echecs
+
+
 @app.route("/kill", methods=["POST"])
 @require_bridge_key
 def kill_all():
-    """Cancel all open orders + close all positions (kill-switch manuel)."""
+    """Kill-switch : annule ce qui peut ouvrir, ferme ce qui est ouvert.
+
+    ⛔ L'ancienne version appelait `cancelallorders` **AVANT** de fermer, puis
+    rendait `ok: True` sans jamais regarder le resultat des fermetures. Trois
+    consequences, toutes dans la seule route qu'on appelle quand ca va deja
+    mal :
+
+    1. une fermeture qui echoue laissait la position **ouverte et NUE**, son
+       stop venant d'etre annule — l'incident du 2026-08-05 reproduit par le
+       remede ;
+    2. le kill pouvait annoncer « tout est ferme » alors que rien ne l'etait.
+       **Un mecanisme qui ment sur son propre resultat est pire que son
+       absence : il fait renoncer a verifier** ;
+    3. une exception au milieu de la boucle abandonnait les positions
+       suivantes, stops deja annules.
+
+    🔑 L'ordre correct distingue ce que `cancelallorders` confondait :
+
+    - un ordre d'**ENTREE** en attente peut OUVRIR du risque pendant le kill :
+      il part **en premier**, c'est le geste meme du kill ;
+    - un ordre de **PROTECTION** (`reduceOnly`) borne du risque existant : il
+      ne part qu'**APRES** que SA position soit effectivement fermee.
+
+    Une position dont la fermeture echoue **garde son stop**, et le kill le dit
+    en rendant `ok: False` avec la liste de ce qui reste ouvert.
+    """
     try:
-        # Cancel all open orders
-        cancel_resp = _signed_request("POST", "/api/v3/cancelallorders")
-        # Close positions via market orders reduceOnly
+        ordres = []
+        try:
+            od = _signed_request("GET", "/api/v3/openorders")
+            ordres = od.get("openOrders", []) or []
+        except Exception as e:  # noqa: BLE001
+            logger.warning("kill : ordres illisibles, on ferme quand meme : %s", e)
+
+        # 1. Ce qui peut OUVRIR du risque part tout de suite.
+        entrees = [o for o in ordres if not o.get("reduceOnly")]
+        entrees_annulees, entrees_echecs = _annuler_ordres(entrees)
+
+        # 2. Chaque position est TENTEE, quoi qu'il arrive aux autres.
         pos_data = _signed_request("GET", "/api/v3/openpositions")
-        closed = []
+        if pos_data.get("result") != "success":
+            return jsonify({"ok": False, "error": "positions illisibles",
+                            "entrees_annulees": entrees_annulees}), 503
+
+        fermees, non_fermees = [], []
         for p in pos_data.get("openPositions", []) or []:
             sym = p.get("symbol")
-            side = p.get("side")
-            size = float(p.get("size", 0.0))
-            close_side = "sell" if side == "long" else "buy"
-            close_params = {
-                "orderType": "mkt",
-                "symbol": sym,
-                "side": close_side,
-                "size": size,
-                "reduceOnly": "true",
-            }
-            close_resp = _signed_request("POST", "/api/v3/sendorder", close_params)
-            closed.append({"symbol": sym, "resp": close_resp})
-        return jsonify({
-            "ok": True,
-            "cancel_all_orders": cancel_resp,
-            "closed_positions": closed,
-        })
+            try:
+                taille = abs(float(p.get("size") or 0.0))
+                if taille <= 0:
+                    continue
+                sens = "sell" if str(p.get("side", "")).lower().startswith("l") else "buy"
+                resp = _signed_request("POST", "/api/v3/sendorder", {
+                    "orderType": "mkt",
+                    "symbol": sym,
+                    "side": sens,
+                    "size": taille,
+                    "reduceOnly": "true",
+                })
+                statut = (resp.get("sendStatus") or {}).get("status")
+                if resp.get("result") == "success" and statut in ("placed", "filled",
+                                                                  "partiallyFilled"):
+                    fermees.append(sym)
+                else:
+                    non_fermees.append({"symbol": sym, "raison": statut or resp.get("error")})
+                    logger.error("kill : fermeture REFUSEE pour %s : %s", sym, resp)
+            except Exception as e:  # noqa: BLE001
+                # ⛔ Une position qui leve ne doit pas priver les SUIVANTES de
+                # leur tentative de fermeture.
+                non_fermees.append({"symbol": sym, "raison": str(e)})
+                logger.exception("kill : fermeture impossible pour %s", sym)
+
+        # 3. Seuls les stops des positions REELLEMENT fermees sont annules.
+        protections = [o for o in ordres
+                       if o.get("reduceOnly") and o.get("symbol") in set(fermees)]
+        stops_annules, stops_echecs = _annuler_ordres(protections)
+
+        tout_ferme = not non_fermees
+        corps = {
+            "ok": tout_ferme,
+            "fermees": fermees,
+            "non_fermees": non_fermees,
+            "entrees_annulees": entrees_annulees,
+            "protections_annulees": stops_annules,
+            "annulations_ratees": entrees_echecs + stops_echecs,
+        }
+        if not tout_ferme:
+            logger.error("kill : %d position(s) restent OUVERTES : %s",
+                         len(non_fermees), non_fermees)
+        return jsonify(corps), (200 if tout_ferme else 502)
     except Exception as e:
         logger.exception("kill_all failed")
         return jsonify({"ok": False, "error": str(e)}), 500
