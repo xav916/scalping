@@ -660,6 +660,26 @@ except Exception:
 #
 # 🔑 A retirer des qu'une mediane de detention existe sur ces couples — c'est
 # la mesure, pas l'exemption, qui doit finir par decider.
+#
+# ✅ 2026-09-05 — LA MEDIANE EXISTE, ET ELLE TRANCHE CONTRE L'EXEMPTION.
+# Reconstruite depuis les 69 fills reels du bridge Kraken (`GET /fills`) :
+#     ouvertures a partir du 15/08   n=8   mediane 42,4 h   max 223 h
+#     ouvertures a partir du 25/08   n=3   mediane 33,2 h   max  63 h
+#     PF_DOTUSD, toujours ouverte, tient depuis 357 h
+# ⛔ Les 10 aller-retours sous la MINUTE datent tous du 02/08, jour des
+# premiers ordres Kraken : des artefacts, pas un regime de detention. Les
+# inclure ramenait la mediane a 1,31 h et aurait fait dire l'inverse aux
+# memes donnees.
+#
+# A 33-42 h, le portage vaut 0,20-0,25 R ; avec 0,101 R de cout de base, le
+# total tient entre 0,30 et 0,36 R, soit **2,7 a 3,2x l'edge** (0,11 R).
+# L'hypothese de 96 h n'etait pas pessimiste, elle etait du bon ordre.
+# ⚠️ n=3 a 8 : la mesure est mince, mais elle ne laisse aucune fenetre ou le
+# couple paierait ses frais — il faudrait tomber sous ~4 h pour cela.
+#
+# ⛔ Et l'exemption n'a RIEN achete : zero fill sur PF_XAUUSD comme sur
+# PF_XAGUSD entre le 29/08 et le 05/09. Sept jours de porte ouverte, aucun
+# trade passe. On retire donc une exemption sans contrepartie mesurable.
 _raw_exempt = os.getenv("COST_GATE_EXEMPT_PAIRS", "")
 COST_GATE_EXEMPT_PAIRS = frozenset(
     x.strip() for x in _raw_exempt.split(",") if x.strip()
