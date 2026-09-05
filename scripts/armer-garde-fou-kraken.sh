@@ -108,3 +108,34 @@ print(f'  radar   stop d urgence             {g.EMERGENCY_SL_PCT} % de l entree'
 echo
 echo "✅ Garde-fou Kraken armé. Le cron le passe chaque minute."
 echo "   Désarmement : remettre KRAKEN_SLTP_GUARD_ENABLED=false côté bridge."
+
+# Un armement qui ne s'annonce pas est un changement de comportement que
+# personne ne peut dater après coup. Best-effort : la notification ne
+# conditionne jamais l'armement, qui a déjà eu lieu à ce stade.
+TOKEN="shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg"
+GELEES=$(curl -s -m 15 -H "X-Bridge-Key: $BK" http://127.0.0.1:8790/positions \
+  | python3 -c "
+import json, sys
+try:
+    ps = json.load(sys.stdin).get('positions') or []
+except Exception:
+    print('(positions illisibles)'); raise SystemExit
+print('\n'.join(f\"• {p.get('symbol')} {p.get('side')} {p.get('size')} — ouverte {p.get('fill_time') or 'date inconnue'}\" for p in ps) or '(aucune)')
+" 2>/dev/null)
+
+curl -sS -m 8 -X POST \
+  "https://app.scalping-radar.online/api/admin/notify-infra-telegram?token=${TOKEN}&channel=infra" \
+  -H 'Content-Type: application/json' --data "$(python3 -c "
+import json, sys
+print(json.dumps({
+  'title': '🛡️ Garde-fou Kraken ARMÉ',
+  'body': ('Les positions nues reçoivent désormais un stop d urgence automatique '
+           'à 1 % du prix d entrée.\n\n'
+           'Armé le : $HORODATAGE\n\n'
+           'Gelées pour toujours (ouvertes avant l armement, jamais touchées) :\n'
+           + '''$GELEES'''
+           + '\n\n👉 Désarmement : KRAKEN_SLTP_GUARD_ENABLED=false côté bridge.'),
+  'dedup_key': 'kraken_guard_arme',
+  'cooldown_seconds': 3600,
+}))
+")" -o /dev/null -w 'notify HTTP %{http_code}\n' || true
