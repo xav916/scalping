@@ -69,6 +69,44 @@ def _build_kraken_payload(setup, sz: dict, dest) -> dict[str, Any]:
     }
 
 
+async def alerter_si_non_protegee(body: dict, pair: str, direction: str,
+                                  destination_id: str) -> None:
+    """Alerte immediate si le bridge dit que la position n'a PAS de stop.
+
+    Sur Kraken, une entree est **trois ordres independants** : marche, stop,
+    objectif. Le stop peut echouer a la pose sans que l'entree echoue, et
+    `/order` rendait alors `ok: True` comme si tout allait bien. Le champ
+    `sl_error` existait deja dans la reponse — personne ne le lisait.
+
+    C'est l'incident du 2026-08-05 (position XAU/USD sans stop, decouverte 7 h
+    plus tard a -51 EUR), cote Kraken cette fois. Le bridge MT5 a ce garde-fou
+    depuis le 06/08 ; il n'avait jamais ete propage ici.
+
+    ⚠️ **`protected is False`, jamais `not protected`.** Un bridge pas encore
+    deploye n'a pas le champ, et « pas de champ » ne veut pas dire « pas de
+    stop » : alerter la-dessus apprendrait a ignorer l'alerte.
+
+    ⛔ Best-effort : le flux d'ordre ne doit jamais dependre de Telegram.
+    """
+    if body.get("protected") is not False:
+        return
+    try:
+        from backend.services import telegram_service as _tg
+        await _tg.send_infra_text(
+            "🚨 <b>Position Kraken ouverte SANS stop</b>\n"
+            f"Destination : <code>{destination_id}</code>\n"
+            f"Pair : <code>{pair}</code> {str(direction).upper()}\n"
+            f"Symbole : <code>{body.get('symbol') or '?'}</code>\n"
+            f"Ordre : <code>{body.get('market_order_id') or '?'}</code>\n"
+            f"SL error : <code>{body.get('sl_error') or '?'}</code>\n"
+            "\n👉 Le stop est un ordre INDEPENDANT sur Kraken : verifier "
+            "<code>/openorders</code> et le reposer a la main si besoin.",
+            parse_mode="HTML",
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"alerte position kraken non protegee echouee : {e}")
+
+
 async def push_to_kraken(setup, sz: dict, dest) -> None:
     """Pousse un setup vers le kraken-bridge. Logge dans ``mt5_pushes``.
 
@@ -166,6 +204,12 @@ async def push_to_kraken(setup, sz: dict, dest) -> None:
                 )
             except Exception as _e:
                 logger.warning(f"send_trade_opened kraken hook error: {_e}")
+            # ⛔ L'entree a reussi, mais son stop a pu echouer : trois ordres
+            # independants. Sans ce controle, une position nue passait pour
+            # saine — `sl_error` etait rendu et personne ne le lisait.
+            await alerter_si_non_protegee(
+                body, pair=setup.pair, direction=direction,
+                destination_id=dest.destination_id)
         elif r.status_code == 429 and body.get("blocked"):
             # Kill-switch bridge (daily drawdown, whitelist, max positions).
             # Rien n'est parti au marché : la contrainte peut se lever seule,

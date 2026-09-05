@@ -1268,6 +1268,11 @@ def place_order():
     # ── Place SL order (optional, reduceOnly) ──
     sl_order_id = None
     sl_error = None
+    # ⛔ Trois etats, jamais deux : None = pas demande, True = confirme pose,
+    # False = demande et RATE. Replier « pas demande » sur False rendrait
+    # `protected` illisible ; les confondre est ce qui a laisse une position
+    # nue passer pour saine le 2026-08-05.
+    sl_applied = None
     if sl_raw is not None:
         try:
             sl_price = _round_to_tick(float(sl_raw))
@@ -1284,15 +1289,21 @@ def place_order():
             sl_resp = _signed_request("POST", "/api/v3/sendorder", sl_params)
             sl_status = (sl_resp.get("sendStatus", {}) or {})
             sl_order_id = sl_status.get("order_id") or sl_status.get("orderId")
-            if sl_status.get("status") not in ("placed",):
-                sl_error = f"SL status={sl_status.get('status')}"
+            if sl_resp.get("result") == "success" and sl_status.get("status") == "placed":
+                sl_applied = True
+            else:
+                sl_applied = False
+                sl_error = (f"SL status={sl_status.get('status')}"
+                            if sl_status else str(sl_resp.get("error") or "refuse"))
         except Exception as e:
+            sl_applied = False
             sl_error = str(e)
             logger.warning(f"SL order failed for {sym}: {e}")
 
     # ── Place TP order (optional, reduceOnly) ──
     tp_order_id = None
     tp_error = None
+    tp_applied = None
     if tp_raw is not None:
         try:
             tp_price = _round_to_tick(float(tp_raw))
@@ -1309,9 +1320,14 @@ def place_order():
             tp_resp = _signed_request("POST", "/api/v3/sendorder", tp_params)
             tp_status = (tp_resp.get("sendStatus", {}) or {})
             tp_order_id = tp_status.get("order_id") or tp_status.get("orderId")
-            if tp_status.get("status") not in ("placed",):
-                tp_error = f"TP status={tp_status.get('status')}"
+            if tp_resp.get("result") == "success" and tp_status.get("status") == "placed":
+                tp_applied = True
+            else:
+                tp_applied = False
+                tp_error = (f"TP status={tp_status.get('status')}"
+                            if tp_status else str(tp_resp.get("error") or "refuse"))
         except Exception as e:
+            tp_applied = False
             tp_error = str(e)
             logger.warning(f"TP order failed for {sym}: {e}")
 
@@ -1328,6 +1344,16 @@ def place_order():
         "sl_error": sl_error,
         "tp_order_id": tp_order_id,
         "tp_error": tp_error,
+        # ⛔ Contrat identique au bridge MT5 depuis le 2026-08-06. `ok` reste
+        # True : l'ordre de MARCHE est bien parti, et le faire passer pour un
+        # echec ferait retenter l'appelant — donc ouvrir une SECONDE position
+        # par-dessus la premiere. Ce qui rate ici, c'est la protection, pas
+        # l'ordre, et les deux ne se disent pas avec le meme mot.
+        "sl_applied": sl_applied,
+        "tp_applied": tp_applied,
+        # ⚠️ `protected` ne parle QUE du stop. Un objectif manquant coute du
+        # gain, pas de la protection : les confondre banaliserait l'alerte.
+        "protected": sl_applied is True,
         # Niveaux réellement posés, après arrondi au tickSize. La réponse ne
         # portait que les identifiants d'ordre : le radar ne savait donc pas à
         # quels prix ses stops avaient été placés, et `personal_trades` ne
@@ -1339,6 +1365,162 @@ def place_order():
         # recalage a bien eu lieu.
         "stops_source": stops_source,
     })
+
+
+@app.route("/position/sltp", methods=["POST"])
+@require_bridge_key
+def position_sltp():
+    """Repose ou deplace le stop et/ou l'objectif d'une position vivante.
+
+    Le bridge Kraken n'avait aucune route equivalente a celle du bridge MT5.
+    Deux consequences : rien ne pouvait **reparer** une position ouverte sans
+    stop — la detection existait (`/openorders` -> `positions_non_protegees`),
+    la reparation non — et rien ne pouvait **deplacer** un stop, donc la sortie
+    a l'equilibre du 23/08 n'avait aucun bras de ce cote.
+
+    Corps : ``{"symbol": "PF_XBTUSD"}`` ou ``{"pair": "BTC/USD"}``, plus au
+    moins un de ``sl`` / ``tp``, et une ``raison`` libre.
+
+    Sur Kraken le stop n'est pas un attribut de la position, c'est un ordre
+    independant. « Deplacer un stop » veut donc dire en poser un neuf et
+    annuler l'ancien — et l'ORDRE de ces deux gestes decide si la position
+    passe, ou non, par un instant sans protection.
+
+    On pose d'abord, on annule ensuite. Deux stops coexistent une fraction de
+    seconde : le premier declenche ferme la position, le second devient sans
+    objet — il est `reduceOnly`, il ne peut rien ouvrir. L'ordre inverse
+    ouvrirait une fenetre nue, exactement le defaut corrige dans `/kill`. Si la
+    pose echoue, l'ancien est CONSERVE.
+
+    La taille vient du COURTIER : un stop plus petit que la position en
+    laisserait une part nue. Position introuvable => 404.
+    """
+    corps = request.get_json(silent=True) or {}
+    raison = str(corps.get("raison") or corps.get("reason") or "non precisee")
+
+    symbole = corps.get("symbol")
+    if not symbole and corps.get("pair"):
+        symbole = _resolve_symbol(str(corps["pair"]))
+        if not symbole:
+            return jsonify({"ok": False, "error": "unsupported pair " + str(corps["pair"]),
+                            "raison": raison}), 400
+    if not symbole:
+        return jsonify({"ok": False, "error": "symbol ou pair requis",
+                        "raison": raison}), 400
+    symbole = str(symbole)
+
+    sl_raw = corps.get("sl")
+    tp_raw = corps.get("tp")
+    if sl_raw is None and tp_raw is None:
+        return jsonify({"ok": False, "error": "sl ou tp requis", "symbol": symbole,
+                        "raison": raison}), 400
+
+    try:
+        pos_data = _signed_request("GET", "/api/v3/openpositions")
+        if pos_data.get("result") != "success":
+            return jsonify({"ok": False, "error": "positions illisibles",
+                            "raison": raison}), 503
+        cible = None
+        for p in pos_data.get("openPositions", []) or []:
+            if p.get("symbol") == symbole:
+                cible = p
+                break
+        if cible is None:
+            logger.info("position/sltp : %s introuvable (raison=%s)", symbole, raison)
+            return jsonify({"ok": False, "error": "position introuvable",
+                            "symbol": symbole, "raison": raison}), 404
+
+        taille = abs(float(cible.get("size") or 0.0))
+        if taille <= 0:
+            return jsonify({"ok": False, "error": "taille nulle chez le courtier",
+                            "symbol": symbole, "raison": raison}), 404
+        long = str(cible.get("side") or "").lower().startswith("l")
+        sens_protection = "sell" if long else "buy"
+
+        specs = _get_specs(symbole) or {}
+        tick = float(specs.get("tickSize", 0.01) or 0.01)
+
+        def _au_tick(x):
+            return round(round(float(x) / tick) * tick, 8)
+
+        # Les ordres vivants du symbole, lus AVANT de poser : ce sont eux qu'on
+        # remplacera, et seulement ceux qui PROTEGENT.
+        anciens = []
+        try:
+            od = _signed_request("GET", "/api/v3/openorders")
+            anciens = [o for o in (od.get("openOrders", []) or [])
+                       if o.get("symbol") == symbole and o.get("reduceOnly")]
+        except Exception as e:  # noqa: BLE001
+            logger.warning("position/sltp : ordres illisibles pour %s : %s", symbole, e)
+
+        def _est_stop(o):
+            t = str(o.get("orderType") or "").lower()
+            return t == "stp" or ("stop" in t and "profit" not in t)
+
+        pose, erreurs, annules = {}, [], []
+        for genre, brut, type_kraken in (("sl", sl_raw, "stp"),
+                                         ("tp", tp_raw, "take_profit")):
+            if brut is None:
+                continue
+            prix = _au_tick(brut)
+            try:
+                resp = _signed_request("POST", "/api/v3/sendorder", {
+                    "orderType": type_kraken,
+                    "symbol": symbole,
+                    "side": sens_protection,
+                    "size": taille,
+                    "stopPrice": prix,
+                    "triggerSignal": "mark",
+                    "reduceOnly": "true",
+                })
+                statut = (resp.get("sendStatus") or {}).get("status")
+                if resp.get("result") != "success" or statut != "placed":
+                    # Pose ratee => on NE TOUCHE PAS a l'ancien ordre. Sans
+                    # nouveau stop, l'ancien est la seule protection restante.
+                    erreurs.append({genre: statut or resp.get("error")})
+                    continue
+                pose[genre] = {"prix": prix,
+                               "order_id": (resp.get("sendStatus") or {}).get("order_id")}
+            except Exception as e:  # noqa: BLE001
+                erreurs.append({genre: str(e)})
+                logger.warning("position/sltp : pose %s refusee sur %s : %s",
+                               genre, symbole, e)
+                continue
+
+            # Et seulement MAINTENANT : l'ancien ordre du MEME genre. Poser un
+            # stop ne doit pas emporter l'objectif, ni l'inverse.
+            for o in anciens:
+                meme_genre = _est_stop(o) if genre == "sl" else not _est_stop(o)
+                if not meme_genre:
+                    continue
+                oid = o.get("order_id") or o.get("orderId")
+                if not oid or oid == pose[genre]["order_id"]:
+                    continue
+                try:
+                    _signed_request("POST", "/api/v3/cancelorder", {"order_id": oid})
+                    annules.append(oid)
+                except Exception as e:  # noqa: BLE001
+                    # Un ancien stop qui survit fait double emploi, il ne
+                    # decouvre rien : c'est le sens sur lequel se tromper.
+                    logger.warning("position/sltp : ancien ordre %s non annule : %s",
+                                   oid, e)
+
+        ok = bool(pose) and not erreurs
+        logger.info("position/sltp : %s pose=%s annules=%d erreurs=%s (raison=%s)",
+                    symbole, list(pose), len(annules), erreurs, raison)
+        return jsonify({
+            "ok": ok,
+            "symbol": symbole,
+            "size": taille,
+            "raison": raison,
+            "pose": pose,
+            "ordres_annules": annules,
+            "erreurs": erreurs,
+        }), (200 if ok else 502)
+    except Exception as e:
+        logger.exception("position/sltp failed")
+        return jsonify({"ok": False, "error": str(e), "symbol": symbole,
+                        "raison": raison}), 500
 
 
 @app.route("/position/close", methods=["POST"])
