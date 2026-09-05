@@ -437,3 +437,89 @@ async def bulletin(jours: int = 7) -> dict:
     les faits, eux, sont toujours la."""
     donnees = releve(jours=jours)
     return {**donnees, "narration": await narration(donnees)}
+
+
+# ─── Bulletin ────────────────────────────────────────────────────────────
+def texte_bulletin(donnees: dict) -> str:
+    """Met le releve en texte brut pour Telegram. Pur, donc testable.
+
+    La narration, si elle existe, est placee EN TETE et clairement separee des
+    faits : c'est le seul passage que le modele a ecrit, et le lecteur doit
+    savoir ou il commence et ou il s'arrete.
+    """
+    lignes: list[str] = [f"Lecteur de journaux — {donnees.get('jours', 0)} jours"]
+
+    narration = donnees.get("narration")
+    if narration:
+        lignes += ["", narration, "", "— faits —"]
+
+    r = donnees.get("rejets") or {}
+    if r.get("total_courant") or r.get("total_precedent"):
+        lignes.append(
+            f"Rejets : {r.get('total_courant', 0)} "
+            f"(periode precedente {r.get('total_precedent', 0)})"
+        )
+        for c in (r.get("par_code") or [])[:5]:
+            signe = "+" if c["delta"] > 0 else ""
+            lignes.append(f"  {c['code']} : {c['courant']} ({signe}{c['delta']})")
+
+    inertes = [x for x in (donnees.get("regles_inertes") or []) if x.get("jamais_tiree")]
+    if inertes:
+        lignes.append(
+            "Regles jamais declenchees : " + ", ".join(x["regle"] for x in inertes)
+        )
+
+    v = donnees.get("veto_contrefactuel") or {}
+    if v.get("disponible") and v.get("shadows_evalues"):
+        taux = v.get("taux")
+        lignes.append(
+            f"Veto contrefactuel : {v['would_veto']}/{v['shadows_evalues']} shadows"
+            + (f" ({taux * 100:.2f} %)" if taux is not None else "")
+        )
+
+    s = donnees.get("shadows_en_suspens") or {}
+    if s.get("total"):
+        lignes.append(
+            f"Shadows non resolus : {s['total']}, dont {s.get('abandonnes', 0)} "
+            f"au-dela de {s.get('seuil_abandon_jours', JOURS_SHADOW_ABANDONNE)} jours"
+        )
+
+    cadence = donnees.get("cadence") or []
+    if cadence:
+        lignes.append("Cadence (clotures/mois, mois avant de pouvoir conclure) :")
+        for c in cadence[:6]:
+            mois = c.get("mois_restants")
+            lignes.append(
+                f"  {c['pair']} : {c['par_mois']}/mois, "
+                + (f"{mois} mois" if mois is not None else "jamais a ce rythme")
+            )
+
+    if len(lignes) == 1:
+        lignes.append("Rien a signaler : aucune trace sur la periode.")
+    return "\n".join(lignes)
+
+
+async def envoyer_bulletin_hebdomadaire(jours: int = 7) -> bool:
+    """Job scheduler : lit, met en forme, envoie sur le fil infra.
+
+    ⚠️ Le retour de l'envoi est JOURNALISE. Un bulletin qui part n'est pas un
+    bulletin qui arrive — meme lecon que la sauvegarde S3 tombee cinq nuits.
+
+    Fil infra et non sales : ce bulletin parle de la SANTE DE LA MESURE, pas
+    d'un verdict sur une paire. Changer `send_infra_text` suffit a le deplacer.
+    """
+    from backend.services import telegram_service
+
+    try:
+        donnees = await bulletin(jours=jours)
+        texte = texte_bulletin(donnees)
+    except Exception:
+        logger.exception("lecteur_journaux: construction du bulletin impossible")
+        return False
+
+    envoye = await telegram_service.send_infra_text(texte, parse_mode=None)
+    logger.info(
+        "lecteur_journaux: bulletin %d j, narration=%s, envoye=%s",
+        jours, bool(donnees.get("narration")), envoye,
+    )
+    return bool(envoye)

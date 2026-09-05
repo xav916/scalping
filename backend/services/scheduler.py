@@ -929,6 +929,25 @@ def start_scheduler() -> AsyncIOScheduler:
         replace_existing=True,
     )
 
+    # Lecteur de journaux, lundi 08h15 UTC — quinze minutes apres le banc
+    # d'essai, sur le meme fil de lecture du lundi matin.
+    #
+    # ⛔ Ce job ne DECIDE de rien et ne bloque rien : il relit `signal_rejections`,
+    # les contrefactuels de veto et les shadows, et dit ce qu'il y voit. Il
+    # existe pour la meme raison que le bulletin ci-dessus — une information
+    # que personne ne va chercher n'existe pas.
+    #
+    # Hebdomadaire : les regles de veto se declenchent a l'echelle du mois, pas
+    # de la journee. Un bulletin quotidien repeterait le meme zero.
+    from backend.services import lecteur_journaux as _lecteur
+    _scheduler.add_job(
+        _lecteur.envoyer_bulletin_hebdomadaire,
+        CronTrigger(day_of_week="mon", hour=8, minute=15),
+        id="bulletin_lecteur_journaux",
+        name="Lecteur de journaux (hebdo)",
+        replace_existing=True,
+    )
+
     # Soldes réels des comptes, toutes les 2 min. Alimente le « dernier solde
     # connu » qu'oppose le plafond de perte journalière (2026-09-03).
     #

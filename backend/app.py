@@ -3754,6 +3754,28 @@ async def api_admin_geopolitical_veto_stats(
     return geopolitical_veto.get_stats(days=days)
 
 
+@app.get("/api/admin/lecteur-journaux")
+async def api_admin_lecteur_journaux(
+    jours: int = 7,
+    narration: bool = False,
+    _ctx: AuthContext = Depends(require_admin),
+):
+    """Releve des journaux sur les ``jours`` derniers jours (defaut 7, max 90).
+
+    Retourne ``{rejets, regles_inertes, veto_contrefactuel, shadows_en_suspens,
+    cadence}``. Tous ces chiffres sont calcules en SQL dans le module — le
+    modele de langage n'en produit aucun.
+
+    ``narration=true`` ajoute une mise en francais du releve. Elle vaut ``null``
+    si `LECTEUR_NARRATION_ENABLED` est faux ou si aucune cle API n'est posee ;
+    les faits, eux, sont rendus dans tous les cas.
+    """
+    from backend.services import lecteur_journaux
+    if narration:
+        return await lecteur_journaux.bulletin(jours=jours)
+    return lecteur_journaux.releve(jours=jours)
+
+
 @app.get("/api/admin/pair-admission")
 async def api_admin_pair_admission(
     _ctx: AuthContext = Depends(require_admin),

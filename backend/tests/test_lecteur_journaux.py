@@ -240,3 +240,54 @@ def test_narration_sans_cle_ne_tente_pas_l_appel(base, monkeypatch):
     monkeypatch.setattr(lj, "LECTEUR_NARRATION_API_KEY", "", raising=False)
 
     assert asyncio.run(lj.narration({"jours": 7})) is None
+
+
+# ─── Bulletin ────────────────────────────────────────────────────────────
+
+def test_bulletin_signale_les_regles_jamais_declenchees(base):
+    """Le seul chiffre qui compte pour gdelt_stress est qu'il n'y en a pas."""
+    texte = lj.texte_bulletin(lj.releve(jours=7))
+    assert "Regles jamais declenchees" in texte
+    assert "gdelt_stress" in texte
+
+
+def test_bulletin_separe_la_narration_des_faits(base):
+    """Le lecteur doit voir ou s'arrete ce que le modele a ecrit."""
+    donnees = {**lj.releve(jours=7), "narration": "Rien de neuf cette semaine."}
+    texte = lj.texte_bulletin(donnees)
+
+    assert texte.index("Rien de neuf cette semaine.") < texte.index("— faits —")
+
+
+def test_bulletin_vide_le_dit_plutot_que_de_meubler(base):
+    texte = lj.texte_bulletin({"jours": 7})
+    assert "Rien a signaler" in texte
+
+
+def test_envoi_hebdomadaire_rend_le_resultat_de_telegram(base, monkeypatch):
+    """Prouver qu'un message part ne prouve pas qu'il arrive — mais un envoi
+    qui echoue doit au moins remonter False."""
+    import sys
+    import types
+
+    envois = []
+
+    faux = types.ModuleType("backend.services.telegram_service")
+
+    async def send_infra_text(texte, parse_mode=None):
+        envois.append(texte)
+        return False
+
+    faux.send_infra_text = send_infra_text
+    monkeypatch.setitem(sys.modules, "backend.services.telegram_service", faux)
+    # `from backend.services import telegram_service` lit l'ATTRIBUT du paquet
+    # des qu'un autre module de test l'a importe : sys.modules seul ne suffit
+    # pas, le vrai service repasserait devant (pollution croisee).
+    import backend.services as _paquet_services
+    monkeypatch.setattr(_paquet_services, "telegram_service", faux, raising=False)
+    monkeypatch.setattr(lj, "LECTEUR_NARRATION_ENABLED", False, raising=False)
+    _rejet(base, "below_confidence", 0)
+
+    assert asyncio.run(lj.envoyer_bulletin_hebdomadaire(jours=7)) is False
+    assert len(envois) == 1
+    assert "Lecteur de journaux" in envois[0]
