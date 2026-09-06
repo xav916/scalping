@@ -163,6 +163,39 @@ out = {{}}
 from backend.services.canaux_telegram import (libelle_avec_picto as _lib,
                                               canal_pour as _cp)
 from backend.services.destinations_registry import DESTINATIONS as _DEST
+import os as _os, json as _json, urllib.request as _url
+
+
+def _compte(dest):
+    """Solde du courtier, lu chez LUI. `None` si illisible.
+
+    ⛔ Lecture NON bloquante : un bridge muet ne doit pas tuer le recap. Mais
+    elle se DIT — « compte illisible » et « compte a zero » menent a des
+    conclusions opposees, et c'est la seconde qu'on lirait dans un silence.
+    """
+    d = _DEST.get(dest)
+    if d is None:
+        return None
+    try:
+        u = _os.environ.get(d.url_env, "")
+        k = _os.environ.get(d.key_env, "")
+        rq = _url.Request(u.rstrip("/") + "/account",
+                          headers={{getattr(d, "key_header", None) or "X-API-Key": k}})
+        with _url.urlopen(rq, timeout=10) as r:
+            o = _json.load(r)
+    except Exception:
+        return None
+    # MT5 et Kraken ne parlent pas la meme langue : on normalise ICI, une
+    # fois, plutot que dans le rendu.
+    if "equity" in o:
+        return {{"valeur": o.get("equity"), "solde": o.get("balance"),
+                 "latent": o.get("profit"), "positions": o.get("positions_count"),
+                 "devise": o.get("currency") or "?"}}
+    if "portfolio_value_usd" in o:
+        return {{"valeur": o.get("portfolio_value_usd"), "solde": None,
+                 "latent": o.get("pnl_net_usd"), "positions": None,
+                 "devise": "USD"}}
+    return None
 DEVISES = {{"admin_live": "EUR", "admin_legacy": "EUR",
             "admin_kraken": "USD", "admin_kraken_spot": "USD"}}
 for dest in ("admin_live", "admin_kraken", "admin_kraken_spot", "admin_legacy"):
@@ -190,6 +223,7 @@ for dest in ("admin_live", "admin_kraken", "admin_kraken_spot", "admin_legacy"):
         "by_pair": sorted(by_pair.items(), key=lambda kv: kv[1]),
         "libelle": _lib(_cp(dest)),
         "devise": DEVISES.get(dest, "?"),
+        "compte": _compte(dest),
     }}
 # Les clotures SANS destination : on les compte plutot que de les taire. Une
 # ligne qu'aucun compte ne reclame est un trou de tracabilite, pas un zero.
@@ -280,18 +314,37 @@ def render(date_str: str, mt5_data: dict, binance: dict, activite: dict | None =
             if vus.count(titre) > 1:
                 titre = f"{titre} · {dest}"
             lines += [titre]
-            if d.get("trades", 0):
-                lines += [
-                    f"• {d['trades']} trades fermés",
-                    f"• PnL : {d['pnl_total']:+.2f} {d.get('devise') or ''}".rstrip(),
-                ]
+            dev = d.get("devise") or ""
+            # ⚠️ Le PnL du jour est dit MEME a zero. « Rien affiche » et
+            # « rien gagne » se ressemblent trop pour qu'on laisse le lecteur
+            # trancher.
+            n = d.get("trades", 0)
+            lines.append(f"• {n} trade(s) fermé(s) · PnL du jour "
+                         f"{d.get('pnl_total', 0):+.2f} {dev}".rstrip())
+            if n:
                 paires = d.get("by_pair") or []
                 if paires and paires[-1][1] > 0:
                     lines.append(f"• Top : {paires[-1][0]} {paires[-1][1]:+.2f}")
                 if paires and paires[0][1] < 0:
                     lines.append(f"• Pire : {paires[0][0]} {paires[0][1]:+.2f}")
+
+            # Le montant du compte, lu CHEZ LE COURTIER — pas reconstitue
+            # depuis nos propres lignes, qui peuvent en manquer.
+            c = d.get("compte")
+            if not c or c.get("valeur") is None:
+                lines.append("• ⚠️ Compte illisible — ce n'est pas « zéro », "
+                             "c'est « on n'a pas pu lire ».")
             else:
-                lines += ["• 0 trade fermé sur 24h"]
+                bout = f"• Compte : {c['valeur']:.2f} {c.get('devise') or ''}".rstrip()
+                # Le solde et le latent ne sont dits que si le courtier les
+                # rend : les inventer ferait un chiffre faux d'apparence sure.
+                if c.get("solde") is not None and c.get("latent") is not None:
+                    bout += (f"  (solde {c['solde']:.2f}, "
+                             f"latent {c['latent']:+.2f}")
+                    if c.get("positions"):
+                        bout += f" sur {c['positions']} position(s)"
+                    bout += ")"
+                lines.append(bout)
             lines.append("")
 
         # ⛔ Une cloture qu'aucun compte ne reclame est un trou de tracabilite,
