@@ -269,3 +269,140 @@ def test_le_digest_ne_NIE_pas_ce_que_sa_propre_liste_montre(s):
 
     _, sans = s.message_silence([("fees_exceed_edge", 3)], 24, {})
     assert "Aucun de ces refus n'est le plafond" in sans
+
+
+# ── Kraken : le journal, c'est `/fills` (2026-09-06) ──────────────────────
+#
+# ⛔ Kraken était hors périmètre faute d'`/audit` : son bridge n'a pas cet
+# endpoint. Le brancher dessus aurait rendu « illisible » à chaque passage —
+# un silence qu'on lirait comme « aucun ordre métal », c'est-à-dire l'inverse
+# de ce que la sonde cherche.
+#
+# 🔑 Sur un exchange, un FILL EST un ordre parti : le `status="filled"` que
+# l'audit MT5 porte y est acquis par construction.
+
+
+def _fill(symbole="PF_XAUUSD", quand="2026-09-06T14:03:12.500Z",
+          genre="taker", oid="abc-123"):
+    return {"fill_id": "f-1", "order_id": oid, "symbol": symbole,
+            "side": "buy", "size": 0.01, "price": 4450.0,
+            "fill_time": quand, "fill_type": genre}
+
+
+def test_kraken_est_desormais_surveille(s):
+    assert "admin_kraken" in s.DESTINATIONS_SURVEILLEES
+
+
+def test_un_fill_metal_devient_un_ordre_PARTI(s):
+    l = s.fills_en_lignes_audit([_fill()])
+    assert len(l) == 1 and l[0]["status"] == "filled"
+    assert s.metaux_partis(l) == l
+
+
+def test_un_fill_NON_metal_est_ignore(s):
+    l = s.fills_en_lignes_audit([_fill(symbole="PF_XBTUSD")])
+    assert s.metaux_partis(l) == []
+
+
+def test_une_LIQUIDATION_n_est_PAS_un_ordre_que_nous_avons_envoye(s):
+    """⛔ C'est la même distinction que `filled` et rien d'autre côté MT5 :
+    décrire un événement subi comme un ordre parti serait un contresens."""
+    assert s.fills_en_lignes_audit([_fill(genre="liquidation")]) == []
+
+
+def test_un_type_de_fill_INCONNU_passe_et_se_voit(s):
+    """⚠️ On nomme ce qui est EXCLU, pas ce qui est admis : lister les types
+    admis rendrait la sonde muette le jour où Kraken renomme un libellé — et
+    un détecteur ne se teste pas sur son silence."""
+    assert len(s.fills_en_lignes_audit([_fill(genre="un_nouveau_type")])) == 1
+
+
+def test_l_id_est_chronologique(s):
+    """Le curseur ne fonctionne que si l'ordre est préservé."""
+    l = s.fills_en_lignes_audit([
+        _fill(quand="2026-09-06T14:05:00.000Z"),
+        _fill(quand="2026-09-06T14:03:00.000Z")])
+    assert [x["id"] for x in l] == sorted(x["id"] for x in l)
+    assert s.id_max(l) == l[-1]["id"]
+
+
+def test_un_horodatage_ILLISIBLE_ne_devient_pas_zero(s):
+    """⛔ Un `id` à 0 ferait relire toute l'histoire et re-annoncer des ordres
+    de mai comme s'ils partaient à l'instant."""
+    assert s.fills_en_lignes_audit([_fill(quand="pas une date")]) == []
+    assert s.fills_en_lignes_audit([_fill(quand=None)]) == []
+
+
+def test_le_stop_est_None_PAS_zero(s):
+    """⚠️ Chez Kraken le stop est un ORDRE SÉPARÉ : le fill ne le porte pas.
+    Un `0.0` se lirait « position nue »."""
+    assert s.fills_en_lignes_audit([_fill()])[0]["sl"] is None
+
+
+def test_le_message_DIT_que_le_stop_est_inconnu(s):
+    """⛔ Afficher « stop None » se lirait comme une position sans protection."""
+    l = s.fills_en_lignes_audit([_fill()])
+    _, corps = s.message_depart("admin_kraken", l)
+    assert "None" not in corps
+    assert "inconnu" in corps
+
+
+def test_le_dispatcher_envoie_KRAKEN_sur_les_fills(s, monkeypatch):
+    """⛔ Le brancher sur `/audit` rendrait « illisible » à chaque passage."""
+    vus = []
+    monkeypatch.setattr(s, "_appel",
+                        lambda dest, chemin: (vus.append(chemin) or
+                                              {"ok": True, "fills": [_fill()]}, True))
+
+    class _Dest:
+        bridge_type = "kraken"
+
+    lignes, ok = s._lignes_du_journal(_Dest(), 0)
+    assert vus == ["/fills"] and ok is True and len(lignes) == 1
+
+
+def test_le_dispatcher_laisse_MT5_sur_l_audit(s, monkeypatch):
+    vus = []
+    monkeypatch.setattr(s, "_appel",
+                        lambda dest, chemin: (vus.append(chemin) or
+                                              {"orders": []}, True))
+
+    class _Dest:
+        bridge_type = "mt5"
+
+    s._lignes_du_journal(_Dest(), 7)
+    assert vus and vus[0].startswith("/audit"), vus
+
+
+def test_le_curseur_filtre_ce_qui_est_DEJA_vu(s, monkeypatch):
+    monkeypatch.setattr(s, "_appel", lambda dest, chemin: (
+        {"ok": True, "fills": [_fill(quand="2026-09-06T14:03:00.000Z"),
+                               _fill(quand="2026-09-06T14:07:00.000Z")]}, True))
+
+    class _Dest:
+        bridge_type = "kraken"
+
+    tout, _ = s._lignes_du_journal(_Dest(), 0)
+    apres, _ = s._lignes_du_journal(_Dest(), tout[0]["id"])
+    assert len(tout) == 2 and len(apres) == 1
+
+
+def test_une_lecture_RATEE_n_est_pas_une_absence_d_ordre(s, monkeypatch):
+    """⛔ `(None, False)` et `([], True)` mènent à des conclusions opposées."""
+    monkeypatch.setattr(s, "_appel", lambda dest, chemin: (None, False))
+
+    class _Dest:
+        bridge_type = "kraken"
+
+    lignes, ok = s._lignes_du_journal(_Dest(), 0)
+    assert lignes is None and ok is False
+
+
+def test_un_ok_FALSE_du_bridge_est_aussi_une_lecture_ratee(s, monkeypatch):
+    monkeypatch.setattr(s, "_appel",
+                        lambda dest, chemin: ({"ok": False, "error": "x"}, True))
+
+    class _Dest:
+        bridge_type = "kraken"
+
+    assert s._lignes_du_journal(_Dest(), 0) == (None, False)

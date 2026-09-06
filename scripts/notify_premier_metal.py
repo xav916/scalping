@@ -55,7 +55,18 @@ DELAI = 10
 # « métal » embarquerait le platine et le palladium, qui ne sont pas le sujet.
 SYMBOLES_METAUX = ("XAU", "GOLD", "XAG", "SILVER")
 
-DESTINATIONS_SURVEILLEES = ("admin_legacy", "admin_live")
+# ⛔ Kraken en etait absent faute d'`/audit` : son bridge n'a pas cet
+# endpoint. Il a `/fills`, et sur un exchange un FILL EST un ordre parti — la
+# distinction intention/execution que cette sonde protege y est gratuite.
+DESTINATIONS_SURVEILLEES = ("admin_legacy", "admin_live", "admin_kraken")
+
+# Types de fill qui ne sont PAS un ordre que nous avons envoye.
+#
+# ⚠️ On NOMME ce qui est exclu plutot que de lister ce qui est admis : un type
+# inconnu passe donc, et se voit. L'inverse rendrait la sonde MUETTE le jour ou
+# Kraken renomme un libelle — et un detecteur ne se teste pas sur son silence.
+FILL_TYPES_EXCLUS = frozenset({"liquidation", "assignment", "assignor",
+                               "assignee"})
 
 ETAT = Path(os.environ.get("PREMIER_METAL_ETAT_PATH",
                            "/app/data/premier_metal.json"))
@@ -152,7 +163,10 @@ def message_depart(destination: str, ordres: list[dict]) -> tuple[str, str]:
         f"ticket   {o.get('ticket')}",
         f"lots     {o.get('lots')}",
         f"entree   {o.get('entry')}",
-        f"stop     {o.get('sl')}",
+        # ⚠️ Chez Kraken le stop est un ORDRE SEPARE : le fill ne le porte pas.
+        # Afficher « stop None » se lirait comme une position nue.
+        (f"stop     {o.get('sl')}" if o.get("sl") is not None
+         else "stop     inconnu a cet instant"),
         f"quand    {str(o.get('created_at'))[:19]}",
     ]
     if len(ordres) > 1:
@@ -238,6 +252,93 @@ def _lignes_audit(dest, depuis_id):
     if not isinstance(lignes, list):
         return None, False
     return lignes, True
+
+
+def _ms_depuis_iso(iso: str | None) -> int | None:
+    """Horodatage ISO -> millisecondes epoque. `None` si illisible.
+
+    ⛔ Jamais 0 : un curseur a zero ferait relire toute l'histoire et
+    re-annoncer des ordres de mai comme s'ils partaient a l'instant.
+    """
+    if not iso:
+        return None
+    t = str(iso).strip().replace("Z", "+00:00")
+    try:
+        d = datetime.fromisoformat(t)
+    except ValueError:
+        return None
+    if d.tzinfo is None:
+        d = d.replace(tzinfo=timezone.utc)
+    return int(d.timestamp() * 1000)
+
+
+def fills_en_lignes_audit(fills) -> list[dict]:
+    """Traduit les fills Kraken dans la forme que la sonde sait lire.
+
+    🔑 Sur un exchange, un FILL EST un ordre parti : le `status="filled"` que
+    l'audit MT5 porte y est acquis par construction. C'est ce qui rend la
+    traduction honnete plutot que complaisante.
+
+    ⚠️ L'`id` est l'horodatage en MILLISECONDES : Kraken n'a pas de compteur
+    entier, et `fill_id` est un UUID. L'ordre chronologique est preserve, donc
+    le curseur fonctionne — au prix connu suivant : deux fills dans la MEME
+    milliseconde et le second serait saute. A quelques ordres par jour, le cas
+    ne s'est jamais produit ; il est ecrit ici plutot que tu, pour qu'on sache
+    ou regarder s'il arrive.
+
+    ⛔ Le stop n'y figure pas : chez Kraken c'est un ordre independant. On rend
+    `None`, et le message le dit — pas un zero, qui se lirait « pas de stop ».
+    """
+    lignes = []
+    for f in fills or []:
+        if not isinstance(f, dict):
+            continue
+        if str(f.get("fill_type") or "").lower() in FILL_TYPES_EXCLUS:
+            continue
+        ms = _ms_depuis_iso(f.get("fill_time"))
+        if ms is None:
+            # Sans horodatage lisible, la ligne n'a pas de place dans l'ordre
+            # chronologique : la garder casserait le curseur.
+            continue
+        lignes.append({
+            "id": ms,
+            "status": "filled",
+            "symbol": f.get("symbol"),
+            "direction": f.get("side"),
+            "ticket": f.get("order_id") or f.get("fill_id"),
+            "lots": f.get("size"),
+            "entry": f.get("price"),
+            "sl": None,
+            "created_at": f.get("fill_time"),
+        })
+    lignes.sort(key=lambda l: l["id"])
+    return lignes
+
+
+def _lignes_fills(dest, depuis_id):
+    """Equivalent Kraken de `_lignes_audit`. `(lignes, ok)`.
+
+    ⛔ Le filtrage se fait ICI, apres lecture : `/fills` ne prend pas de
+    curseur. Une lecture ratee rend `(None, False)` — « je n'ai pas pu lire »
+    n'est pas « aucun ordre ».
+    """
+    charge, ok = _appel(dest, "/fills")
+    if not ok or not isinstance(charge, dict) or not charge.get("ok"):
+        return None, False
+    lignes = fills_en_lignes_audit(charge.get("fills"))
+    return [l for l in lignes if l["id"] > int(depuis_id)], True
+
+
+def _lignes_du_journal(dest, depuis_id):
+    """Le journal du courtier, quel qu'il soit.
+
+    ⚠️ Le bridge Kraken n'a PAS d'`/audit`. Le brancher dessus rendrait
+    « illisible » a chaque passage — un silence qu'on lirait comme
+    « aucun ordre metal », c'est-a-dire l'inverse de ce que la sonde cherche.
+    """
+    if getattr(dest, "bridge_type", "") in ("kraken", "kraken_spot"):
+        return _lignes_fills(dest, depuis_id)
+    return _lignes_audit(dest, depuis_id)
 
 
 def _refus_metaux(heures: int) -> tuple[list[tuple], dict]:
@@ -335,7 +436,7 @@ def main() -> int:
 
         if curseur is None:
             # Premier passage : on note où on en est, sans rien annoncer.
-            lignes, ok = _lignes_audit(dest, 0)
+            lignes, ok = _lignes_du_journal(dest, 0)
             if not ok:
                 print("    audit illisible — curseur NON pose")
                 continue
@@ -343,7 +444,7 @@ def main() -> int:
             # page par page jusqu'a la fin pour poser le curseur au present.
             dernier = id_max(lignes)
             while lignes and len(lignes) >= 500:
-                lignes, ok = _lignes_audit(dest, dernier)
+                lignes, ok = _lignes_du_journal(dest, dernier)
                 if not ok:
                     break
                 dernier = id_max(lignes) or dernier
@@ -355,7 +456,7 @@ def main() -> int:
                   "rien annonce (une ligne de mai n'est pas un premier ordre)")
             continue
 
-        lignes, ok = _lignes_audit(dest, curseur)
+        lignes, ok = _lignes_du_journal(dest, curseur)
         if not ok:
             print("    audit illisible — curseur inchange")
             continue
