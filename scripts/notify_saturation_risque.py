@@ -113,7 +113,10 @@ BASE_URL = ("https://app.scalping-radar.online/api/admin/"
 # apres un seul envoi rendrait invisible un blocage qui dure des jours.
 COOLDOWN_SEC = 21600
 
-DESTINATIONS_SURVEILLEES = ("admin_legacy", "admin_live")
+# ⛔ Kraken en etait absent alors qu'il engage de l'argent REEL, avec un
+# plafond de risque cumule a 50 % — le plus haut des trois comptes. La sonde
+# se taisait donc precisement la ou la porte est la plus large.
+DESTINATIONS_SURVEILLEES = ("admin_legacy", "admin_live", "admin_kraken")
 
 # Volatilite journaliere relative en dessous de laquelle on refuse de conclure.
 # Un flux GELE rend un sigma minuscule mais positif : sans ce plancher, toute
@@ -423,8 +426,57 @@ def _source_volatilite(dest):
     return _lire
 
 
+def _lire_kraken(dest) -> dict:
+    """La saturation de Kraken vient de SA porte, pas d'un calcul parallele.
+
+    ⛔ Le bridge Kraken expose `/risque` depuis le 06/09 : c'est exactement le
+    chiffre que la porte de `/order` emploie pour refuser. Le recalculer ici
+    en aurait fait une cinquieme copie — et une copie derive.
+
+    ⚠️ Sur Kraken le stop est un ORDRE INDEPENDANT : une position sans ordre
+    de stop n'a pas un petit risque, elle a un risque NON BORNE, et la porte
+    refuse alors TOUTE ouverture. Ce cas est `indecidable`, jamais « ok ».
+    """
+    charge, ok = _appel(dest, "/risque")
+    if not ok or not isinstance(charge, dict) or not charge.get("ok"):
+        return evaluation_illisible()
+
+    e = evaluation_illisible()
+    e.update({
+        "lisible": True,
+        "positions": int(charge.get("positions") or 0),
+        "risque_total": charge.get("risque_ouvert_usd"),
+        "plafond": charge.get("plafond_usd"),
+        "poche": "kraken",
+    })
+
+    if not charge.get("porte_armee"):
+        e.update({"indecidable": False, "pct": 0.0, "desarme": True})
+        return e
+
+    nues = charge.get("non_bornables") or []
+    if nues:
+        # ⛔ La saturation calculee serait TROMPEUSE : elle ignore le risque
+        # qu'on ne sait pas borner. On refuse de conclure, et on nomme.
+        e.update({"indecidable": True, "nues": len(nues),
+                  "non_mesurables": len(nues)})
+        return e
+
+    pct = charge.get("saturation_pct")
+    if pct is None:
+        return e  # indecidable : equity inconnue
+    e.update({"indecidable": False, "pct": float(pct)})
+    return e
+
+
 def _lire_destination(dest) -> dict:
     """Santé + compte + positions. Toute lecture ratée ⇒ `illisible`."""
+    # ⚠️ Kraken ne parle pas la meme langue : pas de poches, pas de soupape
+    # d'equilibre, et son plafond vit dans SON bridge. Le brancher sur le
+    # chemin MT5 rendrait `illisible` a chaque passage — un silence qu'on
+    # lirait comme « rien a signaler ».
+    if getattr(dest, "bridge_type", "") in ("kraken", "kraken_spot"):
+        return _lire_kraken(dest)
     sante, ok = _appel(dest, "/health")
     if not ok or not isinstance(sante, dict):
         return evaluation_illisible()

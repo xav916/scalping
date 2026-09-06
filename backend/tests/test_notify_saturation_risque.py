@@ -556,3 +556,98 @@ def test_hors_DRY_RUN_l_etat_est_bien_ecrit(s, monkeypatch):
                         lambda t, c, dedup, destination_id=None: None)
     assert s.main() == 0
     assert ecrits and ecrits[0]
+
+
+# ── Kraken (2026-09-06) ───────────────────────────────────────────────────
+#
+# ⛔ Kraken était absent de `DESTINATIONS_SURVEILLEES` alors qu'il engage de
+# l'argent RÉEL, avec le plafond de risque cumulé le plus haut des trois
+# comptes — 50 %. La sonde se taisait donc précisément là où la porte est la
+# plus large.
+#
+# 🔑 Sa saturation vient de SA porte, via `/risque`, exposé le même jour par
+# le bridge. La recalculer ici en aurait fait une cinquième copie.
+
+class _DestKraken:
+    bridge_type = "kraken"
+    destination_id = "admin_kraken"
+
+
+def _brancher(s, monkeypatch, charge, ok=True):
+    appels = []
+
+    def _faux(dest, chemin):
+        appels.append(chemin)
+        return charge, ok
+
+    monkeypatch.setattr(s, "_appel", _faux)
+    return appels
+
+
+def test_kraken_est_desormais_surveille(s):
+    assert "admin_kraken" in s.DESTINATIONS_SURVEILLEES
+
+
+def test_kraken_lit_SA_porte_et_pas_le_chemin_MT5(s, monkeypatch):
+    """⛔ Le brancher sur `/health` MT5 rendrait `illisible` à chaque passage —
+    un silence qu'on lirait comme « rien à signaler »."""
+    appels = _brancher(s, monkeypatch, {
+        "ok": True, "porte_armee": True, "positions": 1,
+        "risque_ouvert_usd": 40.0, "plafond_usd": 500.0,
+        "saturation_pct": 8.0, "non_bornables": []})
+    e = s._lire_destination(_DestKraken())
+    assert appels == ["/risque"], appels
+    assert e["lisible"] is True and e["pct"] == 8.0
+    assert s.verdict(e, 67.0) == "ok"
+
+
+def test_kraken_sature_declenche_le_meme_verdict(s, monkeypatch):
+    _brancher(s, monkeypatch, {
+        "ok": True, "porte_armee": True, "positions": 3,
+        "risque_ouvert_usd": 420.0, "plafond_usd": 500.0,
+        "saturation_pct": 84.0, "non_bornables": []})
+    e = s._lire_destination(_DestKraken())
+    assert s.verdict(e, 67.0) == "sature"
+
+
+def test_une_position_SANS_STOP_rend_INDECIDABLE_pas_ok(s, monkeypatch):
+    """⛔ Sur Kraken le stop est un ORDRE indépendant. Une position sans ordre
+    de stop n'a pas un petit risque : elle a un risque NON BORNÉ, et la porte
+    refuse alors toute ouverture. Annoncer « 8 % » serait rassurant et faux."""
+    _brancher(s, monkeypatch, {
+        "ok": True, "porte_armee": True, "positions": 2,
+        "risque_ouvert_usd": 40.0, "plafond_usd": 500.0,
+        "saturation_pct": 8.0, "non_bornables": ["PF_ETHUSD"]})
+    e = s._lire_destination(_DestKraken())
+    assert s.verdict(e, 67.0) == "indecidable"
+    assert e["nues"] == 1
+
+
+def test_un_bridge_MUET_n_est_pas_zero_pour_cent(s, monkeypatch):
+    """⛔ Muet n'est pas sain."""
+    _brancher(s, monkeypatch, None, ok=False)
+    assert s.verdict(s._lire_destination(_DestKraken()), 67.0) == "illisible"
+
+
+def test_une_reponse_ok_FALSE_est_illisible(s, monkeypatch):
+    """Le bridge répond, mais dit qu'il n'a pas pu lire : ce n'est pas 0 %."""
+    _brancher(s, monkeypatch, {"ok": False, "error": "lecture impossible"})
+    assert s.verdict(s._lire_destination(_DestKraken()), 67.0) == "illisible"
+
+
+def test_porte_DESARMEE_ne_declenche_rien(s, monkeypatch):
+    _brancher(s, monkeypatch, {
+        "ok": True, "porte_armee": False, "positions": 1,
+        "risque_ouvert_usd": 40.0, "plafond_usd": None,
+        "saturation_pct": None, "non_bornables": []})
+    e = s._lire_destination(_DestKraken())
+    assert e.get("desarme") is True and s.verdict(e, 67.0) == "ok"
+
+
+def test_equity_inconnue_est_INDECIDABLE(s, monkeypatch):
+    """Sans equity, il n'y a pas de plafond — donc pas de saturation faible."""
+    _brancher(s, monkeypatch, {
+        "ok": True, "porte_armee": True, "positions": 1,
+        "risque_ouvert_usd": 40.0, "plafond_usd": None,
+        "saturation_pct": None, "non_bornables": []})
+    assert s.verdict(s._lire_destination(_DestKraken()), 67.0) == "indecidable"

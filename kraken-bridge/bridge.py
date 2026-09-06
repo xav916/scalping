@@ -755,6 +755,24 @@ def positions():
         # dans `fillTime`. Lecture non bloquante — ne pas savoir depuis quand
         # une position est ouverte ne doit jamais empecher de la LIRE. Un echec
         # ici rend `fill_time: null`, et les positions sortent quand meme.
+        # Stop et objectif : ordres INDEPENDANTS chez Kraken (2026-09-06).
+        #
+        # ⛔ Lecture non bloquante, comme l'age : ne pas savoir quels ordres
+        # protegent une position ne doit jamais empecher de la LIRE. Mais
+        # `niveaux_lus` dit si la lecture a REUSSI — sans lui, « pas de stop »
+        # et « je n'ai pas pu lire les ordres » rendraient tous deux `None`,
+        # et le second se lirait comme le premier : une position protegee
+        # passerait pour nue, ou l'inverse.
+        niveaux: dict = {}
+        niveaux_lus = False
+        try:
+            ords = _signed_request("GET", "/api/v3/openorders")
+            if ords.get("result") == "success":
+                niveaux = niveaux_par_symbole(ords.get("openOrders", []) or [])
+                niveaux_lus = True
+        except Exception as e:  # noqa: BLE001
+            logger.info(f"niveaux des positions illisibles ({e})")
+
         ouvertures: dict = {}
         try:
             hist = _signed_request("GET", "/api/v3/fills")
@@ -772,6 +790,11 @@ def positions():
                 "side": p.get("side"),  # "long" ou "short"
                 "size": float(p.get("size", 0.0)),
                 "price": float(p.get("price", 0.0)),
+                # ⚠️ Alias du nom MT5. Les sondes lisent `price_open` ; sans
+                # lui, elles rendraient « prix illisibles » sur Kraken — un
+                # motif qui ressemble a une donnee cassee alors que c'est un
+                # simple desaccord de vocabulaire entre deux courtiers.
+                "price_open": float(p.get("price", 0.0)),
                 "unrealizedFunding": float(p.get("unrealizedFunding", 0.0)),
                 # ⚠️ Le P&L latent etait JETE ici alors que Kraken le rend
                 # — et `None` s'il ne le rend pas, jamais un zero.
@@ -781,6 +804,14 @@ def positions():
                 # elle n'est plus servie, meme pas sous son nom d'origine, pour
                 # qu'aucun appelant ne puisse la prendre pour une date.
                 "fill_time": ouvertures.get(sym),
+                # Meme forme que MT5, pour que les sondes n'aient pas a savoir
+                # a quel courtier elles parlent.
+                "sl": (niveaux.get(sym) or {}).get("sl"),
+                "tp": (niveaux.get(sym) or {}).get("tp"),
+                "niveaux_lus": niveaux_lus,
+                # ⚠️ `None` si Kraken ne le rend pas — jamais le prix
+                # d'entree a la place, qui ferait croire a un gain nul.
+                "price_current": flottant_ou_none(p, "markPrice", "mark_price"),
             })
         return jsonify({"ok": True, "count": len(cleaned), "positions": cleaned})
     except Exception as e:
@@ -893,6 +924,82 @@ def _controle_risque_engage_kraken(risque_ouvert: float, non_bornables: list,
     return True, ""
 
 
+def niveaux_par_symbole(open_orders: list) -> dict:
+    """Rend `{symbole: {"sl": prix|None, "tp": prix|None}}`.
+
+    ⚠️ Sur Kraken, stop et objectif ne sont PAS des attributs de la position :
+    ce sont des ordres conditionnels independants. Chaque consommateur qui
+    voulait les connaitre refaisait donc la jointure chez lui — c'est deja le
+    cas de la sonde des positions nues. Une jointure de plus est une jointure
+    qui derive.
+
+    ⛔ Seuls les ordres `reduceOnly` comptent : un ordre d'ENTREE en attente
+    sur le meme symbole n'est pas une protection, et le compter comme telle
+    ferait passer une position nue pour saine.
+    """
+    par_sym: dict = {}
+    for o in open_orders or []:
+        if not o.get("reduceOnly"):
+            continue
+        sym = o.get("symbol")
+        if not sym:
+            continue
+        genre = (o.get("orderType") or "").lower()
+        if genre in ("stp", "stop"):
+            cle, brut = "sl", o.get("stopPrice")
+        elif genre in ("take_profit", "takeprofit"):
+            # Kraken rend le declencheur sous `stopPrice` pour les deux types ;
+            # `limitPrice` sert de repli.
+            cle, brut = "tp", o.get("stopPrice") or o.get("limitPrice")
+        else:
+            continue
+        try:
+            prix = float(brut)
+        except (TypeError, ValueError):
+            continue
+        e = par_sym.setdefault(sym, {"sl": None, "tp": None})
+        # ⚠️ Le PREMIER l'emporte : s'il y en a plusieurs, la position n'en a
+        # qu'un vrai, et surestimer la protection serait le mauvais sens de
+        # l'erreur.
+        if e[cle] is None:
+            e[cle] = prix
+    return par_sym
+
+
+def resume_risque(positions: list, open_orders: list, flex: dict,
+                  plafond_pct: float) -> dict:
+    """Ce que la PORTE voit, sous forme lisible. Fonction pure.
+
+    ⛔ Le risque engage n'existait QUE dans `/order`, au moment de decider.
+    Une sonde qui voulait le surveiller devait refaire le calcul chez elle :
+    une cinquieme copie, qui aurait derive comme les autres.
+
+    ⛔ `None` et non 0 quand la saturation n'a pas de valeur : sans equity, ou
+    porte desarmee, elle n'en a pas une PETITE.
+    """
+    stops = _stops_par_symbole(open_orders or [])
+    ouvert, non_bornables = _risque_engage_kraken(positions or [], stops)
+    equity = flottant_ou_none(flex or {}, "portfolioValue")
+
+    plafond = (equity * plafond_pct / 100.0
+               if equity and plafond_pct > 0 else None)
+    saturation = (100.0 * ouvert / plafond) if plafond and plafond > 0 else None
+
+    return {
+        "porte_armee": plafond_pct > 0,
+        "risque_ouvert_usd": round(ouvert, 4),
+        "equity_usd": equity,
+        "plafond_pct": plafond_pct,
+        "plafond_usd": round(plafond, 4) if plafond is not None else None,
+        "saturation_pct": round(saturation, 2) if saturation is not None else None,
+        # ⚠️ Une seule position sans stop et la porte refuse TOUT : son risque
+        # n'etant pas borne, aucun total n'a de sens. La saturation ci-dessus
+        # est alors trompeuse — c'est CE champ qui compte.
+        "non_bornables": sorted(set(map(str, non_bornables))),
+        "positions": len(positions or []),
+    }
+
+
 def _protection_par_symbole(open_orders: list) -> dict:
     """Rend {symbole: {"stop": bool, "objectif": bool}} depuis les ordres vivants.
 
@@ -989,6 +1096,30 @@ def openorders():
     except Exception as e:
         logger.exception("openorders failed")
         return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/risque", methods=["GET"])
+@require_bridge_key
+def risque_engage():
+    """Expose `resume_risque()` — la lecture reseau, rien d'autre.
+
+    ⛔ Une lecture ratee rend une ERREUR, jamais des zeros. « Je n'ai pas pu
+    lire » et « le risque est nul » menent a des conclusions opposees, et
+    c'est le second qu'on lirait.
+    """
+    try:
+        pos_data = _signed_request("GET", "/api/v3/openpositions")
+        ord_data = _signed_request("GET", "/api/v3/openorders")
+        acc_data = _signed_request("GET", "/api/v3/accounts")
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"ok": False, "error": f"lecture impossible: {e}"}), 503
+
+    resume = resume_risque(
+        pos_data.get("openPositions", []) or [],
+        ord_data.get("openOrders", []) or [],
+        (acc_data.get("accounts", {}) or {}).get("flex", {}) or {},
+        MAX_RISQUE_ENGAGE_PCT)
+    return jsonify({"ok": True, **resume})
 
 
 @app.route("/fills", methods=["GET"])
