@@ -105,10 +105,10 @@ def main():
         con.commit()
         total_pnl = (last_two[0].get("pnl") or 0) + (last_two[1].get("pnl") or 0)
         msg = (
-            "⛔ <b>WTI auto-pause</b>\n\n"
+            "⛔ WTI auto-pause\n\n"
             f"2 SL consécutifs sur compte Live IC Markets.\n"
-            f"Tickets : <code>{last_two[0][mt5_ticket]}</code> + <code>{last_two[1][mt5_ticket]}</code>\n"
-            f"PnL cumulé : <code>{total_pnl:+.2f}</code>\n\n"
+            f"Tickets : {last_two[0][mt5_ticket]} + {last_two[1][mt5_ticket]}\n"
+            f"PnL cumulé : {total_pnl:+.2f}\n\n"
             "ℹ️ WTI désormais PAUSED en auto-exec. Reprise manuelle via /v2/admin ou DB UPDATE."
         )
         alert_telegram(env, msg)

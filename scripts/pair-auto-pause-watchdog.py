@@ -165,7 +165,7 @@ def check_pair(con, pair, env):
     con.commit()
 
     msg = (
-        f"⛔ <b>{pair} auto-pause</b>\n\n"
+        f"⛔ {pair} auto-pause\n\n"
         f"{reason}\n\n"
         f"ℹ️ {pair} désormais PAUSED. Reprise manuelle via /v2/admin ou DB UPDATE."
     )
