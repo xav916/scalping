@@ -230,10 +230,23 @@ if [ "${DRY_RUN:-0}" = "1" ]; then
   exit 0
 fi
 
-curl -sS --max-time 15 -X POST \
+# ⛔ La reponse de Telegram etait JETEE : le script sortait en SUCCES meme si
+# l'envoi etait refuse — jeton revoque, chat introuvable, balise HTML mal
+# formee. Le recap qui surveille tout le reste ne surveillait donc pas sa
+# PROPRE arrivee, et son silence se serait lu comme « tout va bien ».
+#
+# 🔑 En sortant en ECHEC, il se signale lui-meme : l'enveloppe `sonde.sh` le
+# voit KO et crie immediatement. C'est le seul message dont l'echec ne peut
+# pas etre annonce par un autre message.
+REPONSE=$(curl -sS --max-time 15 -X POST \
   "https://api.telegram.org/bot${BOT}/sendMessage" \
   -d "chat_id=${CHAT}" \
   --data-urlencode "text=$(echo -e "$MESSAGE")" \
-  -d "parse_mode=HTML" -d "disable_web_page_preview=true" > /dev/null
+  -d "parse_mode=HTML" -d "disable_web_page_preview=true" 2>&1)
 
-echo "$(date -Iseconds) sante quotidienne envoyee"
+if echo "$REPONSE" | grep -q '"ok":true'; then
+  echo "$(date -Iseconds) sante envoyee — Telegram a CONFIRME"
+else
+  echo "$(date -Iseconds) sante NON DELIVREE : $(echo "$REPONSE" | head -c 300)" >&2
+  exit 1
+fi
