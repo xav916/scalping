@@ -806,7 +806,33 @@ def paire_dans_la_portee(dest: Any, pair: Any) -> bool:
         except Exception:  # noqa: BLE001 — un reglage illisible ne scope RIEN
             portee = frozenset()
     if not portee:
-        return True
+        # ⛔ « Pas de portee » veut dire « herite du GLOBAL », pas « aucun
+        # filtre ». Tant qu'aucune portee n'existait, les deux se confondaient.
+        # Des qu'UNE portee fait entrer une paire dans l'univers, la difference
+        # devient le bug exact que ce mecanisme existe pour empecher : la paire
+        # ouverte pour Kraken atteindrait l'argent reel MT5.
+        #
+        # 🔑 Une paire du global va aux destinations non scopees ; une paire qui
+        # n'existe QUE par une portee ne va qu'a celles qui la declarent.
+        # ⚠️ On ne filtre QUE ce qui fuit : une paire absente du global ET
+        # presente dans la portee d'une AUTRE plateforme. Filtrer sur le global
+        # tout court serait trop large — cela couperait les paires « extra »
+        # des bridges MT5 et les signaux de bots externes, qui n'ont jamais eu
+        # a figurer dans l'univers commun. Mesure du 06/09 : 5 tests de bout en
+        # bout le montraient.
+        try:
+            from config.settings import (WATCHED_PAIRS as _global,
+                                         WATCHED_PAIRS_PAR_DESTINATION as _portees)
+        except Exception:  # noqa: BLE001 — reglages illisibles : on n'aiguille pas
+            return True
+        if not _portees:
+            return True
+        p = str(pair or "").strip().upper()
+        if any(p == str(x).strip().upper() for x in (_global or ())):
+            return True
+        ouvertes_ailleurs = {str(x).strip().upper()
+                             for paires in _portees.values() for x in paires}
+        return p not in ouvertes_ailleurs
     if not pair:
         return False
     p = str(pair).strip().upper()

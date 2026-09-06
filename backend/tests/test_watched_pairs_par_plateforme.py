@@ -55,12 +55,20 @@ def _dest(destination_id, portee=frozenset()):
 
 # ── La portée elle-même ──────────────────────────────────────────────
 
-def test_une_portee_ABSENTE_laisse_tout_passer(bd_module=bd):
+def test_une_portee_ABSENTE_laisse_passer_LE_GLOBAL(monkeypatch):
     """⚠️ Le défaut qui rend la migration neutre : sans portée déclarée, la
-    plateforme se comporte exactement comme avant."""
+    plateforme reçoit exactement l'univers commun — ni plus, ni moins.
+
+    ⛔ « Ni plus » est le correctif du 06/09 : c'était « aucun filtre », donc
+    une paire ouverte pour une seule plateforme atteignait toutes les autres."""
+    from config import settings
+    monkeypatch.setattr(settings, "WATCHED_PAIRS", ["EUR/USD", "BTC/USD"])
+    monkeypatch.setattr(settings, "WATCHED_PAIRS_PAR_DESTINATION",
+                        {"admin_kraken": frozenset({"SUI/USD"})})
     d = _dest("admin_live")
     assert bd.paire_dans_la_portee(d, "EUR/USD") is True
-    assert bd.paire_dans_la_portee(d, "SUI/USD") is True
+    assert bd.paire_dans_la_portee(d, "BTC/USD") is True
+    assert bd.paire_dans_la_portee(d, "SUI/USD") is False
 
 
 def test_une_portee_DECLAREE_est_stricte():
@@ -98,10 +106,19 @@ def test_une_paire_scopee_kraken_n_atteint_QUE_kraken(monkeypatch):
         monkeypatch.setattr(bd, nom, lambda: None)
     monkeypatch.setattr(bd, "_user_destinations", lambda s: [])
 
+    from config import settings
+    monkeypatch.setattr(settings, "WATCHED_PAIRS", ["EUR/USD"])
+    monkeypatch.setattr(settings, "WATCHED_PAIRS_PAR_DESTINATION",
+                        {"admin_kraken": frozenset({"SUI/USD"})})
+
     ids = [d.destination_id for d in bd.resolve_destinations(_Setup("SUI/USD"))]
-    assert "admin_kraken" in ids
-    assert "admin_live" not in ids, "⛔ le reel ne doit PAS heriter d'une paire Kraken"
-    assert "admin_legacy" in ids, "la destination sans portee garde son comportement"
+    assert ids == ["admin_kraken"], (
+        "⛔ SUI n'existe que par la portee Kraken : ni le reel ni la demo "
+        f"ne doivent l'attraper — vu {ids}")
+
+    ids = [d.destination_id for d in bd.resolve_destinations(_Setup("EUR/USD"))]
+    assert "admin_legacy" in ids, "le global va toujours aux destinations libres"
+    assert "admin_kraken" not in ids, "Kraken est scope : il ne recoit que sa portee"
 
 
 def test_une_paire_du_global_atteint_toujours_les_destinations_NON_scopees(monkeypatch):
@@ -216,11 +233,66 @@ def test_la_portee_se_replie_sur_les_REGLAGES_par_identifiant(monkeypatch):
     assert bd.paire_dans_la_portee(d, "EUR/USD") is False
 
 
-def test_un_reglage_ILLISIBLE_ne_scope_RIEN(monkeypatch):
-    """Fail-OUVERT ici, et c'est voulu : un réglage cassé ne doit pas couper le
-    routage de toutes les plateformes. C'est le sens inverse d'un garde-fou —
-    ici on ne protège pas, on aiguille."""
+def test_un_reglage_de_PORTEE_illisible_retombe_sur_le_global(monkeypatch):
+    """Un réglage de portée cassé ne coupe pas le routage : on retombe sur
+    l'univers commun, c'est-à-dire exactement l'état d'avant ce mécanisme.
+
+    ⚠️ Ce n'est pas un garde-fou — ici on aiguille, on ne protège pas. Le défaut
+    sûr est donc « comme avant », pas « rien ne passe »."""
     import config.settings as reglages
+    monkeypatch.setattr(reglages, "WATCHED_PAIRS", ["EUR/USD"])
     monkeypatch.delattr(reglages, "WATCHED_PAIRS_PAR_DESTINATION", raising=False)
     d = _dest("admin_kraken")
+    assert bd.paire_dans_la_portee(d, "EUR/USD") is True
     assert bd.paire_dans_la_portee(d, "N_IMPORTE/QUOI") is True
+
+
+# ── ⛔ La fuite trouvée le 06/09, avant d'ouvrir AVAX et SUI ──────────
+#
+# « Portée absente ⇒ hérite du global » était implémenté comme « aucun filtre ».
+# Tant qu'aucune portée n'existait, les deux se confondaient. Dès qu'UNE portée
+# fait entrer une paire dans l'univers, la différence devient le bug exact que
+# ce chantier existe pour empêcher : la paire ouverte pour Kraken atteindrait
+# l'argent réel MT5.
+#
+# 🔑 La règle juste : une paire du GLOBAL va aux destinations non scopées ; une
+# paire qui n'existe QUE par une portée ne va qu'aux destinations qui la
+# déclarent.
+
+def test_une_paire_hors_global_n_atteint_PAS_une_destination_non_scopee(monkeypatch):
+    from config import settings
+
+    monkeypatch.setattr(settings, "WATCHED_PAIRS", ["EUR/USD", "BTC/USD"])
+    monkeypatch.setattr(settings, "WATCHED_PAIRS_PAR_DESTINATION",
+                        {"admin_kraken": frozenset({"AVAX/USD"})})
+    libre = _dest("admin_live")          # aucune portée déclarée
+
+    assert bd.paire_dans_la_portee(libre, "EUR/USD") is True, "le global passe"
+    assert bd.paire_dans_la_portee(libre, "AVAX/USD") is False, (
+        "⛔ une paire ouverte pour Kraken ne doit PAS atteindre l'argent reel")
+
+
+def test_la_paire_hors_global_atteint_bien_la_destination_qui_la_declare(monkeypatch):
+    from config import settings
+
+    monkeypatch.setattr(settings, "WATCHED_PAIRS", ["EUR/USD"])
+    monkeypatch.setattr(settings, "WATCHED_PAIRS_PAR_DESTINATION",
+                        {"admin_kraken": frozenset({"AVAX/USD"})})
+    kraken = _dest("admin_kraken", frozenset({"AVAX/USD"}))
+    assert bd.paire_dans_la_portee(kraken, "AVAX/USD") is True
+
+
+def test_sans_AUCUNE_portee_declaree_rien_ne_change(monkeypatch):
+    """La migration reste neutre : sans portée déclarée, l'univers analysé EST
+    le global, donc filtrer sur le global ne retire rien à personne.
+
+    🔑 C'est ce qui rend le correctif du 06/09 sans effet de bord : il ne mord
+    que sur les paires qui n'existent QUE par une portée."""
+    from config import settings
+
+    monkeypatch.setattr(settings, "WATCHED_PAIRS", ["EUR/USD", "BTC/USD"])
+    monkeypatch.setattr(settings, "WATCHED_PAIRS_PAR_DESTINATION", {})
+    libre = _dest("admin_live")
+    for p in settings.univers_a_analyser():
+        assert bd.paire_dans_la_portee(libre, p) is True, (
+            f"{p} est analysee et doit atteindre une destination libre")
