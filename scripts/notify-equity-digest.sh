@@ -1,4 +1,22 @@
 #!/bin/bash
+# ⛔ RETIRÉ LE 2026-09-06 — son sujet n'existe plus.
+#
+# Ce digest ne couvre que AAPL, TSLA, NVDA et MSFT. Ces quatre paires ont été
+# SORTIES DE L'UNIVERS le 06/09 : 0 signal, 0 refus, 0 ordre en 30 jours, pour
+# 12 % du quota de données. Mesure faite le même jour dans `shadow_setups` :
+#
+#     7 jours  : 0 setup
+#     30 jours : 0 setup
+#     dernier  : 2026-08-06
+#
+# Il envoyait donc un rapport vide chaque soir à 20:15 depuis un mois. Son cron
+# est commenté ; le script reste ici, intact, pour le jour où ces paires
+# reviendraient — c'est une décision de PÉRIMÈTRE, pas un verdict de
+# rentabilité, et rien ne les a réfutées.
+#
+# ⚠️ Il appelait aussi l'API Telegram en direct, hors de la table des canaux.
+# Si on le rallume, il faut d'abord le faire passer par l'endpoint, comme
+# notify-energy-weekend-reminder.sh et notify-promotion-candidates.sh.
 # Digest quotidien des signaux equity (AAPL/TSLA/NVDA/MSFT).
 #
 # Contexte : ces 4 paires ont été admises en état TELEGRAM le 2026-08-04

@@ -9,12 +9,11 @@
 
 set -uo pipefail
 
-BOT_TOKEN=$(sudo grep -E '^SALES_TELEGRAM_BOT_TOKEN=' /opt/scalping/.env | cut -d= -f2-)
-CHAT_ID=$(sudo grep -E '^SALES_TELEGRAM_CHAT_ID=' /opt/scalping/.env | cut -d= -f2-)
+# Le jeton du bot n'est plus lu ici : l'endpoint le detient.
 LU=$(sudo grep -E '^MT5_BRIDGE_LIVE_URL=' /opt/scalping/.env | cut -d= -f2-)
 LK=$(sudo grep -E '^MT5_BRIDGE_LIVE_API_KEY=' /opt/scalping/.env | cut -d= -f2-)
 
-if [ -z "$BOT_TOKEN" ] || [ -z "$CHAT_ID" ] || [ -z "$LU" ] || [ -z "$LK" ]; then
+if [ -z "$LU" ] || [ -z "$LK" ]; then
   echo "missing creds/URL" >&2
   exit 1
 fi
@@ -42,20 +41,33 @@ if [ -z "$ENERGY_LIST" ]; then
   exit 0
 fi
 
-MESSAGE="⚠️ <b>Positions énergie encore ouvertes vendredi 17h UTC</b>
+# ── Passe par l'endpoint, canal `ic_markets` (2026-09-06) ────────────
+#
+# ⛔ Ce script appelait l'API Telegram EN DIRECT, en lisant
+# `SALES_TELEGRAM_BOT_TOKEN` dans le .env : il echappait donc entierement a la
+# table des canaux, et rien ne l'aurait suivi si le bot changeait de role.
+#
+# Il interroge `MT5_BRIDGE_LIVE_URL` : il ne parle que du compte reel IC
+# Markets. Son fil est donc celui de ce compte.
+#
+# ⚠️ Les balises <b> ont disparu : l'endpoint passe le corps dans
+# `html.escape`, elles s'afficheraient telles quelles. Le titre porte
+# l'emphase — meme format que toutes les autres notifications.
+TITRE="⚠️ Positions énergie encore ouvertes vendredi 17h UTC"
+CORPS="Le pre-push filter bloque déjà les nouveaux trades énergie après 18h UTC.
+Mais ces positions risquent un gap de week-end (incident WTI du 2026-08-03 :
+−20,75 € sur 2 tickets à cause du gap du dimanche).
 
-Le pre-push filter bloque déjà les nouveaux trades énergie après 18h UTC.
-Mais ces positions actuelles risquent un gap risk weekend (cf. incident WTI 2026-08-03 : -€20.75 sur 2 tickets à cause du gap dimanche).
+Positions concernées :
+${ENERGY_LIST}
 
-<b>Positions concernées :</b>
-<pre>${ENERGY_LIST}</pre>
+Reco : ferme-les à la main depuis MT5 mobile avant la clôture du marché,
+vendredi 22h UTC. Sinon, assume le risque et garde-les le week-end."
 
-<b>Reco</b> : ferme-les manuellement depuis MT5 mobile avant fermeture marché ven 22h UTC pour éviter le gap risk.
-Sinon assume le risque et garde-les weekend."
-
-curl -sS --max-time 10 -X POST \
-  "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
-  -d "chat_id=${CHAT_ID}" \
-  --data-urlencode "text=${MESSAGE}" \
-  -d "parse_mode=HTML" \
-  -d "disable_web_page_preview=true" > /dev/null
+TOKEN_NOTIFY="shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg"
+CORPS_JSON=$(TITRE="$TITRE" CORPS="$CORPS" python3 -c '
+import json, os
+print(json.dumps({"title": os.environ["TITRE"], "body": os.environ["CORPS"],
+                  "dedup_key": "energie-weekend", "cooldown_seconds": 3600}))
+')
+curl -sS --max-time 10 -X POST   "https://app.scalping-radar.online/api/admin/notify-infra-telegram?token=${TOKEN_NOTIFY}&channel=ic_markets"   -H "Content-Type: application/json" --data "$CORPS_JSON" > /dev/null

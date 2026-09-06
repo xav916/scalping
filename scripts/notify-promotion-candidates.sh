@@ -8,13 +8,7 @@
 set -uo pipefail
 
 DB=/opt/scalping/data/trades.db
-BOT_TOKEN=$(sudo grep -E '^SALES_TELEGRAM_BOT_TOKEN=' /opt/scalping/.env | cut -d= -f2-)
-CHAT_ID=$(sudo grep -E '^SALES_TELEGRAM_CHAT_ID=' /opt/scalping/.env | cut -d= -f2-)
-
-if [ -z "$BOT_TOKEN" ] || [ -z "$CHAT_ID" ]; then
-  echo "missing sales creds" >&2
-  exit 1
-fi
+# Le jeton du bot n'est plus lu ici : l'endpoint le detient.
 
 # Seuils empiriques (calqués sur gates 1-2 du promotion_engine)
 MIN_SIGNALS_7D=5     # au moins 5 signaux dans les 7j = flux actif
@@ -122,23 +116,23 @@ for s in stats:
 
 lines = []
 if candidates_promote:
-    lines.append("🟢 <b>Candidats promotion (critères remplis)</b>")
+    lines.append("🟢 Candidats promotion (critères remplis)")
     lines.extend(f"  • {r}" for r in candidates_promote[:10])
     lines.append("")
 if to_watch:
-    lines.append("🟡 <b>À surveiller (proche seuils)</b>")
+    lines.append("🟡 À surveiller (proche seuils)")
     lines.extend(f"  • {r}" for r in to_watch[:10])
     lines.append("")
 if missing_data:
-    lines.append("🔵 <b>Données insuffisantes (volume trop faible)</b>")
+    lines.append("🔵 Données insuffisantes (volume trop faible)")
     lines.extend(f"  • {r}" for r in missing_data[:10])
     lines.append("")
 
 if not lines:
     lines.append("Aucune destination Kraken sans admission à évaluer aujourd'hui.")
 
-lines.append(f"\n<i>Seuils : n_7d ≥ {min_7d} + n_30d ≥ {min_30d} (proxy user:2 EA)</i>")
-lines.append("<i>Rapport quotidien 20h Paris. Reply au bot pour promouvoir manuellement.</i>")
+lines.append(f"\nSeuils : n_7d ≥ {min_7d} + n_30d ≥ {min_30d} (proxy user:2 EA)")
+lines.append("Rapport quotidien 20h Paris. Reply au bot pour promouvoir manuellement.")
 
 print("\n".join(lines))
 PY
@@ -149,13 +143,25 @@ if [ -z "$BODY" ]; then
   exit 0
 fi
 
-MESSAGE=$(printf "<b>Candidats promotion Kraken · %s</b>\n\n%s" "$(date -u '+%Y-%m-%d')" "$BODY")
-
-curl -sS --max-time 10 -X POST \
-  "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
-  -d "chat_id=${CHAT_ID}" \
-  --data-urlencode "text=${MESSAGE}" \
-  -d "parse_mode=HTML" \
-  -d "disable_web_page_preview=true" > /dev/null
+# Passe par l'endpoint, canal `kraken` (2026-09-06).
+#
+# Ce script appelait l'API Telegram EN DIRECT en lisant
+# SALES_TELEGRAM_BOT_TOKEN : il echappait donc a la table des canaux, et
+# atterrissait dans le fil du compte reel IC Markets alors qu'il ne parle que
+# des destinations KRAKEN (admin_kraken, admin_kraken_spot).
+#
+# Les balises HTML ont ete retirees : l'endpoint passe le corps dans
+# html.escape, elles s'afficheraient telles quelles.
+TOKEN_NOTIFY="shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg"
+CHARGE=$(BODY="$BODY" JOUR="$(date -u '+%Y-%m-%d')" python3 -c '
+import json, os
+print(json.dumps({
+    "title": "Candidats promotion Kraken - " + os.environ["JOUR"],
+    "body": os.environ["BODY"],
+    "dedup_key": "promotion-candidats-" + os.environ["JOUR"],
+    "cooldown_seconds": 43200,
+}))
+')
+curl -sS --max-time 10 -X POST   "https://app.scalping-radar.online/api/admin/notify-infra-telegram?token=${TOKEN_NOTIFY}&channel=kraken"   -H "Content-Type: application/json" --data "$CHARGE" > /dev/null
 
 echo "$(date -Iseconds) sent promotion candidates report"
