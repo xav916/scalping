@@ -1356,8 +1356,10 @@ def _format_close(trade: dict, destination_id: str | None = None) -> str:
     # lisent ensemble dans le fil.
     perte = pnl < 0
     montants = _risque_annonce(trade, destination_id)
+    prevu = None
     if montants:
         prevu = montants["risque_eur"] if perte else montants["gain_eur"]
+    if prevu is not None:
         prevu_fr = f"{abs(prevu):.2f}".replace(".", ",")
         lines.append(f"Prévu *{'−' if perte else '+'}{prevu_fr} €*  →  "
                      f"Réalisé *{pnl_sign}{pnl_fr} €*")
@@ -1754,10 +1756,19 @@ def _format_trade_opened(
     # signification sur Kraken — le premier trade réel annonçait « Risque
     # −0,01 € » pour environ 0,57 € engagés.
     montants = _montants_du_trade(setup, volume, destination_id)
-    if montants is not None:
+    if montants is not None and montants.get("risque_eur") is not None:
         perte_fr = f"{montants['risque_eur']:.2f}".replace(".", ",")
         gain_fr = f"{montants['gain_eur']:.2f}".replace(".", ",")
         lines.append(f"Risque *−{perte_fr} €*  →  Objectif *+{gain_fr} €*")
+    elif montants is not None:
+        # ⛔ Sur une paire croisée sans taux connu, la conversion en euros est
+        # indécidable. On dit le R:R, qui reste JUSTE — numérateur et
+        # dénominateur sont dans la même devise, elle s'annule — plutôt qu'un
+        # montant approché qui serait lu comme vrai. C'est ce défaut-là qui
+        # annonçait « Risque −909,09 € » pour 5,82 € engagés sur USD/JPY.
+        lines.append(
+            f"Rapport gain/risque *{montants['rr']:.2f}*  ·  montant en euros "
+            f"indisponible ({montants.get('devise_cotation') or '?'})")
     lines.append("")
 
     # Le plan complet : ces trois valeurs manquaient au message.

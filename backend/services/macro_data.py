@@ -42,6 +42,20 @@ SYMBOL_MAP: dict[str, str] = {
     "spx": "^GSPC",
     "tnx": "^TNX",
     "btc": "BTC-USD",
+    # Taux de change (2026-09-06). ⛔ `risk_eur.taux_eur_usd()` cherchait
+    # « EURUSD=X », un symbole qui n'a JAMAIS existé dans ce magasin : le taux
+    # euro/dollar de toutes les notifications était donc la constante 1,155
+    # depuis toujours, et le repli « exceptionnel » était permanent.
+    #
+    # 🔑 Les six suivants servent aussi à convertir les paires CROISÉES :
+    # sur GBP/JPY, le prix d'entrée ne dit rien du taux yen→euro.
+    "eurusd": "EURUSD=X",
+    "usdjpy": "JPY=X",      # Yahoo cote USD/JPY sous « JPY=X »
+    "gbpusd": "GBPUSD=X",
+    "usdchf": "CHF=X",
+    "usdcad": "CAD=X",
+    "audusd": "AUDUSD=X",
+    "nzdusd": "NZDUSD=X",
 }
 
 USER_AGENT = "Mozilla/5.0 (compatible; ScalpingResearch/1.0)"
