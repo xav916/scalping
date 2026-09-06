@@ -1728,7 +1728,7 @@ def _unite_de_volume(setup, destination_id: str | None) -> str:
 
 def _format_trade_opened(
     setup, ticket: int | str, fill_price: float, volume: float,
-    mode: str, destination_id: str | None = None,
+    mode: str, destination_id: str | None = None, essai: bool = False,
 ) -> str:
     """Format vulgarisé : 'qu'est-ce qui se passe, combien je gagne/perds, pourquoi'.
 
@@ -1825,12 +1825,20 @@ def _format_trade_opened(
     lines.append("")
     # Le broker est déjà dans le titre : le pied porte la référence et l'heure.
     lines.append(f"`#{ticket}` · {time_str}")
+    if essai:
+        # ⛔ Un essai emprunte le MEME chemin qu'un vrai trade — c'est tout
+        # son interet — donc il doit etre impossible a confondre avec lui.
+        # Sans ce bandeau, un message d'essai relu dans trois semaines
+        # passerait pour une position qu'on aurait vraiment prise.
+        lines.insert(0, "🧪 *ESSAI DE BOUT EN BOUT — AUCUN ORDRE PASSÉ*")
+        lines.append("Message fabriqué pour vérifier l'aiguillage et les "
+                     "montants. Rien n'a été envoyé à un courtier.")
     return "\n".join(lines)
 
 
 async def send_trade_opened(
     setup, ticket: int | str, fill_price: float, volume: float,
-    mode: str, destination_id: str | None = None,
+    mode: str, destination_id: str | None = None, essai: bool = False,
 ) -> None:
     """Push une notif user-facing à la confirmation d'un fill broker.
 
@@ -1857,7 +1865,7 @@ async def send_trade_opened(
     try:
         text = _format_trade_opened(
             setup, ticket, fill_price, volume, mode,
-            destination_id=destination_id,
+            destination_id=destination_id, essai=essai,
         )
         jeton, destinataires = _canal_trade(destination_id)
         url = TELEGRAM_API.format(token=jeton)
