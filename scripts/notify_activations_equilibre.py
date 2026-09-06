@@ -75,7 +75,7 @@ def _appel(dest, chemin: str):
         return None, False
 
 
-def activations(dest) -> tuple[list, bool]:
+def activations(dest, did: str | None = None) -> tuple[list, bool]:
     """Lignes d'audit `status='equilibre'`. `(liste, lecture_reussie)`.
 
     ⛔ `([], False)` et `([], True)` sont deux verdicts distincts : « on n'a
@@ -94,7 +94,12 @@ def activations(dest) -> tuple[list, bool]:
     try:
         from backend.services.motif_interne_cloture import _conn, init_schema
         init_schema()
-        did = getattr(dest, "destination_id", None) or str(dest)
+        # ⛔ L'identifiant vient de L'APPELANT. L'objet du registre ne porte
+        # PAS de `destination_id` : mon premier repli lisait `str(dest)`, un
+        # repr d'objet qui ne correspondait a aucune ligne — la sonde rendait
+        # donc encore zero, corrigee mais toujours fausse.
+        if not did:
+            raise ValueError("identifiant de destination manquant")
         with _conn() as c:
             lignes = [dict(r) for r in c.execute(
                 "SELECT ticket, pair, sl, active_le AS created_at "
@@ -189,7 +194,7 @@ def main() -> int:
         if dest is None:
             continue
         print(f"{did} :")
-        lignes, ok = activations(dest)
+        lignes, ok = activations(dest, did)
         if not ok:
             illisibles.append(did)
             print("    ILLISIBLE — aucune conclusion tirée")
