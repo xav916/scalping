@@ -164,6 +164,14 @@ from backend.services.canaux_telegram import (libelle_avec_picto as _lib,
                                               canal_pour as _cp)
 from backend.services.destinations_registry import DESTINATIONS as _DEST
 import os as _os, json as _json, urllib.request as _url
+from backend.services.risk_eur import taux_eur_usd as _taux_eur_usd
+
+# ⚠️ Additionner des comptes exige une CONVERSION. C'est le mecanisme meme qui
+# annoncait 909 EUR pour 5,82 reels ce matin, faute de partir de la bonne
+# devise. On le fait ici parce que Xavier l'a demande, mais le taux employe
+# est AFFICHE dans le message : une conversion cachee est une conversion qu'on
+# ne peut pas contredire.
+_TAUX = _taux_eur_usd()
 
 
 def _compte(dest):
@@ -224,6 +232,10 @@ for dest in ("admin_live", "admin_kraken", "admin_kraken_spot", "admin_legacy"):
         "libelle": _lib(_cp(dest)),
         "devise": DEVISES.get(dest, "?"),
         "compte": _compte(dest),
+        # Le PnL ramene a l'euro, pour pouvoir SOMMER. La devise d'origine
+        # reste affichee a cote : on ne remplace pas la mesure, on l'ajoute.
+        "pnl_eur": (sum(pnls) / _TAUX if DEVISES.get(dest) == "USD"
+                    else sum(pnls)),
     }}
 # Les clotures SANS destination : on les compte plutot que de les taire. Une
 # ligne qu'aucun compte ne reclame est un trou de tracabilite, pas un zero.
@@ -233,6 +245,7 @@ orphelines = con.execute("""
        AND (destination_id IS NULL OR destination_id = '')
 """, ("{since_iso}",)).fetchone()[0]
 out["_orphelines"] = orphelines
+out["_taux_eur_usd"] = _TAUX
 print(json.dumps(out))
 '''
     try:
@@ -308,6 +321,15 @@ def render(date_str: str, mt5_data: dict, binance: dict, activite: dict | None =
         # on ajoute l'identifiant SEULEMENT quand il y a ambiguite.
         comptes = [(k, v) for k, v in mt5_data.items()
                    if not k.startswith("_") and isinstance(v, dict)]
+        # Le total, en euros, pour pouvoir dire la PART de chacun.
+        total_eur = sum((v.get("pnl_eur") or 0) for _, v in comptes)
+        # ⚠️ Des signes opposes peuvent s'annuler : deux comptes a +10 et −10
+        # donnent un total NUL, et une part n'a alors aucun sens. On le DIT
+        # plutot que d'afficher une division par presque-zero.
+        signes = {(1 if (v.get("pnl_eur") or 0) > 0 else
+                   -1 if (v.get("pnl_eur") or 0) < 0 else 0)
+                  for _, v in comptes}
+        mixte = 1 in signes and -1 in signes
         vus = [v.get("libelle") for _, v in comptes]
         for dest, d in comptes:
             titre = d.get("libelle") or dest
@@ -331,6 +353,14 @@ def render(date_str: str, mt5_data: dict, binance: dict, activite: dict | None =
             pnl = d.get("pnl_total", 0)
             part = f"  ({pnl / base * 100:+.2f} % du compte)" if base else ""
             lines.append(f"• PnL du jour : {pnl:+.2f} {dev}{part}".rstrip())
+
+            # La part du PnL GLOBAL, tous comptes confondus.
+            pe = d.get("pnl_eur") or 0
+            if abs(total_eur) < 0.01:
+                pass          # rien a repartir : on se tait plutot que d'inventer
+            else:
+                lines.append(f"• Part du PnL global : {pe / total_eur * 100:+.1f} %"
+                             + (f"  ({pe:+.2f} EUR)" if dev != "EUR" else ""))
             if n:
                 paires = d.get("by_pair") or []
                 if paires and paires[-1][1] > 0:
@@ -358,6 +388,18 @@ def render(date_str: str, mt5_data: dict, binance: dict, activite: dict | None =
 
         # ⛔ Une cloture qu'aucun compte ne reclame est un trou de tracabilite,
         # pas un zero. On la COMPTE plutot que de la taire.
+        # ⛔ Le total et le TAUX sont dits. Une conversion cachee est une
+        # conversion qu'on ne peut pas contredire.
+        taux = mt5_data.get("_taux_eur_usd")
+        pied = f"Σ PnL du jour, tous comptes : {total_eur:+.2f} EUR"
+        if taux:
+            pied += f"  (USD converti au taux {taux:.4f})"
+        lines += [pied]
+        if mixte:
+            lines += ["⚠️ Comptes de signes opposés : les parts se compensent, "
+                      "l'une peut dépasser 100 %."]
+        lines.append("")
+
         orphelines = mt5_data.get("_orphelines") or 0
         if orphelines:
             lines += [f"⚠️ {orphelines} clôture(s) SANS destination — "
