@@ -189,7 +189,11 @@ def etat_essai() -> tuple[int, int, str | None]:
     try:
         from backend.services import research_bench as rb
         t = rb.get_trial(ESSAI)
-        if not t:
+        # ⛔ Un essai ABANDONNE ou JUGE n'est plus a alimenter. Sans ce test,
+        # la sonde continuait de crier « l'essai n'accumule rien » sur un essai
+        # que personne n'alimente plus — le bruit exact qu'on cherche a
+        # supprimer, et qui finit par faire ignorer les vraies alertes.
+        if not t or t.get("status") != "open":
             return (0, 0, None)
         n = len(rb._clotures_eligibles(t["selector"], t["declared_at"]))
         return (n, t["min_sample"], t["declared_at"])

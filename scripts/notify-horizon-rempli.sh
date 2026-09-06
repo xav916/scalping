@@ -1,5 +1,5 @@
 #!/bin/bash
-# BUT: verifie que l'horizon des essais se remplit
+# BUT: garde le maillon qui ecrit `horizon` sur les clotures (essais du banc)
 # PERIODE_MIN: 60
 # Enveloppe cron de notify_horizon_rempli.py — la logique est en Python, dans le
 # conteneur, pour n'avoir qu'une seule couche de citation.

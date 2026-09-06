@@ -161,3 +161,54 @@ def test_les_messages_ne_contiennent_pas_de_balises():
     for v in cas:
         assert "<" not in v["message"] and ">" not in v["message"], \
             f"balise dans : {v['message'][:60]}"
+
+
+# ── Un essai clos ne doit plus faire crier (2026-09-06) ───────────────────
+#
+# ⛔ L'essai `or-4h-2026-08-26` est resté à 0/60 pendant onze jours : l'or a
+# clôturé 39 fois, toutes en `5min` ou sans horizon, jamais en `4h` — parce
+# que ses motifs ont été élargis à tous les horizons le 26/08, le jour même où
+# l'essai a été déclaré. Les deux décisions travaillaient l'une contre l'autre.
+#
+# 🔑 Une fois l'essai abandonné, continuer de crier « il n'accumule rien » est
+# le bruit exact qu'on cherche à supprimer — celui qui finit par faire ignorer
+# les vraies alertes.
+
+def test_un_essai_ABANDONNE_est_traite_comme_absent(monkeypatch):
+    import importlib.util
+    import pathlib
+
+    src = (pathlib.Path(__file__).resolve().parents[2]
+           / "scripts" / "notify_horizon_rempli.py")
+    spec = importlib.util.spec_from_file_location("horizon_clos", src)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    class _RB:
+        @staticmethod
+        def get_trial(slug):
+            return {"status": "abandoned", "selector": {}, "declared_at": "2026-08-26",
+                    "min_sample": 60}
+
+    import sys
+    faux = type(sys)("backend.services.research_bench")
+    faux.get_trial = _RB.get_trial
+    monkeypatch.setitem(sys.modules, "backend.services.research_bench", faux)
+
+    assert mod.etat_essai() == (0, 0, None), (
+        "un essai abandonné doit être vu comme absent, sinon la sonde crie "
+        "sur un essai que personne n'alimente plus")
+
+
+def test_sans_essai_declare_aucune_cloture_or_n_est_comptee():
+    """⛔ `clotures_or_depuis(None)` doit rendre 0 : sans déclaration, il n'y a
+    pas de fenêtre à mesurer, donc pas d'alerte « n'accumule rien »."""
+    import importlib.util
+    import pathlib
+
+    src = (pathlib.Path(__file__).resolve().parents[2]
+           / "scripts" / "notify_horizon_rempli.py")
+    spec = importlib.util.spec_from_file_location("horizon_sans", src)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert mod.clotures_or_depuis(None) == 0
