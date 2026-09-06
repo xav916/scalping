@@ -130,12 +130,15 @@ def test_le_bilan_compte_les_INEXPLIQUEES(base):
     assert any(mi.MOTIF_TIERS in k for k in b["par_motif"])
 
 
-def test_le_bilan_DIT_que_la_soupape_n_est_pas_tracee(base):
+def test_une_cloture_TRAILING_SL_sans_activation_reste_generique(base):
+    """⚠️ `TRAILING_SL` est le motif natif de MT5 : il ne prouve PAS que la
+    soupape a agi. Sans activation journalisee, la cloture reste inexpliquee —
+    et le bilan la compte comme telle plutot que de l'attribuer par ressemblance."""
     c, _ = base
     _trade(c, "1", reason="TRAILING_SL")
-    b = mi.bilan()
-    assert "soupape" in b["note"].lower()
-    assert "aucun journal" in b["note"].lower()
+    mi.enrichir()
+    assert c.execute("SELECT motif_interne FROM personal_trades").fetchone()[0] is None
+    assert mi.bilan()["clotures_generiques_non_attribuees"] == 1
 
 
 def test_le_bilan_ne_compte_pas_DEUX_FOIS_la_meme_cloture(base):
@@ -157,3 +160,72 @@ def test_le_bilan_ne_compte_pas_DEUX_FOIS_la_meme_cloture(base):
     ligne = next(v for k, v in b["par_motif"].items() if mi.MOTIF_TIERS in k)
     assert ligne["n"] == 1, "une clôture, pas deux"
     assert ligne["pnl"] == pytest.approx(10.24), "le P&L ne doit pas doubler"
+
+
+# ── Le journal de la soupape d'équilibre ─────────────────────────────
+#
+# ⛔ Sa trace EXISTAIT — le bridge écrit `status="equilibre"` — mais elle vivait
+# dans l'audit du bridge, jamais persistée, et la sonde écrite le 24/08 pour la
+# lire n'avait AUCUN cron. Une activation en 14 jours sur le réel, zéro sur le
+# démo : sans journal, on ne pouvait même pas le savoir.
+
+def _audit(id_, status="equilibre", ticket="1357145568"):
+    return {"id": id_, "status": status, "ticket": ticket, "pair": "XAU/USD",
+            "sl": 4475.2, "created_at": "2026-08-31T02:48:35+00:00"}
+
+
+def test_seules_les_lignes_EQUILIBRE_sont_journalisees(base):
+    c, _ = base
+    n = mi.enregistrer_activations("admin_live",
+                                   [_audit(1), _audit(2, status="filled"),
+                                    _audit(3, status="closed")], dernier_id=3)
+    assert n == 1
+
+
+def test_le_journal_est_IDEMPOTENT(base):
+    mi.enregistrer_activations("admin_live", [_audit(1)], dernier_id=1)
+    assert mi.enregistrer_activations("admin_live", [_audit(1)], dernier_id=1) == 0
+
+
+def test_le_curseur_n_avance_QUE_si_on_a_lu(base):
+    """⛔ Une lecture qui échoue laisserait un trou définitif — le défaut du
+    `DRY_RUN` qui avançait le curseur de la sonde de capture des niveaux."""
+    mi.enregistrer_activations("admin_live", [_audit(7)], dernier_id=7)
+    assert mi.curseur("admin_live") == 7
+    mi.enregistrer_activations("admin_live", [], dernier_id=99)
+    assert mi.curseur("admin_live") == 7, "aucune ligne lue ⇒ curseur inchangé"
+
+
+def test_la_cloture_qui_SUIT_une_activation_est_attribuee(base):
+    c, _ = base
+    _trade(c, "1357145568", reason="TRAILING_SL", pnl=5.0, dest="admin_live")
+    mi.enregistrer_activations("admin_live", [_audit(1)], dernier_id=1)
+    mi.enrichir()
+    r = c.execute("SELECT motif_interne, motif_interne_detail FROM personal_trades").fetchone()
+    assert r[0] == mi.MOTIF_EQUILIBRE
+    assert "2026-08-31" in r[1]
+
+
+def test_le_tiers_PRIME_sur_la_soupape_si_les_deux(base):
+    """Une clôture déjà attribuée n'est pas réécrite : le premier motif tient."""
+    c, _ = base
+    _trade(c, "42")
+    _journal(c, "42")
+    mi.enrichir()
+    mi.enregistrer_activations("admin_legacy", [_audit(1, ticket="42")], dernier_id=1)
+    mi.enrichir()
+    assert c.execute("SELECT motif_interne FROM personal_trades"
+                     ).fetchone()[0] == mi.MOTIF_TIERS
+
+
+def test_le_bilan_expose_le_COMPTE_d_activations(base):
+    mi.enregistrer_activations("admin_live", [_audit(1), _audit(2, ticket="X")],
+                               dernier_id=2)
+    assert mi.bilan()["activations_equilibre"] == {"admin_live": 2}
+
+
+def test_le_bilan_ne_pretend_PAS_a_une_causalite(base):
+    """⚠️ Une clôture attribuée dit que le stop avait été remonté AVANT — pas
+    que la soupape a causé la sortie."""
+    n = mi.bilan()["note"].lower()
+    assert "pas que la soupape a causé" in n or "inventer" in n
