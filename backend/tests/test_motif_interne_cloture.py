@@ -31,7 +31,7 @@ def base(tmp_path, monkeypatch):
     c.executescript("""
         CREATE TABLE personal_trades (
             mt5_ticket TEXT, pair TEXT, close_reason TEXT,
-            destination_id TEXT, pnl REAL, closed_at TEXT);
+            destination_id TEXT, pnl REAL, closed_at TEXT, entry_price REAL);
         CREATE TABLE fermetures_weekend (
             jour TEXT, destination_id TEXT, ticket TEXT, symbole TEXT,
             sens TEXT, volume REAL, part REAL, profit REAL, ferme_le TEXT);
@@ -40,8 +40,8 @@ def base(tmp_path, monkeypatch):
 
 
 def _trade(c, ticket, reason="EXPERT", pnl=10.24, dest="admin_legacy"):
-    c.execute("INSERT INTO personal_trades VALUES (?,?,?,?,?,?)",
-              (ticket, "XAU/USD", reason, dest, pnl, "2026-09-04T18:05:05+00:00"))
+    c.execute("INSERT INTO personal_trades VALUES (?,?,?,?,?,?,?)",
+              (ticket, "XAU/USD", reason, dest, pnl, "2026-09-04T18:05:05+00:00", 100.0))
 
 
 def _journal(c, ticket, part=0.3788):
@@ -78,8 +78,9 @@ def test_le_ticket_TEXTE_ou_ENTIER_joint_pareil(base):
     """⚠️ Le journal stocke du texte, les clotures parfois de l'entier. Une
     jointure qui echoue sur un TYPE ne dit rien, elle rend zero."""
     c, _ = base
-    c.execute("INSERT INTO personal_trades VALUES (?,?,?,?,?,?)",
-              (99, "XAU/USD", "EXPERT", "admin_legacy", 1.0, "2026-09-04T18:00:00+00:00"))
+    c.execute("INSERT INTO personal_trades VALUES (?,?,?,?,?,?,?)",
+              (99, "XAU/USD", "EXPERT", "admin_legacy", 1.0,
+               "2026-09-04T18:00:00+00:00", 100.0))
     _journal(c, "99")
     assert mi.enrichir()["enrichies"] == 1
 
@@ -105,7 +106,8 @@ def test_sans_journal_ce_n_est_PAS_une_anomalie(tmp_path, monkeypatch):
     monkeypatch.setattr(mi, "_DB", chemin)
     c = sqlite3.connect(str(chemin), isolation_level=None)
     c.execute("""CREATE TABLE personal_trades (mt5_ticket TEXT, pair TEXT,
-                 close_reason TEXT, destination_id TEXT, pnl REAL, closed_at TEXT)""")
+                 close_reason TEXT, destination_id TEXT, pnl REAL,
+                 closed_at TEXT, entry_price REAL)""")
     c.close()
     r = mi.enrichir()
     assert r["sans_journal"] is True and r["enrichies"] == 0
@@ -134,3 +136,24 @@ def test_le_bilan_DIT_que_la_soupape_n_est_pas_tracee(base):
     b = mi.bilan()
     assert "soupape" in b["note"].lower()
     assert "aucun journal" in b["note"].lower()
+
+
+def test_le_bilan_ne_compte_pas_DEUX_FOIS_la_meme_cloture(base):
+    """⛔ `personal_trades` porte deux lignes par clôture : une au nom radar
+    (`XAU/USD`) et une au nom courtier (`XAUUSD`, `entry_price = 0`). Compter
+    les lignes doublait le P&L — 25,22 € annoncés pour 12,61 réels le 06/09."""
+    c, _ = base
+    c.execute("INSERT INTO personal_trades (mt5_ticket,pair,close_reason,"
+              "destination_id,pnl,closed_at,entry_price) VALUES (?,?,?,?,?,?,?)",
+              ("42", "XAU/USD", "EXPERT", "admin_legacy", 10.24,
+               "2026-09-04T18:05:05+00:00", 4400.0))
+    c.execute("INSERT INTO personal_trades (mt5_ticket,pair,close_reason,"
+              "destination_id,pnl,closed_at,entry_price) VALUES (?,?,?,?,?,?,?)",
+              ("42", "XAUUSD", "EXPERT", "admin_legacy", 10.24,
+               "2026-09-04T18:05:05+00:00", 0.0))
+    _journal(c, "42")
+    mi.enrichir()
+    b = mi.bilan()
+    ligne = next(v for k, v in b["par_motif"].items() if mi.MOTIF_TIERS in k)
+    assert ligne["n"] == 1, "une clôture, pas deux"
+    assert ligne["pnl"] == pytest.approx(10.24), "le P&L ne doit pas doubler"

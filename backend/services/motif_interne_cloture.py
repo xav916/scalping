@@ -115,10 +115,21 @@ def bilan() -> dict:
     init_schema()
     par_motif: dict = {}
     generiques = 0
+    # ⛔ `personal_trades` porte DEUX lignes par cloture : une au nom radar
+    # (`XAU/USD`) et une au nom courtier (`XAUUSD`), cette derniere avec
+    # `entry_price = 0`. Compter les lignes DOUBLAIT le P&L — mesure du 06/09 :
+    # 25,22 EUR annonces pour 12,61 reels. On compte donc par TICKET.
+    vus: set = set()
     with _conn() as c:
         for r in c.execute(
-                "SELECT destination_id, close_reason, motif_interne, pnl "
-                "FROM personal_trades WHERE closed_at >= '2026-08-25'"):
+                "SELECT mt5_ticket, destination_id, close_reason, motif_interne, pnl "
+                "FROM personal_trades WHERE closed_at >= '2026-08-25' "
+                "ORDER BY (entry_price IS NULL), entry_price DESC"):
+            cle_ticket = str(r["mt5_ticket"]) if r["mt5_ticket"] else None
+            if cle_ticket and cle_ticket in vus:
+                continue
+            if cle_ticket:
+                vus.add(cle_ticket)
             mi = r["motif_interne"]
             if mi:
                 cle = (r["destination_id"], mi)
