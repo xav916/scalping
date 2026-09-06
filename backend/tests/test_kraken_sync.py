@@ -336,15 +336,26 @@ async def test_toute_cloture_en_argent_reel_est_notifiee(pair, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_une_paire_non_star_hors_argent_reel_reste_filtree(monkeypatch):
-    """Le filtre garde son rôle pour les customers."""
+async def test_une_paire_non_star_sur_NOS_comptes_n_est_plus_filtree(monkeypatch):
+    """⛔ Le filtre « stars » protégeait les notifications des CLIENTS. Depuis
+    le 06/09, aucun client ne l'atteint : la porte du dessus ne laisse passer
+    que nos trois comptes. Il ne pouvait donc plus frapper que nous — et il
+    reproduisait sur le démo le défaut du 04/08 : une ouverture sans clôture.
+
+    ⚠️ La garde est CONSERVÉE dans le code, pas supprimée : si la porte du
+    dessus s'ouvrait un jour, elle serait la dernière chose entre un flux de
+    trades et un fil client."""
     from backend.services import telegram_service as ts
 
     envois: list[str] = []
 
+    class _Rep:
+        status_code = 200
+        text = "ok"
+
     async def _post(self, url, **kw):
         envois.append(str(url))
-        raise AssertionError("ne devrait pas envoyer")
+        return _Rep()
 
     monkeypatch.setattr("httpx.AsyncClient.post", _post)
     monkeypatch.setattr(ts, "destination_for_ticket", lambda t: "admin_legacy")
@@ -359,7 +370,8 @@ async def test_une_paire_non_star_hors_argent_reel_reste_filtree(monkeypatch):
         "created_at": "2026-08-04T17:50:47+00:00",
         "closed_at": "2026-08-04T18:15:21+00:00",
     })
-    assert envois == []
+    # Le demo recoit desormais sa cloture, comme il recoit son ouverture.
+    assert len(envois) == 1, envois
 
 
 @pytest.mark.asyncio

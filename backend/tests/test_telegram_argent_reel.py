@@ -173,12 +173,19 @@ def test_cloture_argent_reel_notifiee(monkeypatch, _db):
     assert len(envoyes) >= 1
 
 
-def test_cloture_demo_silencieuse(monkeypatch, _db):
-    """Le cas concret : une clôture Pepperstone Demo ne doit plus sonner."""
+def test_la_cloture_DEMO_sonne_desormais(monkeypatch, _db):
+    """⛔ ASYMÉTRIE RÉPARÉE LE 06/09. L'ouverture avait cessé d'exclure le démo
+    le matin même ; la clôture, elle, testait toujours l'argent réel. Le fil
+    démo recevait donc des ouvertures qui ne se refermaient JAMAIS — la moitié
+    d'une histoire, ce qui est pire que pas d'histoire du tout.
+
+    ⚠️ C'est le défaut constaté le 04/08 sur une perte réelle Kraken
+    (« trade ouvert BTC » sans jamais « trade fermé BTC », alors que c'est la
+    clôture qui porte le résultat), reproduit à l'identique sur le démo."""
     _push(_db, "admin_legacy", 82202633)
     envoyes = _capture(monkeypatch)
     asyncio.run(ts.send_close(_trade(82202633)))
-    assert envoyes == []
+    assert len(envoyes) == 1
 
 
 def test_cloture_ticket_orphelin_silencieuse(monkeypatch, _db):

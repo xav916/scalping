@@ -1224,7 +1224,8 @@ def _risque_annonce(trade: dict, destination_id: str | None):
         return None
 
 
-def _format_close(trade: dict, destination_id: str | None = None) -> str:
+def _format_close(trade: dict, destination_id: str | None = None,
+                  essai: bool = False) -> str:
     """Format vulgarisé fermeture : 'résultat + impact sur ton solde'.
 
     Réécrit 2026-06-13 pour parler au lambda.
@@ -1456,6 +1457,12 @@ def _format_close(trade: dict, destination_id: str | None = None) -> str:
             lines.append("")
 
     lines.append(f"`#{ticket}`")
+    if essai:
+        # Meme bandeau qu'a l'ouverture : un essai emprunte le vrai chemin,
+        # donc il doit etre impossible a confondre avec une vraie cloture.
+        lines.insert(0, "🧪 *ESSAI DE BOUT EN BOUT — AUCUNE POSITION FERMÉE*")
+        lines.append("Message fabriqué pour vérifier l'aiguillage et les "
+                     "montants. Aucune position n'a été fermée.")
     return "\n".join(lines)
 
 
@@ -1504,7 +1511,8 @@ def _canal_trade(destination_id: str | None) -> tuple[str, list]:
     return TELEGRAM_BOT_TOKEN, []
 
 
-async def send_close(trade: dict) -> None:
+async def send_close(trade: dict, destination_id: str | None = None,
+                     essai: bool = False) -> None:
     """Push une notification de fermeture sur le canal user-facing.
 
     Filtre : pair stars-only + LIVE_EXTRA_PAIRS (forex majors autorisés pour
@@ -1523,14 +1531,23 @@ async def send_close(trade: dict) -> None:
     if cle:
         _notified_closes.add(cle)
 
-    # Argent réel uniquement, comme à l'ouverture. `personal_trades` ne porte
-    # pas la destination : on la résout depuis `mt5_pushes` via le ticket.
-    dest_close = destination_for_ticket(ticket)
-    if not destination_is_real_money(dest_close):
-        logger.debug(f"send_close: ticket {ticket} ({dest_close}) hors argent réel — skip")
+    # ⛔ ASYMETRIE REPAREE LE 06/09. L'ouverture avait cesse d'exclure le demo
+    # le matin meme — le critere etant devenu « est-ce un de NOS comptes de
+    # trading » — mais la cloture, elle, testait toujours l'argent reel. Le
+    # fil demo recevait donc des ouvertures qui ne se refermaient JAMAIS : la
+    # moitie d'une histoire, ce qui est pire que pas d'histoire du tout.
+    #
+    # `personal_trades` ne porte pas la destination : on la resout depuis
+    # `mt5_pushes` via le ticket. L'appelant peut l'imposer — l'essai de bout
+    # en bout n'a pas de ligne en base a resoudre.
+    from backend.services.canaux_telegram import est_un_compte_de_trading
+    dest_close = destination_id or destination_for_ticket(ticket)
+    if not est_un_compte_de_trading(dest_close):
+        logger.debug(f"send_close: ticket {ticket} ({dest_close}) n'est pas "
+                     f"un compte de trading — skip")
         return
 
-    text = _format_close(trade, dest_close)
+    text = _format_close(trade, dest_close, essai=essai)
 
     # ⚠️ Un miroir vers le canal sales existait ici (2026-08-02) : chaque
     # clôture partait DEUX fois, sur deux canaux, dans le même format. Il
@@ -1554,7 +1571,18 @@ async def send_close(trade: dict) -> None:
     # que c'est la clôture qui porte le résultat. Constaté le 2026-08-04 sur
     # une perte réelle Kraken.
     allowed_pairs = _STAR_PAIRS_SET | _live_extras
-    if pair not in allowed_pairs and not destination_is_real_money(dest_close):
+    # ⛔ L'exemption couvre desormais TOUS nos comptes, pas seulement l'argent
+    # reel. Le defaut constate le 04/08 sur une perte Kraken — « trade ouvert
+    # BTC » sans jamais « trade fermé BTC », alors que c'est la cloture qui
+    # porte le resultat — se reproduisait a l'identique sur le demo depuis que
+    # ses ouvertures sont annoncees.
+    #
+    # ⚠️ La garde est CONSERVEE plutot que supprimee. Aucun client ne peut
+    # l'atteindre aujourd'hui : la porte du dessus ne laisse passer que nos
+    # trois comptes. Mais si cette porte s'ouvrait un jour, le filtre serait
+    # la derniere chose entre un flux de trades et un fil client.
+    from backend.services.canaux_telegram import est_un_compte_de_trading
+    if pair not in allowed_pairs and not est_un_compte_de_trading(dest_close):
         return
     jeton, destinataires = _canal_trade(dest_close)
     if not destinataires:
