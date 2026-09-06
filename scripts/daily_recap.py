@@ -319,8 +319,18 @@ def render(date_str: str, mt5_data: dict, binance: dict, activite: dict | None =
             # « rien gagne » se ressemblent trop pour qu'on laisse le lecteur
             # trancher.
             n = d.get("trades", 0)
-            lines.append(f"• {n} trade(s) fermé(s) · PnL du jour "
-                         f"{d.get('pnl_total', 0):+.2f} {dev}".rstrip())
+            lines.append(f"• {n} trade(s) fermé(s)")
+
+            # ⚠️ Le POURCENTAGE rend les comptes comparables : 712 EUR, 581 EUR
+            # et 107 USD ne se jugent pas au montant brut. Et il se passe de
+            # toute conversion de devise — le PnL et le compte sont dans la
+            # MEME monnaie, elle s'annule. Convertir pour additionner les
+            # comptes recreerait le defaut du jour (909 EUR pour 5,82).
+            c = d.get("compte") or {}
+            base = c.get("valeur")
+            pnl = d.get("pnl_total", 0)
+            part = f"  ({pnl / base * 100:+.2f} % du compte)" if base else ""
+            lines.append(f"• PnL du jour : {pnl:+.2f} {dev}{part}".rstrip())
             if n:
                 paires = d.get("by_pair") or []
                 if paires and paires[-1][1] > 0:
@@ -330,8 +340,7 @@ def render(date_str: str, mt5_data: dict, binance: dict, activite: dict | None =
 
             # Le montant du compte, lu CHEZ LE COURTIER — pas reconstitue
             # depuis nos propres lignes, qui peuvent en manquer.
-            c = d.get("compte")
-            if not c or c.get("valeur") is None:
+            if not base:
                 lines.append("• ⚠️ Compte illisible — ce n'est pas « zéro », "
                              "c'est « on n'a pas pu lire ».")
             else:
