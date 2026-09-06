@@ -42,18 +42,32 @@ def load_env():
 
 
 def alert_telegram(env, msg):
-    tok = env.get("INFRA_TELEGRAM_BOT_TOKEN", "")
-    chat = env.get("INFRA_TELEGRAM_CHAT_ID", "")
-    if not tok or not chat:
-        print("  [telegram] no INFRA_TELEGRAM_* vars, skip notify")
-        return
-    try:
-        data = urllib.parse.urlencode({"chat_id": chat, "text": msg, "parse_mode": "HTML"}).encode()
-        urllib.request.urlopen(f"https://api.telegram.org/bot{tok}/sendMessage", data=data, timeout=10).read()
-        print("  [telegram] alert sent")
-    except Exception as e:
-        print(f"  [telegram] fail: {e}")
+    """Passe par l'endpoint, canal `ic_markets`.
 
+    Cette pause ne concerne QUE le compte reel : la requete filtre sur
+    `destination_id='admin_live'`. Le message partait pourtant sur le fil
+    infra, parce que le script lisait `INFRA_TELEGRAM_BOT_TOKEN` en dur — un
+    contournement de plus de la table des canaux.
+
+    Une paire mise en pause est une decision de TRADING : elle appartient au
+    fil du compte concerne, la ou Xavier lit ses trades.
+    """
+    import json as _json
+    jeton = "shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg"
+    url = ("https://app.scalping-radar.online/api/admin/"
+           "notify-infra-telegram?token=" + jeton + "&channel=ic_markets")
+    lignes = str(msg).splitlines() or [""]
+    charge = _json.dumps({
+        "title": lignes[0][:120],
+        "body": chr(10).join(lignes[1:]) or lignes[0],
+    }).encode("utf-8")
+    try:
+        rq = urllib.request.Request(
+            url, data=charge, headers={"Content-Type": "application/json"},
+            method="POST")
+        urllib.request.urlopen(rq, timeout=10).read()
+    except Exception as e:
+        print(f"telegram fail: {e}")
 
 def get_live_pushes(con, pair, limit=LOOKBACK_PUSHES):
     """Retourne les tickets des derniers pushes admin_live ok=1 pour la pair."""
