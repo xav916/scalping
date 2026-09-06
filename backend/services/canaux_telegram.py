@@ -101,6 +101,35 @@ def libelle(canal: str) -> str:
     return CANAUX[canal][2]
 
 
+FILS_DE_TRADING = frozenset({"ic_markets", "kraken", "demo"})
+
+
+def est_un_compte_de_trading(destination_id: str | None) -> bool:
+    """Un de NOS comptes qui passe des ordres — réel ou démo.
+
+    ⛔ Sert à décider qui reçoit une notification d'ouverture. Un `user:2` ou
+    une destination inconnue n'en est pas un : lui en envoyer une la ferait
+    atterrir sur `infra`, où elle se lirait comme un trade de la maison.
+
+    ⚠️ IBKR en est exclu par construction : il est éteint, et son fil est
+    `infra`.
+    """
+    return canal_pour(destination_id) in FILS_DE_TRADING
+
+
+def jeton_et_chat(canal: str) -> tuple[str, str]:
+    """``(jeton_bot, chat_id)`` d'un fil, lus dans la configuration.
+
+    ⛔ Sert aux envois qui appellent l'API Telegram DIRECTEMENT, sans passer
+    par l'endpoint — les notifications d'ouverture et de clôture. Sans cela
+    ils redéfinissent leur propre table, et c'est très exactement ce qui a
+    fait partir les ouvertures du compte réel IC Markets dans le fil Kraken.
+    """
+    from config import settings as _cfg
+    var_token, var_chat, _ = CANAUX[canal]
+    return getattr(_cfg, var_token, ""), getattr(_cfg, var_chat, "")
+
+
 if __name__ == "__main__":
     # Les scripts shell lisent la table ICI plutôt que d'en recopier une.
     #

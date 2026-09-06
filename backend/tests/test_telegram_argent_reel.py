@@ -26,6 +26,19 @@ import pytest
 from backend.services import telegram_service as ts
 
 
+
+@pytest.fixture(autouse=True)
+def _fils_par_compte(monkeypatch):
+    """Depuis le 06/09, chaque compte a SON bot : un harnais qui n'en gree
+    qu'un seul ferait retomber tous les envois sur infra, donc sur rien."""
+    import config.settings as _s
+    for var in ("SALES_TELEGRAM_BOT_TOKEN", "TRADES_TELEGRAM_BOT_TOKEN",
+                "TELEGRAM_BOT_TOKEN", "INFRA_TELEGRAM_BOT_TOKEN"):
+        monkeypatch.setattr(_s, var, "T", raising=False)
+    for var in ("SALES_TELEGRAM_CHAT_ID", "TRADES_TELEGRAM_CHAT_ID",
+                "TELEGRAM_CHAT_ID", "INFRA_TELEGRAM_CHAT_ID"):
+        monkeypatch.setattr(_s, var, "1", raising=False)
+
 @pytest.fixture(autouse=True)
 def _db(tmp_path, monkeypatch):
     from backend.services import trade_log_service
@@ -107,12 +120,29 @@ def test_ouverture_argent_reel_notifiee(monkeypatch):
     assert "IC Markets" in envoyes[0]["text"]
 
 
-@pytest.mark.parametrize("dest", ["admin_legacy", "admin_binance", "user:2", None])
-def test_ouverture_sans_argent_reel_silencieuse(monkeypatch, dest):
+@pytest.mark.parametrize("dest", ["admin_binance", "user:2", None])
+def test_ouverture_hors_de_NOS_comptes_reste_silencieuse(monkeypatch, dest):
+    """⛔ Ces destinations n'ont pas de fil : leur message atterrirait sur
+    `infra`, ou il se lirait comme un trade de la maison."""
     envoyes = _capture(monkeypatch)
     asyncio.run(ts.send_trade_opened(_setup(), ticket="881", fill_price=3312.4,
                                      volume=0.02, mode="DEMO", destination_id=dest))
     assert envoyes == []
+
+
+def test_le_DEMO_recoit_desormais_ses_ouvertures(monkeypatch):
+    """⛔ Il en etait exclu depuis le 2026-08-04, au motif qu'il « doublait le
+    volume du canal sans rien engager ». C'etait vrai quand tout partageait UN
+    SEUL fil ; depuis le decoupage par compte il a le sien, et le motif de
+    l'exclusion a disparu avec sa cause.
+
+    ⚠️ Demande explicite : etendre le message d'ouverture aux comptes reels
+    ET demo qui tradent."""
+    envoyes = _capture(monkeypatch)
+    asyncio.run(ts.send_trade_opened(_setup(), ticket="881", fill_price=3312.4,
+                                     volume=0.02, mode="DEMO",
+                                     destination_id="admin_legacy"))
+    assert len(envoyes) == 1
 
 
 # --- la clôture, destination résolue depuis le ticket ---------------------

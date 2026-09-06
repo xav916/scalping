@@ -180,6 +180,19 @@ def test_un_trade_deja_ferme_par_son_stop_n_est_pas_refermé():
 
 # --- écriture en base ------------------------------------------------------
 
+
+@pytest.fixture(autouse=True)
+def _fils_par_compte(monkeypatch):
+    """Depuis le 06/09, chaque compte a SON bot : un harnais qui n'en gree
+    qu'un seul ferait retomber tous les envois sur infra, donc sur rien."""
+    import config.settings as _s
+    for var in ("SALES_TELEGRAM_BOT_TOKEN", "TRADES_TELEGRAM_BOT_TOKEN",
+                "TELEGRAM_BOT_TOKEN", "INFRA_TELEGRAM_BOT_TOKEN"):
+        monkeypatch.setattr(_s, var, "T", raising=False)
+    for var in ("SALES_TELEGRAM_CHAT_ID", "TRADES_TELEGRAM_CHAT_ID",
+                "TELEGRAM_CHAT_ID", "INFRA_TELEGRAM_CHAT_ID"):
+        monkeypatch.setattr(_s, var, "1", raising=False)
+
 @pytest.fixture
 def base(tmp_path, monkeypatch):
     db = tmp_path / "trades.db"

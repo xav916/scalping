@@ -1460,32 +1460,48 @@ def _format_close(trade: dict, destination_id: str | None = None) -> str:
 
 
 def _canal_trade(destination_id: str | None) -> tuple[str, list]:
-    """Rend (jeton_bot, destinataires) pour une notification de trade.
+    """Rend ``(jeton_bot, destinataires)`` pour une notification de trade.
 
-    Le compte reel **13137475** (`admin_live`) part sur « Scalping Radar
-    Trades », et lui seul : c'est le fil que Xavier suit pour ce compte, et il
-    y attend le message complet — risque et objectif en euros, niveaux,
-    « pourquoi ce trade », ticket. Toute autre destination garde le bot radar
-    et ses destinataires habituels.
+    ⛔ Cette fonction portait sa PROPRE table — la troisième du dépôt :
 
-    ⚠️ Un seul destinataire pour le fil trades, jamais `_destinataires()` :
-    ce dernier boucle sur `TELEGRAM_CHATS` pour servir les clients. Y envoyer
-    les trades du compte reel les leur ferait parvenir le jour ou ils y
-    seraient inscrits — et `TELEGRAM_CHATS` etant vide aujourd'hui, rien ne le
-    revelerait avant qu'il ne soit trop tard.
+        admin_live          -> TRADES_TELEGRAM_BOT_TOKEN
+        toute autre         -> TELEGRAM_BOT_TOKEN
 
-    ⚠️ Repli sur le bot radar si le fil trades n'est pas gree : comportement
-    d'avant le 2026-08-19, donc aucune notification perdue.
+    Or `TRADES_*` est le bot nommé « KRAKEN Trades » et `TELEGRAM_*` le bot
+    « DEMO Trades ». Les ouvertures du compte réel IC Markets partaient donc
+    dans le fil Kraken, et celles de Kraken dans le fil démo. Le canal vient
+    désormais de `canaux_telegram`, seul module qui sache faire d'un compte un
+    fil.
+
+    ⚠️ Un seul destinataire, jamais `_destinataires()` : ce dernier boucle sur
+    `TELEGRAM_CHATS` pour servir les clients. Y envoyer les trades d'un de nos
+    comptes les leur ferait parvenir le jour où ils y seraient inscrits — et
+    `TELEGRAM_CHATS` étant vide aujourd'hui, rien ne le révélerait avant qu'il
+    ne soit trop tard. Cette garde valait pour le seul fil du compte réel ;
+    elle vaut désormais pour tous.
+
+    ⚠️ Repli sur le fil infra si le fil du compte n'est pas gréé — jamais sur
+    les destinataires clients, et jamais sur un autre fil de compte, qui
+    attribuerait le trade au mauvais compte.
     """
-    from config.settings import (
-        TRADES_TELEGRAM_BOT_TOKEN as _tok,
-        TRADES_TELEGRAM_CHAT_ID as _chat,
-    )
-    if destination_id == "admin_live" and _tok and _chat:
-        # `__any__` et non un pseudo-utilisateur : evite la recherche de mode
+    from backend.services import canaux_telegram as ct
+
+    canal = ct.canal_pour(destination_id)
+    jeton, chat = ct.jeton_et_chat(canal)
+    if jeton and chat:
+        # `__any__` et non un pseudo-utilisateur : évite la recherche de mode
         # silencieux, qui n'a pas de sens pour un fil d'administration.
-        return _tok, [("__any__", _chat)]
-    return TELEGRAM_BOT_TOKEN, _destinataires()
+        return jeton, [("__any__", chat)]
+
+    jeton, chat = ct.jeton_et_chat("infra")
+    if jeton and chat:
+        logger.warning(
+            "_canal_trade: fil %s non gréé pour %s — repli sur infra",
+            canal, destination_id)
+        return jeton, [("__any__", chat)]
+
+    logger.error("_canal_trade: aucun fil gréé, même infra — %s", destination_id)
+    return TELEGRAM_BOT_TOKEN, []
 
 
 async def send_close(trade: dict) -> None:
@@ -1721,9 +1737,12 @@ def _format_trade_opened(
 
     2026-06-18 fix : "LIVE (argent réel)" ne dépend plus du `mode` du
     bridge (toujours "live" en exécution réelle, qu'on tape sur Demo
-    Pepperstone ou Live IC Markets), mais du destination_id. Seul
-    `admin_live` = argent réel. Tous les autres (admin_legacy, user:N
-    Premium en Demo, etc.) = Démo.
+    Pepperstone ou Live IC Markets), mais du destination_id.
+
+    ⛔ Cette note affirmait « seul `admin_live` = argent réel ». C'est FAUX :
+    Kraken en engage aussi. C'est cette croyance qui avait fait afficher
+    « Démo » sur des trades Kraken réels. Le libellé vient du registre, via
+    `destination_label()` — jamais d'une liste recopiée ici.
     """
     from datetime import datetime, timezone, timedelta
     dir_value = setup.direction.value if hasattr(setup.direction, "value") else str(setup.direction)
@@ -1822,10 +1841,18 @@ async def send_trade_opened(
     """
     if not is_configured():
         return
-    # Argent réel uniquement (2026-08-04). Le Demo doublait le volume du
-    # canal sans rien engager ; il reste visible dans le récap quotidien.
-    if not destination_is_real_money(destination_id):
-        logger.debug(f"send_trade_opened: {destination_id} sans argent réel — skip")
+    # ⛔ Le démo était EXCLU depuis le 2026-08-04, au motif qu'il « doublait le
+    # volume du canal sans rien engager ». C'était vrai quand tout partageait
+    # UN SEUL fil. Depuis le découpage par compte du 06/09, le démo a le sien :
+    # le motif de l'exclusion a disparu avec la cause.
+    #
+    # ⚠️ On n'annonce que nos comptes de trading. Un `user:2` ou une
+    # destination inconnue atterrirait sur `infra`, où le message se lirait
+    # comme un trade de la maison.
+    from backend.services.canaux_telegram import est_un_compte_de_trading
+    if not est_un_compte_de_trading(destination_id):
+        logger.debug(f"send_trade_opened: {destination_id} n'est pas un compte "
+                     f"de trading — skip")
         return
     try:
         text = _format_trade_opened(
