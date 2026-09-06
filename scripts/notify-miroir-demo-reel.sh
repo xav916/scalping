@@ -1,5 +1,5 @@
 #!/bin/bash
-# BUT: detecte une divergence entre le demo et le reel
+# BUT: annonce tout ordre parti sur le compte reel IC Markets 13137475
 # PERIODE_MIN: 2
 # Prévient dès qu'un ordre part sur le COMPTE RÉEL 13137475, et dit si le
 # démo a suivi.
@@ -9,7 +9,20 @@
 # 19/08 à 17:17 avec l'EUR/GBP, que le démo avait refusé en veto géopolitique.
 # Le réel est désormais la ligne, le démo la colonne de contexte.
 #
-# Contexte : depuis le 2026-08-06 le compte de démonstration PILOTE le compte
+# ⛔ LE MIROIR EST COUPE DEPUIS LE 2026-09-04. Les deux comptes sont
+# COMPLETEMENT DISSOCIES : `MIRROR_DEMO_TO_LIVE_ENABLED=false` pour les
+# trades, et `capital_mirror` debranche sur les trois destinations.
+#
+# Ce script n'est donc plus un detecteur de divergence : c'est l'annonceur des
+# ordres du compte reel, role qu'il tient depuis le re-ancrage du 19/08. Le
+# demo n'est qu'une colonne de CONTEXTE — savoir s'il a pris le meme setup,
+# ce qui reste interessant sans etre une anomalie.
+#
+# ⚠️ Il reste utile malgre `send_trade_opened` : ce dernier est best-effort et
+# avale ses exceptions. Deux chemins independants pour annoncer un ordre en
+# argent reel, c'est voulu — « prouver que l'alerte ARRIVE, pas qu'elle part ».
+#
+# ex-contexte (caduc) : depuis le 2026-08-06 le compte de démonstration PILOTE le compte
 # réel — un fill confirmé en démo déclenche l'ouverture du même ordre sur le
 # réel (cf. `mt5_bridge._mirror_fill_to_live`). Ce script est le témoin de
 # cette copie : il dit si elle a abouti, et sinon pourquoi.
@@ -41,6 +54,12 @@ NOTIFY_URL="https://app.scalping-radar.online/api/admin/notify-infra-telegram?to
 # Fenêtre de recherche : large assez pour ne rien rater entre deux passages,
 # la déduplication côté endpoint évite les répétitions.
 FENETRE_MIN="${MIROIR_FENETRE_MIN:-15}"
+
+# Le miroir est-il cense agir ? Lu dans la CONFIGURATION, jamais suppose :
+# le jour ou il sera reactive, le message doit redevenir une alerte tout seul.
+MIROIR_ACTIF=$(sudo grep -m1 -iE '^MIRROR_DEMO_TO_LIVE_ENABLED=' /opt/scalping/.env 2>/dev/null | cut -d= -f2- | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
+case "$MIROIR_ACTIF" in true|1|yes|on) MIROIR_ACTIF=1 ;; *) MIROIR_ACTIF=0 ;; esac
+export MIROIR_ACTIF
 
 # `-i` est indispensable : sans lui `docker exec` n'attache pas stdin et le
 # heredoc part dans le vide, avec un rapport vide indiscernable d'une panne.
@@ -100,7 +119,11 @@ for x in t:
 "
 
 PAYLOAD=$(echo "$RAPPORT" | python3 -c "
-import json, sys
+import json, os, sys
+
+# ⛔ Lu de la configuration, pas code en dur : le jour ou le miroir
+# revient, l'avertissement redevient pertinent sans qu'on y pense.
+MIROIR_ACTIF = os.environ.get('MIROIR_ACTIF') == '1'
 
 d = json.load(sys.stdin)
 # Tout ce que le compte 13137475 a recu. Le demo n'est plus un filtre mais un
@@ -118,7 +141,8 @@ def _demo(x):
         return 'demo : ouvert aussi'
     if x['t_demo']:
         return 'demo : REFUSE'
-    return 'demo : PAS de trade — le reel a agi seul'
+    return ('demo : PAS de trade — le reel a agi seul' if MIROIR_ACTIF
+            else 'demo : pas de trade (comptes dissocies depuis le 04/09)')
 
 lignes = []
 for x in ok:
@@ -134,7 +158,10 @@ for x in ko:
 titre = ('✅ Compte reel 13137475 : %d ordre(s) parti(s)' % len(ok)) if ok \
         else '⚠️ Compte reel 13137475 : ordre REFUSE'
 corps = '\n'.join(lignes)
-if any(not x['t_demo'] for x in suivis):
+# ⛔ Cet avertissement ne vaut QUE si le miroir est cense agir. Depuis qu'il
+# est coupe, un ordre reel sans ordre demo est le fonctionnement NORMAL —
+# le signaler serait alarmer sur l'absence de ce qu'on a retire.
+if MIROIR_ACTIF and any(not x['t_demo'] for x in suivis):
     corps += ('\n\n⚠️ Un ordre parti sur le reel SANS le demo vient du dispatch '
               'direct, pas du miroir : les deux routes sont evaluees separement.')
 if ko:
