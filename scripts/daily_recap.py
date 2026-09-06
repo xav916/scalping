@@ -355,9 +355,15 @@ def render(date_str: str, mt5_data: dict, binance: dict, activite: dict | None =
             lines.append(f"• PnL du jour : {pnl:+.2f} {dev}{part}".rstrip())
 
             # La part du PnL GLOBAL, tous comptes confondus.
+            #
+            # ⛔ La ligne est TOUJOURS ecrite, meme quand il n'y a rien a
+            # repartir. Je la supprimais sous 0,01 EUR de total : le jour ou
+            # tous les comptes sont a zero, elle disparaissait entierement et
+            # se lisait comme une fonction MANQUANTE. Une absence n'explique
+            # rien ; un tiret motive, si.
             pe = d.get("pnl_eur") or 0
             if abs(total_eur) < 0.01:
-                pass          # rien a repartir : on se tait plutot que d'inventer
+                lines.append("• Part du PnL global : — (aucun PnL aujourd'hui)")
             else:
                 lines.append(f"• Part du PnL global : {pe / total_eur * 100:+.1f} %"
                              + (f"  ({pe:+.2f} EUR)" if dev != "EUR" else ""))
