@@ -1,11 +1,26 @@
-"""Daily recap PnL des 3 brokers — envoie le bilan 24h sur Telegram infra.
+"""Daily recap PnL par COMPTE — envoie le bilan 24h sur le fil infra.
 
-Source de vérité par broker :
-- Pepperstone Demo (admin_legacy) : personal_trades closed sur 24h, jointure mt5_pushes
-- IC Markets Live (admin_live) : idem mais filtre destination_id=admin_live
-- Binance Testnet (admin_binance) : /fapi/v1/income via le bridge testnet
+Une section par compte de trading, nommée avec la convention du 06/09 —
+`[RÉEL · IC_MARKETS]`, `[RÉEL · KRAKEN]`, `[DÉMO · PEPPERSTONE]` — via
+`canaux_telegram.libelle()`, la seule source de ces libellés.
 
-Cron suggéré : 22:00 UTC (= minuit Paris CEST) tous les jours.
+Source de vérité : `personal_trades` filtré sur `destination_id`.
+
+⛔ Ce filtre remplace une jointure via `mt5_pushes` avec
+`CAST(ticket AS INTEGER)`. Les tickets Kraken étant des UUID, le cast rendait
+0 : **Kraken n'apparaissait dans aucun récap**, alors qu'il trade en argent
+réel — 15 clôtures sur 30 jours, invisibles.
+
+⛔ **Binance a disparu du récap.** La destination est désarmée depuis le
+02/08 ; sa section affichait « Binance API keys missing » à chaque passage,
+ce qui se lit comme un incident alors que c'est une décision. Le code de
+collecte reste, inerte, pour le jour où elle reviendrait.
+
+⚠️ Les devises ne s'additionnent pas : les comptes MT5 sont en EUR, Kraken en
+USD. Chaque section porte la sienne.
+
+Cron : `0 22 * * *` avec `CRON_TZ=Europe/Paris` — 22h à Paris. Sans le TZ il
+partait à 22h UTC, donc à MINUIT.
 
 Usage manuel :
     /opt/binance-bridge/venv/bin/python /opt/scalping/scripts/daily_recap.py [--since ISO]
@@ -132,17 +147,21 @@ from backend.services.trade_log_service import _DB_PATH
 con = sqlite3.connect(str(_DB_PATH))
 con.row_factory = sqlite3.Row
 out = {{}}
-for dest in ("admin_legacy", "admin_live"):
+# KRAKEN etait ABSENT du recap. La jointure passait par `mt5_pushes` et un
+# CAST(... AS INTEGER) sur le ticket : les tickets Kraken sont des UUID, donc
+# le cast rendait 0 et aucune ligne ne remontait. Un compte en ARGENT REEL
+# n'apparaissait dans aucun recap — 15 clotures sur 30 jours, invisibles.
+#
+# `personal_trades` porte deja `destination_id` : on filtre dessus, ce qui
+# marche pour TOUS les courtiers au lieu d'un seul.
+for dest in ("admin_live", "admin_kraken", "admin_kraken_spot", "admin_legacy"):
     rows = con.execute("""
         SELECT pt.pair, pt.pnl
         FROM personal_trades pt
         WHERE pt.status='CLOSED'
           AND pt.is_auto=1
           AND pt.closed_at >= ?
-          AND pt.mt5_ticket IN (
-              SELECT CAST(json_extract(bridge_response, '$.ticket') AS INTEGER)
-              FROM mt5_pushes WHERE destination_id=?
-          )
+          AND pt.destination_id = ?
     """, ("{since_iso}", dest)).fetchall()
     pnls = [float(r["pnl"] or 0) for r in rows]
     by_pair = {{}}
@@ -154,6 +173,14 @@ for dest in ("admin_legacy", "admin_live"):
         "pnl_total": sum(pnls),
         "by_pair": sorted(by_pair.items(), key=lambda kv: kv[1]),
     }}
+# Les clotures SANS destination : on les compte plutot que de les taire. Une
+# ligne qu'aucun compte ne reclame est un trou de tracabilite, pas un zero.
+orphelines = con.execute("""
+    SELECT COUNT(*) FROM personal_trades
+     WHERE status='CLOSED' AND is_auto=1 AND closed_at >= ?
+       AND (destination_id IS NULL OR destination_id = '')
+""", ("{since_iso}",)).fetchone()[0]
+out["_orphelines"] = orphelines
 print(json.dumps(out))
 '''
     try:
@@ -205,55 +232,62 @@ def fetch_activite(since_iso: str) -> dict:
 def render(date_str: str, mt5_data: dict, binance: dict, activite: dict | None = None) -> str:
     lines = []
 
-    legacy = mt5_data.get("admin_legacy", {})
+    # ── Une section PAR COMPTE, nommee comme partout ailleurs ─────────
+    #
+    # Les libelles etaient ecrits en dur — « Pepperstone Demo », « IC Markets
+    # Live » — et ne suivaient pas la convention par compte adoptee le 06/09.
+    # Ils viennent desormais de `canaux_telegram.libelle()`, la seule source.
+    #
+    # KRAKEN etait absent du recap alors qu'il trade en ARGENT REEL.
+    #
+    # BINANCE en a disparu : la destination est desarmee depuis le 02/08, et
+    # sa section affichait « Binance API keys missing » a chaque passage — ce
+    # qui se lit comme un incident alors que c'est une decision.
+    import sys as _sys
+    _sys.path.insert(0, "/app")
+    try:
+        from backend.services.canaux_telegram import libelle, canal_pour
+    except Exception:
+        libelle = lambda c: c
+        canal_pour = lambda d: d
+
     if "error" in mt5_data:
         lines += ["⚠️ Erreur récup MT5 : " + mt5_data["error"]]
     else:
-        lines += ["🟦 Pepperstone Demo (admin_legacy)"]
-        if legacy.get("trades", 0):
-            lines += [
-                f"• {legacy['trades']} trades fermés",
-                f"• PnL : {legacy['pnl_total']:+.2f} USD",
-            ]
-            top_win = legacy["by_pair"][-1] if legacy["by_pair"] else None
-            top_loss = legacy["by_pair"][0] if legacy["by_pair"] else None
-            if top_win and top_win[1] > 0:
-                lines.append(f"• Top : {top_win[0]} {top_win[1]:+.2f}")
-            if top_loss and top_loss[1] < 0:
-                lines.append(f"• Pire : {top_loss[0]} {top_loss[1]:+.2f}")
-        else:
-            lines += ["• 0 trade fermé sur 24h"]
-        lines.append("")
-
-        live = mt5_data.get("admin_live", {})
-        lines += ["🟩 IC Markets Live (admin_live, argent réel)"]
-        if live.get("trades", 0):
-            lines += [
-                f"• {live['trades']} trades fermés",
-                f"• PnL : {live['pnl_total']:+.2f} EUR",
-            ]
-        else:
-            lines += ["• 0 trade fermé sur 24h"]
-            lines += ["• ⚠️ Inactivité — bridge ou compte à vérifier"]
-        lines.append("")
-
-    lines += ["🟪 Binance Testnet (admin_binance)"]
-    if "error" in binance:
-        lines += ["• ⚠️ " + binance["error"]]
-    else:
-        lines += [
-            f"• Wallet : {binance['wallet_balance']:.0f} USDT ({binance['unrealized']:+.0f} unrealized)",
-            f"• PnL net 24h : {binance['total_net']:+.2f} USDT",
-            f"  ├ Realized : {binance['realized']:+.2f}",
-            f"  ├ Commission : {binance['commission']:+.2f}",
-            f"  └ Funding : {binance['funding']:+.2f}",
+        # ⚠️ La devise est celle du COMPTE : les MT5 sont en EUR, Kraken en
+        # USD. Les additionner serait le piege d'unite deja paye ailleurs.
+        COMPTES = [
+            ("admin_live", "EUR"),
+            ("admin_kraken", "USD"),
+            ("admin_kraken_spot", "USD"),
+            ("admin_legacy", "EUR"),
         ]
-        if binance["top_losses"]:
-            losses_str = ", ".join(f"{s} {v:+.0f}" for s, v in binance["top_losses"])
-            lines.append(f"• Top loss : {losses_str}")
-        best = binance.get("best_winner")
-        if best and best[1] > 0:
-            lines.append(f"• Meilleur : {best[0]} {best[1]:+.0f}")
+        for dest, devise in COMPTES:
+            d = mt5_data.get(dest) or {}
+            if not d and dest.endswith("_spot"):
+                continue          # jamais gree : ne pas inventer une section
+            lines += [f"{libelle(canal_pour(dest))} {dest}"]
+            if d.get("trades", 0):
+                lines += [
+                    f"• {d['trades']} trades fermés",
+                    f"• PnL : {d['pnl_total']:+.2f} {devise}",
+                ]
+                paires = d.get("by_pair") or []
+                if paires and paires[-1][1] > 0:
+                    lines.append(f"• Top : {paires[-1][0]} {paires[-1][1]:+.2f}")
+                if paires and paires[0][1] < 0:
+                    lines.append(f"• Pire : {paires[0][0]} {paires[0][1]:+.2f}")
+            else:
+                lines += ["• 0 trade fermé sur 24h"]
+            lines.append("")
+
+        # ⛔ Une cloture qu'aucun compte ne reclame est un trou de tracabilite,
+        # pas un zero. On la COMPTE plutot que de la taire.
+        orphelines = mt5_data.get("_orphelines") or 0
+        if orphelines:
+            lines += [f"⚠️ {orphelines} clôture(s) SANS destination — "
+                      "elles n'apparaissent dans aucune section ci-dessus.", ""]
+
     # Activite du radar : ce qui etait pousse en temps reel sans declencher
     # de decision. Ici, ca sert a ajuster un seuil.
     if activite and "error" not in activite:
