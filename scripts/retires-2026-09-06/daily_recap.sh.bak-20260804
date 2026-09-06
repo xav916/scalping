@@ -1,0 +1,15 @@
+#!/bin/bash
+# Wrapper cron : lit env vars binance-bridge (BINANCE_*) + scalping-radar (SALES_TELEGRAM_*)
+# et lance daily_recap. Target bot configurable via $RECAP_TARGET (default: sales).
+set -euo pipefail
+BRIDGE_PID=$(systemctl show binance-bridge-rd.service -p MainPID --value)
+BINANCE_KEYS=$(cat /proc/$BRIDGE_PID/environ | tr "\0" "\n" | grep -E "^BINANCE_(API_KEY|API_SECRET|ENV)=")
+RADAR_PID=$(docker inspect --format "{{.State.Pid}}" scalping-radar)
+SALES_KEYS=$(cat /proc/$RADAR_PID/environ | tr "\0" "\n" | grep -E "^SALES_TELEGRAM_(BOT_TOKEN|CHAT_ID)=")
+TARGET="${RECAP_TARGET:-sales}"
+LOG=/var/log/scalping-daily-recap.log
+{
+  echo "=== $(date -u +%Y-%m-%dT%H:%M:%SZ) daily_recap start target=$TARGET ==="
+  env -i HOME=/tmp PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin $BINANCE_KEYS $SALES_KEYS /opt/binance-bridge/venv/bin/python /opt/scalping/scripts/daily_recap.py --target "$TARGET"
+  echo "=== done ==="
+} >> "$LOG" 2>&1
