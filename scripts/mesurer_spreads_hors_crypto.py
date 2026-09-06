@@ -33,7 +33,11 @@ import sys
 import urllib.request
 from datetime import datetime, timezone
 
-JOURNAL = "/var/log/scalping/spreads-hors-crypto.jsonl"
+# ⛔ PAS `/var/log/scalping` : ce chemin est monté en LECTURE SEULE dans le
+# conteneur (`-v /var/log/scalping:/var/log/scalping:ro`). Un relevé qui ne
+# s'écrit pas est un bilan vide le soir venu, sans que rien ne l'annonce.
+# Trouvé en lançant le premier relevé, pas en relisant le code.
+JOURNAL = "/app/data/spreads_hors_crypto.jsonl" if os.path.isdir("/app/data")     else "spreads_hors_crypto.jsonl"
 TICKERS = "https://futures.kraken.com/derivatives/api/v3/tickers"
 
 # (paire radar, symbole Kraken). Seules celles cotées DES DEUX CÔTÉS permettent
