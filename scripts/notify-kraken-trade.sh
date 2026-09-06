@@ -4,7 +4,7 @@
 # Prévient dès qu'un ordre part RÉELLEMENT sur Kraken (2026-08-08).
 #
 # Manque comblé : `notify-new-pushes.sh` ne signale que les ÉCHECS (`ok = 0`),
-# et `notify-miroir-demo-reel.sh` ne couvre que les deux comptes MT5. Aucun
+# et `notify-ordres-reel.sh` ne couvre que les deux comptes MT5. Aucun
 # script ne disait « un trade est parti sur Kraken » — la route qui vient de
 # passer de 2 à 18 instruments tradables.
 #

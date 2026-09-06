@@ -46,7 +46,7 @@ DELAI = 10
 TOKEN = os.environ.get("INFRA_NOTIFY_TOKEN", "shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg")
 # Routage PAR DESTINATION (2026-08-19). Le fil `trades` suit le compte reel
 # 13137475 de bout en bout : son ouverture y est deja annoncee par
-# notify-miroir-demo-reel.sh, sa cloture l'y rejoint. Les autres destinations
+# notify-ordres-reel.sh, sa cloture l'y rejoint. Les autres destinations
 # restent sur `sales`.
 #
 # ⚠️ Le routage se fait par MESSAGE, pas globalement : une cloture reelle et

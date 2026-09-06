@@ -23,7 +23,7 @@
 # Ce qu'il reste à faire ici, et que le hook ne peut pas faire : signaler un
 # push qui n'a jamais été confirmé. Il couvre TOUTES les destinations et part
 # donc sur le fil `sales` — le fil `trades` est réservé au compte réel
-# 13137475, dont les refus sont déjà portés par notify-miroir-demo-reel.sh.
+# 13137475, dont les refus sont déjà portés par notify-ordres-reel.sh.
 #
 # Usage :
 #   notify-new-pushes.sh           → alerte sur les pushes non confirmés

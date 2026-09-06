@@ -1,5 +1,11 @@
 #!/bin/bash
 # BUT: annonce tout ordre parti sur le compte reel IC Markets 13137475
+#
+# ⛔ RENOMME le 06/09 : il s'appelait `notify-miroir-demo-reel.sh`. Le miroir
+# demo -> reel est coupe depuis le 04/09 et les comptes sont dissocies : le nom
+# decrivait un role que la sonde ne tient plus depuis son re-ancrage du 19/08.
+# Un nom qui ment sur sa fonction est ce qui a produit trois tables de canaux
+# divergentes le meme jour.
 # PERIODE_MIN: 2
 # Prévient dès qu'un ordre part sur le COMPTE RÉEL 13137475, et dit si le
 # démo a suivi.
@@ -36,8 +42,8 @@
 # Cadence conseillée : toutes les 2 minutes. Dedup par ticket côté endpoint.
 #
 # Usage :
-#   notify-miroir-demo-reel.sh           → vérifie + notifie
-#   DRY_RUN=1 notify-miroir-demo-reel.sh → affiche sans notifier
+#   notify-ordres-reel.sh           → vérifie + notifie
+#   DRY_RUN=1 notify-ordres-reel.sh → affiche sans notifier
 set -uo pipefail
 
 TOKEN="shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg"
@@ -186,4 +192,4 @@ else
     --data "$PAYLOAD" -o /dev/null -w 'notify HTTP %{http_code}\n' || true
 fi
 
-echo "notify-miroir-demo-reel terminé"
+echo "notify-ordres-reel terminé"
