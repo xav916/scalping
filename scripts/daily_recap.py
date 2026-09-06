@@ -280,6 +280,18 @@ def fetch_activite(since_iso: str) -> dict:
         "+ chr(34) + 'below_confidence' + chr(34) + ' AND created_at >= ? GROUP BY pair "
         "ORDER BY c DESC LIMIT 1', (s,)).fetchone()" + chr(10) +
         "out['refus_top'] = list(h) if h else None" + chr(10) +
+        # ⛔ `below_confidence` ne pesait que 229 refus sur 13 700 le 06/09 —
+        # 1,7 %. Le recap le mettait en avant et taisait `verdict_blocker`
+        # (10 114). Mettre en vedette une cause marginale fait chercher au
+        # mauvais endroit. On rend les motifs DOMINANTS.
+        "out['motifs'] = [list(r) for r in con.execute('SELECT reason_code, "
+        "COUNT(*) c FROM signal_rejections WHERE created_at >= ? GROUP BY 1 "
+        "ORDER BY c DESC LIMIT 4', (s,)).fetchall()]" + chr(10) +
+        # Les paires dont le mode a change, NOMMEES. Un compte brut disait
+        # « 2 changements » pour UNE paire suivie dans les deux sens.
+        "out['modes'] = [list(r) for r in con.execute('SELECT pair, state, "
+        "direction, reason FROM pair_admission_state WHERE state_since >= ? "
+        "ORDER BY state_since DESC LIMIT 8', (s,)).fetchall()]" + chr(10) +
         "print(json.dumps(out))" + chr(10)
     )
     try:
@@ -414,26 +426,37 @@ def render(date_str: str, mt5_data: dict, binance: dict, activite: dict | None =
     # Activite du radar : ce qui etait pousse en temps reel sans declencher
     # de decision. Ici, ca sert a ajuster un seuil.
     if activite and "error" not in activite:
-        tr = activite.get("transitions") or {}
-        total = sum(tr.values())
-        refus = activite.get("refus") or 0
-        if total or refus:
-            lines += ["", "⚙️ Activité du radar"]
-        if total:
-            detail = []
-            for etat, libelle in (("AUTO_EXEC", "activées"), ("TELEGRAM", "en notif"),
-                                  ("PAUSED", "en pause"), ("DEMOTED", "rétrogradées"),
-                                  ("OBSERVED", "en observation")):
-                if tr.get(etat):
-                    detail.append(str(tr[etat]) + " " + libelle)
-            lines.append("• " + str(total) + " changements de mode" +
-                         (" (" + ", ".join(detail) + ")" if detail else ""))
-        if refus:
-            ligne = "• " + str(refus) + " signaux refusés faute de confiance"
-            top = activite.get("refus_top")
-            if top:
-                ligne += " (surtout " + str(top[0]) + ", " + str(top[1]) + ")"
-            lines.append(ligne)
+        modes = activite.get("modes") or []
+        motifs = activite.get("motifs") or []
+        if modes or motifs:
+            lines += ["", "⚙️ Activité du radar",
+                      "  (ce que le radar a vu sans que ça devienne un trade)"]
+
+        # ⛔ Les paires sont NOMMEES, avec leur motif. Un compte brut disait
+        # « 2 changements de mode » pour UNE SEULE paire — achat et vente sont
+        # suivis separement, donc chaque pause compte double.
+        if modes:
+            vus = {}
+            for pair, etat, direction, raison in modes:
+                cle = (pair, etat)
+                vus.setdefault(cle, {"sens": [], "raison": raison})
+                if direction:
+                    vus[cle]["sens"].append(direction)
+            lines.append(f"• {len(vus)} paire(s) ont changé de mode :")
+            for (pair, etat), d in list(vus.items())[:5]:
+                sens = "/".join(d["sens"]) or "—"
+                lines.append(f"   {pair} → {etat} ({sens})")
+                if d["raison"]:
+                    lines.append(f"     {str(d['raison'])[:110]}")
+
+        # ⛔ Les motifs DOMINANTS, pas un seul choisi d'avance.
+        # `below_confidence` ne pesait que 1,7 % des refus le 06/09, et c'est
+        # pourtant le seul qui etait affiche.
+        if motifs:
+            total = sum(n for _, n in motifs)
+            lines.append(f"• {total} signaux refusés — principaux motifs :")
+            for code, n in motifs:
+                lines.append(f"   {code} : {n}")
     return "\n".join(lines)
 
 
