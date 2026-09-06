@@ -112,7 +112,23 @@ echo "   Désarmement : remettre KRAKEN_SLTP_GUARD_ENABLED=false côté bridge."
 # Un armement qui ne s'annonce pas est un changement de comportement que
 # personne ne peut dater après coup. Best-effort : la notification ne
 # conditionne jamais l'armement, qui a déjà eu lieu à ce stade.
+#
+# ⛔ ATTENDRE que l'APPLICATION réponde, pas seulement que le conteneur existe.
+# Le 06/09 l'annonce est partie pendant le démarrage et a rendu 502 : le script
+# annonce à travers le service qu'il vient lui-même de redémarrer.
+# `docker exec python -c 1` réussit dès que le conteneur tourne, bien avant
+# qu'uvicorn ne serve. L'armement avait bien eu lieu — personne ne l'a su.
+#
+# 🔑 Prouver que l'alerte ARRIVE, pas qu'elle part.
 TOKEN="shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg"
+CODE_APP=000
+for _ in $(seq 1 60); do
+  CODE_APP=$(curl -s -o /dev/null -w "%{http_code}" -m 5 http://localhost:8000/api/health 2>/dev/null || echo 000)
+  # 401/403 = l'application répond, elle exige seulement une authentification.
+  case "$CODE_APP" in 200|401|403) break ;; esac
+  sleep 2
+done
+echo "application joignable (HTTP $CODE_APP) — envoi de l'annonce"
 GELEES=$(curl -s -m 15 -H "X-Bridge-Key: $BK" http://127.0.0.1:8790/positions \
   | python3 -c "
 import json, sys
@@ -139,3 +155,22 @@ print(json.dumps({
   'cooldown_seconds': 3600,
 }))
 ")" -o /dev/null -w 'notify HTTP %{http_code}\n' || true
+
+# ⛔ Un seul essai laisse l'annonce à la merci d'une seconde d'indisponibilité,
+# et un `|| true` avale l'échec. On VÉRIFIE qu'elle est passée, on retente, et
+# on le dit si elle ne passe pas.
+CODE_ANNONCE=000
+for essai in 1 2 3; do
+  CODE_ANNONCE=$(curl -s -o /dev/null -w "%{http_code}" -m 8 -X POST \
+    "https://app.scalping-radar.online/api/admin/notify-infra-telegram?token=${TOKEN}&channel=infra" \
+    -H 'Content-Type: application/json' \
+    --data "{\"title\":\"🛡️ Garde-fou Kraken ARMÉ (confirmation)\",\"body\":\"Armé le $HORODATAGE. Stop d urgence automatique à 1 % sur toute position nue ouverte APRÈS cet horodatage.\",\"dedup_key\":\"kraken_guard_arme\",\"cooldown_seconds\":3600}" 2>/dev/null || echo 000)
+  echo "  annonce, essai $essai : HTTP $CODE_ANNONCE"
+  [ "$CODE_ANNONCE" = "200" ] && break
+  sleep 5
+done
+if [ "$CODE_ANNONCE" != "200" ]; then
+  echo "⚠️ L'ANNONCE N'EST PAS PASSÉE (HTTP $CODE_ANNONCE)."
+  echo "   L'armement, lui, a bien eu lieu et est vérifié ci-dessus."
+  echo "   👉 Prévenir à la main."
+fi
