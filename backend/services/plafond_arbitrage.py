@@ -291,6 +291,63 @@ def repondre(decision: str, destination_id: str | None = None
             "destinations": sorted({d["destination_id"] for d in attente})}
 
 
+# ── À QUEL compte s'adresse la décision ───────────────────────────────────
+#
+# ⛔ Le défaut réparé le 06/09 : `repondre(decision)` était appelé sans
+# destination. Un seul « continue » tapé sur Telegram débloquait donc TOUS les
+# comptes en attente — y compris ceux dont Xavier n'avait pas lu la ligne.
+# L'autorisation est censée être ANCRÉE et ne couvrir qu'une tranche ; elle
+# couvrait en réalité tout le monde.
+#
+# 🔑 On résout le mot tapé contre les seules demandes EN ATTENTE. Pas besoin
+# d'une table d'alias — donc pas de table qui dérive — et toute ambiguïté est
+# décidable sur place.
+
+
+def resoudre_cible(cible: str | None, decision: str
+                   ) -> tuple[str | None, str | None]:
+    """Rend ``(destination_id, refus)``.
+
+    ``destination_id`` à ``None`` signifie « toutes les demandes en attente ».
+    ``refus`` non nul signifie qu'on n'écrit RIEN et qu'on redemande.
+
+    ⛔ Un « continue » nu quand PLUSIEURS comptes attendent est refusé : c'est
+    la seule décision qui remet de l'argent réel en jeu, et rien ne dit que
+    Xavier a vu les autres lignes. Un « gele » nu, lui, s'applique à tous —
+    il va dans le sens qui protège.
+    """
+    comptes = sorted({d["destination_id"] for d in demandes_en_attente()})
+
+    if cible:
+        brut = cible.strip().lower().replace("-", "_")
+        exacts = [c for c in comptes if c.lower() == brut]
+        if exacts:
+            return exacts[0], None
+        # Tolérance utile : « live », « kraken », « ic_markets »… On ne
+        # cherche QUE parmi les comptes en attente, donc jamais au hasard.
+        proches = [c for c in comptes
+                   if brut in c.lower()
+                   or brut in c.lower().removeprefix("admin_")]
+        if len(proches) == 1:
+            return proches[0], None
+        if not proches:
+            return None, ("Compte inconnu : " + cible.strip() + "\n"
+                          "En attente : " + (", ".join(comptes) or "aucun"))
+        return None, ("Plusieurs comptes correspondent a « " + cible.strip()
+                      + " » : " + ", ".join(proches) + "\n"
+                        "Repondre avec le nom complet.")
+
+    if len(comptes) <= 1 or decision == GELER:
+        return None, None
+
+    return None, ("Plusieurs comptes attendent une decision :\n"
+                  + "\n".join("  " + c for c in comptes)
+                  + "\n\nUn « continue » remet de l'argent reel en jeu : il "
+                    "faut nommer le compte.\n"
+                    "Exemple : continue " + comptes[0] + "\n\n"
+                    "« gele » sans nom les bloque TOUS.")
+
+
 # ── Le message ────────────────────────────────────────────────────────────
 
 def construire_question(demandes: list[dict[str, Any]]) -> str:
@@ -307,6 +364,19 @@ def construire_question(demandes: list[dict[str, Any]]) -> str:
         "",
         "  gele     : il reste bloque jusqu'a minuit UTC (02h00 Paris)",
         "  continue : il retrade, pour CETTE tranche de perte seulement",
+    ]
+    # ⛔ Quand PLUSIEURS comptes attendent, un « continue » nu est refuse : il
+    # remettrait de l'argent reel en jeu sur des comptes dont la ligne n'a
+    # peut-etre pas ete lue. On le dit AVANT, sinon le refus arrive par
+    # surprise et se lit comme une panne.
+    if len(demandes) > 1:
+        lignes += [
+            "",
+            "PLUSIEURS comptes attendent : « continue » doit nommer lequel.",
+            "  continue " + str(demandes[0]["destination_id"]),
+            "« gele » sans nom les bloque TOUS.",
+        ]
+    lignes += [
         "",
         "Sans reponse, il reste bloque. Une nouvelle question sera posee si la",
         "perte franchit un plafond de plus.",

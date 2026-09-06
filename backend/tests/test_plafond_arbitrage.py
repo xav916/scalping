@@ -401,3 +401,99 @@ def test_le_message_ne_casse_pas_le_HTML(base):
     assert "gele" in texte and "continue" in texte
     assert "DEJA bloque" in texte, (
         "le message doit dire que le blocage est déjà en vigueur")
+
+
+# ── La décision porte sur UN compte (2026-09-06) ───────────────────────────
+#
+# ⛔ Le défaut : `app.py` appelait `repondre(decision)` SANS destination. Un
+# seul « continue » tapé sur Telegram débloquait donc toutes les demandes en
+# attente — y compris des comptes dont Xavier n'avait pas lu la ligne. Le
+# service savait filtrer depuis toujours ; c'est l'appelant qui ne le faisait
+# pas, et aucun test ne regardait l'appelant.
+#
+# 🔑 « Une porte posée d'un seul côté n'est pas une porte. »
+
+
+@pytest.fixture()
+def deux_en_attente(base):
+    t, a, chemin = base
+    a.ouvrir_demande("admin_live", -21.0, -19.5, palier=1)
+    a.ouvrir_demande("admin_kraken", -33.0, -19.5, palier=1)
+    return t, a, chemin
+
+
+def test_un_CONTINUE_nu_avec_DEUX_comptes_est_REFUSE(deux_en_attente):
+    """⛔ C'est la seule décision qui remet de l'argent réel en jeu."""
+    _, a, _ = deux_en_attente
+    dest, refus = a.resoudre_cible(None, a.CONTINUER)
+    assert dest is None and refus
+    assert "admin_live" in refus and "admin_kraken" in refus
+
+
+def test_le_refus_n_ecrit_RIEN(deux_en_attente):
+    """⛔ Un refus qui écrirait quand même serait pire que le défaut d'origine."""
+    _, a, _ = deux_en_attente
+    dest, refus = a.resoudre_cible(None, a.CONTINUER)
+    assert refus
+    assert len(a.demandes_en_attente()) == 2, "les deux attendent toujours"
+
+
+def test_un_GELE_nu_s_applique_a_TOUS(deux_en_attente):
+    """⚠️ Le gel va dans le sens qui protège : le refuser pour cause
+    d'ambiguïté laisserait des comptes sans décision."""
+    _, a, _ = deux_en_attente
+    dest, refus = a.resoudre_cible(None, a.GELER)
+    assert dest is None and refus is None
+    assert a.repondre(a.GELER, dest)["applique"] == 2
+
+
+def test_un_CONTINUE_NOMME_ne_touche_QUE_son_compte(deux_en_attente):
+    """⛔ LE test qui compte : c'est exactement ce que le défaut violait."""
+    _, a, _ = deux_en_attente
+    dest, refus = a.resoudre_cible("admin_live", a.CONTINUER)
+    assert refus is None and dest == "admin_live"
+    r = a.repondre(a.CONTINUER, dest)
+    assert r["applique"] == 1 and r["destinations"] == ["admin_live"]
+    restants = [d["destination_id"] for d in a.demandes_en_attente()]
+    assert restants == ["admin_kraken"], "l'autre compte reste BLOQUE"
+
+
+def test_un_nom_ABREGE_est_accepte(deux_en_attente):
+    """⚠️ Xavier tape « continue kraken », pas « continue admin_kraken ».
+    On ne cherche que parmi les comptes EN ATTENTE, jamais au hasard."""
+    _, a, _ = deux_en_attente
+    assert a.resoudre_cible("kraken", a.CONTINUER)[0] == "admin_kraken"
+    assert a.resoudre_cible("live", a.CONTINUER)[0] == "admin_live"
+
+
+def test_un_compte_qui_N_ATTEND_PAS_est_refuse(deux_en_attente):
+    """⛔ Se replier sur « toutes » parce que le nom ne matche pas
+    ramènerait le défaut par la fenêtre."""
+    _, a, _ = deux_en_attente
+    dest, refus = a.resoudre_cible("admin_legacy", a.CONTINUER)
+    assert dest is None and refus and "inconnu" in refus.lower()
+    assert len(a.demandes_en_attente()) == 2
+
+
+def test_un_SEUL_compte_en_attente_accepte_le_mot_nu(base):
+    """Pas de régression d'ergonomie : sans ambiguïté, rien à nommer."""
+    _, a, _ = base
+    a.ouvrir_demande("admin_live", -21.0, -19.5, palier=1)
+    dest, refus = a.resoudre_cible(None, a.CONTINUER)
+    assert refus is None
+    assert a.repondre(a.CONTINUER, dest)["applique"] == 1
+
+
+def test_la_QUESTION_dit_comment_repondre_par_compte(deux_en_attente):
+    """⛔ Sans cela le refus arrive par surprise et se lit comme une panne."""
+    _, a, _ = deux_en_attente
+    texte = a.construire_question(a.demandes_en_attente())
+    assert "continue admin_" in texte
+    assert "TOUS" in texte
+
+
+def test_la_question_d_UN_SEUL_compte_ne_s_alourdit_pas(base):
+    _, a, _ = base
+    a.ouvrir_demande("admin_live", -21.0, -19.5, palier=1)
+    texte = a.construire_question(a.demandes_en_attente())
+    assert "PLUSIEURS comptes" not in texte

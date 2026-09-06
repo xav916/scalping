@@ -3168,16 +3168,32 @@ async def api_telegram_sales_webhook(request: Request):
     # l'argent réel : elles ne sont sûres que parce que la route valide le
     # secret Telegram ET filtre sur le `chat_id` de Xavier, plus haut. Ne
     # jamais les déplacer sur un chemin qui n'a pas ces deux verrous.
+    #
+    # ⛔ La décision porte sur UN compte (2026-09-06). Elle était appliquée à
+    # toutes les demandes en attente : un seul « continue » débloquait des
+    # comptes dont Xavier n'avait pas lu la ligne, alors que l'autorisation
+    # est censée être ancrée et ne couvrir qu'une tranche.
+    premier, _, reste = mot.partition(" ")
+    cible = reste.strip() or None
     decision = None
-    if mot in ("gele", "gèle", "geler", "/gele", "freeze"):
+    if premier in ("gele", "gèle", "geler", "/gele", "freeze"):
         decision = "GELER"
-    elif mot in ("continue", "continuer", "/continue", "go"):
+    elif premier in ("continue", "continuer", "/continue", "go"):
         decision = "CONTINUER"
 
     if decision:
         from backend.services import plafond_arbitrage
         try:
-            resultat = plafond_arbitrage.repondre(decision)
+            destination_id, refus = plafond_arbitrage.resoudre_cible(
+                cible, decision)
+            if refus:
+                # ⛔ On n'écrit RIEN et on redemande. Choisir à sa place serait
+                # exactement le défaut qu'on répare.
+                sent = await send_sales_text(refus, parse_mode=None)
+                return {"ok": True, "command": "arbitrage",
+                        "decision": decision, "applique": 0,
+                        "refus": True, "sent": bool(sent)}
+            resultat = plafond_arbitrage.repondre(decision, destination_id)
             reponse = plafond_arbitrage.confirmation(resultat)
         except Exception as e:
             # ⛔ Se taire laisserait croire que la décision est passée, et le

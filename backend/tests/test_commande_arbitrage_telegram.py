@@ -159,3 +159,76 @@ def test_un_echec_interne_ne_pretend_PAS_avoir_debloque(client, envois,
     assert len(envois) == 1
     assert "NON enregistree" in envois[0], envois[0]
     assert "reste bloque" in envois[0], envois[0]
+
+
+# ── La décision porte sur UN compte (2026-09-06) ───────────────────────────
+#
+# ⛔ Le défaut vivait ICI, pas dans le service : la route appelait
+# `repondre(decision)` sans destination. `plafond_arbitrage` savait filtrer par
+# compte depuis le premier jour — personne ne le lui demandait. Un « continue »
+# tapé pour l'or débloquait aussi Kraken, dont Xavier n'avait pas lu la ligne.
+#
+# ⚠️ C'est exactement le risque annoncé en tête de ce fichier : « le service
+# peut être parfait et n'être jamais appelé ». Il l'était mal appelé.
+
+
+@pytest.fixture
+def deux_demandes(arbitrage):
+    arbitrage.ouvrir_demande("admin_kraken", -48.0, -21.54)
+    assert len(arbitrage.demandes_en_attente()) == 2
+    return arbitrage
+
+
+def test_un_CONTINUE_nu_ne_debloque_RIEN_quand_deux_comptes_attendent(
+        client, envois, deux_demandes):
+    """⛔ LE test du défaut. Avant : `applique == 2`."""
+    r = _poster(client, "continue")
+
+    assert r.status_code == 200, r.text
+    assert r.json()["applique"] == 0
+    assert r.json().get("refus") is True
+    assert len(deux_demandes.demandes_en_attente()) == 2, \
+        "les deux comptes restent BLOQUES"
+    assert len(envois) == 1, "Xavier doit savoir POURQUOI rien n'a bouge"
+    assert "admin_kraken" in envois[0] and "admin_live" in envois[0]
+
+
+def test_un_CONTINUE_NOMME_ne_debloque_QUE_lui(client, envois, deux_demandes):
+    r = _poster(client, "continue admin_kraken")
+
+    assert r.json()["applique"] == 1
+    restants = [d["destination_id"] for d in deux_demandes.demandes_en_attente()]
+    assert restants == ["admin_live"], "l'autre compte reste bloque"
+
+
+def test_le_nom_ABREGE_passe_aussi_par_la_route(client, envois, deux_demandes):
+    """⚠️ Xavier tape « continue kraken ». Exiger le nom technique ferait
+    repondre a cote, donc ne pas repondre du tout."""
+    r = _poster(client, "continue kraken")
+
+    assert r.json()["applique"] == 1
+    assert [d["destination_id"] for d in deux_demandes.demandes_en_attente()] \
+        == ["admin_live"]
+
+
+def test_un_GELE_nu_bloque_les_DEUX(client, envois, deux_demandes):
+    """⚠️ Le gel va dans le sens qui protège : pas de refus pour ambiguïté."""
+    r = _poster(client, "gele")
+
+    assert r.json()["applique"] == 2
+    assert deux_demandes.demandes_en_attente() == []
+
+
+def test_un_compte_qui_N_ATTEND_PAS_ne_debloque_rien(
+        client, envois, deux_demandes):
+    """⛔ Un nom qui ne matche pas ne doit PAS retomber sur « toutes »."""
+    r = _poster(client, "continue admin_legacy")
+
+    assert r.json()["applique"] == 0 and r.json().get("refus") is True
+    assert len(deux_demandes.demandes_en_attente()) == 2
+
+
+def test_un_seul_compte_en_attente_repond_toujours_au_mot_nu(
+        client, envois, arbitrage):
+    """Pas de regression : sans ambiguite, rien a nommer."""
+    assert _poster(client, "continue").json()["applique"] == 1
