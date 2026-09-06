@@ -93,6 +93,22 @@ fi
 
 echo "$RAPPORT" | python3 -c "
 import json, sys
+
+# Derives RECONNUES.
+#
+# Ce n'est PAS un mecanisme pour faire taire une alerte : chaque entree
+# epingle les DEUX empreintes. Si le depot change, ou si le bridge change,
+# la paire ne correspond plus et l'alarme revient d'elle-meme.
+#
+# Et l'etat reste AFFICHE, avec son motif. Une derive invisible serait le
+# defaut qu'on evite : une alarme qui crie tous les matins finit par ne
+# plus etre lue, et la vraie derive suivante passe avec elle.
+ACCEPTEES = {
+    ('admin_live', 'b0cc7eaa8606', 'dd8af8d61b7b'):
+        'commentaire seul, renommage du 06/09 — non redemarre sur decision',
+    ('admin_legacy', 'b0cc7eaa8606', 'dd8af8d61b7b'):
+        'commentaire seul, idem admin_live',
+}
 d = json.load(sys.stdin)
 for b in d['bridges']:
     if not b['lisible']:
@@ -103,9 +119,12 @@ for b in d['bridges']:
         etat = 'SOURCE INTROUVABLE'
     elif b['annoncee'] == b['attendue']:
         etat = 'conforme'
+    elif (b['id'], b['attendue'], b['annoncee']) in ACCEPTEES:
+        etat = 'derive ACCEPTEE'
     else:
         etat = 'DERIVE'
-    print('  %-18s %-18s depot=%s bridge=%s' % (b['id'], etat, b['attendue'], b['annoncee']))
+    motif = ACCEPTEES.get((b['id'], b['attendue'], b['annoncee']), '')
+    print('  %-18s %-18s depot=%s bridge=%s%s' % (b['id'], etat, b['attendue'], b['annoncee'], ('  <- ' + motif) if motif else ''))
 "
 
 PAYLOAD=$(echo "$RAPPORT" | python3 -c "
