@@ -58,22 +58,52 @@ rm -f "$SORTIE"
 
 # ⚠️ L'enregistrement ne doit JAMAIS faire echouer la sonde : son propre
 # resultat prime. D'ou le `|| true` et la redirection.
-NOM="$NOM" BUT="$BUT" CODE="$CODE" DUREE="$DUREE" DETAIL="$DETAIL" \
+#
+# Le journal rend la DECISION d'alerter : il connait l'etat precedent, donc
+# lui seul peut distinguer une nouvelle panne d'une panne qui dure.
+DECISION=$(NOM="$NOM" BUT="$BUT" CODE="$CODE" DUREE="$DUREE" DETAIL="$DETAIL" \
 PERIODE="$PERIODE" docker exec -i \
   -e NOM -e BUT -e CODE -e DUREE -e DETAIL -e PERIODE \
   scalping-radar python -c '
-import os, sys
+import json, os, sys
 sys.path.insert(0, "/app")
 from backend.services import journal_sondes as j
 p = os.environ.get("PERIODE") or ""
-j.enregistrer(
-    nom=os.environ["NOM"],
-    but=os.environ.get("BUT") or None,
-    code_sortie=int(os.environ.get("CODE") or 1),
+but = os.environ.get("BUT") or None
+code = int(os.environ.get("CODE") or 1)
+r = j.enregistrer(
+    nom=os.environ["NOM"], but=but, code_sortie=code,
     duree_ms=int(os.environ.get("DUREE") or 0),
     detail=os.environ.get("DETAIL") or None,
     periode_min=int(p) if p.isdigit() else None,
 )
-' >/dev/null 2>&1 || true
+if r["crier"]:
+    titre, corps = j.alerte(os.environ["NOM"], but, r["motif"],
+                            os.environ.get("DETAIL") or None, code)
+    print(json.dumps({"titre": titre, "corps": corps}, ensure_ascii=False))
+' 2>/dev/null) || true
+
+# ⛔ Le cri part de l HOTE, en direct, PAS par l endpoint de l application :
+# une sonde peut echouer PARCE QUE l application est tombee, et c est
+# precisement ce moment-la qu il faut pouvoir signaler. Meme raison que pour
+# le healthcheck.
+#
+# ⚠️ Rien n est envoye quand tout va bien : sur 8 530 passages par jour, le
+# silence est la norme. Le journal decide, l enveloppe se contente d obeir.
+if [ -n "$DECISION" ]; then
+  BOT=$(grep -m1 '^INFRA_TELEGRAM_BOT_TOKEN=' /opt/scalping/.env 2>/dev/null | cut -d= -f2-)
+  CHAT=$(grep -m1 '^INFRA_TELEGRAM_CHAT_ID=' /opt/scalping/.env 2>/dev/null | cut -d= -f2-)
+  if [ -n "$BOT" ] && [ -n "$CHAT" ]; then
+    TEXTE=$(DECISION="$DECISION" python3 -c '
+import json, os
+d = json.loads(os.environ["DECISION"])
+print(d["titre"] + "\n\n" + d["corps"])
+' 2>/dev/null)
+    [ -n "$TEXTE" ] && curl -sS --max-time 10 -X POST \
+      "https://api.telegram.org/bot${BOT}/sendMessage" \
+      -d "chat_id=${CHAT}" --data-urlencode "text=${TEXTE}" \
+      -d "disable_web_page_preview=true" >/dev/null 2>&1 || true
+  fi
+fi
 
 exit "$CODE"
