@@ -284,8 +284,9 @@ def post_telegram(title: str, body: str, target: str = "infra") -> dict:
     """Envoie le recap sur le bot cible.
 
     - target=infra (default) : via endpoint backend /api/admin/notify-infra-telegram
-    - target=sales : appel direct api.telegram.org avec SALES_TELEGRAM_BOT_TOKEN/CHAT_ID
-      (env vars du container scalping-radar, à exporter dans le wrapper cron).
+    ex-`target=sales` : appel direct a api.telegram.org avec
+    SALES_TELEGRAM_BOT_TOKEN. RETIRE le 06/09 — il faisait atterrir un recap
+    TRANSVERSE dans le fil du compte reel IC Markets.
     """
     # CORRIGE LE 06/09. Deux chemins, tous deux fautifs :
     #
