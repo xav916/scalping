@@ -99,3 +99,49 @@ def test_le_fil_DEMO_est_desormais_routable():
 def test_le_libelle_est_le_prefixe_de_compte():
     assert ct.libelle("ic_markets") == "[RÉEL · IC_MARKETS]"
     assert ct.libelle("demo") == "[DÉMO · PEPPERSTONE]"
+
+
+# ── Le veto géopolitique (2026-09-06) ─────────────────────────────────────
+#
+# ⛔ QUATRIÈME site de routage qui contournait ce module. `send_veto_alert`
+# partait sur le bot démo, via `_destinataires()` — la liste de diffusion
+# CLIENTS — pour un événement qui ne concerne pas le démo.
+#
+# 🔑 Le veto agit dans le MOTEUR D'ANALYSE, en amont des destinations : il
+# concerne tous les comptes à la fois, donc le fil d'aucun.
+
+def _code_seul(fonction) -> str:
+    """La source SANS les lignes de commentaire.
+
+    ⛔ Une recherche naive trouve mes propres commentaires d'explication —
+    qui citent forcement le defaut repare — et le test crie sur du code juste.
+    Distinguer le code de la prose est exactement la lecon des trois tables de
+    canaux : chercher la chaine litterale ne suffit pas.
+    """
+    import inspect
+    lignes = [l for l in inspect.getsource(fonction).splitlines()
+              if not l.lstrip().startswith("#")]
+    return chr(10).join(lignes)
+
+
+def test_l_alerte_de_veto_ne_diffuse_PAS_aux_clients():
+    """⚠️ `_destinataires()` boucle sur `TELEGRAM_CHATS` pour servir les
+    clients. Y envoyer nos vetos les leur ferait parvenir le jour où ils y
+    seraient inscrits — et la liste étant vide aujourd'hui, rien ne le
+    révélerait avant qu'il ne soit trop tard."""
+    from backend.services import telegram_service as ts
+    src = _code_seul(ts.send_veto_alert)
+    assert "_destinataires()" not in src, (
+        "le veto est reparti sur la liste de diffusion clients")
+    assert 'jeton_et_chat("infra")' in src
+
+
+def test_le_titre_du_veto_ne_dit_plus_TRADES_SUSPENDUS():
+    """⛔ Lu dans le fil « DEMO Trades », « Trades suspendus » se comprend
+    comme « le compte démo est suspendu » — ce qui est FAUX. Le veto porte sur
+    UNE paire, et il est rare : 11 refus sur 7 jours, 0,02 % du total."""
+    from backend.services import telegram_service as ts
+    src = _code_seul(ts.send_veto_alert)
+    assert "Trades suspendus" not in src
+    assert "bloquée temporairement" in src
+    assert "Cette paire SEULEMENT" in src

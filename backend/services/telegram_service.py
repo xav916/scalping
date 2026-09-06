@@ -1951,19 +1951,41 @@ async def send_veto_alert(pair: str, direction: str, rules_matched: list[str], r
         # HTML depuis 2026-08-02 : Markdown legacy cassait sur les parenthèses /
         # apostrophes / underscores des règles vulgarisées (HTTP 400 "can't parse
         # entities at byte offset 131/132"). html.escape neutralise <>& variables.
+        # ⛔ Le titre disait « Trades suspendus » tout court. Lu dans le fil
+        # « DEMO Trades », ca se comprend comme « le compte demo est
+        # suspendu » — ce qui est FAUX. Le veto porte sur UNE paire, pour un
+        # cycle d'analyse, et il est rare : 11 refus sur 7 jours, 58 sur 30,
+        # soit 0,02 % des refus (mesure du 06/09).
+        #
+        # ⚠️ Il porte aussi sur TOUS les comptes a la fois : le veto agit dans
+        # le moteur d'analyse, en amont des destinations. Aucun compte n'est
+        # vise en particulier.
         text = (
-            f"🌍 <b>Trades suspendus</b> · {_html.escape(pair_label)} ({_html.escape(pair)})\n"
+            f"🌍 <b>{_html.escape(pair_label)} bloquée temporairement</b> "
+            f"({_html.escape(pair)})\n"
             f"\n"
-            f"⚠️ Le contexte macro est trop tendu pour trader sereinement.\n"
+            f"⚠️ Le contexte macro est trop tendu pour trader cette paire "
+            f"sereinement.\n"
             f"Cause(s) :\n{causes_str}\n"
             f"\n"
-            f"ℹ️ Le radar surveille l'actualité économique et géopolitique en continu. "
-            f"Si ça devient risqué, il bloque les trades pour te protéger.\n"
+            f"ℹ️ Cette paire SEULEMENT, et sur tous les comptes : le veto agit "
+            f"dans l'analyse, en amont des destinations. Le reste de l'univers "
+            f"continue de trader normalement.\n"
             f"\n"
             f"🔁 Reprise auto dès que la situation se calme — rien à faire de ton côté."
         )
-        destinataires = _destinataires()
-        url = TELEGRAM_API.format(token=TELEGRAM_BOT_TOKEN)
+        # ⛔ QUATRIEME site de routage qui contournait `canaux_telegram`. Il
+        # partait sur le bot demo pour un evenement qui ne concerne pas le
+        # demo, et par `_destinataires()` — la liste de diffusion CLIENTS.
+        # Un veto d'analyse va sur `infra` : il n'appartient au fil d'aucun
+        # compte, puisqu'il les concerne tous.
+        from backend.services import canaux_telegram as _ct
+        jeton, chat = _ct.jeton_et_chat("infra")
+        if not jeton or not chat:
+            logger.warning("send_veto_alert: fil infra non gréé — alerte perdue")
+            return
+        destinataires = [("__any__", chat)]
+        url = TELEGRAM_API.format(token=jeton)
         for user, chat_id in destinataires:
             try:
                 async with httpx.AsyncClient(timeout=10.0) as client:
