@@ -82,13 +82,30 @@ def activations(dest) -> tuple[list, bool]:
     pas pu lire » n'est pas « il ne s'est rien passé ». Confondre les deux
     ferait passer un bridge muet pour un mécanisme au repos.
     """
-    charge, ok = _appel(dest, "/audit?since_id=0&limit=5000")
-    if not ok or not isinstance(charge, dict):
+    # ⛔ NE PLUS lire `/audit` directement. Le bridge PLAFONNE `limit` a 500 et
+    # ne le dit pas : cette fonction demandait 5 000, recevait les 500 lignes
+    # les plus ANCIENNES (ids 1-500), et concluait « la soupape n'a jamais
+    # agi » — pendant 13 jours, alors que l'unique activation siege a l'id
+    # 3904. Un plafond silencieux, et un appelant qui fait confiance.
+    #
+    # 🔑 La source est desormais le journal persiste `activations_equilibre`,
+    # alimente toutes les heures par `journal-mecanismes-sortie.sh`, qui lui
+    # pagine depuis un curseur. Une seule verite, et elle est complete.
+    try:
+        from backend.services.motif_interne_cloture import _conn, init_schema
+        init_schema()
+        did = getattr(dest, "destination_id", None) or str(dest)
+        with _conn() as c:
+            lignes = [dict(r) for r in c.execute(
+                "SELECT ticket, pair, sl, active_le AS created_at "
+                "FROM activations_equilibre WHERE destination_id=?", (did,))]
+        return lignes, True
+    except Exception as e:  # noqa: BLE001
+        # ⛔ Journal illisible => on rend `ok=False`, jamais une liste vide :
+        # « je n'ai pas pu lire » et « aucune activation » sont les deux
+        # conclusions que cette sonde existe precisement pour distinguer.
+        print(f"  journal des activations illisible : {e}")
         return [], False
-    lignes = charge.get("orders")
-    if not isinstance(lignes, list):
-        return [], False
-    return [o for o in lignes if o.get("status") == "equilibre"], True
 
 
 def _devenir(tickets: list) -> dict:
