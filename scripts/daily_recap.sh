@@ -1,4 +1,6 @@
 #!/bin/bash
+# BUT: recap quotidien de l'activite du radar
+# PERIODE_MIN: 1440
 # Wrapper cron du recap quotidien.
 #
 # ⚠️ Corrige le 2026-08-04. L'ancienne version lisait les cles Binance dans

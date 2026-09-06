@@ -1,4 +1,6 @@
 #!/bin/bash
+# BUT: verifie que le bridge retient le stop REELLEMENT porte a la cloture
+# PERIODE_MIN: 15
 # Enveloppe cron de notify_capture_niveaux.py — la logique est en Python, dans
 # le conteneur, pour n'avoir qu'une seule couche de citation.
 #

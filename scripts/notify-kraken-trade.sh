@@ -1,4 +1,6 @@
 #!/bin/bash
+# BUT: annonce les nouveaux trades Kraken
+# PERIODE_MIN: 2
 # Prévient dès qu'un ordre part RÉELLEMENT sur Kraken (2026-08-08).
 #
 # Manque comblé : `notify-new-pushes.sh` ne signale que les ÉCHECS (`ok = 0`),

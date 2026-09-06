@@ -1,4 +1,6 @@
 #!/bin/bash
+# BUT: annonce le premier ordre metal parti chez le courtier
+# PERIODE_MIN: 15
 # Enveloppe cron de notify_premier_metal.py — la logique est en Python, dans
 # le conteneur, pour n'avoir qu'une seule couche de citation à surveiller.
 #

@@ -1,4 +1,6 @@
 #!/bin/bash
+# BUT: annonce et analyse chaque cloture de position
+# PERIODE_MIN: 2
 # Enveloppe cron de notify_position_fermee.py — toute la logique est en Python,
 # dans le conteneur, pour n'avoir qu'une seule couche de citation à surveiller.
 #

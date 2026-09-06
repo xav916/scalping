@@ -1,4 +1,6 @@
 #!/bin/bash
+# BUT: mesure les spreads Kraken contre MT5 hors crypto
+# PERIODE_MIN: 30
 # Lanceur cron de la mesure Kraken vs MT5 hors crypto.
 #
 # ⛔ Le garde-fou jour+heure vit dans le SCRIPT PYTHON, pas ici : un fichier de

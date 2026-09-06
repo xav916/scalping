@@ -1,4 +1,6 @@
 #!/bin/bash
+# BUT: detecte un client dont l'EA n'execute plus
+# PERIODE_MIN: 1440
 # Enveloppe cron de notify_execution_client.py — la logique est en Python,
 # dans le conteneur, pour n'avoir qu'une seule couche de citation à surveiller.
 #

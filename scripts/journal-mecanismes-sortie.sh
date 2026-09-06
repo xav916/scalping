@@ -1,4 +1,6 @@
 #!/bin/bash
+# BUT: persiste les activations des mecanismes de sortie
+# PERIODE_MIN: 60
 # Journal des mecanismes de sortie — lit l'audit des bridges MT5, persiste les
 # activations de la soupape d'equilibre, puis attribue les clotures.
 #

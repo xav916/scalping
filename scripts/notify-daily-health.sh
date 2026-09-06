@@ -1,5 +1,11 @@
 #!/bin/bash
-# Santé quotidienne de la chaîne, sur le canal infra.
+# BUT: sante de la chaine (bridges, crons) et RECAP de toutes les sondes
+# PERIODE_MIN: 60
+# Sante de la chaine + recap des sondes, sur le canal infra.
+#
+# Il appelle l'API Telegram EN DIRECT, et c'est VOULU : il surveille la
+# chaine, donc le faire transiter par l'application le rendrait muet
+# precisement quand elle tombe — le cas qu'il existe pour signaler.
 #
 # Répond à une seule question : « est-ce que la machine tourne ? »
 #
@@ -188,7 +194,35 @@ print("\\n".join(lignes).replace("\\\\n", "\\n"))
 PY
 )
 
-MESSAGE=$(printf "<b>Santé · %s</b>\n\n%s" "$(date -u '+%d/%m')" "$CORPS")
+# ── Le recap de TOUTES les sondes (2026-09-06) ───────────────────────
+#
+# Demande : savoir, pour chaque sonde, ce qu'elle verifie et si elle est OK
+# ou KO. Un message par PASSAGE serait 8 507 messages par jour — un toutes
+# les dix secondes. On enregistre chaque passage (scripts/sonde.sh) et on le
+# DIT ici, en un seul bloc, a chaque passage du healthcheck.
+#
+# Lecture non bloquante : si le conteneur est injoignable, la sante des
+# BRIDGES doit partir quand meme — c'est justement le moment ou elle compte.
+# Mais l'echec se DIT : un bloc absent en silence se lirait comme « aucune
+# sonde a signaler ».
+RECAP_SONDES=$(docker exec -i scalping-radar python -c '
+import sys
+sys.path.insert(0, "/app")
+from backend.services import journal_sondes as j
+titre, corps = j.message(j.bilan())
+print(titre)
+print(corps)
+' 2>/dev/null)
+if [ -z "$RECAP_SONDES" ]; then
+  RECAP_SONDES="Journal des sondes ILLISIBLE — ce n'est pas « aucune sonde a signaler », c'est « on ne sait pas »."
+fi
+
+MESSAGE=$(printf "<b>Santé · %s</b>
+
+%s
+
+───────────────
+%s" "$(date -u '+%d/%m %H:%M')" "$CORPS" "$RECAP_SONDES")
 
 if [ "${DRY_RUN:-0}" = "1" ]; then
   echo "----- DRY RUN -----"

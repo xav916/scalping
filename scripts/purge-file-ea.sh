@@ -1,4 +1,6 @@
 #!/bin/bash
+# BUT: purge la file d'ordres de l'EA client
+# PERIODE_MIN: 60
 # Enveloppe cron de purge_file_ea.py — la logique est en Python, dans le
 # conteneur, pour n'avoir qu'une seule couche de citation à surveiller.
 #

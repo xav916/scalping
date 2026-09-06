@@ -1,4 +1,6 @@
 #!/bin/bash
+# BUT: compte les activations de la soupape d'equilibre
+# PERIODE_MIN: 1440
 # Enveloppe cron de notify_activations_equilibre.py — la logique est en
 # Python, dans le conteneur, pour n'avoir qu'une seule couche de citation.
 #

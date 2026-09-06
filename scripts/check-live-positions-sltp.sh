@@ -1,4 +1,6 @@
 #!/bin/bash
+# BUT: verifie que chaque position live porte son SL et son TP
+# PERIODE_MIN: 1
 # Garde-fou SL/TP — détecte (et, si activé, corrige) les positions LIVE
 # ouvertes sans stop-loss sur les bridges MT5 (legacy Demo + live IC Markets).
 #

@@ -1,4 +1,6 @@
 #!/bin/bash
+# BUT: ferme les metaux avant la fermeture du week-end
+# PERIODE_MIN: 5
 # Enveloppe cron de fermer_metaux_avant_weekend.py.
 #
 # ⚠️ Tourne DANS le conteneur : c'est la que vivent MT5_BRIDGE_URL /

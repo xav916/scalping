@@ -1,4 +1,6 @@
 #!/bin/bash
+# BUT: detecte une divergence entre le demo et le reel
+# PERIODE_MIN: 2
 # Prévient dès qu'un ordre part sur le COMPTE RÉEL 13137475, et dit si le
 # démo a suivi.
 #

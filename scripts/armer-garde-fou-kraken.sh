@@ -1,4 +1,5 @@
 #!/bin/bash
+# BUT: arme le garde-fou des positions nues sur Kraken
 # Arme le garde-fou des positions nues sur Kraken — en UN geste, vérifié.
 #
 # Trois valeurs, jamais deux : les deux drapeaux ne suffisent pas, il faut une

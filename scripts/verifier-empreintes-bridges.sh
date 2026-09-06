@@ -1,4 +1,6 @@
 #!/bin/bash
+# BUT: verifie que les bridges deployes sont ceux du depot
+# PERIODE_MIN: 1440
 # Compare ce que chaque bridge EXECUTE a ce qui est VERSIONNE (2026-08-25).
 #
 # Pourquoi ce script existe : le repli de resolution de symbole du bridge

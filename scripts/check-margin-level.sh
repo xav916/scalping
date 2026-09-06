@@ -1,4 +1,6 @@
 #!/bin/bash
+# BUT: surveille le niveau de marge du compte reel
+# PERIODE_MIN: 15
 # Alerte quand le niveau de marge d'un compte RÉEL approche la liquidation.
 #
 # Contexte : le 2026-08-06 le compte Live est tombé à 95,5 % de niveau de marge

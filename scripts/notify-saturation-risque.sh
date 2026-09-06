@@ -1,4 +1,6 @@
 #!/bin/bash
+# BUT: alerte quand le plafond de risque engage approche
+# PERIODE_MIN: 60
 # Enveloppe cron de notify_saturation_risque.py — la logique est en Python,
 # dans le conteneur, pour n'avoir qu'une seule couche de citation à surveiller.
 #

@@ -1,4 +1,6 @@
 #!/bin/bash
+# BUT: detecte les ordres pousses que le courtier n'a jamais confirmes
+# PERIODE_MIN: 2
 # Alerte infra sur les pushes d'ordre qui n'ont PAS abouti.
 #
 # ⚠️ Ce script n'envoie plus le message « trade ouvert » (2026-08-04).

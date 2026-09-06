@@ -1,4 +1,6 @@
 #!/bin/bash
+# BUT: rappelle les positions energie encore ouvertes le vendredi
+# PERIODE_MIN: 1440
 # Cron vendredi 17h UTC : rappelle Xavier sur sales bot si positions energy Live
 # encore ouvertes. Motif : incident 2026-08-03 → gap réouverture dimanche a slippé
 # 2 SL WTI de -4 USD/ticket, perte €20.75 au lieu de €4-5 attendus.

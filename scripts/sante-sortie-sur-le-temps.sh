@@ -1,4 +1,6 @@
 #!/bin/bash
+# BUT: verifie que la sortie sur le temps observe vraiment
+# PERIODE_MIN: 1440
 # Sonde de sante QUOTIDIENNE de la sortie sur le temps — [DEMO PEPPERSTONE].
 #
 # ⛔ Elle ne surveille pas « est-ce que ca tourne » mais les TROIS facons dont

@@ -1,4 +1,6 @@
 #!/bin/bash
+# BUT: mesure l'etat du forex en H4
+# PERIODE_MIN: 1440
 # Rapport automatique de la MESURE forex H4 (posé le 2026-08-07).
 #
 # Question tranchée : les stops forex en H4 passent-ils la porte de coût ?

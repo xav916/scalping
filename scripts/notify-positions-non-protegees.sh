@@ -1,4 +1,6 @@
 #!/bin/bash
+# BUT: detecte les positions ouvertes SANS stop
+# PERIODE_MIN: 2
 # Enveloppe cron de notify_positions_non_protegees.py — toute la logique est en
 # Python, dans le conteneur, pour n'avoir qu'une seule couche de citation à
 # surveiller (même parti pris que notify-position-fermee.sh).

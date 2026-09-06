@@ -1,4 +1,6 @@
 #!/bin/bash
+# BUT: verifie que le slippage est bien instrumente
+# PERIODE_MIN: 1440
 # Vérifie que la mesure du coût d'exécution enregistre réellement quelque chose.
 #
 # Contexte : `slippage_pips` et `fill_price` sont restés vides sur 1581/1581

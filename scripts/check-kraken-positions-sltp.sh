@@ -1,4 +1,6 @@
 #!/bin/bash
+# BUT: verifie que chaque position Kraken porte son SL et son TP
+# PERIODE_MIN: 1
 # Garde-fou SL/TP Kraken — détecte (et, si armé, répare) les positions ouvertes
 # sans stop sur le bridge Kraken Futures.
 #

@@ -1,4 +1,6 @@
 #!/bin/bash
+# BUT: observe la sortie sur le temps, desarmee, sur le demo
+# PERIODE_MIN: 30
 # Sortie sur le temps — DEMO PEPPERSTONE uniquement, en OBSERVATION.
 #
 # ⛔ Deux mesures pointent en sens opposes, et la plus lourde dit NON :

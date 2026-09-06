@@ -1,4 +1,6 @@
 #!/bin/bash
+# BUT: liste les candidats a la promotion sur Kraken
+# PERIODE_MIN: 1440
 # Rapport quotidien des candidats à promotion sur destinations sans auto-promote
 # (admin_kraken, admin_kraken_spot, admin_kraken_stocks).
 # Base : nombre de signaux reçus par user:2 (Cédric EA bypass verdicts) sur 7j/30j

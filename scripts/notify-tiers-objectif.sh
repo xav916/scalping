@@ -1,4 +1,6 @@
 #!/bin/bash
+# BUT: annonce le franchissement des paliers vers l'objectif
+# PERIODE_MIN: 5
 # Enveloppe cron de notify_tiers_objectif.py — la logique est en Python, dans
 # le conteneur, pour n'avoir qu'une seule couche de citation a surveiller.
 #

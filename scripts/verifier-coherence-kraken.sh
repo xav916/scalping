@@ -1,4 +1,6 @@
 #!/bin/bash
+# BUT: confronte les trois listes qui definissent l'univers Kraken
+# PERIODE_MIN: 1440
 # Confronte les trois listes qui definissent l'univers Kraken.
 #
 # ⛔ Ne parle QUE en cas d'incoherence. Une verification qui annonce son succes

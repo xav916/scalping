@@ -1,4 +1,6 @@
 #!/bin/bash
+# BUT: surveille la fin du rodage de l'or en 4h
+# PERIODE_MIN: 1440
 # Fin du rodage de l'or en 4h : remet la porte horaire (posé le 2026-08-11).
 #
 # La porte `PAIR_TRADING_HOURS_UTC={"XAU/USD":"06-19"}` a été RETIRÉE pendant

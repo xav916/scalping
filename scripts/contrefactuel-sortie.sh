@@ -1,4 +1,6 @@
 #!/bin/bash
+# BUT: rejoue ce que le SL/TP AURAIT donne sur les sorties non automatiques
+# PERIODE_MIN: 1440
 # Contrefactuel de sortie : ce que le SL/TP AURAIT donne sur les trades sortis
 # autrement. Balayage en LECTURE — ne ferme rien, ne modifie aucun trade.
 #

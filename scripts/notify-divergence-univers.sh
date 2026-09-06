@@ -1,4 +1,6 @@
 #!/bin/bash
+# BUT: detecte un bridge partiellement muet sur l'univers
+# PERIODE_MIN: 1440
 # Enveloppe cron de notify_divergence_univers.py — la logique est en Python,
 # dans le conteneur, pour n'avoir qu'une seule couche de citation à surveiller.
 #

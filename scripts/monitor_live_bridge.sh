@@ -1,4 +1,6 @@
 #!/bin/bash
+# BUT: surveille la sante du bridge live IC Markets
+# PERIODE_MIN: 15
 # Moniteur du bridge Live (IC Markets) — ping /health toutes les 15 min.
 #
 # ⛔ RECUPERE DE LA PROD LE 06/09/2026. Ce script tournait toutes les quinze
