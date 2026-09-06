@@ -1767,7 +1767,12 @@ def _format_trade_opened(
     # Ligne 1 : QUOI. Ligne 2 : COMBIEN. Le reste est du détail consultable.
     # Le broker figure une seule fois, dans le titre — il y était répété trois
     # fois auparavant, et le montant n'arrivait qu'en quatrième position.
-    lines = [f"🟢 *{dir_word} {pair_label}* · {mode_label}"]
+    # ⛔ La pastille etait 🟢 EN DUR, alors que le mot varie : toute VENTE
+    # portait le signe universel de l'ACHAT. Trouve le 06/09 par l'essai de
+    # bout en bout — jamais par un test unitaire, qui verifiait le texte et
+    # pas ce que l'oeil lit en premier.
+    pastille = "🟢" if dir_value == "buy" else "🔴"
+    lines = [f"{pastille} *{dir_word} {pair_label}* · {mode_label}"]
 
     # Montants calculés sur le volume RÉELLEMENT exécuté (2026-08-04).
     # Ils venaient d'une table statique « pour 0,01 lot », sans lien avec

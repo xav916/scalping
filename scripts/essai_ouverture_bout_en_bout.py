@@ -99,6 +99,18 @@ def _verifier(texte: str, libelle_attendu: str, montants) -> list[str]:
     return anomalies
 
 
+def _verifier_pastille(texte: str, sens: str) -> list[str]:
+    """⛔ La pastille etait 🟢 EN DUR : toute VENTE portait le signe de
+    l'ACHAT. C'est ce que l'oeil lit en PREMIER, avant tout chiffre — et
+    aucun test unitaire ne le voyait, tous verifiant le texte."""
+    attendue = "🟢" if sens == "buy" else "🔴"
+    ligne = next((l for l in texte.splitlines()
+                  if "ACHAT" in l or "VENTE" in l), "")
+    if attendue not in ligne:
+        return [f"pastille incoherente avec le sens {sens} : {ligne[:40]}"]
+    return []
+
+
 async def _un_cas(did, libelle, setup, volume, motif, envoyer):
     from backend.services import telegram_service as ts
     from backend.services.canaux_telegram import canal_pour, libelle as lib
@@ -120,6 +132,7 @@ async def _un_cas(did, libelle, setup, volume, motif, envoyer):
               f"R:R {montants.get('rr')}")
 
     anomalies = _verifier(texte, libelle, montants)
+    anomalies += _verifier_pastille(texte, setup.direction)
     # ⛔ Le fil doit correspondre au compte : c'est LE defaut du jour.
     if lib(canal) != libelle:
         anomalies.append(f"fil {canal} ≠ compte attendu {libelle}")

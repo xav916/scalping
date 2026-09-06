@@ -195,3 +195,29 @@ def test_les_transitions_ne_sonnent_plus(monkeypatch):
     asyncio.run(ts.send_pac_transition_user("XAG/USD", "buy", "TELEGRAM",
                                             "AUTO_EXEC", "auto-promote"))
     assert envoyes == []
+
+
+# ── La pastille suit le SENS (2026-09-06) ─────────────────────────────────
+#
+# ⛔ Elle était 🟢 EN DUR alors que le mot varie : toute VENTE portait le
+# signe universel de l'ACHAT. Trouvé par l'essai de bout en bout, jamais par
+# un test unitaire — ceux-ci vérifiaient le texte, pas ce que l'œil lit en
+# premier.
+
+@pytest.mark.parametrize("sens,pastille,mot", [("buy", "🟢", "ACHAT"),
+                                               ("sell", "🔴", "VENTE")])
+def test_la_pastille_suit_le_sens(sens, pastille, mot):
+    class _S:
+        pair = "EUR/GBP"
+        direction = sens
+        entry_price = 0.865
+        stop_loss = 0.87
+        take_profit_1 = 0.856
+        pattern = "rebond_support"
+        confidence_score = 62
+
+    texte = ts._format_trade_opened(_S(), ticket="1", fill_price=0.865,
+                                    volume=0.01, mode="live",
+                                    destination_id="admin_live")
+    assert texte.startswith(pastille), texte[:40]
+    assert mot in texte
