@@ -51,6 +51,27 @@ COMPARABLES = [
 ]
 KRAKEN_SEUL = [("SPY", "PF_SPYXUSD"), ("AAPL", "PF_AAPLXUSD")]
 
+# ─── Candidats forex pour [DÉMO · PEPPERSTONE] (2026-09-06) ──────────
+#
+# Le démo surveille 9 paires forex ; Pepperstone en cote 28 parmi les 8 devises
+# majeures. Les 19 restantes sont TOUTES servies par Twelve Data — le filtre qui
+# avait éliminé HYPE côté Kraken n'écarte personne ici.
+#
+# ⛔ Leur classement demande des spreads EN SÉANCE. Mesurés un dimanche, ils
+# valent la clôture de vendredi — l'erreur exacte commise le matin même en
+# comparant Kraken à MT5. On les relève donc ici, dans la fenêtre de séance.
+#
+# ⚠️ Ces spreads sont ceux de PEPPERSTONE (le démo). Ils ne préjugent pas de
+# ceux d'IC MARKETS : la promotion vers le réel demandera sa propre mesure.
+CANDIDATS_FOREX = [
+    "AUD/CAD", "AUD/CHF", "AUD/JPY", "AUD/NZD", "CAD/CHF", "CAD/JPY",
+    "CHF/JPY", "EUR/AUD", "EUR/CAD", "EUR/CHF", "EUR/NZD", "GBP/AUD",
+    "GBP/CAD", "GBP/CHF", "GBP/NZD", "NZD/CAD", "NZD/CHF", "NZD/JPY",
+    "NZD/USD",
+]
+# Témoins déjà surveillés : sans eux, un spread de 0,012 % ne se compare à rien.
+TEMOINS_FOREX = ["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD"]
+
 # Fenêtre de séance : le chevauchement Londres/New-York, là où l'or, le pétrole
 # et l'euro sont le plus liquides. Mesurer à 3 h du matin dirait autre chose,
 # et pas ce qu'on veut savoir.
@@ -87,10 +108,18 @@ def _spread_relatif(bid, ask) -> float | None:
     return (a - b) / ((a + b) / 2) * 100.0
 
 
-def _mt5_tick(pair: str) -> dict | None:
-    """Tick du bridge MT5 réel. ``None`` si injoignable — jamais un prix inventé."""
-    url = os.environ.get("MT5_BRIDGE_LIVE_URL", "")
-    cle = os.environ.get("MT5_BRIDGE_LIVE_API_KEY", "")
+def _mt5_tick(pair: str, demo: bool = False) -> dict | None:
+    """Tick d'un bridge MT5. ``None`` si injoignable — jamais un prix inventé.
+
+    ⚠️ `demo=True` lit PEPPERSTONE, `demo=False` lit IC MARKETS. Les confondre
+    ferait comparer deux courtiers en croyant en mesurer un.
+    """
+    if demo:
+        url = os.environ.get("MT5_BRIDGE_URL", "")
+        cle = os.environ.get("MT5_BRIDGE_API_KEY", "")
+    else:
+        url = os.environ.get("MT5_BRIDGE_LIVE_URL", "")
+        cle = os.environ.get("MT5_BRIDGE_LIVE_API_KEY", "")
     if not url:
         return None
     try:
@@ -128,6 +157,18 @@ def collecte() -> int:
             # Un tick de vendredi soir servi le lundi ressemble à un tick frais.
             entree["mt5_tick_time"] = (tick or {}).get("time")
         releve["mesures"][paire] = entree
+
+    # Les candidats forex du démo, sur le bridge Pepperstone.
+    for paire in CANDIDATS_FOREX + TEMOINS_FOREX:
+        tick = _mt5_tick(paire, demo=True)
+        sp = _spread_relatif((tick or {}).get("bid"), (tick or {}).get("ask"))
+        releve["mesures"]["demo:" + paire] = {
+            "demo_spread_pct": sp,
+            # ⚠️ L'horodatage dit si le marché est VRAIMENT ouvert : un tick de
+            # vendredi soir servi le lundi ressemble à un tick frais.
+            "mt5_tick_time": (tick or {}).get("time"),
+            "temoin": paire in TEMOINS_FOREX,
+        }
 
     os.makedirs(os.path.dirname(JOURNAL), exist_ok=True)
     with open(JOURNAL, "a", encoding="utf-8") as f:
@@ -201,6 +242,32 @@ def bilan() -> int:
                      f"à {max(verdicts):.1f}×). Le sujet « élargir Kraken hors crypto » "
                      "est clos pour la semaine — il ne reste que le WEEK-END, où MT5 "
                      "est fermé et Kraken seul ouvert.")
+    # ── Les candidats forex du démo ───────────────────────────────
+    fx = {}
+    for d in lignes:
+        for cle, m in (d.get("mesures") or {}).items():
+            if not cle.startswith("demo:"):
+                continue
+            fx.setdefault(cle[5:], {"sp": [], "temoin": m.get("temoin")})
+            fx[cle[5:]]["sp"].append(m.get("demo_spread_pct"))
+    if fx:
+        classe = sorted(((_mediane(v["sp"]), p, v["temoin"]) for p, v in fx.items()
+                         if _mediane(v["sp"]) is not None), key=lambda x: x[0])
+        corps.append("")
+        corps.append("── Candidats forex [DÉMO · PEPPERSTONE], spread médian ──")
+        for sp, paire, temoin in classe[:14]:
+            corps.append(f"• {paire}{' (déjà suivi)' if temoin else ''} : {sp:.4f} %")
+        temoins = [x for x in classe if x[2]]
+        if temoins:
+            pire = max(t[0] for t in temoins)
+            retenus = [p for sp, p, t in classe if not t and sp <= pire]
+            corps.append("")
+            corps.append(f"⇒ {len(retenus)} candidat(s) au spread ≤ au PIRE des "
+                         f"paires déjà suivies ({pire:.4f} %) : "
+                         + (", ".join(retenus[:8]) or "aucun"))
+            corps.append("⚠️ Spreads PEPPERSTONE. La promotion vers "
+                         "[RÉEL · IC_MARKETS] demandera sa propre mesure.")
+
     corps.append("")
     corps.append("⚠️ Le spread ne dit pas tout : le funding et la distance de stop "
                  "comptent autant. Un coût en R comparé entre classes sans corriger "
