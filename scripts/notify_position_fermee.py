@@ -53,8 +53,21 @@ TOKEN = os.environ.get("INFRA_NOTIFY_TOKEN", "shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWc
 # une cloture Kraken dans le meme passage produisent DEUX envois, chacun sur
 # son fil. Grouper les deux enverrait du Kraken sur un fil cense ne porter que
 # le compte reel.
-CANAL_PAR_DESTINATION = {"admin_live": "trades"}
-CANAL_DEFAUT = "sales"
+# ⛔ Cette table a ete SUPPRIMEE le 06/09. Elle disait :
+#
+#     CANAL_PAR_DESTINATION = {"admin_live": "trades"}
+#     CANAL_DEFAUT = "sales"
+#
+# Or `trades` designait le bot nomme « KRAKEN Trades » et `sales` le bot
+# « IC MARKETS trades » : les clotures du compte reel IC Markets partaient donc
+# chez Kraken, et celles de Kraken chez IC Markets. Exactement inverse.
+#
+# 🔑 Une DEUXIEME table est une table qui derive. Le canal se demande desormais
+# au module qui le sait — le seul.
+sys.path.insert(0, "/app")
+from backend.services.canaux_telegram import canal_pour, libelle  # noqa: E402
+
+CANAL_DEFAUT = "infra"
 
 
 def _url(canal: str) -> str:
@@ -167,8 +180,12 @@ def decrire(dest, pos, sortie) -> str:
 
 
 def notifier(corps: str, cles: list[str], canal: str = CANAL_DEFAUT) -> bool:
-    titre = ("Position fermee — compte reel 13137475" if canal == "trades"
-             else "Position fermee")
+    # ⛔ Le titre testait `canal == "trades"` et codait le login 13137475 en
+    # dur. « trades » n'existe plus comme canal, donc tous les messages
+    # seraient devenus « Position fermee » tout court — le compte disparait du
+    # titre au moment meme ou on separe les fils. Le libelle vient du module :
+    # une seule facon de nommer un compte, ici comme en session.
+    titre = f"{libelle(canal)} Position fermee"
     charge = json.dumps({
         "title": titre,
         "body": corps,
@@ -210,7 +227,7 @@ def main() -> int:
         print(f"  {did:14s} {etat}, {len(courant)} ouverte(s), "
               f"{len(fermees)} fermee(s)")
 
-        canal = CANAL_PAR_DESTINATION.get(did, CANAL_DEFAUT)
+        canal = canal_pour(did)
         lignes_c, cles_c = groupes.setdefault(canal, ([], []))
         for pos in fermees:
             lignes_c.append(decrire(dest, pos, enrichir(dest, pos)))
