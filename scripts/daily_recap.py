@@ -154,7 +154,22 @@ out = {{}}
 #
 # `personal_trades` porte deja `destination_id` : on filtre dessus, ce qui
 # marche pour TOUS les courtiers au lieu d'un seul.
+# ⛔ Les LIBELLES viennent du conteneur, qui seul peut importer
+# `canaux_telegram`. Ce script tourne sur l'HOTE, avec un venv qui n'a pas le
+# paquet `backend` : mon premier essai importait le module et retombait en
+# SILENCE sur un repli qui affichait « admin_live admin_live ».
+#
+# Les recopier ici en ferait une deuxieme table — la faute de la journee.
+from backend.services.canaux_telegram import libelle as _lib, canal_pour as _cp
+from backend.services.destinations_registry import DESTINATIONS as _DEST
+DEVISES = {{"admin_live": "EUR", "admin_legacy": "EUR",
+            "admin_kraken": "USD", "admin_kraken_spot": "USD"}}
 for dest in ("admin_live", "admin_kraken", "admin_kraken_spot", "admin_legacy"):
+    # ⚠️ Une destination absente du registre n'a pas de section : inventer une
+    # ligne « 0 trade » pour un compte qui n'existe pas ferait croire a un
+    # compte silencieux la ou il n'y a pas de compte.
+    if dest not in _DEST:
+        continue
     rows = con.execute("""
         SELECT pt.pair, pt.pnl
         FROM personal_trades pt
@@ -172,6 +187,8 @@ for dest in ("admin_live", "admin_kraken", "admin_kraken_spot", "admin_legacy"):
         "trades": len(rows),
         "pnl_total": sum(pnls),
         "by_pair": sorted(by_pair.items(), key=lambda kv: kv[1]),
+        "libelle": _lib(_cp(dest)),
+        "devise": DEVISES.get(dest, "?"),
     }}
 # Les clotures SANS destination : on les compte plutot que de les taire. Une
 # ligne qu'aucun compte ne reclame est un trou de tracabilite, pas un zero.
@@ -243,34 +260,21 @@ def render(date_str: str, mt5_data: dict, binance: dict, activite: dict | None =
     # BINANCE en a disparu : la destination est desarmee depuis le 02/08, et
     # sa section affichait « Binance API keys missing » a chaque passage — ce
     # qui se lit comme un incident alors que c'est une decision.
-    import sys as _sys
-    _sys.path.insert(0, "/app")
-    try:
-        from backend.services.canaux_telegram import libelle, canal_pour
-    except Exception:
-        libelle = lambda c: c
-        canal_pour = lambda d: d
-
     if "error" in mt5_data:
         lines += ["⚠️ Erreur récup MT5 : " + mt5_data["error"]]
     else:
-        # ⚠️ La devise est celle du COMPTE : les MT5 sont en EUR, Kraken en
-        # USD. Les additionner serait le piege d'unite deja paye ailleurs.
-        COMPTES = [
-            ("admin_live", "EUR"),
-            ("admin_kraken", "USD"),
-            ("admin_kraken_spot", "USD"),
-            ("admin_legacy", "EUR"),
-        ]
-        for dest, devise in COMPTES:
-            d = mt5_data.get(dest) or {}
-            if not d and dest.endswith("_spot"):
-                continue          # jamais gree : ne pas inventer une section
-            lines += [f"{libelle(canal_pour(dest))} {dest}"]
+        # ⚠️ Le libelle et la devise viennent de la COLLECTE, faite dans le
+        # conteneur. Les recalculer ici serait impossible — ce script tourne
+        # sur l'hote, sans le paquet `backend` — et mon premier essai
+        # retombait en SILENCE sur « admin_live admin_live ».
+        for dest, d in mt5_data.items():
+            if dest.startswith("_") or not isinstance(d, dict):
+                continue
+            lines += [f"{d.get('libelle') or dest}"]
             if d.get("trades", 0):
                 lines += [
                     f"• {d['trades']} trades fermés",
-                    f"• PnL : {d['pnl_total']:+.2f} {devise}",
+                    f"• PnL : {d['pnl_total']:+.2f} {d.get('devise') or ''}".rstrip(),
                 ]
                 paires = d.get("by_pair") or []
                 if paires and paires[-1][1] > 0:
