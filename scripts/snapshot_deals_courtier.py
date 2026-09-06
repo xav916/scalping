@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# BUT: capture chez le courtier les clotures que nous n'avons pas vues
+# PERIODE_MIN: 30
 """Fige ce que le courtier sait encore, avant qu'il ne l'oublie.
 
 ⛔ LE PROBLEME. MT5 purge l'historique des deals. Mesure du 2026-08-24 :

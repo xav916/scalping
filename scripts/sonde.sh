@@ -21,28 +21,40 @@
 # lit le journal et en fait UN recap.
 set -uo pipefail
 
-CIBLE="${1:-}"
-if [ -z "$CIBLE" ]; then
-  echo "usage: sonde.sh <script> [args...]" >&2
-  exit 2
-fi
-shift
-
-if [ ! -f "$CIBLE" ]; then
-  echo "sonde.sh: cible introuvable : $CIBLE" >&2
+if [ "$#" -eq 0 ]; then
+  echo "usage: sonde.sh <commande...>   ex: sonde.sh /chemin/x.sh" >&2
+  echo "                                ou: sonde.sh python3 /chemin/x.py --arg" >&2
   exit 2
 fi
 
-NOM=$(basename "$CIBLE")
-BUT=$(grep -m1 -E '^#\s*BUT:' "$CIBLE" 2>/dev/null | sed -E 's/^#\s*BUT:\s*//')
-PERIODE=$(grep -m1 -E '^#\s*PERIODE_MIN:' "$CIBLE" 2>/dev/null | sed -E 's/^#\s*PERIODE_MIN:\s*//' | tr -dc '0-9')
+# ⛔ La ligne ENTIERE est la commande ; on cherche seulement QUI nommer.
+#
+# Cinq crons echappaient au recap parce qu'ils passent par un interpreteur —
+# `python3 /opt/.../x.py --manquants`. Prendre `$1` aurait nomme la sonde
+# « python3 », et les cinq auraient partage une seule ligne de journal. Parmi
+# eux : `backup-s3.sh`, precisement la sauvegarde qui a crie CINQ NUITS sans
+# etre vue, et qui a motive tout ce dispositif.
+SONDE=""
+for a in "$@"; do
+  case "$a" in
+    *.py|*.sh) if [ -f "$a" ]; then SONDE="$a"; break; fi ;;
+  esac
+done
+if [ -z "$SONDE" ]; then
+  echo "sonde.sh: aucun script .py/.sh existant dans : $*" >&2
+  exit 2
+fi
+
+NOM=$(basename "$SONDE")
+BUT=$(grep -m1 -E '^#\s*BUT:' "$SONDE" 2>/dev/null | sed -E 's/^#\s*BUT:\s*//')
+PERIODE=$(grep -m1 -E '^#\s*PERIODE_MIN:' "$SONDE" 2>/dev/null | sed -E 's/^#\s*PERIODE_MIN:\s*//' | tr -dc '0-9')
 
 DEBUT=$(date +%s%3N)
 # ⚠️ La sortie est DUPLIQUEE : elle va au log comme avant, et une copie sert
 # a garder les dernieres lignes en cas d'echec. Les avaler priverait le recap
 # de la seule chose qui explique un KO.
 SORTIE=$(mktemp)
-"$CIBLE" "$@" 2>&1 | tee "$SORTIE"
+"$@" 2>&1 | tee "$SORTIE"
 CODE=${PIPESTATUS[0]}
 FIN=$(date +%s%3N)
 DUREE=$((FIN - DEBUT))

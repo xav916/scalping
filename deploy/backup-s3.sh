@@ -1,4 +1,6 @@
 #!/bin/bash
+# BUT: sauvegarde nocturne des bases vers S3
+# PERIODE_MIN: 1440
 # Backup quotidien des SQLite vers S3.
 #
 # ⛔ VERSIONNE DEPUIS LE 2026-09-04. L'ancien vivait dans

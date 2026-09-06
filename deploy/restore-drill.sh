@@ -1,4 +1,6 @@
 #!/bin/bash
+# BUT: essai hebdomadaire de RESTAURATION — une sauvegarde non restauree n'en est pas une
+# PERIODE_MIN: 10080
 # Contrôle hebdomadaire des sauvegardes S3 : télécharge la plus récente et
 # vérifie qu'elle est FRAÎCHE, COMPLÈTE et RESTAURABLE.
 #
