@@ -145,3 +145,32 @@ def test_le_titre_du_veto_ne_dit_plus_TRADES_SUSPENDUS():
     assert "Trades suspendus" not in src
     assert "bloquée temporairement" in src
     assert "Cette paire SEULEMENT" in src
+
+
+# ── Le picto du courtier (2026-09-06) ─────────────────────────────────────
+#
+# ⚠️ Il vit dans la MEME table que le libellé : c'est la même information —
+# « de quel compte parle-t-on » — sous deux formes. Une seconde table
+# dériverait, comme les trois tables de canaux du même jour.
+
+def test_chaque_fil_a_son_picto():
+    for canal in ct.CANAUX:
+        assert ct.picto(canal), canal
+
+
+def test_les_pictos_sont_DISTINCTS():
+    """⛔ Deux fils du même picto seraient impossibles à distinguer d'un coup
+    d'œil — c'est tout ce qu'on lui demande."""
+    pictos = [ct.picto(c) for c in ct.CANAUX]
+    assert len(set(pictos)) == len(pictos), pictos
+
+
+def test_le_libelle_avec_picto_contient_les_deux():
+    assert ct.libelle_avec_picto("ic_markets") == "🟦 [RÉEL · IC_MARKETS]"
+    assert ct.libelle_avec_picto("kraken").endswith("[RÉEL · KRAKEN]")
+
+
+def test_le_libelle_SEUL_reste_disponible():
+    """⚠️ Les préfixes de réponse en session n'ont pas de picto : le libellé
+    nu doit rester utilisable."""
+    assert ct.libelle("demo") == "[DÉMO · PEPPERSTONE]"

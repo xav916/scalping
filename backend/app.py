@@ -2727,7 +2727,7 @@ async def api_admin_notify_infra_telegram(
         logger.info(
             "notify-infra-telegram: canal hérité %r → %s (%s)",
             channel, channel_norm, ct.libelle(channel_norm))
-    var_token, var_chat, _lib = ct.CANAUX[channel_norm]
+    var_token, var_chat, _lib, _picto = ct.CANAUX[channel_norm]
     bot_token = getattr(_cfg, var_token, "")
     chat_id = getattr(_cfg, var_chat, "")
 

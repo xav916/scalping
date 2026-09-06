@@ -41,16 +41,23 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# canal → (variable jeton, variable chat, ce que le fil porte)
-CANAUX: dict[str, tuple[str, str, str]] = {
+# canal → (variable jeton, variable chat, ce que le fil porte, picto)
+#
+# ⚠️ Le PICTO vit ici, avec le libellé, et pas dans une table à part : c'est
+# la même information — « de quel compte parle-t-on » — sous deux formes. Une
+# seconde table dériverait, comme les trois tables de canaux du 06/09.
+#
+# Couleurs choisies sur la marque du courtier : IC Markets bleu, Kraken
+# violet, Pepperstone orange. L'œil reconnaît la section avant de lire.
+CANAUX: dict[str, tuple[str, str, str, str]] = {
     "ic_markets": ("SALES_TELEGRAM_BOT_TOKEN", "SALES_TELEGRAM_CHAT_ID",
-                   "[RÉEL · IC_MARKETS]"),
+                   "[RÉEL · IC_MARKETS]", "🟦"),
     "kraken": ("TRADES_TELEGRAM_BOT_TOKEN", "TRADES_TELEGRAM_CHAT_ID",
-               "[RÉEL · KRAKEN]"),
+               "[RÉEL · KRAKEN]", "🟪"),
     "demo": ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID",
-             "[DÉMO · PEPPERSTONE]"),
+             "[DÉMO · PEPPERSTONE]", "🟧"),
     "infra": ("INFRA_TELEGRAM_BOT_TOKEN", "INFRA_TELEGRAM_CHAT_ID",
-              "[INFRA]"),
+              "[INFRA]", "⚙️"),
 }
 
 # ⚠️ Anciens noms. `trades` visait le bot Kraken et `sales` le bot IC Markets :
@@ -101,6 +108,16 @@ def libelle(canal: str) -> str:
     return CANAUX[canal][2]
 
 
+def picto(canal: str) -> str:
+    """Le picto du courtier. Couleur de sa marque, pour que l'œil trouve la
+    section avant de lire."""
+    return CANAUX[canal][3]
+
+
+def libelle_avec_picto(canal: str) -> str:
+    return f"{picto(canal)} {libelle(canal)}"
+
+
 FILS_DE_TRADING = frozenset({"ic_markets", "kraken", "demo"})
 
 
@@ -126,7 +143,7 @@ def jeton_et_chat(canal: str) -> tuple[str, str]:
     fait partir les ouvertures du compte réel IC Markets dans le fil Kraken.
     """
     from config import settings as _cfg
-    var_token, var_chat, _ = CANAUX[canal]
+    var_token, var_chat, _lib, _picto = CANAUX[canal]
     return getattr(_cfg, var_token, ""), getattr(_cfg, var_chat, "")
 
 

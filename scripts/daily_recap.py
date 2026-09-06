@@ -160,7 +160,8 @@ out = {{}}
 # SILENCE sur un repli qui affichait « admin_live admin_live ».
 #
 # Les recopier ici en ferait une deuxieme table — la faute de la journee.
-from backend.services.canaux_telegram import libelle as _lib, canal_pour as _cp
+from backend.services.canaux_telegram import (libelle_avec_picto as _lib,
+                                              canal_pour as _cp)
 from backend.services.destinations_registry import DESTINATIONS as _DEST
 DEVISES = {{"admin_live": "EUR", "admin_legacy": "EUR",
             "admin_kraken": "USD", "admin_kraken_spot": "USD"}}
