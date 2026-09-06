@@ -246,6 +246,40 @@ orphelines = con.execute("""
 """, ("{since_iso}",)).fetchone()[0]
 out["_orphelines"] = orphelines
 out["_taux_eur_usd"] = _TAUX
+
+# ── Ou en est la mesure du compte reel ? ──────────────────────────────
+#
+# ⛔ En R, pas en euros. Un PnL moyen en euros melange des trades de tailles
+# differentes et ne se compare a rien — c'est le piege d'unite deja paye ici.
+# R = pnl / risque_engage, donc chaque trade pese pareil.
+#
+# ⚠️ Depuis le 25/08 SEULEMENT : avant, les niveaux stockes ne correspondaient
+# pas a ceux du courtier dans 44 % des cas. Mesurer sur des SL faux ne mesure
+# rien.
+from backend.services import risk_eur as _re
+_taux = _re.taux_eur_usd()
+_rs = []
+for r in con.execute("""
+        SELECT pair, pnl, entry_price, stop_loss, take_profit, size_lot
+          FROM personal_trades
+         WHERE destination_id='admin_live' AND status='CLOSED' AND is_auto=1
+           AND pnl IS NOT NULL AND entry_price > 0 AND stop_loss > 0
+           AND closed_at >= '2026-08-25'
+    """).fetchall():
+    m = _re.calculer(r["pair"], r["entry_price"], r["stop_loss"],
+                     r["take_profit"] or 0, r["size_lot"] or 0,
+                     "mt5", _taux)
+    risque = (m or {{}}).get("risque_eur")
+    if risque:
+        _rs.append(float(r["pnl"]) / risque)
+if len(_rs) >= 3:
+    _m = sum(_rs) / len(_rs)
+    _v = sum((x - _m) ** 2 for x in _rs) / (len(_rs) - 1)
+    _s = _v ** 0.5
+    out["_mesure"] = {{"n": len(_rs), "moyenne_R": _m,
+                       "t": (_m / (_s / len(_rs) ** 0.5)) if _s else 0.0}}
+else:
+    out["_mesure"] = {{"n": len(_rs)}}
 print(json.dumps(out))
 '''
     try:
@@ -418,6 +452,29 @@ def render(date_str: str, mt5_data: dict, binance: dict, activite: dict | None =
                       "l'une peut dépasser 100 %."]
         lines.append("")
 
+        # ── Ou en est la mesure ? ─────────────────────────────────────
+        #
+        # ⛔ Le seul chiffre qui dise si le systeme gagne. Affiche CHAQUE soir
+        # pour qu'on n'ait pas a le demander — et pour qu'on sache combien de
+        # clotures manquent encore avant de pouvoir conclure quoi que ce soit.
+        mes = mt5_data.get("_mesure") or {}
+        N_CIBLE = 135
+        if mes.get("n", 0) >= 3:
+            n, moy, t = mes["n"], mes["moyenne_R"], mes["t"]
+            verdict = ("indiscernable du hasard" if abs(t) < 2
+                       else "significatif à ce stade")
+            lines += ["", "📏 Où en est la mesure  [RÉEL · IC_MARKETS]",
+                      f"• {n} clôtures mesurables depuis le 25/08 "
+                      f"(il en faut ≈{N_CIBLE})",
+                      f"• {moy:+.3f} R en moyenne · t = {t:+.2f} → {verdict}"]
+            if n < N_CIBLE:
+                lines.append(f"• Encore {N_CIBLE - n} clôtures avant de "
+                             "pouvoir trancher")
+        elif "n" in mes:
+            lines += ["", "📏 Où en est la mesure  [RÉEL · IC_MARKETS]",
+                      f"• {mes['n']} clôture(s) mesurable(s) — trop peu pour "
+                      "le moindre calcul"]
+
         orphelines = mt5_data.get("_orphelines") or 0
         if orphelines:
             lines += [f"⚠️ {orphelines} clôture(s) SANS destination — "
@@ -519,7 +576,11 @@ def main() -> int:
     activite = fetch_activite(since_iso)
     binance = fetch_binance(since_ms)
     body = render(date_str, mt5_data, binance, activite)
-    title = f"Daily recap 24h {date_str}"
+    # ⚠️ Le titre disait « 24h » meme avec `--since` : un lancement
+    # manuel sur 8 jours s'annoncait comme une journee.
+    heures = max(1, round((datetime.now(timezone.utc) - since_dt).total_seconds() / 3600))
+    fenetre = "24h" if 20 <= heures <= 28 else f"{heures} h"
+    title = f"Daily recap {fenetre} {date_str}"
 
     if args.dry_run:
         print(f"=== {title} ===")

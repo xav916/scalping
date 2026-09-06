@@ -79,3 +79,9 @@ alerter() {
   fi
   echo "=== done ==="
 } >> "$LOG" 2>&1
+
+# ⛔ Tout le bloc ci-dessus va dans SON log. `sonde.sh` ne voyait donc AUCUNE
+# sortie : en cas d'echec, le journal des sondes avait le bon verdict mais un
+# detail VIDE — « ca a casse » sans dire pourquoi. On ressort la derniere
+# ligne utile sur stdout, pour elle.
+tail -3 "$LOG" | grep -E "telegram\[|ERREUR" | tail -1 || true
