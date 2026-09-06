@@ -171,6 +171,87 @@ def resoudre_observations(trades_fermes=None) -> int:
     return n
 
 
+def sante(positions_ouvertes=None, destination_id: str = "admin_legacy") -> dict:
+    """Etat de sante de la mesure. Rend ``{alertes, infos, ok}``.
+
+    ⛔ Une sonde ne se teste pas sur « est-ce que ca tourne » : il faut nommer
+    les facons dont la mesure meurt SANS BRUIT. Il y en a trois ici.
+
+    1. **La regle ne passe plus.** Aucune observation depuis plus de 24 h alors
+       que des positions sont eligibles. Le silence se lit « rien a observer »,
+       alors qu'il veut dire « personne ne regarde » — le moniteur muet pendant
+       trois mois disait deja cela.
+    2. **Les observations ne se resolvent jamais.** La jointure a casse (elle
+       l'a fait le jour meme : `mt5_ticket` et non `ticket`), et le compteur
+       reste a zero pendant que les lignes s'accumulent. Une mesure qui
+       n'aboutit pas ressemble a une mesure en cours.
+    3. ⛔ **La portee a derive.** Si `admin_live` entre dans le perimetre, ou si
+       le mode observation tombe, la regle FERME de l'argent reel. C'est le
+       seul point qui justifie de crier.
+    """
+    init_schema()
+    cfg = reglages()
+    alertes, infos = [], []
+
+    # ⛔ 3 d'abord : c'est le seul qui touche a l'argent.
+    if "admin_live" in cfg["destinations"] or "admin_kraken" in cfg["destinations"]:
+        alertes.append("PERIMETRE : un compte REEL est entre dans "
+                       f"SORTIE_TEMPS_DESTINATIONS ({sorted(cfg['destinations'])})")
+    if cfg["actif"] and not cfg["observer"]:
+        alertes.append("MODE : la regle FERME reellement "
+                       "(SORTIE_TEMPS_OBSERVER=false) — ce n'est plus une mesure")
+
+    with _conn() as c:
+        total = c.execute("SELECT COUNT(*) FROM observations_sortie_temps "
+                          "WHERE destination_id=?", (destination_id,)).fetchone()[0]
+        resolues = c.execute("SELECT COUNT(*) FROM observations_sortie_temps "
+                             "WHERE destination_id=? AND r_reel IS NOT NULL",
+                             (destination_id,)).fetchone()[0]
+        dernier = c.execute("SELECT MAX(observe_a) FROM observations_sortie_temps "
+                            "WHERE destination_id=?", (destination_id,)).fetchone()[0]
+
+    infos.append(f"{total} observation(s), {resolues} resolue(s)")
+    if not cfg["actif"]:
+        infos.append("regle DESARMEE — aucune observation nouvelle ne sera prise")
+
+    # 1. La regle passe-t-elle encore ?
+    eligibles = 0
+    for p in positions_ouvertes or []:
+        ok, _ = eligible(p, destination_id, cfg)
+        eligibles += 1 if ok else 0
+    if eligibles and dernier:
+        try:
+            age = _age_heures(dernier)
+            if age is not None and age > 24:
+                alertes.append(f"MUETTE : {eligibles} position(s) eligible(s) et "
+                               f"aucune observation depuis {age:.0f} h")
+        except Exception:  # noqa: BLE001
+            pass
+    elif eligibles and not dernier and cfg["actif"]:
+        alertes.append(f"MUETTE : {eligibles} position(s) eligible(s) et AUCUNE "
+                       "observation n'a jamais ete prise")
+
+    # 2. Les observations aboutissent-elles ?
+    if total >= 10 and resolues == 0:
+        alertes.append(f"BLOQUEE : {total} observations et AUCUNE resolue — "
+                       "la jointure vers les clotures est probablement cassee")
+
+    # Progression, pour que l'attente soit lisible plutot que subie.
+    b = bilan_apparie(destination_id)
+    if b.get("n"):
+        infos.append(f"ecart moyen {b.get('ecart_moyen')} R sur n={b['n']} "
+                     f"(t={b.get('t')}) — {b.get('verdict')}")
+        infos.append("⚠️ seuil de preuve a battre : n=5690, t=-6,83 (porte de "
+                     "duree du 13/08)")
+    else:
+        infos.append("aucun verdict possible — les positions observees ne sont "
+                     "pas encore fermees")
+
+    return {"ok": not alertes, "alertes": alertes, "infos": infos,
+            "reglages": {k: (sorted(v) if isinstance(v, frozenset) else v)
+                         for k, v in cfg.items()}}
+
+
 def bilan_apparie(destination_id: str = "admin_legacy") -> dict:
     """Comparaison APPARIEE : le meme trade, avec et sans la regle.
 

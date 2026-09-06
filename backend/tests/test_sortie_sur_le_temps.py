@@ -257,3 +257,77 @@ def test_le_verdict_reste_PRUDENT_sous_le_seuil(tmp_path, monkeypatch):
     c.close()
     v = st.bilan_apparie("admin_legacy")["verdict"]
     assert v == "indistinguable du hasard"
+
+
+# ── La sonde de santé ────────────────────────────────────────────────
+#
+# ⛔ Une sonde ne se teste pas sur « est-ce que ça tourne » : il faut nommer les
+# façons dont la mesure meurt SANS BRUIT. Trois ici — la règle ne passe plus,
+# les observations ne se résolvent jamais, la portée a dérivé vers le réel.
+
+def test_sonde_saine_quand_tout_va(tmp_path, monkeypatch):
+    _base(tmp_path, monkeypatch)
+    monkeypatch.setenv("SORTIE_TEMPS_ENABLED", "true")
+    monkeypatch.setenv("SORTIE_TEMPS_OBSERVER", "true")
+    monkeypatch.setenv("SORTIE_TEMPS_DESTINATIONS", "admin_legacy")
+    s = st.sante(positions_ouvertes=[])
+    assert s["ok"] is True and s["alertes"] == []
+
+
+def test_ALERTE_si_un_compte_REEL_entre_dans_le_perimetre(tmp_path, monkeypatch):
+    """⛔ Le seul point qui justifie de crier : la règle fermerait de l'argent
+    réel."""
+    _base(tmp_path, monkeypatch)
+    monkeypatch.setenv("SORTIE_TEMPS_DESTINATIONS", "admin_legacy,admin_live")
+    s = st.sante(positions_ouvertes=[])
+    assert s["ok"] is False
+    assert any("PERIMETRE" in a for a in s["alertes"])
+
+
+def test_ALERTE_si_le_mode_observation_tombe(tmp_path, monkeypatch):
+    _base(tmp_path, monkeypatch)
+    monkeypatch.setenv("SORTIE_TEMPS_ENABLED", "true")
+    monkeypatch.setenv("SORTIE_TEMPS_OBSERVER", "false")
+    s = st.sante(positions_ouvertes=[])
+    assert any("MODE" in a for a in s["alertes"])
+
+
+def test_ALERTE_si_MUETTE_alors_que_des_positions_sont_eligibles(tmp_path, monkeypatch):
+    """⛔ Le silence se lit « rien à observer », alors qu'il veut dire
+    « personne ne regarde »."""
+    _base(tmp_path, monkeypatch)
+    monkeypatch.setenv("SORTIE_TEMPS_ENABLED", "true")
+    monkeypatch.setenv("SORTIE_TEMPS_DESTINATIONS", "admin_legacy")
+    from datetime import datetime, timedelta, timezone
+    vieille = {"symbol": "X", "ticket": 1,
+               "fill_time": (datetime.now(timezone.utc) - timedelta(hours=50)).isoformat()}
+    s = st.sante(positions_ouvertes=[vieille])
+    assert any("MUETTE" in a for a in s["alertes"])
+
+
+def test_ALERTE_si_les_observations_ne_se_resolvent_JAMAIS(tmp_path, monkeypatch):
+    """La jointure a cassé le jour même : `mt5_ticket` et non `ticket`."""
+    base = _base(tmp_path, monkeypatch)
+    monkeypatch.setenv("SORTIE_TEMPS_DESTINATIONS", "admin_legacy")
+    c = sqlite3.connect(str(base), isolation_level=None)
+    for i in range(12):
+        c.execute("""INSERT INTO observations_sortie_temps
+            (ticket,destination_id,symbol,observe_a,seuil_h,r_si_coupe)
+            VALUES (?,?,?,?,?,?)""", (i, "admin_legacy", "X", "2026-09-06", 16.0, 0.2))
+    c.close()
+    s = st.sante(positions_ouvertes=[])
+    assert any("BLOQUEE" in a for a in s["alertes"])
+
+
+def test_la_sonde_RAPPELLE_le_seuil_de_preuve(tmp_path, monkeypatch):
+    """⚠️ Un verdict sans son seuil invite à conclure trop vite."""
+    base = _base(tmp_path, monkeypatch)
+    monkeypatch.setenv("SORTIE_TEMPS_DESTINATIONS", "admin_legacy")
+    c = sqlite3.connect(str(base), isolation_level=None)
+    for i, (a, b) in enumerate([(0.4, -1.0), (0.5, 1.8), (0.3, -1.0)]):
+        c.execute("""INSERT INTO observations_sortie_temps
+            (ticket,destination_id,symbol,observe_a,seuil_h,r_si_coupe,r_reel)
+            VALUES (?,?,?,?,?,?,?)""", (i, "admin_legacy", "X", "2026-09-06", 16.0, a, b))
+    c.close()
+    s = st.sante(positions_ouvertes=[])
+    assert any("5690" in i for i in s["infos"])
