@@ -122,8 +122,17 @@ def nom_du_palier(palier: float) -> str:
             return nom
     return f"{palier:.0%}"
 
-ETAT = Path(os.environ.get("TIERS_OBJECTIF_ETAT_PATH",
-                           "/app/data/tiers_objectif.json"))
+# ⛔ L'etat est PAR COMPTE depuis le 06/09. Il etait un fichier unique, reecrit
+# EN ENTIER a chaque passage : faire tourner la sonde sur deux destinations les
+# aurait fait s'effacer mutuellement toutes les cinq minutes, chacune
+# re-annoncant sans fin les paliers que l'autre venait d'oublier.
+#
+# ⚠️ Le chemin se DERIVE, il ne se configure pas : compter sur une variable
+# d'environnement bien posee dans chaque ligne de cron, c'est attendre l'oubli.
+ETAT_LEGACY = Path("/app/data/tiers_objectif.json")
+ETAT = Path(os.environ.get(
+    "TIERS_OBJECTIF_ETAT_PATH",
+    f"/app/data/tiers_objectif_{DESTINATION}.json"))
 
 TOKEN = os.environ.get("INFRA_NOTIFY_TOKEN",
                        "shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg")
@@ -342,7 +351,12 @@ def _charger_etat() -> dict:
     doublon pose par une migration, la pire facon d'introduire du bruit.
     """
     try:
-        brut = json.loads(ETAT.read_text(encoding="utf-8"))
+        chemin = ETAT
+        if not chemin.exists() and ETAT_LEGACY.exists():
+            # Reprise unique de l'ancien fichier commun : sans elle, la sonde
+            # re-annoncerait une fois des paliers deja annonces.
+            chemin = ETAT_LEGACY
+        brut = json.loads(chemin.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
     if not isinstance(brut, dict):

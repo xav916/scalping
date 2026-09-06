@@ -344,3 +344,36 @@ def test_le_corps_ne_porte_AUCUNE_balise(s):
                                      palier)
             assert "<" not in corps and ">" not in corps
             assert "<" not in titre and ">" not in titre
+
+
+# ── L'état est PAR COMPTE (2026-09-06) ────────────────────────────────────
+#
+# ⛔ Il était un fichier unique, réécrit EN ENTIER à chaque passage. Faire
+# tourner la sonde sur deux destinations les aurait fait s'effacer
+# mutuellement toutes les cinq minutes : chacune ré-annonçant sans fin les
+# paliers que l'autre venait d'oublier — soit exactement le défaut que
+# « un seul message par passage » existe pour empêcher.
+
+def test_le_chemin_d_etat_porte_le_nom_du_COMPTE(s):
+    assert s.DESTINATION in str(s.ETAT), str(s.ETAT)
+
+
+def test_deux_comptes_n_ecrivent_PAS_dans_le_meme_fichier():
+    """⚠️ Le chemin se DÉRIVE. Compter sur une variable d'environnement bien
+    posée dans chaque ligne de cron, c'est attendre l'oubli."""
+    import importlib.util
+    import os
+    import pathlib
+
+    src = (pathlib.Path(__file__).resolve().parents[2]
+           / "scripts" / "notify_tiers_objectif.py")
+    chemins = []
+    for did in ("admin_live", "admin_kraken"):
+        os.environ["TIERS_OBJECTIF_DESTINATION"] = did
+        os.environ.pop("TIERS_OBJECTIF_ETAT_PATH", None)
+        spec = importlib.util.spec_from_file_location(f"tiers_{did}", src)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        chemins.append(str(mod.ETAT))
+    os.environ.pop("TIERS_OBJECTIF_DESTINATION", None)
+    assert chemins[0] != chemins[1], chemins
