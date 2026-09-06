@@ -209,6 +209,12 @@ def bilan() -> int:
     par_paire: dict = {}
     for d in lignes:
         for paire, m in (d.get("mesures") or {}).items():
+            # ⛔ Les relevés du démo ont leur propre section : les laisser
+            # traverser la boucle Kraken produisait une ligne
+            # « Kraken illisible » par candidat — du bruit qui ferait douter
+            # d'une mesure saine.
+            if paire.startswith("demo:"):
+                continue
             par_paire.setdefault(paire, {"k": [], "m": [], "n": []})
             par_paire[paire]["k"].append(m.get("kraken_spread_pct"))
             par_paire[paire]["m"].append(m.get("mt5_spread_pct"))
