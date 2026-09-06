@@ -27,6 +27,10 @@ async def main():
     # ⚠️ Le bridge MT5 nomme le champ 'time', pas 'fill_time'.
     rap = st.passer(positions, 'admin_legacy', fermer=None, cfg=cfg)
     rap['positions_lues'] = len(positions)
+    # Le rejeu APPARIE : on renseigne le R reellement obtenu des que la
+    # position s'est fermee, puis on compare sur les MEMES trades.
+    rap['resolues'] = st.resoudre_observations()
+    rap['bilan_apparie'] = st.bilan_apparie('admin_legacy')
     print(json.dumps(rap, ensure_ascii=False, indent=1))
 asyncio.run(main())
 "

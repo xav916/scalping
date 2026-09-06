@@ -166,3 +166,94 @@ def test_les_positions_JEUNES_sont_comptees_a_part():
 def test_une_liste_vide_ne_plante_pas():
     r = st.passer([], "admin_legacy", cfg=_cfg(), maintenant=MAINTENANT)
     assert r["observees"] == [] and r["ignorees"] == 0
+
+
+# ── Le rejeu apparié ─────────────────────────────────────────────────
+#
+# 🔑 L'intérêt d'observer plutôt que de couper, sur le démo : chaque trade
+# fournit LES DEUX résultats — celui obtenu et celui qu'il aurait eu. La
+# comparaison est appariée, la variance entre trades s'annule, et le verdict
+# arrive avec bien moins d'observations que deux périodes séparées.
+
+import sqlite3
+
+
+def _base(tmp_path, monkeypatch):
+    monkeypatch.setattr(st, "_DB", tmp_path / "t.db")
+    st.init_schema()
+    return tmp_path / "t.db"
+
+
+def test_r_au_prix_achat_et_vente():
+    assert st.r_au_prix(100, 105, 95, achat=True) == pytest.approx(1.0)
+    assert st.r_au_prix(100, 95, 105, achat=False) == pytest.approx(1.0)
+
+
+def test_r_au_prix_risque_nul_rend_None():
+    assert st.r_au_prix(100, 105, 100, achat=True) is None
+
+
+def test_une_position_n_est_observee_QU_UNE_FOIS(tmp_path, monkeypatch):
+    """⛔ La règle repasse toutes les 30 min. Sans unicité par ticket, une
+    position tenue trois jours pèserait 144 fois dans la mesure."""
+    _base(tmp_path, monkeypatch)
+    p = {"ticket": 42, "symbol": "EURUSD", "type": "buy",
+         "price_open": 1.0, "price_current": 1.005, "sl": 0.99}
+    assert st.enregistrer_observation(p, "admin_legacy", _cfg(), 20.0) is True
+    assert st.enregistrer_observation(p, "admin_legacy", _cfg(), 25.0) is False
+    c = sqlite3.connect(str(tmp_path / "t.db"))
+    assert c.execute("SELECT COUNT(*) FROM observations_sortie_temps").fetchone()[0] == 1
+    c.close()
+
+
+def test_l_observation_fige_le_R_du_MOMENT(tmp_path, monkeypatch):
+    _base(tmp_path, monkeypatch)
+    st.enregistrer_observation(
+        {"ticket": 7, "symbol": "X", "type": "buy",
+         "price_open": 100.0, "price_current": 102.0, "sl": 95.0},
+        "admin_legacy", _cfg(), 20.0)
+    c = sqlite3.connect(str(tmp_path / "t.db"))
+    r = c.execute("SELECT r_si_coupe FROM observations_sortie_temps").fetchone()[0]
+    c.close()
+    assert r == pytest.approx(2.0 / 5.0)      # +0,4 R
+
+
+def test_une_position_ENCORE_OUVERTE_n_est_pas_resolue(tmp_path, monkeypatch):
+    _base(tmp_path, monkeypatch)
+    st.enregistrer_observation(
+        {"ticket": 7, "symbol": "X", "type": "buy", "price_open": 100.0,
+         "price_current": 102.0, "sl": 95.0}, "admin_legacy", _cfg(), 20.0)
+    assert st.resoudre_observations(trades_fermes={}) == 0
+
+
+def test_la_resolution_calcule_le_R_REEL(tmp_path, monkeypatch):
+    _base(tmp_path, monkeypatch)
+    st.enregistrer_observation(
+        {"ticket": 7, "symbol": "X", "type": "buy", "price_open": 100.0,
+         "price_current": 102.0, "sl": 95.0}, "admin_legacy", _cfg(), 20.0)
+    # finalement fermee a 95 : le stop, soit -1 R
+    assert st.resoudre_observations(trades_fermes={7: (95.0,)}) == 1
+    b = st.bilan_apparie("admin_legacy")
+    assert b["n"] == 1
+    assert b["r_si_coupe_moyen"] == pytest.approx(0.4)
+    assert b["r_reel_moyen"] == pytest.approx(-1.0)
+    assert b["ecart_moyen"] == pytest.approx(1.4)
+
+
+def test_aucune_observation_resolue_le_DIT(tmp_path, monkeypatch):
+    """⛔ « Pas encore de verdict » n'est pas « pas d'écart »."""
+    _base(tmp_path, monkeypatch)
+    assert "ouverte" in st.bilan_apparie("admin_legacy")["verdict"]
+
+
+def test_le_verdict_reste_PRUDENT_sous_le_seuil(tmp_path, monkeypatch):
+    """Un écart non significatif se dit « indistinguable », jamais « ça marche »."""
+    _base(tmp_path, monkeypatch)
+    c = sqlite3.connect(str(tmp_path / "t.db"), isolation_level=None)
+    for i, (a, b) in enumerate([(0.4, 0.3), (0.1, 0.5), (0.6, 0.2), (-0.2, 0.4)]):
+        c.execute("""INSERT INTO observations_sortie_temps
+            (ticket,destination_id,symbol,observe_a,seuil_h,r_si_coupe,r_reel)
+            VALUES (?,?,?,?,?,?,?)""", (i, "admin_legacy", "X", "t", 16.0, a, b))
+    c.close()
+    v = st.bilan_apparie("admin_legacy")["verdict"]
+    assert v == "indistinguable du hasard"
