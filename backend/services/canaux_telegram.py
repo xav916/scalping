@@ -47,15 +47,23 @@ logger = logging.getLogger(__name__)
 # la même information — « de quel compte parle-t-on » — sous deux formes. Une
 # seconde table dériverait, comme les trois tables de canaux du 06/09.
 #
-# Couleurs choisies sur la marque du courtier : IC Markets bleu, Kraken
-# violet, Pepperstone orange. L'œil reconnaît la section avant de lire.
+# Couleurs prises sur la marque du courtier :
+#
+#   🟩 IC Markets   vert/noir/blanc
+#   🟪 Kraken       violet
+#   🟦 Pepperstone  bleu/blanc
+#
+# ⛔ Je les avais inversées le 06/09 en réécrivant le récap — bleu pour IC
+# Markets, orange pour Pepperstone — alors que l'ancien code portait les
+# BONNES. Réécrire vaut mieux que rafistoler, mais pas quand on jette au
+# passage une information juste.
 CANAUX: dict[str, tuple[str, str, str, str]] = {
     "ic_markets": ("SALES_TELEGRAM_BOT_TOKEN", "SALES_TELEGRAM_CHAT_ID",
-                   "[RÉEL · IC_MARKETS]", "🟦"),
+                   "[RÉEL · IC_MARKETS]", "🟩"),
     "kraken": ("TRADES_TELEGRAM_BOT_TOKEN", "TRADES_TELEGRAM_CHAT_ID",
                "[RÉEL · KRAKEN]", "🟪"),
     "demo": ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID",
-             "[DÉMO · PEPPERSTONE]", "🟧"),
+             "[DÉMO · PEPPERSTONE]", "🟦"),
     "infra": ("INFRA_TELEGRAM_BOT_TOKEN", "INFRA_TELEGRAM_CHAT_ID",
               "[INFRA]", "⚙️"),
 }

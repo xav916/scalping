@@ -166,7 +166,10 @@ def test_les_pictos_sont_DISTINCTS():
 
 
 def test_le_libelle_avec_picto_contient_les_deux():
-    assert ct.libelle_avec_picto("ic_markets") == "🟦 [RÉEL · IC_MARKETS]"
+    # ⛔ Les couleurs sont celles des MARQUES : IC Markets vert/noir/blanc,
+    # Pepperstone bleu/blanc. Je les avais inversées le 06/09.
+    assert ct.libelle_avec_picto("ic_markets") == "🟩 [RÉEL · IC_MARKETS]"
+    assert ct.libelle_avec_picto("demo") == "🟦 [DÉMO · PEPPERSTONE]"
     assert ct.libelle_avec_picto("kraken").endswith("[RÉEL · KRAKEN]")
 
 
