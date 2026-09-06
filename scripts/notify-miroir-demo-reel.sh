@@ -26,10 +26,15 @@
 set -uo pipefail
 
 TOKEN="shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg"
-# channel=trades : fil dedie aux ordres (2026-08-19). Tant que le bot dedie
+# channel=ic_markets (2026-09-06) : ce script juge le COMPTE REEL 13137475.
+#
+# Il ecrivait `channel=trades` en croyant viser ce compte — mais le bot
+# derriere `TRADES_*` s'appelle « KRAKEN Trades ». D'ou « Position fermee —
+# compte reel 13137475 » affiche dans le fil Kraken.
+# ex-commentaire : fil dedie aux ordres (2026-08-19). Tant que le bot dedie
 # n'est pas gree, l'endpoint retombe sur `sales` en le journalisant — donc
 # basculer ici ne perd rien et la migration se fera sans retoucher ce script.
-NOTIFY_URL="https://app.scalping-radar.online/api/admin/notify-infra-telegram?token=${TOKEN}&channel=trades"
+NOTIFY_URL="https://app.scalping-radar.online/api/admin/notify-infra-telegram?token=${TOKEN}&channel=ic_markets"
 
 # Fenêtre de recherche : large assez pour ne rien rater entre deux passages,
 # la déduplication côté endpoint évite les répétitions.

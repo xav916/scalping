@@ -49,8 +49,11 @@ SEUIL_FILE = int(os.environ.get("SEUIL_FILE", "20"))
 
 TOKEN = os.environ.get("INFRA_NOTIFY_TOKEN", "shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg")
 # channel=sales : un client qui n'execute plus est un evenement COMMERCIAL.
+# channel=infra (2026-09-06) : cette sonde juge l'EXECUTION CHEZ UN CLIENT,
+# pas un de nos comptes. La ranger dans un fil de compte melangerait deux
+# choses differentes.
 NOTIFY_URL = ("https://app.scalping-radar.online/api/admin/"
-              f"notify-infra-telegram?token={TOKEN}&channel=sales")
+              f"notify-infra-telegram?token={TOKEN}&channel=infra")
 
 
 def diagnostiquer(etat: dict, maintenant: datetime,

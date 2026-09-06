@@ -244,7 +244,8 @@ def _armer(s, monkeypatch, positions, etat=None, envoi=True):
     monkeypatch.setattr(s, "_positions", lambda dest: positions)
     monkeypatch.setattr(s, "_charger_etat", lambda: dict(etat or {}))
     monkeypatch.setattr(s, "_ecrire_etat", lambda e: ecrits.update(e))
-    monkeypatch.setattr(s, "_notifier", lambda t, c, dedup: envoi)
+    monkeypatch.setattr(s, "_notifier",
+                        lambda t, c, dedup, destination_id=None: envoi)
     return ecrits
 
 

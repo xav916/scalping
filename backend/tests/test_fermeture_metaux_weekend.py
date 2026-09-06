@@ -300,8 +300,11 @@ def _armer(s, monkeypatch, positions, fermeture_ok=True):
         return {"ok": False, "error": "marche ferme", "retcode": 10018}, False
 
     monkeypatch.setattr(s, "_appel", _faux_appel)
-    monkeypatch.setattr(s, "_notifier",
-                        lambda t, c: appels["notifs"].append((t, c)) or True)
+    # ⚠️ Le digest porte desormais son CANAL : un digest qui melange deux
+    # comptes doit partir sur `infra`, jamais dans le fil de l'un d'eux.
+    monkeypatch.setattr(
+        s, "_notifier",
+        lambda t, c, canal="infra": appels["notifs"].append((t, c, canal)) or True)
     return appels
 
 

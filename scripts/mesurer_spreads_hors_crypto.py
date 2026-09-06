@@ -284,7 +284,7 @@ def bilan() -> int:
 def _poster(titre: str, corps: str) -> int:
     jeton = os.environ.get("NOTIFY_TOKEN", "shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg")
     url = ("https://app.scalping-radar.online/api/admin/notify-infra-telegram"
-           f"?token={jeton}&channel=sales")
+           f"?token={jeton}&channel=infra")
     charge = json.dumps({"title": titre, "body": corps,
                          "dedup_key": "spreads_hors_crypto",
                          "cooldown_seconds": 3600}).encode()
@@ -306,4 +306,7 @@ def _poster(titre: str, corps: str) -> int:
 
 if __name__ == "__main__":
     mode = sys.argv[1] if len(sys.argv) > 1 else "--collecte"
-    sys.exit(bilan() if mode == "--bilan" else collecte())
+    sys.exit(bilan() if mode == "--bilan" else collecte())# channel=infra (2026-09-06) : une MESURE comparant plusieurs courtiers
+# n'appartient au fil d'aucun compte — elle sert a decider, pas a tracer
+# un ordre.
+

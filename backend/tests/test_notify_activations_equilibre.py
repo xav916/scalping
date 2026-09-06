@@ -107,20 +107,53 @@ def test_un_bridge_illisible_est_un_verdict_DISTINCT(s, monkeypatch):
     assert lignes == [] and ok is False
 
 
-def test_un_bridge_lisible_SANS_activation_est_un_autre_verdict(s, monkeypatch):
-    monkeypatch.setattr(s, "_appel",
-                        lambda dest, chemin: ({"orders": []}, True))
-    lignes, ok = s.activations(object())
+# ⛔ Ces deux tests simulaient une lecture de `/audit`. La sonde ne lit PLUS
+# `/audit` : le bridge y plafonne `limit` a 500 SANS le dire, si bien qu'une
+# demande de 5 000 rendait les 500 lignes les plus ANCIENNES et concluait « la
+# soupape n'a jamais agi » — pendant 13 jours, alors que l'unique activation
+# siege a l'id 3904. La source est desormais le journal persiste.
+#
+# 🔑 Les tests suivent la source, sinon ils verrouillent le defaut.
+
+
+def _journal(tmp_path, monkeypatch, lignes, did="admin_live"):
+    """Pointe le journal sur une base jetable et y depose des activations."""
+    from backend.services import motif_interne_cloture as mi
+    monkeypatch.setattr(mi, "_DB", tmp_path / "j.db")
+    import sqlite3
+    c = sqlite3.connect(str(tmp_path / "j.db"), isolation_level=None)
+    c.execute("CREATE TABLE IF NOT EXISTS personal_trades (mt5_ticket TEXT)")
+    c.close()
+    mi.enregistrer_activations(did, lignes, dernier_id=99)
+
+
+def test_un_journal_lisible_SANS_activation_est_un_autre_verdict(
+        s, tmp_path, monkeypatch):
+    """⛔ `([], False)` et `([], True)` sont deux verdicts distincts : « on n'a
+    pas pu lire » n'est pas « il ne s'est rien passe »."""
+    _journal(tmp_path, monkeypatch, [])
+    lignes, ok = s.activations(object(), "admin_live")
     assert lignes == [] and ok is True
 
 
-def test_seules_les_lignes_equilibre_sont_retenues(s, monkeypatch):
-    """`/audit` porte aussi les fills, refus et clôtures : les compter
-    gonflerait le dénominateur."""
-    monkeypatch.setattr(s, "_appel", lambda dest, chemin: ({"orders": [
-        {"status": "filled", "ticket": 1},
-        {"status": "equilibre", "ticket": 2, "message": "libere=5.00"},
-        {"status": "blocked", "ticket": 3},
-    ]}, True))
-    lignes, ok = s.activations(object())
-    assert ok is True and len(lignes) == 1 and lignes[0]["ticket"] == 2
+def test_le_journal_ne_rend_QUE_la_destination_demandee(
+        s, tmp_path, monkeypatch):
+    """⚠️ Melanger les comptes gonflerait le denominateur — et la soupape a
+    ete armee sur le reel seulement."""
+    _journal(tmp_path, monkeypatch, [
+        {"id": 1, "status": "equilibre", "ticket": 2, "pair": "XAU/USD",
+         "sl": 4475.2, "created_at": "2026-08-31T02:48:35+00:00"}])
+    lignes, ok = s.activations(object(), "admin_live")
+    assert ok is True and len(lignes) == 1 and str(lignes[0]["ticket"]) == "2"
+    autres, ok = s.activations(object(), "admin_legacy")
+    assert ok is True and autres == []
+
+
+def test_sans_identifiant_la_sonde_rend_un_ECHEC_de_lecture(
+        s, tmp_path, monkeypatch):
+    """⛔ Le premier correctif lisait `str(dest)` — un repr d'objet qui ne
+    correspondait a aucune ligne. La sonde rendait encore zero, corrigee mais
+    toujours fausse. Un identifiant manquant doit se DIRE."""
+    _journal(tmp_path, monkeypatch, [])
+    lignes, ok = s.activations(object(), None)
+    assert lignes == [] and ok is False

@@ -33,10 +33,21 @@ set -uo pipefail
 DB=${DB:-/opt/scalping/data/trades.db}
 ETAT=${ETAT:-/var/lib/scalping/last-failed-push-id.txt}
 TOKEN="shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg"
-# channel=sales : le fil `trades` est reserve au COMPTE REEL 13137475
-# (2026-08-19). Ce script couvre TOUTES les destinations, il reste donc ici —
-# les refus du compte reel sont deja portes par notify-miroir-demo-reel.sh.
-URL="https://app.scalping-radar.online/api/admin/notify-infra-telegram?token=${TOKEN}&channel=sales"
+# Le fil suit le COMPTE du push (2026-09-06).
+#
+# Jusqu'ici tout partait sur `channel=sales`, c'est-a-dire le bot nomme
+# « IC MARKETS trades » : les echecs de push Kraken et demo s'y melaient aux
+# reels. Le script connait pourtant `destination_id` a chaque ligne.
+#
+# La table des canaux est lue dans le MODULE, jamais recopiee ici — c'est la
+# duplication qui avait deja fait afficher « Demo » sur des trades Kraken.
+BASE_URL="https://app.scalping-radar.online/api/admin/notify-infra-telegram?token=${TOKEN}"
+CANAUX=$(docker exec scalping-radar python -m backend.services.canaux_telegram 2>/dev/null)
+canal() {  # $1 = destination_id -> canal, `infra` si inconnu ou table illisible
+  local c
+  c=$(echo "$CANAUX" | grep -m1 "^$1=" | cut -d= -f2)
+  echo "${c:-infra}"
+}
 
 # Un push est inséré à `ok=0` AVANT l'envoi, puis passé à `ok=1` s'il aboutit.
 # Un `ok=0` récent est donc peut-être simplement en vol : on laisse une marge
@@ -146,7 +157,7 @@ while IFS='|' read -r id dest pair dir ts reponse; do
     echo "  $titre"
     echo -e "$corps" | sed 's/^/    /'
   else
-    curl -sS -m 5 -X POST "$URL" -H "Content-Type: application/json" \
+    curl -sS -m 5 -X POST "${BASE_URL}&channel=$(canal "$dest")" -H "Content-Type: application/json" \
       --data "{\"title\":\"$titre\",\"body\":\"$corps\",\"dedup_key\":\"push_echec_${id}\",\"cooldown_seconds\":86400}" \
       > /dev/null || true
   fi

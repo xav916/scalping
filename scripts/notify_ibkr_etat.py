@@ -43,8 +43,10 @@ INSTANTANE = Path(os.environ.get(
 TOKEN = os.environ.get("INFRA_NOTIFY_TOKEN", "shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg")
 # channel=sales : le fil `trades` est reserve au compte MT5 reel 13137475.
 # IBKR est une autre route, comme Kraken.
+# channel=infra (2026-09-06) : IBKR est ETEINT, son edge mesure negatif.
+# ⛔ Poster son etat parmi les trades laisserait croire qu'il en passe.
 NOTIFY_URL = ("https://app.scalping-radar.online/api/admin/"
-              f"notify-infra-telegram?token={TOKEN}&channel=sales")
+              f"notify-infra-telegram?token={TOKEN}&channel=infra")
 
 
 def _lire(chemin: str):

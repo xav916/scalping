@@ -111,10 +111,19 @@ JOURNAL = os.environ.get("FERMETURE_WEEKEND_JOURNAL",
 
 TOKEN = os.environ.get("INFRA_NOTIFY_TOKEN",
                        "shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg")
-# channel=sales : fermer une position est un evenement de TRADING.
+# Le fil suit le compte CONCERNE (2026-09-06).
+#
+# ⛔ Tout partait sur `channel=sales`, le bot nomme « IC MARKETS trades » : les
+# fermetures du demo s'y affichaient comme des evenements du compte reel.
+#
+# ⚠️ Ce script n'envoie qu'UN digest, qui montre volontairement les deux
+# comptes ensemble — le decouper donnerait deux images partielles. On route
+# donc d'apres son CONTENU : un seul compte concerne, son fil ; plusieurs,
+# `infra`, qui n'attribue rien a personne.
+# ex-commentaire : fermer une position est un evenement de TRADING.
 # ⛔ Omettre `channel` route vers le fil infra EN SILENCE.
-NOTIFY_URL = ("https://app.scalping-radar.online/api/admin/"
-              f"notify-infra-telegram?token={TOKEN}&channel=sales")
+BASE_URL = ("https://app.scalping-radar.online/api/admin/"
+            f"notify-infra-telegram?token={TOKEN}")
 
 RAISON = "pre_weekend"
 
@@ -372,14 +381,28 @@ def _appel(dest, chemin: str, charge: dict | None = None):
         return {"error": f"{type(e).__name__}: {e}"}, False
 
 
-def _notifier(titre: str, corps: str) -> bool:
+def _canal(*groupes) -> str:
+    """Le fil du digest : celui du seul compte concerne, sinon `infra`.
+
+    ⛔ Un digest qui melange deux comptes ne doit pas etre range dans le fil de
+    l'un d'eux — cela attribuerait a un compte des fermetures faites sur
+    l'autre. C'est precisement le defaut repare ce jour-la.
+    """
+    sys.path.insert(0, "/app")
+    from backend.services.canaux_telegram import canal_pour
+    vus = {str(x.get("destination_id")) for g in groupes for x in (g or [])
+           if isinstance(x, dict) and x.get("destination_id")}
+    return canal_pour(next(iter(vus))) if len(vus) == 1 else "infra"
+
+
+def _notifier(titre: str, corps: str, canal: str = "infra") -> bool:
     if os.environ.get("DRY_RUN") == "1":
         print(f"  [DRY_RUN] {titre}\n{corps}\n")
         return False
     charge = json.dumps({"title": titre, "body": corps,
                          "dedup_key": "fermeture_metaux"}).encode("utf-8")
     rq = urllib.request.Request(
-        NOTIFY_URL, data=charge,
+        f"{BASE_URL}&channel={canal}", data=charge,
         headers={"Content-Type": "application/json"}, method="POST")
     try:
         with urllib.request.urlopen(rq, timeout=DELAI) as r:
@@ -460,7 +483,7 @@ def main() -> int:
         return 0
     titre, corps = message(fermees, echouees, forcee, laissees,
                            fermetures_du_jour() if PREAVIS else None)
-    _notifier(titre, corps)
+    _notifier(titre, corps, _canal(fermees, echouees, laissees))
     return 0 if not echouees else 1
 
 

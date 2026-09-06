@@ -129,8 +129,20 @@ TOKEN = os.environ.get("INFRA_NOTIFY_TOKEN",
                        "shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg")
 # channel=sales : une position qui avance est un événement de TRADING.
 # ⛔ Omettre `channel` route vers le fil infra EN SILENCE.
-NOTIFY_URL = ("https://app.scalping-radar.online/api/admin/"
-              f"notify-infra-telegram?token={TOKEN}&channel=sales")
+# ── Le fil suit le COMPTE dont parle le message (2026-09-06) ─────────
+#
+# ⛔ Tout partait sur `channel=sales`, c'est-à-dire le bot nommé « IC MARKETS
+# trades » : les positions Kraken et démo s'affichaient dans le fil du compte
+# forex réel. La sonde connaît pourtant sa destination à chaque message.
+#
+# 🔑 La règle : un message qui parle d'une POSITION part dans le fil de son
+# compte ; un message qui parle de LA SONDE (base illisible, silence, récap
+# global) part sur `infra` — `canal_pour(None)` y mène.
+sys.path.insert(0, "/app")
+from backend.services.canaux_telegram import canal_pour  # noqa: E402
+
+BASE_URL = ("https://app.scalping-radar.online/api/admin/"
+            f"notify-infra-telegram?token={TOKEN}")
 
 
 # --------------------------------------------------------------------------
@@ -352,7 +364,8 @@ def _ecrire_etat(etat: dict) -> None:
         print(f"  etat non ecrit ({e})")
 
 
-def _notifier(titre: str, corps: str, dedup: str) -> bool:
+def _notifier(titre: str, corps: str, dedup: str,
+              destination_id: str | None = None) -> bool:
     """**True seulement si l'envoi est confirmé** (`sent` lu dans la réponse).
 
     ⛔ Un POST qui aboutit ne prouve pas qu'un message est arrivé — c'est ainsi
@@ -364,7 +377,7 @@ def _notifier(titre: str, corps: str, dedup: str) -> bool:
     charge = json.dumps({"title": titre, "body": corps,
                          "dedup_key": dedup}).encode("utf-8")
     rq = urllib.request.Request(
-        NOTIFY_URL, data=charge,
+        f"{BASE_URL}&channel={canal_pour(destination_id)}", data=charge,
         headers={"Content-Type": "application/json"}, method="POST")
     try:
         with urllib.request.urlopen(rq, timeout=DELAI) as r:
@@ -418,7 +431,7 @@ def main() -> int:
         titre, corps = message(p, m, len(muettes), palier)
         print(f"  ALERTE {p.get('symbol')} ticket {p.get('ticket')} "
               f"— {nom_du_palier(palier)} ({m['part']:.0%} du chemin)")
-        if _notifier(titre, corps,
+        if _notifier(titre, corps, destination_id=DESTINATION,
                      dedup=f"tiers_objectif:{p.get('ticket')}:{palier:.4f}"):
             # ⛔ Le palier n'est retenu qu'ici : une annonce ratee doit etre
             # rejouee au passage suivant, pas perdue.

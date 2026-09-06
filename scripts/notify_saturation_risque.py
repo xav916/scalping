@@ -94,8 +94,20 @@ TOKEN = os.environ.get("INFRA_NOTIFY_TOKEN", "shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWc
 # channel=sales : l'admission qui se ferme est un evenement de TRADING, pas
 # d'infrastructure. Meme choix que la sonde des positions non protegees.
 # ⛔ Omettre `channel` router ait vers le fil infra EN SILENCE.
-NOTIFY_URL = ("https://app.scalping-radar.online/api/admin/"
-              f"notify-infra-telegram?token={TOKEN}&channel=sales")
+# ── Le fil suit le COMPTE dont parle le message (2026-09-06) ─────────
+#
+# ⛔ Tout partait sur `channel=sales`, c'est-à-dire le bot nommé « IC MARKETS
+# trades » : les positions Kraken et démo s'affichaient dans le fil du compte
+# forex réel. La sonde connaît pourtant sa destination à chaque message.
+#
+# 🔑 La règle : un message qui parle d'une POSITION part dans le fil de son
+# compte ; un message qui parle de LA SONDE (base illisible, silence, récap
+# global) part sur `infra` — `canal_pour(None)` y mène.
+sys.path.insert(0, "/app")
+from backend.services.canaux_telegram import canal_pour  # noqa: E402
+
+BASE_URL = ("https://app.scalping-radar.online/api/admin/"
+            f"notify-infra-telegram?token={TOKEN}")
 
 # Persistant tant que c'est saturé : quatre rappels par jour au plus. Se taire
 # apres un seul envoi rendrait invisible un blocage qui dure des jours.
@@ -482,7 +494,8 @@ def _ecrire_etats(etats: dict) -> None:
         print(f"  instantané non écrit ({e})")
 
 
-def _notifier(titre: str, corps: str, dedup: str) -> None:
+def _notifier(titre: str, corps: str, dedup: str,
+              destination_id: str | None = None) -> None:
     if os.environ.get("DRY_RUN") == "1":
         print(f"  [DRY_RUN] {titre}\n{corps}\n")
         return
@@ -491,7 +504,7 @@ def _notifier(titre: str, corps: str, dedup: str) -> None:
         "dedup_key": dedup, "cooldown_seconds": COOLDOWN_SEC,
     }).encode("utf-8")
     rq = urllib.request.Request(
-        NOTIFY_URL, data=charge,
+        f"{BASE_URL}&channel={canal_pour(destination_id)}", data=charge,
         headers={"Content-Type": "application/json"}, method="POST")
     try:
         with urllib.request.urlopen(rq, timeout=DELAI) as r:
@@ -612,7 +625,8 @@ def main() -> int:
             continue
         titre, corps = _message(did, e, v)
         print(f"  ALERTE ({avant} -> {v})")
-        _notifier(titre, corps, dedup=f"saturation:{did}:{v}")
+        _notifier(titre, corps, dedup=f"saturation:{did}:{v}",
+                  destination_id=did)
 
     if os.environ.get("DRY_RUN") == "1":
         # ⛔ Une observation ne doit RIEN déplacer. Ce `_ecrire_etats` était

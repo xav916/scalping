@@ -18,8 +18,17 @@ VALID_TOKEN = "shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg"
 
 @pytest.fixture
 def urls_appelees(monkeypatch):
-    """Rend la liste des URL Telegram appelées — le jeton y est visible."""
-    vues: list[str] = []
+    """Rend la liste des URL Telegram appelées — le jeton y est visible.
+
+    ⚠️ `vues.charges` porte en plus les corps envoyés : le jeton dit à QUEL bot
+    le message est parti, le corps dit de quel COMPTE il parle. Les deux sont
+    nécessaires pour juger un repli.
+    """
+    class _Vues(list):
+        charges: list = []
+
+    vues = _Vues()
+    vues.charges = []
 
     class _Reponse:
         status_code = 200
@@ -37,6 +46,7 @@ def urls_appelees(monkeypatch):
 
         async def post(self, url, *a, **kw):
             vues.append(url)
+            vues.charges.append(kw.get("json") or kw.get("data") or {})
             return _Reponse()
 
     import httpx as _httpx
@@ -81,10 +91,15 @@ def test_trades_configure_va_sur_son_propre_bot(client, urls_appelees, monkeypat
     assert "jeton_trades" in urls_appelees[0]
 
 
-def test_trades_non_configure_retombe_sur_sales_SANS_perdre_le_message(
+def test_fil_non_configure_retombe_sur_INFRA_SANS_perdre_le_message(
     client, urls_appelees, monkeypatch
 ):
-    """LE test qui compte : un 503 ici perdrait l'annonce d'un ordre réel."""
+    """LE test qui compte : un 503 ici perdrait l'annonce d'un ordre réel.
+
+    ⚠️ Le repli visait `sales` jusqu'au 06/09. Sous des canaux nommés par
+    COMPTE, cela attribuerait un trade Kraken au compte IC Markets — on se
+    replie donc sur `infra`, qui n'est le fil de trading de personne.
+    """
     import config.settings as _s
     monkeypatch.setattr(_s, "TRADES_TELEGRAM_BOT_TOKEN", "", raising=False)
     monkeypatch.setattr(_s, "TRADES_TELEGRAM_CHAT_ID", "", raising=False)
@@ -92,7 +107,19 @@ def test_trades_non_configure_retombe_sur_sales_SANS_perdre_le_message(
     r = _envoyer(client, "trades")
     assert r.status_code == 200
     assert r.json()["sent"] is True
-    assert "jeton_sales" in urls_appelees[0]
+    assert "jeton_infra" in urls_appelees[0]
+
+
+def test_le_repli_ESTAMPILLE_le_compte_vise(client, urls_appelees, monkeypatch):
+    """⛔ Sans estampille, le repli transforme un message Kraken en message
+    d'infra : on saurait qu'il est arrivé, plus de quel compte il parle."""
+    import config.settings as _s, json
+    monkeypatch.setattr(_s, "TRADES_TELEGRAM_BOT_TOKEN", "", raising=False)
+    monkeypatch.setattr(_s, "TRADES_TELEGRAM_CHAT_ID", "", raising=False)
+
+    _envoyer(client, "trades")
+    envoye = json.dumps(urls_appelees.charges, ensure_ascii=False)
+    assert "KRAKEN" in envoye, envoye
 
 
 def test_jeton_sans_chat_id_retombe_aussi(client, urls_appelees, monkeypatch):
@@ -103,7 +130,17 @@ def test_jeton_sans_chat_id_retombe_aussi(client, urls_appelees, monkeypatch):
 
     r = _envoyer(client, "trades")
     assert r.status_code == 200
-    assert "jeton_sales" in urls_appelees[0]
+    assert "jeton_infra" in urls_appelees[0]
+
+
+def test_un_fil_INFRA_non_configure_ne_boucle_pas(client, monkeypatch):
+    """⛔ Se replier sur infra quand infra lui-même manque doit rendre un 503
+    franc, pas tourner en rond ni prétendre avoir envoyé."""
+    import config.settings as _s
+    for v in ("TRADES_TELEGRAM_BOT_TOKEN", "TRADES_TELEGRAM_CHAT_ID",
+              "INFRA_TELEGRAM_BOT_TOKEN", "INFRA_TELEGRAM_CHAT_ID"):
+        monkeypatch.setattr(_s, v, "", raising=False)
+    assert _envoyer(client, "trades").status_code == 503
 
 
 def test_les_canaux_existants_ne_bougent_pas(client, urls_appelees):

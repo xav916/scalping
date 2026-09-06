@@ -64,8 +64,20 @@ TOKEN = os.environ.get("INFRA_NOTIFY_TOKEN",
                        "shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg")
 # channel=sales : un ordre qui part est un événement de TRADING, pas
 # d'infrastructure. ⛔ Omettre `channel` route vers le fil infra EN SILENCE.
-NOTIFY_URL = ("https://app.scalping-radar.online/api/admin/"
-              f"notify-infra-telegram?token={TOKEN}&channel=sales")
+# ── Le fil suit le COMPTE dont parle le message (2026-09-06) ─────────
+#
+# ⛔ Tout partait sur `channel=sales`, c'est-à-dire le bot nommé « IC MARKETS
+# trades » : les positions Kraken et démo s'affichaient dans le fil du compte
+# forex réel. La sonde connaît pourtant sa destination à chaque message.
+#
+# 🔑 La règle : un message qui parle d'une POSITION part dans le fil de son
+# compte ; un message qui parle de LA SONDE (base illisible, silence, récap
+# global) part sur `infra` — `canal_pour(None)` y mène.
+sys.path.insert(0, "/app")
+from backend.services.canaux_telegram import canal_pour  # noqa: E402
+
+BASE_URL = ("https://app.scalping-radar.online/api/admin/"
+            f"notify-infra-telegram?token={TOKEN}")
 
 # Le rapport de silence est un digest, pas une alarme : au plus un par jour.
 SILENCE_SEC = int(os.environ.get("PREMIER_METAL_SILENCE_SEC", "86400"))
@@ -276,7 +288,8 @@ def _ecrire_etat(etat: dict) -> None:
         print(f"  etat non ecrit ({e})")
 
 
-def _notifier(titre: str, corps: str, dedup: str) -> bool:
+def _notifier(titre: str, corps: str, dedup: str,
+              destination_id: str | None = None) -> bool:
     """Rend **True seulement si l'envoi est confirmé**.
 
     ⛔ On lit `sent` dans la réponse. Un POST qui aboutit ne prouve pas qu'un
@@ -289,7 +302,7 @@ def _notifier(titre: str, corps: str, dedup: str) -> bool:
     charge = json.dumps({"title": titre, "body": corps,
                          "dedup_key": dedup}).encode("utf-8")
     rq = urllib.request.Request(
-        NOTIFY_URL, data=charge,
+        f"{BASE_URL}&channel={canal_pour(destination_id)}", data=charge,
         headers={"Content-Type": "application/json"}, method="POST")
     try:
         with urllib.request.urlopen(rq, timeout=DELAI) as r:
@@ -359,7 +372,8 @@ def main() -> int:
         quelque_chose_est_parti = True
         titre, corps = message_depart(did, partis)
         print(f"  ALERTE : {len(partis)} ordre(s) metal parti(s)")
-        if _notifier(titre, corps, dedup=f"metal_parti:{did}:{borne}"):
+        if _notifier(titre, corps, dedup=f"metal_parti:{did}:{borne}",
+                     destination_id=did):
             # ⛔ Le curseur n'avance qu'ici. Une annonce ratee doit etre
             # rejouee au passage suivant, pas perdue.
             nouveau[f"curseur:{did}"] = borne

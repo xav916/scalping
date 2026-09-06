@@ -289,12 +289,22 @@ def test_main_ne_harcele_pas_un_client_en_veille(script, monkeypatch, tmp_path):
     assert envois == []
 
 
-def test_le_canal_vise_les_ventes_pas_l_infra(script):
-    """Un client sans service est un evenement COMMERCIAL.
+def test_le_canal_ne_vise_AUCUN_de_nos_comptes(script):
+    """⚠️ Le seul message qui n'a plus de maison (2026-09-06).
 
-    Noye dans le fil infra, il se perdrait parmi les redemarrages de bridges.
+    Un client sans service est un evenement COMMERCIAL. Le fil `sales` le
+    portait pour cette raison — mais depuis le decoupage PAR COMPTE, le bot
+    derriere `sales` s'appelle « IC MARKETS trades » : une alerte client s'y
+    afficherait comme un evenement de notre compte reel.
+
+    ⛔ On le range donc sur `infra`, faute de fil commercial. Le risque
+    reconnu par l'ancien test tient toujours : noye parmi les redemarrages de
+    bridges, il peut se perdre — c'est exactement ce qui est arrive a l'alerte
+    de sauvegarde S3, qui criait depuis cinq nuits. A rejuger si un 5e fil
+    est ouvert.
     """
-    assert "channel=sales" in script.NOTIFY_URL
+    assert "channel=infra" in script.NOTIFY_URL
+    assert "channel=sales" not in script.NOTIFY_URL
 
 
 def test_realerte_une_fois_par_jour(script, monkeypatch):

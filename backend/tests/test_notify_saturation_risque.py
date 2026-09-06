@@ -552,6 +552,7 @@ def test_hors_DRY_RUN_l_etat_est_bien_ecrit(s, monkeypatch):
     monkeypatch.setattr(s, "_ecrire_etats", lambda e: ecrits.append(e))
     monkeypatch.setattr(s, "_lire_destination",
                         lambda dest: _eval_deux_poches_pour_message())
-    monkeypatch.setattr(s, "_notifier", lambda t, c, dedup: None)
+    monkeypatch.setattr(s, "_notifier",
+                        lambda t, c, dedup, destination_id=None: None)
     assert s.main() == 0
     assert ecrits and ecrits[0]

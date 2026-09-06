@@ -177,8 +177,9 @@ def _armer(s, monkeypatch, etat, lignes, envoi_reussi):
     monkeypatch.setattr(s, "_ecrire_etat", lambda e: ecrits.update(e))
     monkeypatch.setattr(s, "_lignes_audit",
                         lambda dest, depuis: (list(lignes), True))
-    monkeypatch.setattr(s, "_notifier",
-                        lambda t, c, dedup: envoi_reussi)
+    monkeypatch.setattr(
+        s, "_notifier",
+        lambda t, c, dedup, destination_id=None: envoi_reussi)
     monkeypatch.setattr(s, "_refus_metaux", lambda h: ([], {}))
     return ecrits
 
@@ -231,7 +232,7 @@ def test_PREMIER_passage_pose_le_curseur_sans_rien_annoncer(s, monkeypatch):
                         lambda dest, depuis: ([_ligne(id=9)], True))
     monkeypatch.setattr(s, "_refus_metaux", lambda h: ([], {}))
 
-    def _espion(titre, corps, dedup):
+    def _espion(titre, corps, dedup, destination_id=None):
         annonces.append(titre)
         return True
 
@@ -250,7 +251,8 @@ def test_un_audit_ILLISIBLE_ne_pose_ni_n_avance_le_curseur(s, monkeypatch):
     monkeypatch.setattr(s, "_ecrire_etat", lambda e: ecrits.update(e))
     monkeypatch.setattr(s, "_lignes_audit", lambda dest, depuis: (None, False))
     monkeypatch.setattr(s, "_refus_metaux", lambda h: ([], {}))
-    monkeypatch.setattr(s, "_notifier", lambda t, c, dedup: True)
+    monkeypatch.setattr(s, "_notifier",
+                        lambda t, c, dedup, destination_id=None: True)
     assert s.main() == 0
     assert ecrits["curseur:admin_legacy"] == 5
 

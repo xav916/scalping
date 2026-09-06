@@ -29,7 +29,7 @@ def _charger(db, etat, **env):
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     envois = []
-    mod._notifier = lambda titre, corps, dedup: envois.append(
+    mod._notifier = lambda titre, corps, dedup, destination_id=None: envois.append(
         {"titre": titre, "corps": corps, "dedup": dedup})
     os.environ.clear()
     os.environ.update(anciens)

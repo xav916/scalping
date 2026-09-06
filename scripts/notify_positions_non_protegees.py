@@ -45,8 +45,20 @@ INSTANTANE = Path(os.environ.get(
 
 TOKEN = os.environ.get("INFRA_NOTIFY_TOKEN", "shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg")
 # channel=sales : une position sans stop est un evenement de TRADING.
-NOTIFY_URL = ("https://app.scalping-radar.online/api/admin/"
-              f"notify-infra-telegram?token={TOKEN}&channel=sales")
+# ── Le fil suit le COMPTE dont parle le message (2026-09-06) ─────────
+#
+# ⛔ Tout partait sur `channel=sales`, c'est-à-dire le bot nommé « IC MARKETS
+# trades » : les positions Kraken et démo s'affichaient dans le fil du compte
+# forex réel. La sonde connaît pourtant sa destination à chaque message.
+#
+# 🔑 La règle : un message qui parle d'une POSITION part dans le fil de son
+# compte ; un message qui parle de LA SONDE (base illisible, silence, récap
+# global) part sur `infra` — `canal_pour(None)` y mène.
+sys.path.insert(0, "/app")
+from backend.services.canaux_telegram import canal_pour  # noqa: E402
+
+BASE_URL = ("https://app.scalping-radar.online/api/admin/"
+            f"notify-infra-telegram?token={TOKEN}")
 
 DESTINATIONS_SURVEILLEES = ("admin_live", "admin_legacy", "admin_kraken")
 
@@ -132,7 +144,8 @@ def _ecrire_instantane(cles: set) -> None:
         print(f"  instantané non écrit ({e})")
 
 
-def _notifier(titre: str, corps: str, dedup: str) -> None:
+def _notifier(titre: str, corps: str, dedup: str,
+              destination_id: str | None = None) -> None:
     if os.environ.get("DRY_RUN") == "1":
         print(f"  [DRY_RUN] {titre}\n{corps}")
         return
@@ -141,7 +154,7 @@ def _notifier(titre: str, corps: str, dedup: str) -> None:
         "dedup_key": dedup, "cooldown_seconds": COOLDOWN_SEC,
     }).encode("utf-8")
     rq = urllib.request.Request(
-        NOTIFY_URL, data=charge,
+        f"{BASE_URL}&channel={canal_pour(destination_id)}", data=charge,
         headers={"Content-Type": "application/json"}, method="POST")
     try:
         with urllib.request.urlopen(rq, timeout=DELAI) as r:
@@ -190,7 +203,10 @@ def main() -> int:
             "par rien. Vérifier chez le courtier et reposer un stop, ou fermer."
         )
         print(f"  ALERTE {n['cle']}")
-        _notifier(titre, corps, dedup=f"nue:{n['cle']}")
+        # ⚠️ La cle est `destination:ticket` — la destination est donc
+        # connue ici, et le message part dans le fil de SON compte.
+        _notifier(titre, corps, dedup=f"nue:{n['cle']}",
+                  destination_id=str(n["cle"]).split(":")[0])
 
     if illisibles:
         titre = "⚠️ Protection des positions : lecture impossible"

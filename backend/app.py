@@ -2695,11 +2695,8 @@ async def api_admin_notify_infra_telegram(
     import hashlib
     from fastapi import HTTPException
     import httpx
-    from config.settings import (
-        INFRA_TELEGRAM_BOT_TOKEN, INFRA_TELEGRAM_CHAT_ID,
-        SALES_TELEGRAM_BOT_TOKEN, SALES_TELEGRAM_CHAT_ID,
-        TRADES_TELEGRAM_BOT_TOKEN, TRADES_TELEGRAM_CHAT_ID,
-    )
+    from config import settings as _cfg
+    from backend.services import canaux_telegram as ct
 
     SHADOW_PUBLIC_TOKEN_HASH = "e980b1ed0b45ca6873caa3f2d6ddcf27f4d8a1d0aa87cf9072f6e3e0909b31ec"
 
@@ -2710,32 +2707,44 @@ async def api_admin_notify_infra_telegram(
     if not _s.compare_digest(provided_hash, SHADOW_PUBLIC_TOKEN_HASH):
         raise HTTPException(status_code=403, detail="invalid token")
 
-    channel_norm = (channel or "infra").strip().lower()
-    if channel_norm == "trades":
-        # Repli volontaire sur `sales` tant que le bot dédié n'est pas gréé.
-        # Perdre la notification d'un ordre réel serait pire que la poster sur
-        # le mauvais fil — mais le repli est JOURNALISÉ : une bascule des
-        # scripts avant configuration se verrait, au lieu de se traduire par
-        # un silence qu'on prendrait pour « aucun trade ».
-        if TRADES_TELEGRAM_BOT_TOKEN and TRADES_TELEGRAM_CHAT_ID:
-            bot_token = TRADES_TELEGRAM_BOT_TOKEN
-            chat_id = TRADES_TELEGRAM_CHAT_ID
-        else:
-            logger.warning(
-                "notify-infra-telegram: channel=trades demandé mais "
-                "TRADES_TELEGRAM_* non configuré — repli sur le canal sales"
-            )
-            bot_token = SALES_TELEGRAM_BOT_TOKEN
-            chat_id = SALES_TELEGRAM_CHAT_ID
-            channel_norm = "trades→sales"
-    elif channel_norm == "sales":
-        bot_token = SALES_TELEGRAM_BOT_TOKEN
-        chat_id = SALES_TELEGRAM_CHAT_ID
-    elif channel_norm == "infra":
-        bot_token = INFRA_TELEGRAM_BOT_TOKEN
-        chat_id = INFRA_TELEGRAM_CHAT_ID
-    else:
+    # ── Le fil est nommé par COMPTE (2026-09-06) ──────────────────────
+    #
+    # ⛔ Avant, `trades` désignait le bot Kraken et `sales` le bot IC Markets.
+    # Un script qui notifiait un trade IC Markets écrivait naturellement
+    # `channel=trades` et atterrissait chez Kraken : c'est exactement ce que
+    # faisait `app.py` pour les clôtures. Les canaux portent désormais le nom
+    # du compte — `ic_markets`, `kraken`, `demo`, `infra`.
+    #
+    # ⚠️ Les anciens noms restent acceptés à l'IDENTIQUE (mêmes bots), sans
+    # quoi la bascule déplacerait des messages en silence. Mais leur emploi est
+    # journalisé : sinon un appelant resté en arrière se lit comme un appelant
+    # correct.
+    try:
+        channel_norm, etait_alias = ct.normaliser(channel)
+    except KeyError:
         raise HTTPException(status_code=400, detail=f"unknown channel: {channel}")
+    if etait_alias:
+        logger.info(
+            "notify-infra-telegram: canal hérité %r → %s (%s)",
+            channel, channel_norm, ct.libelle(channel_norm))
+    var_token, var_chat, _lib = ct.CANAUX[channel_norm]
+    bot_token = getattr(_cfg, var_token, "")
+    chat_id = getattr(_cfg, var_chat, "")
+
+    # ⛔ Un fil non gréé ne doit PAS faire disparaître le message : perdre la
+    # notification d'un ordre réel est pire que la ranger ailleurs. On se replie
+    # donc sur `infra` — jamais sur un autre fil de trading, qui attribuerait le
+    # trade au mauvais compte. Le compte visé est estampillé dans le titre, et
+    # le repli journalisé : un repli silencieux se lirait comme un envoi normal.
+    repli_depuis = None
+    if (not bot_token or not chat_id) and channel_norm != "infra":
+        repli_depuis = _lib
+        logger.warning(
+            "notify-infra-telegram: fil %s non configuré (%s/%s) — repli sur infra",
+            channel_norm, var_token, var_chat)
+        channel_norm = f"{channel_norm}→infra"
+        bot_token = getattr(_cfg, "INFRA_TELEGRAM_BOT_TOKEN", "")
+        chat_id = getattr(_cfg, "INFRA_TELEGRAM_CHAT_ID", "")
 
     if not bot_token or not chat_id:
         raise HTTPException(status_code=503, detail=f"{channel_norm} telegram not configured on backend")
@@ -2744,6 +2753,10 @@ async def api_admin_notify_infra_telegram(
     body = (payload.get("body") or "").strip()
     if not title and not body:
         raise HTTPException(status_code=400, detail="title or body required")
+    if repli_depuis:
+        # Le lecteur doit voir de quel compte on parle, sans quoi le repli
+        # transforme un message d'un compte en message d'infra.
+        title = f"{repli_depuis} {title}".strip()
 
     # Cooldown : skip si dedup_key déjà envoyé récemment.
     dedup_key = (payload.get("dedup_key") or "").strip()

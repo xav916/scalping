@@ -19,9 +19,14 @@
 set -uo pipefail
 
 TOKEN="shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg"
-# channel=sales : le fil `trades` est reserve au COMPTE REEL 13137475
+# channel=kraken (2026-09-06) : ce script ne parle QUE de Kraken.
+#
+# Il postait sur `sales`, c'est-a-dire le bot nomme « IC MARKETS trades » :
+# des ordres crypto s'affichaient dans le fil du compte forex reel. L'ancien
+# commentaire disait vrai a l'envers — `trades` visait le bot Kraken.
+# ex-commentaire : le fil `trades` est reserve au COMPTE REEL 13137475
 # (2026-08-19, demande de Xavier). Kraken est une autre route, il reste ici.
-NOTIFY_URL="https://app.scalping-radar.online/api/admin/notify-infra-telegram?token=${TOKEN}&channel=sales"
+NOTIFY_URL="https://app.scalping-radar.online/api/admin/notify-infra-telegram?token=${TOKEN}&channel=kraken"
 ETAT=/var/lib/scalping/last-kraken-trade-id.txt
 
 mkdir -p "$(dirname "$ETAT")"
