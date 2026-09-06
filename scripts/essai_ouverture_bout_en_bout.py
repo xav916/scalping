@@ -122,6 +122,18 @@ def _verifier_pastille(texte: str, sens: str) -> list[str]:
     return []
 
 
+def _euros_dans(texte: str, etiquette: str):
+    """Le montant en euros qui suit `etiquette`. `None` si introuvable."""
+    import re
+    m = re.search(etiquette + r"[^0-9+-]*([+-]?[0-9]+(?:,[0-9]+)?)\s*€", texte)
+    if not m:
+        return None
+    try:
+        return abs(float(m.group(1).replace(",", ".")))
+    except ValueError:
+        return None
+
+
 def _montrer(texte: str, anomalies: list[str]) -> None:
     print("\n".join("  | " + l for l in texte.splitlines()))
     if anomalies:
@@ -169,14 +181,17 @@ async def _ouverture(did, libelle, setup, volume, motif, envoyer):
     return anomalies
 
 
-def _cloture_depuis(setup, volume) -> dict:
+def _cloture_depuis(setup, volume, gain_eur) -> dict:
     """La clôture de CE trade, gagnante à l'objectif.
 
     ⚠️ Les noms de champs sont ceux que `_format_close` et `_risque_annonce`
     lisent réellement — `take_profit` au singulier côté clôture, et
     `stop_loss` pour retrouver ce que l'ouverture avait annoncé.
     """
-    brut = abs(setup.take_profit_1 - setup.entry_price)
+    # ⛔ Le P&L doit etre en EUROS. Mon premier jeu d'essai le calculait en
+    # devise de COTATION — « Prevu +10,42 € -> Realise +0,02 € » — c'est-a-dire
+    # exactement la confusion reparee ce matin dans `risk_eur`, refaite ici.
+    # Un jeu d'essai faux fait passer du code juste pour casse, et l'inverse.
     return {
         "pair": setup.pair,
         "direction": setup.direction,
@@ -185,7 +200,7 @@ def _cloture_depuis(setup, volume) -> dict:
         "stop_loss": setup.stop_loss,
         "take_profit": setup.take_profit_1,
         "size_lot": volume,
-        "pnl": round(brut * volume, 2),
+        "pnl": gain_eur,
         "close_reason": "TP",
         "mt5_ticket": "ESSAI-" + setup.pair.replace("/", ""),
         "created_at": "2026-09-06T17:00:00+00:00",
@@ -194,14 +209,14 @@ def _cloture_depuis(setup, volume) -> dict:
     }
 
 
-async def _cloture(did, libelle, setup, volume, envoyer):
+async def _cloture(did, libelle, setup, volume, gain_eur, envoyer):
     """⛔ La clôture est la MOITIÉ manquante. Le fil démo recevait des
     ouvertures qui ne se refermaient jamais — une demi-histoire, pire que pas
     d'histoire — et c'est la clôture qui porte le RÉSULTAT."""
     from backend.services import telegram_service as ts
     from backend.services.canaux_telegram import canal_pour, libelle as lib
 
-    trade = _cloture_depuis(setup, volume)
+    trade = _cloture_depuis(setup, volume, gain_eur)
     canal = canal_pour(did)
     texte = ts._format_close(trade, did, essai=True)
 
@@ -219,7 +234,18 @@ async def _cloture(did, libelle, setup, volume, envoyer):
         anomalies.append("ligne « Prévu → Réalisé » absente")
     if lib(canal) != libelle:
         anomalies.append(f"fil {canal} ≠ compte attendu {libelle}")
-    anomalies += _verifier_pastille(texte, setup.direction)
+    # ⚠️ PAS de contrôle de pastille ici : la clôture porte légitimement 🔚,
+    # qui dit « c'est fini », et non le sens du trade. Mon premier essai
+    # appliquait le contrôle de l'ouverture et criait sur du code juste — un
+    # essai qui se trompe coûte plus cher qu'un essai absent.
+    if gain_eur is not None:
+        realise = _euros_dans(texte, "Réalisé")
+        if realise is not None and abs(realise - gain_eur) > 0.05:
+            # 🔑 Un objectif atteint doit donner Prévu ≈ Réalisé. Un écart
+            # large signale que l'une des deux conversions a dérivé — la
+            # classe de défaut exacte du 06/09.
+            anomalies.append(
+                f"objectif atteint mais Prévu {gain_eur} € ≠ Réalisé {realise} €")
 
     _montrer(texte, anomalies)
     if envoyer:
@@ -236,7 +262,12 @@ async def main(envoyer: bool) -> int:
     total = []
     for did, libelle, setup, volume, motif in CAS:
         total += await _ouverture(did, libelle, setup, volume, motif, envoyer)
-        total += await _cloture(did, libelle, setup, volume, envoyer)
+        # Le gain attendu vient du MEME calcul que le message d'ouverture :
+        # c'est ce qui rend la comparaison « Prevu vs Realise » signifiante.
+        from backend.services import telegram_service as _ts
+        m = _ts._montants_du_trade(setup, volume, did) or {}
+        total += await _cloture(did, libelle, setup, volume,
+                                m.get("gain_eur"), envoyer)
 
     print(f"\n{SEP}")
     if total:
