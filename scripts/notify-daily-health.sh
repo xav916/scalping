@@ -245,7 +245,13 @@ REPONSE=$(curl -sS --max-time 15 -X POST \
   -d "parse_mode=HTML" -d "disable_web_page_preview=true" 2>&1)
 
 if echo "$REPONSE" | grep -q '"ok":true'; then
-  echo "$(date -Iseconds) sante envoyee — Telegram a CONFIRME"
+  # ⛔ L'IDENTIFIANT du message est journalise. « Telegram a confirme » ne
+  # suffisait pas : quand Xavier a dit ne pas avoir recu le recap de 22h, il a
+  # fallu renvoyer un temoin pour prouver ou il etait parti. Avec l'id, le log
+  # devient verifiable — un objet qu'on peut retrouver dans la conversation.
+  ID=$(echo "$REPONSE" | grep -oE '"message_id":[0-9]+' | head -1 | cut -d: -f2)
+  CIBLE=$(echo "$REPONSE" | grep -oE '"username":"[^"]+"' | head -1 | cut -d'"' -f4)
+  echo "$(date -Iseconds) sante envoyee — Telegram a CONFIRME (message ${ID:-?} vers @${CIBLE:-?})"
 else
   echo "$(date -Iseconds) sante NON DELIVREE : $(echo "$REPONSE" | head -c 300)" >&2
   exit 1
