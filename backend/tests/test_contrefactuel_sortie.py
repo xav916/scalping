@@ -132,3 +132,106 @@ def test_le_bilan_compare_les_MEMES_trades(tmp_path, monkeypatch):
     assert r["r_realise_total"] == pytest.approx(1.2)
     assert r["r_contrefactuel_total"] == pytest.approx(-0.2)
     assert "sortir tôt a MIEUX fait" in r["verdict"]
+
+
+# ── ⛔ Une panne de lecture n'est pas une absence d'événement ─────────
+#
+# Trouvé au PREMIER passage réel du 06/09 : 13 lignes déclarées « expirées »
+# alors que Twelve Data refusait sur quota (429). Le verdict « ni le stop ni
+# l'objectif n'ont été touchés » était en réalité « je n'ai pas pu regarder ».
+
+import sqlite3
+
+import pytest
+
+
+def _ligne(tmp_path, monkeypatch, closed_at, sl=95.0, tp=108.0):
+    monkeypatch.setattr(cf, "_DB", tmp_path / "t.db")
+    cf.init_schema()
+    c = sqlite3.connect(str(tmp_path / "t.db"), isolation_level=None)
+    c.execute("""INSERT INTO contrefactuels_sortie
+        (trade_id,destination_id,pair,direction,entry_price,sl,tp,exit_price,
+         closed_at,close_reason,r_realise)
+        VALUES (1,'admin_live','EUR/USD','buy',100.0,?,?,101.0,?,'MANUAL',0.2)""",
+              (sl, tp, closed_at))
+    c.close()
+
+
+def _issue(tmp_path):
+    c = sqlite3.connect(str(tmp_path / "t.db"))
+    v = c.execute("SELECT issue FROM contrefactuels_sortie").fetchone()[0]
+    c.close()
+    return v
+
+
+@pytest.mark.asyncio
+async def test_bougies_ILLISIBLES_laissent_en_attente(tmp_path, monkeypatch):
+    """⛔ Le défaut du 06/09 : un 429 devenait « expiré »."""
+    _ligne(tmp_path, monkeypatch, "2026-01-01T00:00:00+00:00")   # tres vieux
+
+    async def _casse(pair, interval=None, outputsize=None):
+        raise RuntimeError("429 Too Many Requests")
+
+    r = await cf.resoudre(fetch_candles=_casse)
+    assert _issue(tmp_path) is None, "une panne de lecture ne tranche RIEN"
+    assert r["en_attente"] == 1
+
+
+@pytest.mark.asyncio
+async def test_liste_VIDE_ne_vaut_pas_lecture(tmp_path, monkeypatch):
+    """Le quota rend `[]` exactement comme un marché sans bougie."""
+    _ligne(tmp_path, monkeypatch, "2026-01-01T00:00:00+00:00")
+
+    async def _vide(pair, interval=None, outputsize=None):
+        return ([], False)
+
+    await cf.resoudre(fetch_candles=_vide)
+    assert _issue(tmp_path) is None
+
+
+@pytest.mark.asyncio
+async def test_bougies_LUES_sans_touche_expirent(tmp_path, monkeypatch):
+    """Le cas legitime : on a regardé, rien n'a été touché, le délai est passé."""
+    _ligne(tmp_path, monkeypatch, "2026-01-01T00:00:00+00:00")
+
+    async def _calme(pair, interval=None, outputsize=None):
+        return ([{"high": 101.0, "low": 99.0,
+                  "timestamp": "2026-01-02T00:00:00+00:00"}], False)
+
+    await cf.resoudre(fetch_candles=_calme)
+    assert _issue(tmp_path) == "expire"
+
+
+@pytest.mark.asyncio
+async def test_objectif_touche_donne_le_R_du_niveau(tmp_path, monkeypatch):
+    _ligne(tmp_path, monkeypatch, "2026-01-01T00:00:00+00:00")
+
+    async def _gagne(pair, interval=None, outputsize=None):
+        return ([{"high": 109.0, "low": 99.0,
+                  "timestamp": "2026-01-02T00:00:00+00:00"}], False)
+
+    await cf.resoudre(fetch_candles=_gagne)
+    c = sqlite3.connect(str(tmp_path / "t.db"))
+    issue, rc = c.execute(
+        "SELECT issue, r_contrefactuel FROM contrefactuels_sortie").fetchone()
+    c.close()
+    assert issue == "TP"
+    assert rc == pytest.approx((108 - 100) / (100 - 95))    # 1,6 R
+
+
+@pytest.mark.asyncio
+async def test_indetermine_ne_recoit_AUCUN_R(tmp_path, monkeypatch):
+    """⛔ Ne pas savoir ne s'impute pas : ni gain, ni perte."""
+    _ligne(tmp_path, monkeypatch, "2026-01-01T00:00:00+00:00")
+
+    async def _les_deux(pair, interval=None, outputsize=None):
+        return ([{"high": 109.0, "low": 94.0,
+                  "timestamp": "2026-01-02T00:00:00+00:00"}], False)
+
+    await cf.resoudre(fetch_candles=_les_deux)
+    c = sqlite3.connect(str(tmp_path / "t.db"))
+    issue, rc = c.execute(
+        "SELECT issue, r_contrefactuel FROM contrefactuels_sortie").fetchone()
+    c.close()
+    assert issue == "indetermine"
+    assert rc is None

@@ -42,6 +42,12 @@ _DB = Path("/app/data/trades.db") if Path("/app").exists() else Path("trades.db"
 # été touchés en une semaine ne dit plus rien sur la décision de sortie.
 JOURS_MAX = 7
 
+# ⚠️ Le contrefactuel partage le quota Twelve Data avec le radar. 200 bougies
+# horaires couvrent 8 jours — plus que `JOURS_MAX` — et le premier passage du
+# 06/09 a sature l'API. 120 suffisent pour 5 jours et coutent le meme appel,
+# mais on garde le reglage lisible pour pouvoir le baisser encore.
+OUTPUTSIZE = 120
+
 # ⛔ Un stop collé à l'entrée fait exploser le R — un USD/JPY à 0,0063 % de
 # distance a rendu +79 R sur le démo et déplacé la moyenne de +0,43 à +3,99.
 # Ces trades sont EXCLUS de la mesure, pas corrigés : leur R n'a pas de sens.
@@ -197,15 +203,23 @@ async def resoudre(fetch_candles=None) -> dict:
         achat = str(l["direction"] or "").lower().startswith("b")
 
         issue = None
+        lecture_ok = False
         try:
-            bougies, _ = await fetch_candles(l["pair"], interval="1h", outputsize=200)
-            recentes = [b for b in (bougies or [])
-                        if _apres(b, ferme)]
+            bougies, _ = await fetch_candles(l["pair"], interval="1h", outputsize=OUTPUTSIZE)
+            recentes = [b for b in (bougies or []) if _apres(b, ferme)]
+            # ⛔ Une liste VIDE n'est pas une lecture : le quota Twelve Data rend
+            # `[]` quand il refuse, exactement comme un marche sans bougie.
+            lecture_ok = bool(recentes)
             issue = issue_depuis_bougies(recentes, l["sl"], l["tp"], achat)
         except Exception as e:  # noqa: BLE001
             logger.warning(f"contrefactuel: bougies indisponibles pour {l['pair']} : {e}")
 
-        if issue is None and age >= JOURS_MAX:
+        # ⛔ On n'expire QUE si les bougies ont ete LUES et n'ont rien montre.
+        # Sans ce garde-fou, un refus de quota se convertit en verdict « aucun
+        # niveau touche » — trouve au premier passage reel du 06/09, ou 13
+        # lignes ont ete declarees expirees sur des 429. Une panne de lecture
+        # n'est pas une absence d'evenement.
+        if issue is None and lecture_ok and age >= JOURS_MAX:
             issue = "expire"
         if issue is None:
             compte["en_attente"] += 1
