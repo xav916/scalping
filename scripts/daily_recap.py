@@ -267,10 +267,18 @@ def render(date_str: str, mt5_data: dict, binance: dict, activite: dict | None =
         # conteneur. Les recalculer ici serait impossible — ce script tourne
         # sur l'hote, sans le paquet `backend` — et mon premier essai
         # retombait en SILENCE sur « admin_live admin_live ».
-        for dest, d in mt5_data.items():
-            if dest.startswith("_") or not isinstance(d, dict):
-                continue
-            lines += [f"{d.get('libelle') or dest}"]
+        # ⚠️ Deux destinations peuvent partager un FIL, donc un libelle :
+        # `admin_kraken` et `admin_kraken_spot` sont toutes deux
+        # « [REEL · KRAKEN] ». Deux sections du meme nom seraient illisibles —
+        # on ajoute l'identifiant SEULEMENT quand il y a ambiguite.
+        comptes = [(k, v) for k, v in mt5_data.items()
+                   if not k.startswith("_") and isinstance(v, dict)]
+        vus = [v.get("libelle") for _, v in comptes]
+        for dest, d in comptes:
+            titre = d.get("libelle") or dest
+            if vus.count(titre) > 1:
+                titre = f"{titre} · {dest}"
+            lines += [titre]
             if d.get("trades", 0):
                 lines += [
                     f"• {d['trades']} trades fermés",
