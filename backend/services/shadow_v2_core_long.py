@@ -406,6 +406,47 @@ SHADOW_CONFIG: dict[str, dict[str, Any]] = {
 }
 
 
+# ─── La portée Kraken COMPLÈTE la configuration (2026-09-06) ──────────
+#
+# ⛔ L'univers Kraken avait TROIS sources de vérité éditées à la main, et rien
+# ne vérifiait leur accord :
+#
+#     liste ci-dessus (code)          -> produit les signaux 1 jour
+#     WATCHED_PAIRS_ADMIN_KRAKEN      -> autorise le routage
+#     KRAKEN_LIVE_WHITELIST_SYMBOLS   -> autorise l'exécution chez le courtier
+#
+# Deux défauts dans la même journée du 06/09 : une portée construite depuis le
+# mauvais univers a coupé 11 paires le matin ; six paires ouvertes dans la
+# portée ET la whitelist ne pouvaient produire AUCUN signal le soir, absentes
+# de la liste ci-dessus.
+#
+# 🔑 Le second est le pire : **une porte ouverte sur une pièce vide se voit
+# moins qu'une porte fermée.** Pas d'erreur, pas de refus — juste une absence
+# de trades qu'on met sur le compte du marché.
+#
+# ⚠️ La dérivation ne fait qu'AJOUTER : `setdefault`. Une paire déjà réglée à la
+# main — l'or, l'argent, le WTI, les SPDR — garde son réglage mesuré. Le gabarit
+# générique est un défaut, jamais une surcharge.
+def _completer_depuis_la_portee_kraken() -> None:
+    try:
+        from config.settings import WATCHED_PAIRS_PAR_DESTINATION as _portees
+    except Exception:  # noqa: BLE001 — réglages illisibles : on n'ajoute rien
+        return
+    for paire in sorted((_portees or {}).get("admin_kraken") or ()):
+        SHADOW_CONFIG.setdefault(paire, {
+            "tf": "1d",
+            "patterns": CRYPTO_LONG_PATTERNS,
+            "system_id": f"V2_CORE_LONG_{str(paire).replace('/', '')}_1D",
+            # ⚠️ Aucun backtest : la valeur la plus prudente de la
+            # configuration, par analogie avec ETH — comme pour les paires
+            # ajoutées à la main le 2026-08-08.
+            "risk_pct": 0.0025,
+        })
+
+
+_completer_depuis_la_portee_kraken()
+
+
 def _configs_par_horizon() -> list[tuple[str, dict[str, Any]]]:
     """``[(paire, cfg), ...]`` — un element par (paire, horizon) servi.
 
