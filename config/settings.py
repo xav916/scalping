@@ -216,6 +216,15 @@ SALES_TELEGRAM_CHAT_ID = os.getenv("SALES_TELEGRAM_CHAT_ID", "")
 # mauvais fil. Le repli est journalisé, il ne passe pas en silence.
 TRADES_TELEGRAM_BOT_TOKEN = os.getenv("TRADES_TELEGRAM_BOT_TOKEN", "")
 TRADES_TELEGRAM_CHAT_ID = os.getenv("TRADES_TELEGRAM_CHAT_ID", "")
+# 5e fil : IBKR (2026-09-07). Decision de Xavier en rallumant la Voie C sur
+# les ETF sectoriels — il veut suivre ce compte depuis son telephone, et
+# l'application IBKR est inutilisable tant que le Gateway occupe la session.
+#
+# ⚠️ Tant que ces deux valeurs sont vides, l'endpoint replie sur `infra` en
+# ESTAMPILLANT « [REEL · IBKR] » dans le titre : rien n'est perdu avant que le
+# bot existe, et la bascule se fait d'elle-meme.
+IBKR_TELEGRAM_BOT_TOKEN = os.getenv("IBKR_TELEGRAM_BOT_TOKEN", "")
+IBKR_TELEGRAM_CHAT_ID = os.getenv("IBKR_TELEGRAM_CHAT_ID", "")
 # Secret du webhook Telegram sales bot. Telegram envoie ce header
 # `X-Telegram-Bot-Api-Secret-Token` sur chaque POST → l'endpoint webhook le
 # compare en compare_digest. Si vide, le webhook accepte tout (mode dev).

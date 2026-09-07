@@ -29,17 +29,29 @@ def test_chaque_compte_a_SON_fil(destination_id, attendu):
     assert ct.canal_pour(destination_id) == attendu
 
 
-def test_les_quatre_fils_visent_QUATRE_bots_distincts():
+def test_chaque_fil_vise_un_bot_DISTINCT():
     """⛔ Deux canaux partageant un jeton fusionneraient deux comptes sans
-    qu'aucun test ne s'en aperçoive."""
+    qu'aucun test ne s'en aperçoive.
+
+    ⚠️ Écrit « == 4 » à l'origine : l'ajout du 5e fil (IBKR, 07/09) l'a fait
+    échouer alors que l'invariant tenait. Un test qui compte au lieu de
+    vérifier la PROPRIÉTÉ casse à chaque ajout légitime."""
     jetons = [v[0] for v in ct.CANAUX.values()]
-    assert len(set(jetons)) == 4, jetons
+    assert len(set(jetons)) == len(ct.CANAUX), jetons
 
 
-def test_IBKR_ne_va_PAS_sur_un_fil_de_trading():
-    """IBKR est éteint — son edge mesuré négatif. Poster son état parmi les
-    trades laisserait croire qu'il en passe."""
-    assert ct.canal_pour("admin_ibkr") == "infra"
+def test_IBKR_a_SON_fil_depuis_le_07_09():
+    """⚠️ La prémisse s'est inversée. IBKR n'avait pas de fil TANT QU'IL ÉTAIT
+    ÉTEINT : poster son état parmi les trades aurait laissé croire qu'il en
+    passait.
+
+    En rallumant la Voie C sur les ETF sectoriels, Xavier a demandé un fil
+    dédié — l'application mobile IBKR est inutilisable tant que le Gateway
+    occupe la session, donc Telegram est le SEUL moyen de suivre ce compte
+    depuis un téléphone."""
+    assert ct.canal_pour("admin_ibkr") == "ibkr"
+    assert ct.est_un_compte_de_trading("admin_ibkr") is True
+    assert ct.libelle("ibkr") == "[RÉEL · IBKR]"
 
 
 def test_un_compte_INCONNU_part_sur_infra_jamais_sur_un_fil_de_trading():

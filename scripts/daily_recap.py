@@ -204,9 +204,14 @@ def _compte(dest):
                  "latent": o.get("pnl_net_usd"), "positions": None,
                  "devise": "USD"}}
     return None
+# ⚠️ IBKR entre ici le 07/09, en rallumant la Voie C. Sans cette ligne, le
+# compte aurait trade sans apparaitre dans aucun recap — exactement ce qui
+# est arrive a Kraken pendant des semaines.
 DEVISES = {{"admin_live": "EUR", "admin_legacy": "EUR",
-            "admin_kraken": "USD", "admin_kraken_spot": "USD"}}
-for dest in ("admin_live", "admin_kraken", "admin_kraken_spot", "admin_legacy"):
+            "admin_kraken": "USD", "admin_kraken_spot": "USD",
+            "admin_ibkr": "USD"}}
+for dest in ("admin_live", "admin_kraken", "admin_kraken_spot",
+             "admin_ibkr", "admin_legacy"):
     # ⚠️ Une destination absente du registre n'a pas de section : inventer une
     # ligne « 0 trade » pour un compte qui n'existe pas ferait croire a un
     # compte silencieux la ou il n'y a pas de compte.

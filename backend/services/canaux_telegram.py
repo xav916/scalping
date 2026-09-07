@@ -64,6 +64,10 @@ CANAUX: dict[str, tuple[str, str, str, str]] = {
                "[RÉEL · KRAKEN]", "🟪"),
     "demo": ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID",
              "[DÉMO · PEPPERSTONE]", "🟦"),
+    # 🟥 IBKR — rouge, la couleur d'Interactive Brokers. Fil ouvert le 07/09
+    # en rallumant la Voie C sur les ETF sectoriels.
+    "ibkr": ("IBKR_TELEGRAM_BOT_TOKEN", "IBKR_TELEGRAM_CHAT_ID",
+             "[RÉEL · IBKR]", "🟥"),
     "infra": ("INFRA_TELEGRAM_BOT_TOKEN", "INFRA_TELEGRAM_CHAT_ID",
               "[INFRA]", "⚙️"),
 }
@@ -75,15 +79,18 @@ ALIAS: dict[str, str] = {"sales": "ic_markets", "trades": "kraken"}
 
 # Le compte dont parle la notification → son fil.
 #
-# ⛔ IBKR n'a pas de fil : il est ÉTEINT, et son edge mesuré négatif. Ses rares
-# messages d'état vont sur `infra` — les mêler aux trades donnerait à croire
-# qu'il en passe.
+# ⚠️ IBKR a SON fil depuis le 07/09. Il n'en avait pas tant qu'il etait
+# eteint — ses messages d'etat allaient sur `infra`, pour ne pas donner a
+# croire qu'il passait des ordres. En rallumant la Voie C sur les ETF
+# sectoriels, Xavier a demande un fil dedie : l'application mobile IBKR est
+# inutilisable tant que le Gateway occupe la session, donc Telegram est le
+# SEUL moyen de suivre ce compte depuis un telephone.
 _PAR_DESTINATION: dict[str, str] = {
     "admin_live": "ic_markets",
     "admin_kraken": "kraken",
     "admin_kraken_spot": "kraken",
     "admin_legacy": "demo",
-    "admin_ibkr": "infra",
+    "admin_ibkr": "ibkr",
 }
 
 
@@ -126,7 +133,7 @@ def libelle_avec_picto(canal: str) -> str:
     return f"{picto(canal)} {libelle(canal)}"
 
 
-FILS_DE_TRADING = frozenset({"ic_markets", "kraken", "demo"})
+FILS_DE_TRADING = frozenset({"ic_markets", "kraken", "demo", "ibkr"})
 
 
 def est_un_compte_de_trading(destination_id: str | None) -> bool:
