@@ -1225,7 +1225,7 @@ def _risque_annonce(trade: dict, destination_id: str | None):
 
 
 def _format_close(trade: dict, destination_id: str | None = None,
-                  essai: bool = False) -> str:
+                  essai: bool = False, etat_risque: dict | None = None) -> str:
     """Format vulgarisé fermeture : 'résultat + impact sur ton solde'.
 
     Réécrit 2026-06-13 pour parler au lambda.
@@ -1456,6 +1456,15 @@ def _format_close(trade: dict, destination_id: str | None = None,
             lines.extend(juge)
             lines.append("")
 
+    # Le risque du COMPTE, pas seulement celui du trade (2026-09-08). Une
+    # clôture LIBÈRE de la marge : c'est précisément l'instant où l'état
+    # change, donc celui où il vaut la peine d'être dit.
+    from backend.services.bloc_risque import lignes as _lignes_risque
+    bloc = _lignes_risque(etat_risque, apres_cloture=True)
+    if bloc:
+        lines.extend(bloc)
+        lines.append("")
+
     lines.append(f"`#{ticket}`")
     if essai:
         # Meme bandeau qu'a l'ouverture : un essai emprunte le vrai chemin,
@@ -1464,6 +1473,33 @@ def _format_close(trade: dict, destination_id: str | None = None,
         lines.append("Message fabriqué pour vérifier l'aiguillage et les "
                      "montants. Aucune position n'a été fermée.")
     return "\n".join(lines)
+
+
+async def _etat_risque_hors_boucle(destination_id: str | None) -> dict:
+    """Lit la porte de risque du courtier SANS bloquer la boucle d'événements.
+
+    ⛔ `bloc_risque.etat()` fait du réseau bloquant (urllib, 10 s de délai par
+    appel). L'appeler depuis le formateur figerait l'API pendant la lecture, à
+    l'instant précis où un ordre vient de partir — le pire moment.
+
+    ⚠️ Budget serré et échec avalé : ne pas savoir le risque ne doit JAMAIS
+    empêcher d'annoncer le trade. Le bloc dira « illisible », ce qui est vrai,
+    plutôt que de taire la position ou d'afficher un zéro rassurant.
+
+    🔑 5 secondes, et non les 10 du délai d'un appel bridge : cette coroutine
+    est `await`ée DANS le chemin de dispatch (`mt5_bridge`, `kraken_*`), donc
+    chaque seconde ici retarde les ordres suivants. Une lecture saine prend
+    quelques centaines de millisecondes ; le plafond ne mord que sur un bridge
+    qui pend — cas où l'on préfère justement dire « illisible » vite.
+    """
+    import asyncio
+    try:
+        from backend.services.bloc_risque import etat
+        return await asyncio.wait_for(
+            asyncio.to_thread(etat, destination_id), timeout=5.0)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"état de risque indisponible ({destination_id}) : {e}")
+        return {"lisible": False, "motif": "lecture trop lente ou en échec"}
 
 
 def _canal_trade(destination_id: str | None) -> tuple[str, list]:
@@ -1547,7 +1583,9 @@ async def send_close(trade: dict, destination_id: str | None = None,
                      f"un compte de trading — skip")
         return
 
-    text = _format_close(trade, dest_close, essai=essai)
+    etat_risque = await _etat_risque_hors_boucle(dest_close)
+    text = _format_close(trade, dest_close, essai=essai,
+                         etat_risque=etat_risque)
 
     # ⚠️ Un miroir vers le canal sales existait ici (2026-08-02) : chaque
     # clôture partait DEUX fois, sur deux canaux, dans le même format. Il
@@ -1757,6 +1795,7 @@ def _unite_de_volume(setup, destination_id: str | None) -> str:
 def _format_trade_opened(
     setup, ticket: int | str, fill_price: float, volume: float,
     mode: str, destination_id: str | None = None, essai: bool = False,
+    etat_risque: dict | None = None,
 ) -> str:
     """Format vulgarisé : 'qu'est-ce qui se passe, combien je gagne/perds, pourquoi'.
 
@@ -1840,6 +1879,17 @@ def _format_trade_opened(
     lines.append(" · ".join(detail))
     lines.append("")
 
+    # Le risque du COMPTE (2026-09-08). « Risque −7,20 € » ne disait pas s'il
+    # restait de la place pour le trade suivant : c'est un montant sans
+    # dénominateur. Le bloc lui en donne un.
+    from backend.services.bloc_risque import lignes as _lignes_risque
+    bloc = _lignes_risque(
+        etat_risque,
+        risque_trade_eur=(montants or {}).get("risque_eur"))
+    if bloc:
+        lines.extend(bloc)
+        lines.append("")
+
     # Justification du trade (pattern + score IA), vulgarisée
     try:
         pat_val = setup.pattern.pattern.value if hasattr(setup.pattern.pattern, "value") else str(setup.pattern.pattern)
@@ -1896,9 +1946,11 @@ async def send_trade_opened(
                      f"de trading — skip")
         return
     try:
+        etat_risque = await _etat_risque_hors_boucle(destination_id)
         text = _format_trade_opened(
             setup, ticket, fill_price, volume, mode,
             destination_id=destination_id, essai=essai,
+            etat_risque=etat_risque,
         )
         jeton, destinataires = _canal_trade(destination_id)
         url = TELEGRAM_API.format(token=jeton)

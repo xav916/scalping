@@ -2926,7 +2926,13 @@ async def _build_sales_recap_text(date_iso: str | None = None) -> str:
 # chiffres divergeraient sans que rien ne le dise.
 # ──────────────────────────────────────────────────────────────────────
 
-_RISQUE_DESTINATIONS = ("admin_live", "admin_legacy")
+# ⛔ Kraken et IBKR en étaient ABSENTS jusqu'au 08/09 : la commande
+# `risque` ne parlait que des deux comptes MT5, alors que Kraken engage
+# de l'argent réel avec le plafond le PLUS LARGE des trois (50 %).
+# ⚠️ Un compte injoignable rend « illisible », jamais un zéro : IBKR
+# éteint le dira, ce qui vaut mieux que de le passer sous silence.
+_RISQUE_DESTINATIONS = ("admin_live", "admin_legacy", "admin_kraken",
+                        "admin_ibkr")
 
 
 def _eur(x: float) -> str:
@@ -2956,7 +2962,10 @@ def _mesurer_risque_destinations() -> list[dict]:
         dest = DESTINATIONS.get(did)
         if dest is None:
             continue
-        evaluation = _lire_destination(dest)
+        # Tout en euros avant tout affichage : le formateur écrit « € »
+        # et n'a aucun moyen de savoir que Kraken parle dollars.
+        from backend.services.bloc_risque import normaliser_en_eur
+        evaluation = normaliser_en_eur(_lire_destination(dest))
         mesures.append({
             "id": did,
             "badge": dest.badge,

@@ -105,6 +105,10 @@ TOKEN = os.environ.get("INFRA_NOTIFY_TOKEN", "shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWc
 # global) part sur `infra` — `canal_pour(None)` y mène.
 sys.path.insert(0, "/app")
 from backend.services.canaux_telegram import canal_pour  # noqa: E402
+# ⛔ Kraken rend des DOLLARS (`risque_ouvert_usd`), et tout ce fichier
+# écrit « € ». Le message annonçait donc ~16 % de trop sur le seul
+# compte dont le plafond est à 50 %. Conversion au POINT UNIQUE.
+from backend.services.bloc_risque import normaliser_en_eur  # noqa: E402
 
 BASE_URL = ("https://app.scalping-radar.online/api/admin/"
             f"notify-infra-telegram?token={TOKEN}")
@@ -319,7 +323,7 @@ def evaluer(positions: list, equity: float, plafond_pct: float,
     plafond, pct = plafonds[q_max], _pct(q_max)
 
     return {
-        "lisible": True, "indecidable": indecidable,
+        "lisible": True, "indecidable": indecidable, "devise": "EUR",
         "poche": q_max, "multi_poches": or_separe,
         "detail_poches": {
             q: {"risque": total[q], "plafond": plafonds[q], "pct": _pct(q),
@@ -337,7 +341,7 @@ def evaluer(positions: list, equity: float, plafond_pct: float,
 def evaluation_illisible() -> dict:
     """⛔ Muet n'est pas sain. Un bridge injoignable ne vaut pas « 0 % »."""
     return {
-        "lisible": False, "indecidable": True,
+        "lisible": False, "indecidable": True, "devise": None,
         "poche": None, "multi_poches": False, "detail_poches": {},
         "risque_total": None, "plafond": None, "pct": None, "restant": None,
         "nues": 0, "non_mesurables": 0, "positions": 0,
@@ -448,6 +452,7 @@ def _lire_kraken(dest) -> dict:
         "risque_total": charge.get("risque_ouvert_usd"),
         "plafond": charge.get("plafond_usd"),
         "poche": "kraken",
+        "devise": "USD",
     })
 
     if not charge.get("porte_armee"):
@@ -657,7 +662,7 @@ def main() -> int:
         if dest is None:
             continue
         print(f"{did} :")
-        e = _lire_destination(dest)
+        e = normaliser_en_eur(_lire_destination(dest))
         v = verdict(e, SEUIL_PCT)
         if e.get("desarme"):
             print("    plafond désarmé — rien à saturer")
