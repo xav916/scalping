@@ -59,6 +59,87 @@ FACTEURS: tuple[int, ...] = tuple(
 # de quoi travailler — `detect_patterns` en regarde jusqu'à 30.
 MIN_BOUGIES = 40
 
+# ⛔ Le cycle ne fournit que `CANDLE_COUNT` bougies de 5 min — **50**. Agrégées,
+# cela donne 16 en M15 et 8 en M30 : sous le minimum, écartées, et rien n'aurait
+# jamais été produit. C'était la vraie cause d'inertie, invisible parce que le
+# `continue` ne disait rien.
+#
+# 🔑 On MÉMORISE donc les bougies entre les cycles, au lieu d'acheter des
+# requêtes en plus. C'est exactement ce que Xavier décrivait — « capitaliser et
+# agréger les analyses » — et ça ne coûte pas un appel : le quota Twelve Data a
+# déjà saturé une fois (954 refus 429).
+#
+# ⚠️ Le tampon vit en mémoire : un redémarrage le vide et il se remplit seul.
+# 400 bougies de 5 min ≈ 33 h, soit 66 bougies M30 — de quoi détecter.
+MAX_MEMOIRE = int(os.getenv("ECHELLES_MEMOIRE_M5", "400"))
+_memoire: dict[str, dict] = {}
+# Ce qu'on a déjà dit sur chaque (paire, échelle) — on ne le redit qu'au
+# CHANGEMENT. ⛔ Sinon 8 500 lignes par jour, et la trace utile s'y noie.
+_dit: dict[tuple, bool] = {}
+# Les paires deja preremplies — une seule tentative par processus.
+_preremplies: set[str] = set()
+
+
+def memoriser(pair: str, candles: list) -> list:
+    """Fusionne les bougies du cycle dans le tampon, et rend le tampon complet.
+
+    Dédoublonné par horodatage : deux cycles consécutifs se recouvrent presque
+    entièrement, seule la ou les dernières bougies sont neuves.
+    """
+    if not candles:
+        return list((_memoire.get(pair) or {}).values())
+    par_date = _memoire.setdefault(pair, {})
+    for c in candles:
+        d = getattr(c, "timestamp", None)
+        if d is not None:
+            par_date[d] = c
+    if len(par_date) > MAX_MEMOIRE:
+        for d in sorted(par_date)[:len(par_date) - MAX_MEMOIRE]:
+            del par_date[d]
+    return [par_date[d] for d in sorted(par_date)]
+
+
+def bougies_manquantes(pair: str) -> int:
+    """Combien de bougies de 5 min manquent à cette paire pour servir TOUTES
+    ses échelles. Zéro si le tampon suffit déjà."""
+    if not FACTEURS:
+        return 0
+    besoin = MIN_BOUGIES * max(FACTEURS) + max(FACTEURS)   # + une marge d'alignement
+    return max(0, min(besoin, MAX_MEMOIRE) - len(_memoire.get(pair) or {}))
+
+
+async def preremplir(pair: str, fetch, interval: str = "5min") -> int:
+    """Remplit le tampon d'un coup, UNE fois par paire et par processus.
+
+    ⛔ Sans lui, le tampon met ~16 h à atteindre M30 en n'ajoutant qu'une
+    bougie toutes les 5 minutes — et **chaque redéploiement le vide**. Le
+    dispositif ne se serait probablement jamais allumé.
+
+    ⚠️ Best-effort et silencieux en cas d'échec côté appelant : un essai en
+    observation ne doit pas pouvoir casser le cycle qui, lui, trade. Un seul
+    appel par paire, donc négligeable devant le quota — qui a déjà saturé une
+    fois (954 refus 429).
+    """
+    if pair in _preremplies or not FACTEURS:
+        return 0
+    _preremplies.add(pair)              # ⛔ posé AVANT l'appel : un échec ne
+                                        # doit pas se retenter à chaque cycle
+    manque = bougies_manquantes(pair)
+    if manque <= 0:
+        return 0
+    taille = min(MAX_MEMOIRE, MIN_BOUGIES * max(FACTEURS) + max(FACTEURS))
+    recues = await fetch(pair, interval=interval, outputsize=taille)
+    avant = len(_memoire.get(pair) or {})
+    apres = len(memoriser(pair, recues or []))
+    logger.info("echelle_agregee: %s preremplie — %d bougies (etait %d)",
+                pair, apres, avant)
+    return apres - avant
+
+
+def etat_memoire() -> dict[str, int]:
+    """Combien de bougies chaque paire a capitalisé. Pour les sondes."""
+    return {p: len(v) for p, v in sorted(_memoire.items())}
+
 
 def horizon_pour(facteur: int) -> str:
     """L'étiquette d'horizon d'une échelle. 3 → `15min`, 6 → `30min`."""
@@ -121,16 +202,33 @@ def setups_agreges(candles_m5: list, pair: str, is_simulated: bool = False) -> l
     n'empêche le chemin 5 min. ⛔ Une piste en observation ne doit jamais
     pouvoir casser le flux qui, lui, trade.
     """
-    if not FACTEURS or not candles_m5:
+    if not FACTEURS:
+        return []
+    # 🔑 On travaille sur le TAMPON, pas sur les 50 bougies du cycle.
+    mem = memoriser(pair, candles_m5)
+    if not mem:
         return []
     from backend.services.pattern_detector import (calculate_trade_setup,
                                                    detect_patterns)
     out = []
     for facteur in FACTEURS:
         try:
-            agregees = agreger(candles_m5, facteur)
+            agregees = agreger(mem, facteur)
             if len(agregees) < MIN_BOUGIES:
+                # ⛔ Dit UNE fois, au changement d'état seulement. Le silence
+                # d'origine ici a masqué l'inertie complète du dispositif.
+                if _dit.get((pair, facteur)) is not True:
+                    _dit[(pair, facteur)] = True
+                    logger.info(
+                        "echelle_agregee: %s %s en attente — %d bougies "
+                        "agregees sur %d (tampon %d/%d bougies 5 min)",
+                        pair, horizon_pour(facteur), len(agregees),
+                        MIN_BOUGIES, len(mem), MAX_MEMOIRE)
                 continue
+            if _dit.get((pair, facteur)) is not False:
+                _dit[(pair, facteur)] = False
+                logger.info("echelle_agregee: %s %s ACTIVE — %d bougies",
+                            pair, horizon_pour(facteur), len(agregees))
             trouves = []
             for motif in detect_patterns(agregees, pair):
                 s = calculate_trade_setup(pair, motif, agregees,

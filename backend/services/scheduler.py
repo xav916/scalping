@@ -217,7 +217,12 @@ async def run_analysis_cycle() -> None:
                 # 5 min. Sans score de confiance, `filter_high_confidence_setups`
                 # les ecarterait en silence -- defaut attrape avant deploiement.
                 try:
-                    from backend.services.echelle_agregee import setups_agreges
+                    from backend.services.echelle_agregee import (
+                        preremplir, setups_agreges)
+                    # ⛔ Une seule fois par paire : sans ce prechargement le
+                    # tampon met ~16 h a servir M30, et chaque redeploiement le
+                    # vide. Le dispositif ne se serait jamais allume.
+                    await preremplir(pair, fetch_candles)
                     for _s in setups_agreges(
                             candles, pair,
                             is_simulated=simulated_pairs.get(pair, False)):

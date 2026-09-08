@@ -230,3 +230,149 @@ def test_le_nom_du_motif_traverse_les_DEUX_emballages():
     enum = type("E", (), {"value": "breakout_up"})()
     p = type("P", (), {"pattern": enum})()
     assert ea._motif(type("S", (), {"pattern": p})()) == "breakout_up"
+
+
+# ── Le tampon : la vraie cause d'inertie ─────────────────────────────
+#
+# ⛔ Le cycle ne fournit que CANDLE_COUNT=50 bougies de 5 min. Agrégées : 16 en
+# M15, 8 en M30 — sous le minimum, écartées, et RIEN n'aurait jamais été
+# produit. Invisible, parce que le `continue` ne disait rien.
+
+@pytest.fixture(autouse=True)
+def _tampon_neuf():
+    ea._memoire.clear()
+    ea._dit.clear()
+    yield
+    ea._memoire.clear()
+    ea._dit.clear()
+
+
+def test_les_cycles_SUCCESSIFS_s_accumulent():
+    """🔑 « Capitaliser et agréger les analyses » — la demande de Xavier, prise
+    au mot. Sans cela, 50 bougies ne suffiront jamais."""
+    ea.memoriser("XAU/USD", _serie(50))
+    t0 = datetime(2026, 9, 8, 10, tzinfo=timezone.utc)
+    suite = [Candle(timestamp=t0 + timedelta(minutes=5 * i), open=1.0, high=2.0,
+                    low=0.5, close=1.5, volume=1.0) for i in range(45, 95)]
+    total = ea.memoriser("XAU/USD", suite)
+    assert len(total) == 95            # 50 + 50 - 5 de recouvrement
+
+
+def test_le_recouvrement_ne_DUPLIQUE_pas():
+    """Deux cycles consécutifs se recouvrent presque entièrement."""
+    ea.memoriser("XAU/USD", _serie(50))
+    assert len(ea.memoriser("XAU/USD", _serie(50))) == 50
+
+
+def test_le_tampon_est_BORNE():
+    """⚠️ Sinon il grandit sans fin sur un processus qui tourne des semaines."""
+    grand = ea.MAX_MEMOIRE + 120
+    t0 = datetime(2026, 9, 8, tzinfo=timezone.utc)
+    ea.memoriser("XAU/USD", [Candle(timestamp=t0 + timedelta(minutes=5 * i),
+                                    open=1.0, high=2.0, low=0.5, close=1.5,
+                                    volume=1.0) for i in range(grand)])
+    assert len(ea._memoire["XAU/USD"]) == ea.MAX_MEMOIRE
+
+
+def test_le_tampon_garde_les_bougies_les_plus_RECENTES():
+    """⛔ Tronquer par le mauvais bout donnerait une détection sur un passé
+    mort, sans que rien ne le signale."""
+    t0 = datetime(2026, 9, 8, tzinfo=timezone.utc)
+    n = ea.MAX_MEMOIRE + 10
+    ea.memoriser("EUR/USD", [Candle(timestamp=t0 + timedelta(minutes=5 * i),
+                                    open=1.0, high=2.0, low=0.5, close=1.5,
+                                    volume=1.0) for i in range(n)])
+    gardees = sorted(ea._memoire["EUR/USD"])
+    assert gardees[-1] == t0 + timedelta(minutes=5 * (n - 1))
+
+
+def test_les_paires_ne_se_MELANGENT_pas():
+    ea.memoriser("XAU/USD", _serie(20))
+    ea.memoriser("EUR/USD", _serie(7))
+    assert ea.etat_memoire() == {"EUR/USD": 7, "XAU/USD": 20}
+
+
+def test_l_ATTENTE_est_DITE_une_seule_fois(caplog):
+    """⛔ Le defaut d'origine : un `continue` muet. Mais le dire a chaque cycle
+    ferait 8 500 lignes par jour — on le dit au CHANGEMENT d'etat."""
+    import logging
+    with caplog.at_level(logging.INFO, logger=ea.__name__):
+        for _ in range(4):
+            ea.setups_agreges(_serie(50), "XAU/USD")
+    attentes = [r for r in caplog.records if "en attente" in r.getMessage()]
+    assert len(attentes) == len(ea.FACTEURS), [r.getMessage() for r in attentes]
+    assert "tampon" in attentes[0].getMessage()
+
+
+# ── Le pre-remplissage ───────────────────────────────────────────────
+
+@pytest.fixture(autouse=True)
+def _preremplies_neuves():
+    ea._preremplies.clear()
+    yield
+    ea._preremplies.clear()
+
+
+async def _fetch_factice(appels, n=400):
+    async def _f(pair, interval="5min", outputsize=50):
+        appels.append((pair, interval, outputsize))
+        return _serie(min(n, outputsize))
+    return _f
+
+
+@pytest.mark.asyncio
+async def test_le_preremplissage_remplit_le_tampon_d_un_coup():
+    """⛔ Sans lui, ~16 h pour servir M30 — et chaque redeploiement remet a
+    zero. Le dispositif ne se serait jamais allume."""
+    appels = []
+    f = await _fetch_factice(appels)
+    ajoutees = await ea.preremplir("XAU/USD", f)
+    assert ajoutees > ea.MIN_BOUGIES * max(ea.FACTEURS) - 10
+    assert appels[0][1] == "5min"
+    assert appels[0][2] >= ea.MIN_BOUGIES * max(ea.FACTEURS)
+
+
+@pytest.mark.asyncio
+async def test_il_n_a_lieu_qu_UNE_fois_par_paire():
+    """⚠️ Un appel par cycle et par paire saturerait le quota — qui a deja
+    rendu 954 refus 429."""
+    appels = []
+    f = await _fetch_factice(appels)
+    for _ in range(5):
+        await ea.preremplir("XAU/USD", f)
+    assert len(appels) == 1
+
+
+@pytest.mark.asyncio
+async def test_un_ECHEC_ne_se_retente_pas_a_chaque_cycle():
+    """⛔ Le marqueur est pose AVANT l'appel : sinon une paire en erreur
+    rappellerait la source a chaque passage, indefiniment."""
+    appels = []
+
+    async def _casse(pair, interval="5min", outputsize=50):
+        appels.append(pair)
+        raise RuntimeError("source indisponible")
+
+    for _ in range(3):
+        try:
+            await ea.preremplir("XAU/USD", _casse)
+        except RuntimeError:
+            pass
+    assert len(appels) == 1
+
+
+@pytest.mark.asyncio
+async def test_un_tampon_DEJA_plein_n_appelle_rien():
+    appels = []
+    f = await _fetch_factice(appels)
+    ea.memoriser("XAU/USD", _serie(ea.MAX_MEMOIRE))
+    assert await ea.preremplir("XAU/USD", f) == 0
+    assert appels == []
+
+
+def test_le_scheduler_PREREMPLIT_avant_de_detecter():
+    """⛔ Le branchement doit exister : le module seul ne se declenche pas."""
+    src = io.open("backend/services/scheduler.py", encoding="utf-8").read()
+    debut = src.index("setups_agreges")
+    bloc = src[max(0, debut - 400):debut + 1200]
+    assert "await preremplir(pair, fetch_candles)" in bloc
