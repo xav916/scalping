@@ -349,3 +349,56 @@ def test_le_canal_utilise_EXISTE_vraiment():
     assert 'canal = canal_pour(' in src
     assert 'canal = "sales"' not in src
     libelle_avec_picto(canal_pour("admin_live"))     # ne doit pas lever
+
+
+# ── L'observation ────────────────────────────────────────────────────
+
+def test_une_cellule_REFUTEE_est_annoncee_AVANT_d_etre_fermee():
+    """🔑 Sans ca, le mecanisme resterait muet jusqu'au soir ou il ferme —
+    une decision surgie de nulle part. La, on voit venir : « 1 nuit sur 3 »."""
+    derniere = _nuits([_huit_motifs("poc_return_up")])
+    g = rg.en_observation(derniere)
+    assert [c["motif"] for c in g] == ["poc_return_up"]
+    assert g[0]["nuits"] == 1
+    texte = " ".join(rg._lignes_observation(g))
+    assert "En observation" in texte
+    assert "1/3 nuits" in texte
+
+
+def test_le_compteur_de_nuits_REPART_apres_une_interruption():
+    """⛔ Compter les REFUTE au total, et non la SUITE en cours, ferait fermer
+    sur un historique troue — exactement ce que l'hysteresis doit empecher."""
+    derniere = _nuits([
+        _huit_motifs("poc_return_up", labo.REFUTE),
+        _huit_motifs("poc_return_up", labo.REFUTE),
+        _huit_motifs("poc_return_up", labo.INSUFFISANT),
+    ])
+    # ⚠️ La fenetre ne retient que NUITS_CONSECUTIVES jours : la derniere nuit
+    # est INSUFFISANT, donc la suite en cours vaut zero.
+    assert rg.en_observation(derniere) == []
+
+
+def test_une_cellule_DEJA_fermee_n_est_plus_guettee():
+    _nuits([_huit_motifs("poc_return_up")] * rg.NUITS_CONSECUTIVES)
+    derniere = _mesure(_huit_motifs("poc_return_up"))
+    rg.decider(derniere)
+    rg._cache.clear()
+    assert rg.en_observation(derniere) == []
+
+
+def test_une_observation_SEULE_declenche_bien_un_message(monkeypatch):
+    """⚠️ Sinon le premier soir serait silencieux et on croirait le labo mort."""
+    recu = {}
+
+    class _R:
+        @staticmethod
+        def raise_for_status(): return None
+
+    import httpx
+    monkeypatch.setattr(httpx, "post",
+                        lambda url, json=None, headers=None, timeout=None:
+                        (recu.update(json or {}), _R())[1])
+    monkeypatch.setenv("INFRA_TELEGRAM_TOKEN", "jeton")
+    derniere = _nuits([_huit_motifs("poc_return_up")])
+    rg._notifier(derniere, [])
+    assert "En observation" in recu.get("body", "")

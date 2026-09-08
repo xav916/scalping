@@ -367,6 +367,45 @@ def cycle_nocturne() -> dict:
             "actions": actions, "plafond": mesure.get("plafond")}
 
 
+def en_observation(mesure: dict, pair: str = PAIRE) -> list[dict]:
+    """Les cellules réfutées qui n'ont pas encore assez de nuits pour agir.
+
+    🔑 Sans ça, le mécanisme resterait muet jusqu'au soir où il ferme quelque
+    chose — une décision surgie de nulle part. Là, on voit venir : « 1 nuit sur
+    3 ». C'est la différence entre un automate et une boîte noire.
+    """
+    historique = _dernieres_nuits(pair, NUITS_CONSECUTIVES)
+    dejas = fermetures(pair)
+    out = []
+    for c in (mesure.get("cellules") or []):
+        if c["verdict"] != labo.REFUTE:
+            continue
+        cle = (c["horizon"], c["motif"])
+        if cle in dejas:
+            continue                    # déjà fermé, plus rien à guetter
+        verdicts = historique.get(cle) or []
+        suite = 0
+        for v in verdicts:              # du plus récent au plus ancien
+            if v != labo.REFUTE:
+                break
+            suite += 1
+        if suite < NUITS_CONSECUTIVES:
+            out.append({**c, "nuits": suite})
+    return out
+
+
+def _lignes_observation(guettees: list[dict]) -> list[str]:
+    if not guettees:
+        return []
+    out = ["👁️ <b>En observation</b> — perd de façon nette, pas encore fermé :"]
+    for c in sorted(guettees, key=lambda x: x["t"]):
+        out.append(f"• {c['horizon']} {c['motif']} {c['sens']} — "
+                   f"{c['r_moyen']:+.2f} R sur {c['n']} trades "
+                   f"(t={c['t']:+.2f}) · {c['nuits']}/{NUITS_CONSECUTIVES} nuits")
+    out.append("")
+    return out
+
+
 def _notifier(mesure: dict, actions: list[dict]) -> None:
     """Un message par nuit, sur le fil du compte concerné.
 
@@ -378,7 +417,8 @@ def _notifier(mesure: dict, actions: list[dict]) -> None:
                    if a["action"] in (FERMER, ROUVRIR, REFUSE_PLANCHER)]
     retenues = [c for c in (mesure.get("cellules") or [])
                 if c["verdict"] == labo.RETENU]
-    if not interessant and not retenues:
+    guettees = en_observation(mesure)
+    if not interessant and not retenues and not guettees:
         # ⛔ Pas de message quand il n'y a rien à dire. Le bruit quotidien est
         # ce qui a noyé l'alerte de sauvegarde S3 pendant cinq nuits.
         logger.info("labo_or: rien à signaler (%d cellules, plafond %.2f)",
@@ -395,7 +435,8 @@ def _notifier(mesure: dict, actions: list[dict]) -> None:
             return
         base = os.getenv("INTERNAL_API_BASE_URL",
                          "http://127.0.0.1:8000").rstrip("/")
-        corps = "\n".join(labo.lignes(mesure) + [""] + lignes(actions))
+        corps = "\n".join(labo.lignes(mesure) + [""]
+                          + _lignes_observation(guettees) + lignes(actions))
         if any(a["action"] in (FERMER, ROUVRIR) for a in interessant):
             corps += ("\n\n⚠️ Cette décision vaut pour TOUS les comptes qui "
                       "servent cet horizon, argent réel compris. Elle ne ferme "
