@@ -82,8 +82,21 @@ _preremplies: set[str] = set()
 
 # ⛔ ETALEMENT. La premiere version preremplissait les 23 paires dans la meme
 # seconde : 23 requetes de 246 bougies d'un coup sur une API plafonnee A LA
-# MINUTE. C'est un burst par construction, et le quota Twelve Data a deja
-# sature une fois (954 refus 429) — « la concurrence n'est pas le debit ».
+# MINUTE. C'est un burst par construction — « la concurrence n'est pas le
+# debit », la lecon des 954 refus 429.
+#
+# ⚠️ CORRECTION de ce que j'avais ecrit le 2026-09-08 : j'ai impute a cette
+# rafale les refus 429 vus juste apres. C'etait FAUX. Mesure au redemarrage
+# suivant : 29 refus, TOUS dans le premier cycle — celui qui n'a fait AUCUN
+# preremplissage — et zero aux deux cycles qui en ont fait un. Le burst 429
+# au demarrage est ANTERIEUR a ce module : le cycle a froid va chercher 23
+# paires (bougies + prix) sans cache et depasse le plafond a la minute. Il
+# varie de 11 a 29 selon l'etat du marche.
+#
+# 🔑 L'etalement reste juste sur le principe — une grosse requete par cycle
+# vaut mieux que 23 d'un coup — mais il ne corrige pas ce burst-la, et le
+# premier cycle apres CHAQUE deploiement reste degrade. C'est un constat a
+# traiter pour lui-meme, pas un effet de bord des echelles agregees.
 #
 # 🔑 Une seule paire par passage. 23 paires × 3 min de cycle ≈ 70 minutes pour
 # tout remplir, contre ~16 h sans prechargement. Le cout devient +1 requete par
