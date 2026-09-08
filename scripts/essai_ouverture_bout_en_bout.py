@@ -224,6 +224,11 @@ async def _cloture(did, libelle, setup, volume, gain_eur, envoyer):
 
     trade = _cloture_depuis(setup, volume, gain_eur)
     canal = canal_pour(did)
+    # ⛔ `_etat_risque` n'etait importe que dans `_ouverture` : la
+    # cloture levait un `NameError` et la batterie mourait apres le
+    # PREMIER compte, en ayant affiche « aucune anomalie ». Le fichier
+    # importe `backend` en local partout (sys.path), on suit sa regle.
+    from backend.services.bloc_risque import etat as _etat_risque
     texte = ts._format_close(trade, did, essai=True,
                              etat_risque=_etat_risque(did))
 
