@@ -94,8 +94,17 @@ def trim_old_heartbeats(keep_days: int = 14) -> int:
                 """
                 -- ⛔ `replace(...,'T',' ')` : stockage ISO avec `T`,
                 -- `datetime('now',...)` avec une ESPACE, et `T` > espace en
-                -- comparaison de chaines. Sans cela la purge ne supprimait
-                -- JAMAIS rien -- 52 663 lignes accumulees.
+                -- comparaison de chaines.
+                --
+                -- ⚠️ La severite depend de la LONGUEUR de la fenetre, et je
+                -- l'avais d'abord surestimee. Pour une borne a -7 jours, les
+                -- dates plus anciennes se comparent correctement par leur
+                -- prefixe : seules les lignes du JOUR DE LA BORNE echappaient
+                -- a la purge (366 sur 49 259 mesurees le 08/09).
+                --
+                -- 🔑 C'est sur les fenetres COURTES que le defaut est total :
+                -- la borne tombe aujourd'hui, et toutes les lignes du jour la
+                -- depassent. Une fenetre de 20 minutes rendait la journee.
                 DELETE FROM radar_cycle_heartbeat
                 WHERE replace(cycle_completed_at,'T',' ') < datetime('now', ?)
                 """,

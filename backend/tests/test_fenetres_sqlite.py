@@ -14,9 +14,15 @@ avertissement, avec un résultat parfaitement crédible.
 - **04/09** : la mesure de saturation Twelve Data
   ([[project_saturation_twelvedata_2026_09_04]]).
 - **08/09** : la déduplication du backtest portait sur la journée au lieu d'une
-  heure ; la purge du heartbeat n'avait **jamais** rien supprimé (52 663 lignes
-  accumulées) ; et mes propres mesures « sur 20 minutes » rendaient la journée,
-  ce qui m'a fait annoncer une anomalie qui n'existait pas.
+  heure, et mes propres mesures « sur 20 minutes » rendaient la journée entière
+  — ce qui m'a fait annoncer une anomalie qui n'existait pas.
+
+⚠️ **La sévérité dépend de la longueur de la fenêtre**, et je l'avais d'abord
+surestimée. Sur une borne à −7 jours, les dates plus anciennes se comparent
+correctement par leur préfixe : seules les lignes du **jour de la borne**
+échappent (366 sur 49 259, mesuré). Le défaut n'est TOTAL que sur les fenêtres
+courtes, où la borne tombe aujourd'hui et où toutes les lignes du jour la
+dépassent.
 
 🔑 La forme du défaut : *une fenêtre qui ne filtre pas se lit comme une fenêtre
 qui filtre.* Rien ne distingue les deux à l'œil.
