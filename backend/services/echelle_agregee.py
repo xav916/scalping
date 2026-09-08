@@ -102,6 +102,18 @@ def agreger(candles: list, facteur: int) -> list:
     return out
 
 
+def _motif(setup) -> str:
+    """Le nom du motif, quelle que soit la profondeur d'emballage.
+
+    ⚠️ `setup.pattern` est un objet Pattern dont `.pattern` est l'enum. Ma
+    sonde de mesure s'est trompée de niveau et a rendu « n=1 » sur chaque
+    ligne — un regroupement qui ne regroupait rien.
+    """
+    p = getattr(setup, "pattern", None)
+    p = getattr(p, "pattern", p)
+    return str(getattr(p, "value", p))
+
+
 def setups_agreges(candles_m5: list, pair: str, is_simulated: bool = False) -> list:
     """Les setups détectés sur les échelles agrégées, horizon estampillé.
 
@@ -119,6 +131,7 @@ def setups_agreges(candles_m5: list, pair: str, is_simulated: bool = False) -> l
             agregees = agreger(candles_m5, facteur)
             if len(agregees) < MIN_BOUGIES:
                 continue
+            trouves = []
             for motif in detect_patterns(agregees, pair):
                 s = calculate_trade_setup(pair, motif, agregees,
                                           is_simulated=is_simulated)
@@ -128,7 +141,17 @@ def setups_agreges(candles_m5: list, pair: str, is_simulated: bool = False) -> l
                 # l'ecrase pas s'il existe. C'est lui qui tient la portee : le
                 # compte reel n'autorise que `5min,4h`.
                 s.horizon = horizon_pour(facteur)
-                out.append(s)
+                trouves.append(s)
+            if trouves:
+                # ⛔ Trace POSITIVE, au niveau INFO. Sans elle le dispositif
+                # serait muet : on ne saurait dire s'il ne produit rien parce
+                # que le marché n'offre rien, ou parce qu'il est cassé. C'est
+                # le mode de défaillance déjà rencontré trois fois ici —
+                # « enregistrer ≠ dire ».
+                logger.info("echelle_agregee: %s %s -> %d setup(s) [%s]",
+                            pair, horizon_pour(facteur), len(trouves),
+                            ", ".join(sorted({_motif(x) for x in trouves})))
+            out.extend(trouves)
         except Exception as e:  # noqa: BLE001
-            logger.debug("echelle_agregee %s x%d : %s", pair, facteur, e)
+            logger.warning("echelle_agregee %s x%d : %s", pair, facteur, e)
     return out

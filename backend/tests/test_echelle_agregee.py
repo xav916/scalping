@@ -183,3 +183,50 @@ def test_le_scheduler_ENRICHIT_les_setups_agreges():
     bloc = src[debut:debut + 1200]
     assert "enrich_trade_setup" in bloc
     assert "compute_verdict" in bloc
+
+
+# ── La trace ─────────────────────────────────────────────────────────
+
+def test_une_production_est_DITE_au_niveau_info(caplog):
+    """⛔ Sans trace positive on ne saurait pas distinguer « le marché n'offre
+    rien » de « c'est casse ». Le mode de defaillance deja rencontre trois fois
+    dans ce projet — enregistrer n'est pas dire."""
+    import logging
+    faux = type("S", (), {"horizon": None,
+                          "pattern": type("P", (), {"pattern": type(
+                              "E", (), {"value": "momentum_up"})()})()})
+    monkey = {"n": 0}
+
+    def _detect(candles, pair):
+        return ["motif"]
+
+    def _calc(pair, motif, candles, is_simulated=False):
+        monkey["n"] += 1
+        return faux()
+
+    import backend.services.pattern_detector as pd
+    old_d, old_c = pd.detect_patterns, pd.calculate_trade_setup
+    pd.detect_patterns, pd.calculate_trade_setup = _detect, _calc
+    try:
+        with caplog.at_level(logging.INFO, logger=ea.__name__):
+            ea.setups_agreges(_serie(300), "XAU/USD")
+    finally:
+        pd.detect_patterns, pd.calculate_trade_setup = old_d, old_c
+    assert any("echelle_agregee:" in r.message for r in caplog.records)
+    assert any("momentum_up" in str(r.getMessage()) for r in caplog.records)
+
+
+def test_un_echec_est_DIT_lui_aussi(caplog):
+    """⚠️ Il était en `debug` : un module qui echoue a chaque cycle serait
+    invisible en production."""
+    import io as _io
+    src = _io.open("backend/services/echelle_agregee.py", encoding="utf-8").read()
+    assert "logger.warning(\"echelle_agregee %s x%d" in src
+
+
+def test_le_nom_du_motif_traverse_les_DEUX_emballages():
+    """⛔ `setup.pattern` est un objet Pattern dont `.pattern` est l'enum. Ma
+    sonde s'est trompee de niveau et a rendu « n=1 » partout."""
+    enum = type("E", (), {"value": "breakout_up"})()
+    p = type("P", (), {"pattern": enum})()
+    assert ea._motif(type("S", (), {"pattern": p})()) == "breakout_up"
