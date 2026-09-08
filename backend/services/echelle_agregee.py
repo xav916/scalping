@@ -88,9 +88,14 @@ _preremplies: set[str] = set()
 # 🔑 Une seule paire par passage. 23 paires × 3 min de cycle ≈ 70 minutes pour
 # tout remplir, contre ~16 h sans prechargement. Le cout devient +1 requete par
 # cycle pendant une heure, puis zero.
+# ⚠️ 150 s, soit un peu moins que le cycle de 180 s : exactement UN
+# pré-remplissage par passage. Et le compteur démarre à l'IMPORT, ce qui fait
+# sauter le PREMIER cycle — celui d'après redémarrage, qui va chercher les 23
+# paires à froid. Mesuré : les 11 refus 429 restants tombaient tous là, et zéro
+# aux deux cycles suivants. Le pic n'est pas le débit moyen.
 SECONDES_ENTRE_PREREMPLISSAGES = float(
-    os.getenv("ECHELLES_DELAI_PREREMPLISSAGE_S", "30"))
-_dernier_preremplissage: list[float] = [0.0]
+    os.getenv("ECHELLES_DELAI_PREREMPLISSAGE_S", "150"))
+_dernier_preremplissage: list[float] = [time.monotonic()]
 
 
 def memoriser(pair: str, candles: list) -> list:

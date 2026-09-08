@@ -466,3 +466,30 @@ async def test_le_delai_est_REGLABLE_sans_redeploiement():
     import io as _io
     src = _io.open("backend/services/echelle_agregee.py", encoding="utf-8").read()
     assert 'os.getenv("ECHELLES_DELAI_PREREMPLISSAGE_S"' in src
+
+
+@pytest.mark.asyncio
+async def test_le_PREMIER_cycle_apres_redemarrage_est_saute():
+    """⛔ Mesure : les 11 refus 429 restants tombaient TOUS dans le premier
+    cycle — celui qui va chercher les 23 paires a froid — et zero aux deux
+    suivants. Le compteur demarre a l'import, ce cycle-la est donc saute.
+
+    ⚠️ Le fixture `_etalement_neuf` remet le compteur a 0 ; ici on reproduit
+    l'etat REEL au demarrage."""
+    import time as _t
+    appels = []
+    f = await _fetch_factice(appels)
+    ea._dernier_preremplissage[0] = _t.monotonic()      # comme a l'import
+    await ea.preremplir("XAU/USD", f)
+    assert appels == []
+    assert "XAU/USD" not in ea._preremplies             # reprise plus tard
+
+
+def test_le_delai_est_INFERIEUR_au_cycle():
+    """🔑 Sinon on n'aurait pas un preremplissage par cycle mais un sur deux,
+    et le remplissage prendrait le double."""
+    # ⚠️ La periode du cycle d'analyse, DERIVEE : `MATAF_POLL_INTERVAL` vaut
+    # 300 par defaut et 180 en production. L'ecrire en dur ferait echouer le
+    # test sur du code juste — la lecon deja servie deux fois aujourd'hui.
+    from config.settings import MATAF_POLL_INTERVAL as cycle
+    assert ea.SECONDES_ENTRE_PREREMPLISSAGES < cycle
