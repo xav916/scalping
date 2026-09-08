@@ -97,6 +97,40 @@ DEMOTION_DEMO_TRAD_MAX_DD_7D = 15.0
 DEMOTION_LIVE_TRAD_MAX_CONSEC_SL = None
 DEMOTION_LIVE_TRAD_MAX_DD_7D = 10.0
 
+# ─── Le drawdown en R (2026-09-08) ─────────────────────────────────────
+#
+# ⛔ CE QUI NE MARCHAIT PAS. `dd_pct` rapporte le creux en EUROS a un capital
+# FIXE (650 EUR). Le seuil de 10 % vaut donc 65 EUR pour TOUS les instruments,
+# alors que le risque par trade va de 3,93 EUR (forex) a 18,61 EUR (or) :
+#
+#     or    : 65 / 18,61 =  3,5 trades perdants d'affilee  -> retrograde
+#     forex : 65 /  3,93 = 16,5 trades                     -> jamais
+#
+# L'or etait donc puni PARCE QU'IL EST DIMENSIONNE PLUS GROS. Le 08/09 il a
+# ete retrograde sur `dd 13,96 %` avec n=7 et 4 stops consecutifs -- une serie
+# parfaitement ordinaire. Le garde-fou mesurait la TAILLE, pas la deterioration.
+#
+# 🔑 SEUIL DERIVE, pas choisi. Distribution du pire creux 7 j en R, mesuree sur
+# la fenetre FIABLE (depuis le 25/08, placebos crypto ecartes, 11 couples) :
+#
+#     median  1,00 R   ·   75 %  2,08 R   ·   95 %  3,57 R   ·   max  3,57 R
+#
+# Le maximum observe est l'or acheteur du compte reel -- celui-la meme que la
+# regle en euros a retrograde. 5 R laisse donc passer TOUT ce qui a ete observe,
+# et correspond a cinq stops pleins d'affilee : une serie peu commune, mais pas
+# la preuve d'un edge casse.
+#
+# ⚠️ CONSEQUENCE ASSUMEE : sur les trois dernieres semaines, ce seuil n'aurait
+# retrograde AUCUN couple. C'est un desserrement, demande sciemment. La
+# protection du capital en valeur absolue reste ailleurs -- poches de risque,
+# plafond journalier, plafond de risque par trade.
+#
+# ⚠️ Reglable sans redeploiement pour pouvoir etre resserre.
+DEMOTION_MAX_DD_R = float(os.getenv("DEMOTION_MAX_DD_R", "5.0"))
+# En dessous de ce nombre de trades a R lisible, on ne juge PAS en R : on
+# retombe sur les euros. ⛔ Un verdict sur deux trades n'est pas un verdict.
+DEMOTION_MIN_TRADES_R = int(os.getenv("DEMOTION_MIN_TRADES_R", "4"))
+
 # Sharpe veto
 SHARPE_VETO_WINDOW_DAYS = 7
 SHARPE_VETO_THRESHOLD = 0.0
@@ -211,16 +245,31 @@ def _query_trades_pnl(pair: str, direction: str, since_utc: str,
     try:
         with sqlite3.connect(_db_path()) as c:
             c.row_factory = sqlite3.Row
-            r = c.execute(
-                f"""
-                SELECT pnl, closed_at, close_reason FROM personal_trades
+            # ⛔ DEGRADATION EXPLICITE (2026-09-08). Les niveaux servent au
+            # drawdown en R. Mais un schema qui ne les porte pas ferait
+            # ECHOUER la requete entiere, et le `except` large plus bas la
+            # transformerait en ZERO ligne -- donc en verdict rendu sur un
+            # ensemble vide, sans un mot. On essaie avec, puis sans.
+            base = ("""
                  WHERE pair = ? AND direction = ? AND status = 'CLOSED'
                    AND is_auto = 1 AND pnl IS NOT NULL
-                   AND closed_at >= ?{portee}{filtre}
-                ORDER BY closed_at DESC
-                """,
-                (pair, direction, since_utc) + portee_args + ex,
-            ).fetchall()
+                   AND closed_at >= ?""" + portee + filtre +
+                    " ORDER BY closed_at DESC")
+            args = (pair, direction, since_utc) + portee_args + ex
+            try:
+                r = c.execute(
+                    "SELECT pnl, closed_at, close_reason, entry_price, "
+                    "stop_loss, exit_price, direction FROM personal_trades"
+                    + base, args).fetchall()
+            except sqlite3.OperationalError as e:
+                # ⚠️ On le DIT : sans niveaux, la decision retombera sur les
+                # euros, et il faut pouvoir le retrouver dans les journaux.
+                logger.info(
+                    "_query_trades_pnl: niveaux indisponibles (%s) — "
+                    "le drawdown sera juge en euros", e)
+                r = c.execute(
+                    "SELECT pnl, closed_at, close_reason FROM personal_trades"
+                    + base, args).fetchall()
             rows.extend(dict(x) for x in r)
     except Exception as e:
         logger.debug(f"_query_trades_pnl personal_trades error: {e}")
@@ -254,7 +303,7 @@ def _compute_metrics(trades: list[dict]) -> dict:
     n = len(trades)
     if n == 0:
         return {"n": 0, "wr": 0.0, "ev": 0.0, "dd_pct": 0.0, "sharpe": 0.0,
-                "pnl_cumul": 0.0, "n_consec_sl": 0}
+                "pnl_cumul": 0.0, "n_consec_sl": 0, "dd_R": 0.0, "n_R": 0}
     pnls = [float(t.get("pnl", 0.0) or 0.0) for t in trades]
     wins = sum(1 for p in pnls if p > 0)
     wr = 100.0 * wins / n
@@ -273,6 +322,42 @@ def _compute_metrics(trades: list[dict]) -> dict:
         dd = peak - cumul
         if dd > max_dd:
             max_dd = dd
+
+    # ⛔ DRAWDOWN EN R (2026-09-08). Le drawdown en EUROS rapporte a un capital
+    # FIXE punissait un instrument parce qu'il est dimensionne plus gros :
+    #
+    #     or    : 65 EUR de seuil / 18,61 EUR de risque =  3,5 trades perdants
+    #     forex : 65 EUR          /  3,93 EUR           = 16,5 trades
+    #
+    # Quatre stops d'affilee sur l'or suffisaient donc a le retrograder, alors
+    # qu'il en aurait fallu seize sur du forex. C'est le piege d'unite applique
+    # a un garde-fou : il mesurait la TAILLE, pas la deterioration.
+    #
+    # 🔑 Le R est neutre a la taille. ⚠️ Il n'est calculable que si les niveaux
+    # sont lisibles : `n_R` dit sur combien de trades, et l'appelant retombe sur
+    # les euros quand c'est trop peu -- jamais un verdict sur du vide.
+    r_chrono = []
+    for t in reversed(trades):
+        try:
+            e = float(t.get("entry_price") or 0)
+            sl = float(t.get("stop_loss") or 0)
+            x = float(t.get("exit_price") or 0)
+        except (TypeError, ValueError):
+            continue
+        dist = abs(e - sl)
+        if e <= 0 or sl <= 0 or x <= 0 or dist <= 0:
+            continue
+        # ⛔ Un stop a moins de 0,1 % du prix est un PLACEBO : il rend des R de
+        # plusieurs centaines et ferait exploser n'importe quel seuil.
+        if dist / abs(e) < 0.001:
+            continue
+        sens = 1 if str(t.get("direction") or "").lower() == "buy" else -1
+        r_chrono.append(sens * (x - e) / dist)
+    cumul_r = pic_r = dd_r = 0.0
+    for v in r_chrono:
+        cumul_r += v
+        pic_r = max(pic_r, cumul_r)
+        dd_r = max(dd_r, pic_r - cumul_r)
 
     # DD % relatif au capital théorique
     try:
@@ -299,6 +384,11 @@ def _compute_metrics(trades: list[dict]) -> dict:
             break
 
     return {
+        # ⚠️ `n_R` dit sur COMBIEN de trades le R a pu etre calcule. Un `dd_R`
+        # sans son `n_R` se lirait comme un verdict alors qu'il peut reposer
+        # sur un seul trade.
+        "dd_R": round(dd_r, 3),
+        "n_R": len(r_chrono),
         "n": n,
         "wr": round(wr, 1),
         "ev": round(ev, 2),
@@ -501,9 +591,23 @@ def check_demotion(pair: str, direction: str, destination: str) -> Optional[dict
     if seuil_sl is not None and m["n_consec_sl"] >= seuil_sl:
         return {"trigger": f"{seuil_sl}_consec_sl",
                 "to_state": pac.STATE_TELEGRAM, "metrics": m}
-    # Limite de perte sur une grandeur mesurée — toujours active.
+    # ⛔ Le drawdown en R d'abord : il est NEUTRE A LA TAILLE. Les euros ne
+    # servent plus que de repli quand les niveaux sont illisibles -- sinon on
+    # retomberait a punir l'or pour son dimensionnement.
+    if m.get("n_R", 0) >= DEMOTION_MIN_TRADES_R:
+        if m["dd_R"] > DEMOTION_MAX_DD_R:
+            return {"trigger": f"dd_above_{DEMOTION_MAX_DD_R}R_7d:{m['dd_R']}",
+                    "to_state": pac.STATE_TELEGRAM, "metrics": m}
+        return None
+
+    # ⚠️ Repli EUROS : trop peu de trades a R lisible pour juger en R. On le
+    # DIT dans le motif, sinon on ne saurait pas lequel des deux a decide.
     if m["dd_pct"] > seuil_dd:
-        return {"trigger": f"dd_above_{seuil_dd}%_7d:{m['dd_pct']}",
+        logger.info(
+            "check_demotion %s/%s@%s : repli sur les euros (n_R=%d < %d)",
+            pair, direction, destination, m.get("n_R", 0), DEMOTION_MIN_TRADES_R)
+        return {"trigger": f"dd_above_{seuil_dd}%_7d:{m['dd_pct']}"
+                           f" (repli euros, n_R={m.get('n_R', 0)})",
                 "to_state": pac.STATE_TELEGRAM, "metrics": m}
     return None
 
