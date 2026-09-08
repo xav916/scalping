@@ -356,10 +356,18 @@ def fetch_objectif_or() -> dict:
     chaque trade. C'est le seul poste couteux du recap, et il tourne une fois
     par jour.
     """
+    # ⛔ Le conteneur rend AUSSI les lignes. Ce script tourne sur l'HOTE, avec
+    # le venv de binance-bridge : `backend` n'y existe pas. Importer le
+    # formateur ici faisait PLANTER tout le recap -- pas seulement disparaitre
+    # le bloc : a 22h, aucun message ne serait parti.
+    #
+    # 🔑 Et recopier le formatage ici en ferait une deuxieme copie, donc une
+    # copie qui derive. Le conteneur reste le seul endroit qui sait.
     py = (
         "import json" + chr(10) +
-        "from backend.services.suivi_objectif_or import mesurer" + chr(10) +
-        "print(json.dumps(mesurer(jours=30)))" + chr(10)
+        "from backend.services.suivi_objectif_or import mesurer, lignes" + chr(10) +
+        "m = mesurer(jours=30)" + chr(10) +
+        "print(json.dumps({'mesure': m, 'lignes': lignes(m)}))" + chr(10)
     )
     try:
         r = subprocess.run(
@@ -518,9 +526,15 @@ def render(date_str: str, mt5_data: dict, binance: dict, activite: dict | None =
     # rien : il affiche la distribution du plus haut atteint pour qu'une derive
     # DURABLE se voie. Re-optimiser a chaque mesure serait du surajustement en
     # boucle -- l'erreur qui a tue l'etude CAC 40.
+    # ⚠️ Les lignes viennent DEJA rendues par le conteneur : cet hote n'a pas
+    # `backend`. Et si elles manquent, on saute le bloc au lieu de lever --
+    # un indicateur absent ne doit pas emporter le recap entier.
     if objectif_or:
-        from backend.services.suivi_objectif_or import lignes as _lignes_or
-        bloc = _lignes_or(objectif_or)
+        bloc = objectif_or.get("lignes") or []
+        if not bloc and objectif_or.get("erreur"):
+            bloc = ["🥇 Or — le plus haut atteint",
+                    f"  ❓ {objectif_or['erreur']} — ce n'est pas "
+                    "« rien à signaler »."]
         if bloc:
             lines += [""] + bloc
 
