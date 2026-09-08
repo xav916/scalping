@@ -38,7 +38,19 @@ TAILLE_CONTRAT_MT5: dict[str, int] = {
 
 _ACTIONS = frozenset({"AAPL", "TSLA", "NVDA", "MSFT", "GOOGL", "AMZN", "META",
                       "AMD", "NFLX", "COIN", "HOOD", "MSTR", "SPY", "QQQ",
-                      "PLTR", "SHOP"})
+                      "PLTR", "SHOP",
+                      # ⛔ Les 7 ETF sectoriels du bridge IBKR manquaient ici.
+                      # `classe_d_actif` retombait sur son defaut — `forex` —
+                      # donc sur un multiplicateur de 100 000 : 2 parts de XLU
+                      # a 43 $ annoncaient **343 799,99 EUR** de risque pour
+                      # 3,44 EUR reels. Trouve le 08/09 en eprouvant le fil
+                      # IBKR qui venait d'etre gree, jamais par un test.
+                      #
+                      # 🔑 Le defaut de `classe_d_actif` est FAIL-DANGEREUX :
+                      # un symbole inconnu herite du plus gros multiplicateur.
+                      # On ne le change pas (le forex en depend), on garde donc
+                      # cette liste alignee — un test l'exige.
+                      "XLI", "XLK", "XLU", "XLRE", "XLB", "XLE", "XLF"})
 _INDICES = frozenset({"SPX", "NDX", "DAX", "CAC40", "FTSE", "US30", "US500",
                       "NAS100"})
 
@@ -69,7 +81,11 @@ def taille_contrat(pair: str, bridge_type: str) -> int:
     le multiplicateur vaut 1. C'est la distinction que l'ancienne table par
     paire ne pouvait pas faire, puisqu'elle ignorait le broker.
     """
-    if bridge_type in ("kraken", "kraken_spot", "binance"):
+    # ⚠️ `ibkr` rejoint la famille le 08/09 : le bridge envoie un NOMBRE DE
+    # PARTS, jamais un lot. Sans cette ligne, une action mal classee heriterait
+    # d'un multiplicateur MT5 — c'est ainsi que XLU annoncait 343 800 EUR.
+    # Le mettre ici protege meme si la classification se trompe a nouveau.
+    if bridge_type in ("kraken", "kraken_spot", "binance", "ibkr"):
         return 1
     return TAILLE_CONTRAT_MT5.get(classe_d_actif(pair), 1)
 

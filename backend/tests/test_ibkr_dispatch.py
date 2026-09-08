@@ -198,3 +198,70 @@ def test_seules_les_ACTIONS_sont_routees(monkeypatch, pair, classe, attendu):
     )
     ids = [d.destination_id for d in bd.resolve_destinations(setup)]
     assert ("admin_ibkr_us" in ids) is attendu
+
+
+# ── Les symboles du bridge et le calcul de risque (2026-09-08) ────────
+#
+# ⛔ Deux listes des mêmes symboles vivaient de part et d'autre d'une frontière
+# de déploiement : `ibkr-bridge/bridge.py::_EQUITY_SYMBOLS` connaissait les
+# 7 ETF sectoriels, `risk_eur::_ACTIONS` non. `classe_d_actif` retombait donc
+# sur son défaut — `forex` — et son multiplicateur de 100 000 : **2 parts de
+# XLU à 43 $ annonçaient 343 799,99 € de risque pour 3,44 € réels.**
+#
+# 🔑 Le bridge est un déployable séparé : on ne peut pas fusionner les deux
+# listes en un import. On les relie donc par un TEST, qui lit la liste du
+# bridge dans sa source. C'est le seul moyen d'empêcher une dérive qu'aucun
+# import ne peut interdire.
+
+def _symboles_actions_du_bridge() -> list[str]:
+    """Lit `_EQUITY_SYMBOLS` DANS la source du bridge, sans l'importer.
+
+    ⚠️ `ibkr-bridge/bridge.py` importe `ib_insync`, absent des tests. On le
+    lit donc en AST : la liste est une donnée, pas du code à exécuter.
+    """
+    import ast
+    import io
+    import pathlib
+
+    src = io.open(pathlib.Path("ibkr-bridge") / "bridge.py",
+                  encoding="utf-8").read()
+    for noeud in ast.parse(src).body:
+        cibles = getattr(noeud, "targets", [])
+        if any(getattr(c, "id", None) == "_EQUITY_SYMBOLS" for c in cibles):
+            return [v.value for v in noeud.value.elts
+                    if isinstance(v, ast.Constant)]
+    raise AssertionError("_EQUITY_SYMBOLS introuvable dans le bridge IBKR")
+
+
+def test_tout_symbole_du_bridge_IBKR_est_classe_ACTION():
+    """⛔ Un symbole non reconnu hérite du multiplicateur FOREX (100 000).
+    Le défaut de `classe_d_actif` est fail-dangereux : il donne le plus GROS
+    multiplicateur à ce qu'il ne connaît pas."""
+    from backend.services.risk_eur import classe_d_actif
+
+    mal_classes = {s: classe_d_actif(s) for s in _symboles_actions_du_bridge()
+                   if classe_d_actif(s) != "equity"}
+    assert not mal_classes, (
+        f"symboles tradés par IBKR mais non reconnus comme actions — leur "
+        f"risque serait calculé en lots forex : {mal_classes}")
+
+
+def test_le_bridge_IBKR_compte_en_PARTS_jamais_en_lots():
+    """⚠️ Filet indépendant de la classification : même si un symbole était
+    mal classé demain, IBKR envoie un nombre de parts."""
+    from backend.services.risk_eur import taille_contrat
+
+    for symbole in ("XLU", "AAPL", "EUR/USD"):
+        assert taille_contrat(symbole, "ibkr") == 1, symbole
+
+
+def test_le_risque_d_un_ETF_est_VRAISEMBLABLE():
+    """La borne qui aurait attrapé les 343 799,99 €."""
+    from backend.services.risk_eur import calculer
+
+    r = calculer(pair="XLU", entry=43.05, sl=41.05, tp=46.65,
+                 volume=2, bridge_type="ibkr")
+    risque = r.get("risque_eur") if isinstance(r, dict) else None
+    assert risque is not None, r
+    assert 1.0 <= risque <= 20.0, (
+        f"2 parts de XLU risquent ~3,44 € — obtenu {risque}")

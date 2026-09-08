@@ -82,6 +82,18 @@ CAS = [
     ("admin_legacy", "[DÉMO · PEPPERSTONE]",
      SetupFictif("EUR/GBP", "sell", 0.86500, 0.87000, 0.85600), 0.02,
      "cotation en GBP sous-estimée de 30 % ; fil muet jusqu'au 06/09"),
+    # ⛔ Entré le 08/09, en gréant le fil IBKR. Le cas a IMMÉDIATEMENT payé :
+    # 2 parts de XLU à 43 $ annonçaient **343 799,99 €** de risque pour 3,46 €
+    # réels. Les 7 ETF sectoriels manquaient à `risk_eur._ACTIONS`, donc
+    # `classe_d_actif` retombait sur son défaut — `forex` — et son
+    # multiplicateur de 100 000.
+    #
+    # 🔑 Trouvé en ÉPROUVANT le fil qu'on venait d'ouvrir, jamais par un test :
+    # personne n'avait de raison de calculer le risque d'un ETF avant qu'IBKR
+    # ait un fil où l'annoncer.
+    ("admin_ibkr_us", "[RÉEL · IBKR]",
+     SetupFictif("XLU", "buy", 43.05, 41.05, 46.65), 2,
+     "annonçait 343 799,99 € pour 3,46 € réels (ETF comptés en lots forex)"),
 ]
 
 
