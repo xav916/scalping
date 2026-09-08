@@ -345,7 +345,36 @@ def fetch_activite(since_iso: str) -> dict:
         return {"error": str(e)}
 
 
-def render(date_str: str, mt5_data: dict, binance: dict, activite: dict | None = None) -> str:
+def fetch_objectif_or() -> dict:
+    """Distribution du plus haut atteint sur l'or, via le module dedie.
+
+    ⛔ La logique vit dans `backend.services.suivi_objectif_or`, pas ici : un
+    calcul recopie dans le recap serait une deuxieme copie, donc une copie qui
+    derive. Ici on ne fait que l'appeler.
+
+    ⚠️ Delai large (90 s) : le module interroge le bridge pour les bougies de
+    chaque trade. C'est le seul poste couteux du recap, et il tourne une fois
+    par jour.
+    """
+    py = (
+        "import json" + chr(10) +
+        "from backend.services.suivi_objectif_or import mesurer" + chr(10) +
+        "print(json.dumps(mesurer(jours=30)))" + chr(10)
+    )
+    try:
+        r = subprocess.run(
+            ["docker", "exec", "scalping-radar", "python3", "-c", py],
+            capture_output=True, text=True, timeout=90,
+        )
+        if r.returncode != 0:
+            return {"erreur": "docker exec: " + r.stderr[:150]}
+        return json.loads(r.stdout.strip().splitlines()[-1])
+    except Exception as e:  # noqa: BLE001
+        return {"erreur": str(e)[:150]}
+
+
+def render(date_str: str, mt5_data: dict, binance: dict, activite: dict | None = None,
+           objectif_or: dict | None = None) -> str:
     lines = []
 
     # ── Une section PAR COMPTE, nommee comme partout ailleurs ─────────
@@ -485,6 +514,16 @@ def render(date_str: str, mt5_data: dict, binance: dict, activite: dict | None =
             lines += [f"⚠️ {orphelines} clôture(s) SANS destination — "
                       "elles n'apparaissent dans aucune section ci-dessus.", ""]
 
+    # Surveillance de l'objectif sur l'or (2026-09-08). ⛔ Ce bloc n'AJUSTE
+    # rien : il affiche la distribution du plus haut atteint pour qu'une derive
+    # DURABLE se voie. Re-optimiser a chaque mesure serait du surajustement en
+    # boucle -- l'erreur qui a tue l'etude CAC 40.
+    if objectif_or:
+        from backend.services.suivi_objectif_or import lignes as _lignes_or
+        bloc = _lignes_or(objectif_or)
+        if bloc:
+            lines += [""] + bloc
+
     # Activite du radar : ce qui etait pousse en temps reel sans declencher
     # de decision. Ici, ca sert a ajuster un seuil.
     if activite and "error" not in activite:
@@ -580,7 +619,8 @@ def main() -> int:
 
     activite = fetch_activite(since_iso)
     binance = fetch_binance(since_ms)
-    body = render(date_str, mt5_data, binance, activite)
+    objectif_or = fetch_objectif_or()
+    body = render(date_str, mt5_data, binance, activite, objectif_or)
     # ⚠️ Le titre disait « 24h » meme avec `--since` : un lancement
     # manuel sur 8 jours s'annoncait comme une journee.
     heures = max(1, round((datetime.now(timezone.utc) - since_dt).total_seconds() / 3600))
