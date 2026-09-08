@@ -147,3 +147,45 @@ def test_un_echec_du_collecteur_ne_casse_PAS_le_recap():
     bloc = src[debut:fin]
     assert "except Exception" in bloc
     assert "erreur" in bloc
+
+
+# ── La sonde /opt vs dépôt (2026-09-08) ──────────────────────────────
+#
+# ⛔ Le défaut systémique de la journée : les crons de l'hôte exécutent
+# `/opt/scalping/scripts/`, un VRAI dossier, pas un lien vers le clone git.
+# 8 fichiers divergeaient — dont 7 corrigés le jour même. Toutes ces
+# corrections étaient MORTES : déployées, testées, annoncées, sans effet.
+
+def _sonde() -> str:
+    return io.open("scripts/verifier-scripts-opt.sh", encoding="utf-8").read()
+
+
+def test_la_sonde_declare_son_BUT_et_sa_PERIODE():
+    """⚠️ `sonde.sh` lit ces deux entêtes pour nommer la sonde et décider si
+    elle est muette. Sans eux, elle passe sans être suivie."""
+    src = _sonde()
+    assert "# BUT:" in src
+    assert "# PERIODE_MIN:" in src
+
+
+def test_la_sonde_ECHOUE_sur_une_divergence():
+    """⛔ Le code de sortie EST le signal : `sonde.sh` en déduit ok/ko."""
+    src = _sonde()
+    assert "exit 1" in src and "exit 0" in src
+
+
+def test_un_script_HORS_DEPOT_ne_fait_pas_echouer():
+    """⚠️ Un fichier de /opt absent du dépôt n'est pas une dérive : c'est un
+    script que personne ne versionne. On le NOMME — `monitor_live_bridge.sh` a
+    tourné ainsi depuis juillet — mais on ne crie pas dessus."""
+    src = _sonde()
+    code = "\n".join(l for l in src.splitlines() if not l.lstrip().startswith("#"))
+    i_absents = code.index("hors depot")
+    i_exit1 = code.index("exit 1", code.index("DERIVE"))
+    assert i_absents < i_exit1, "les non-versionnés doivent être listés avant l'échec"
+
+
+def test_la_sonde_IGNORE_ses_propres_sauvegardes():
+    """⚠️ Les `.bak-*` posés lors des synchronisations feraient crier la sonde
+    à chaque passage — une alarme qui crie tous les matins finit non lue."""
+    assert ".bak-" in _sonde()
