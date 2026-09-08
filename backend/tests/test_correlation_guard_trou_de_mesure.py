@@ -39,7 +39,7 @@ DEST = SimpleNamespace(destination_id="admin_kraken")
 
 @pytest.fixture
 def limite_a_un(monkeypatch):
-    monkeypatch.setattr(cg, "limite", lambda d: 1)
+    monkeypatch.setattr(cg, "limite", lambda d, pair=None: 1)
 
 
 def _ouvertes(monkeypatch, positions):
@@ -86,7 +86,7 @@ def test_aucun_journal_quand_tout_est_mesure(monkeypatch, caplog, limite_a_un):
 
 def test_aucun_journal_quand_le_garde_est_desactive(monkeypatch, caplog):
     """Limite à 0 ⇒ illimité : rien n'est vérifié, il n'y a donc pas de trou."""
-    monkeypatch.setattr(cg, "limite", lambda d: 0)
+    monkeypatch.setattr(cg, "limite", lambda d, pair=None: 0)
     _ouvertes(monkeypatch, [("ZZZ/USD", "buy")])
 
     with caplog.at_level(logging.WARNING, logger="backend.services.correlation_guard"):

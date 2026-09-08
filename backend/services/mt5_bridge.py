@@ -961,6 +961,19 @@ def _check_rejection(setup, dest=None) -> str | None:
             f"{direction} : meme pari que {', '.join(en_cause)}"
         )
         return "correlated_exposure"
+    # Plafond de risque PAR TRADE (2026-09-08). Un trade dont le PLUS PETIT
+    # ordre acceptable engage plus de 5 % du capital ne peut pas être
+    # dimensionné : la seule décision qui reste est de le refuser.
+    # Mesuré avant de la poser : une position or pouvait engager 9,2 % du
+    # compte quand la journée entière est bornée à 3 %.
+    #
+    # Placée juste avant la porte de coût : elle résout le capital (HTTP
+    # possible), donc après les filtres gratuits — mais avant le coût, qui
+    # appelle en plus le sizing complet.
+    from backend.services.porte_risque_par_trade import refus as _refus_taille
+    motif_taille = _refus_taille(setup, dest)
+    if motif_taille:
+        return motif_taille
     # Porte de coût (2026-08-04). Placée en DERNIER, après tous les filtres
     # bon marché : elle appelle le sizing, qui peut interroger le solde du
     # bridge par HTTP. Inutile de payer ce coût pour un signal qu'un filtre

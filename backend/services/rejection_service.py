@@ -55,6 +55,8 @@ REASON_LABELS_FR = {
     "bridge_error": "Bridge : erreur autre",
     "bridge_timeout": "Bridge injoignable",
     "fees_exceed_edge": "frais supérieurs à 30 % de l'edge",
+    "risque_par_trade_excessif":
+        "indimensionnable : même au lot minimum, > 5 % du capital",
     "horizon_not_allowed": "horizon non servi par cette route",
     "earnings_blackout": "résultats publiés pendant la détention",
     "weekend_hold_blocked": "détention à travers le week-end",

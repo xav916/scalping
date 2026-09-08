@@ -234,12 +234,42 @@ def positions_ouvertes(destination_id: str) -> list[tuple[str, str]]:
     return sortie
 
 
-def limite(dest) -> int:
-    """Nombre maximum de positions constituant un même pari. ``0`` ⇒ illimité."""
+# Dérogation par COUPLE (compte, paire) — 2026-09-08, demandée par Xavier.
+#
+# ⛔ Pas un relèvement global : `max_correlated_positions` vaut 1 sur les
+# quatre comptes, et le passer à 2 partout doublerait la concentration sur le
+# forex et la crypto, où rien ne le justifie. Ce qu'on assume doit se lire
+# ligne par ligne — la règle des exemptions de coût du 29/08.
+#
+# 🔑 Motif mesuré : sur 14 séances, l'or n'a tradé que 7 jours, et
+# `correlated_exposure` explique 2 des 7 journées perdues. À une place, une
+# position or ouverte plusieurs heures interdit le signal suivant. Ce n'est
+# pas un edge négatif qui refuse, c'est une file d'attente à une place.
+#
+# ⚠️ Cette dérogation N'A DE SENS qu'avec le plafond de risque par trade
+# (`porte_risque_par_trade`) : sans lui, deux positions or simultanées
+# portaient le pire cas de 9,2 % à 18 % du capital, pour une limite de perte
+# journalière de 3 %. Les deux ont été posées ensemble, exprès.
+LIMITE_PAR_PAIRE: dict[tuple[str, str], int] = {
+    ("admin_live", "XAU/USD"): 2,
+}
+
+
+def limite(dest, pair: str | None = None) -> int:
+    """Nombre maximum de positions constituant un même pari. ``0`` ⇒ illimité.
+
+    ``pair`` consulte d'abord `LIMITE_PAR_PAIRE` : une dérogation nommée prime
+    sur le réglage du compte.
+    """
     if dest is None:
         return 0
+    did = getattr(dest, "destination_id", None)
+    if pair:
+        derogation = LIMITE_PAR_PAIRE.get((str(did or ""), str(pair)))
+        if derogation is not None:
+            return int(derogation)
     from backend.services import destinations_registry as _reg
-    d = _reg.get(getattr(dest, "destination_id", None))
+    d = _reg.get(did)
     return int(d.max_correlated_positions) if d else 0
 
 
@@ -262,7 +292,7 @@ def couples_non_mesures(dest, pair: str, direction: str) -> list[str]:
     Expose le trou sans passer par les logs, pour pouvoir en compter la
     frequence le jour ou l'on tranchera.
     """
-    if dest is None or limite(dest) <= 0:
+    if dest is None or limite(dest, pair) <= 0:
         return []
     ouvertes = positions_ouvertes(getattr(dest, "destination_id", ""))
     return _trier(ouvertes, pair, direction)[1]
@@ -289,7 +319,7 @@ def pari_deja_pris(dest, pair: str, direction: str) -> tuple[bool, list[str]]:
     future impossible à prendre, faute de savoir à quelle fréquence le cas
     survient. On trace donc, on ne bloque pas.
     """
-    maxi = limite(dest)
+    maxi = limite(dest, pair)
     if maxi <= 0 or dest is None:
         return False, []
 
