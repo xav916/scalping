@@ -324,13 +324,14 @@ def test_une_FERMETURE_dit_qu_elle_vaut_pour_l_argent_REEL(monkeypatch):
         @staticmethod
         def raise_for_status(): return None
 
-    def _post(url, json=None, headers=None, timeout=None):
+    def _post(url, params=None, json=None, timeout=None):
         recu.update(json or {})
+        recu["_params"] = params or {}
         return _R()
 
     import httpx
     monkeypatch.setattr(httpx, "post", _post)
-    monkeypatch.setenv("INFRA_TELEGRAM_TOKEN", "jeton")
+    monkeypatch.setenv("SHADOW_LOG_TOKEN", "jeton")
     rg._notifier(_mesure([_cellule("poc_return_up", labo.REFUTE)]),
                  [{"action": rg.FERMER, "horizon": "5min",
                    "motif": "poc_return_up", "pair": rg.PAIRE, "detail": "x"}])
@@ -396,9 +397,9 @@ def test_une_observation_SEULE_declenche_bien_un_message(monkeypatch):
 
     import httpx
     monkeypatch.setattr(httpx, "post",
-                        lambda url, json=None, headers=None, timeout=None:
+                        lambda url, params=None, json=None, timeout=None:
                         (recu.update(json or {}), _R())[1])
-    monkeypatch.setenv("INFRA_TELEGRAM_TOKEN", "jeton")
+    monkeypatch.setenv("SHADOW_LOG_TOKEN", "jeton")
     derniere = _nuits([_huit_motifs("poc_return_up")])
     rg._notifier(derniere, [])
     assert "En observation" in recu.get("body", "")

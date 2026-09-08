@@ -425,16 +425,10 @@ def _notifier(mesure: dict, actions: list[dict]) -> None:
                     len(mesure.get("cellules") or []), mesure.get("plafond", 0))
         return
     try:
-        import httpx
-
         from backend.services.canaux_telegram import (canal_pour,
-                                                      libelle_avec_picto)
+                                                      libelle_avec_picto,
+                                                      notifier)
 
-        jeton = os.getenv("INFRA_TELEGRAM_TOKEN", "").strip()
-        if not jeton:
-            return
-        base = os.getenv("INTERNAL_API_BASE_URL",
-                         "http://127.0.0.1:8000").rstrip("/")
         corps = "\n".join(labo.lignes(mesure) + [""]
                           + _lignes_observation(guettees) + lignes(actions))
         if any(a["action"] in (FERMER, ROUVRIR) for a in interessant):
@@ -446,10 +440,8 @@ def _notifier(mesure: dict, actions: list[dict]) -> None:
         # libellés. Ma première version levait `KeyError: 'sales'`, et le
         # `except` large l'avalait : aucune notification, aucun bruit.
         canal = canal_pour("admin_live")     # le fil IC MARKETS — l'or y trade
-        httpx.post(f"{base}/api/admin/notify-infra-telegram",
-                   json={"title": f"{libelle_avec_picto(canal)} — laboratoire "
-                                  "de l'or", "body": corps, "channel": canal},
-                   headers={"X-Admin-Token": jeton}, timeout=15).raise_for_status()
+        notifier(canal, f"{libelle_avec_picto(canal)} — laboratoire de l'or",
+                 corps)
     except Exception as e:  # noqa: BLE001
         logger.warning("labo_or: notification échouée : %s", e)
 

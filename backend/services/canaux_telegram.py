@@ -170,6 +170,64 @@ def jeton_et_chat(canal: str) -> tuple[str, str]:
     return getattr(_cfg, var_token, ""), getattr(_cfg, var_chat, "")
 
 
+def notifier(canal: str, titre: str, corps: str, *, timeout: float = 15.0,
+             dedup_key: str | None = None,
+             cooldown_seconds: int | None = None) -> bool:
+    """Poste un message sur le fil d'un compte, via l'endpoint interne.
+
+    Rend `True` si c'est parti, `False` sinon — et le DIT dans les logs. ⛔ Un
+    envoi silencieusement raté est pire que pas d'envoi : on croit être prévenu.
+
+    ## Pourquoi cette fonction existe (2026-09-08)
+
+    Trois appelants Python postaient ainsi :
+
+        httpx.post(url, json={..., "channel": canal},
+                   headers={"X-Admin-Token": os.getenv("INFRA_TELEGRAM_TOKEN")})
+
+    Or l'endpoint lit `token` et `channel` en **paramètres d'URL**. L'en-tête
+    n'est jamais lu, `channel` dans le corps est ignoré — et
+    `INFRA_TELEGRAM_TOKEN` n'existe dans aucun `.env`. Donc :
+
+    - la requête partait sans jeton ⇒ **403**, avalé par un `except` large ;
+    - et si elle était passée, elle serait allée sur `infra`, pas sur le fil du
+      compte — le défaut que la docstring de l'endpoint décrit déjà.
+
+    🔑 C'est ainsi que l'alerte de rétrogradation de l'or, écrite le matin même
+    pour réparer « l'or a cessé de s'auto-exécuter et **rien ne l'a dit** »,
+    était elle-même muette. Les scripts shell, eux, avaient toujours raison :
+    `?token=${TOKEN}&channel=infra`.
+
+    ⚠️ Le jeton est `SHADOW_LOG_TOKEN`, partagé avec `public-summary` et
+    `counterfactual` — c'est celui dont l'empreinte correspond à l'endpoint.
+    """
+    import logging
+    import os
+
+    _log = logging.getLogger(__name__)
+    jeton = os.getenv("SHADOW_LOG_TOKEN", "").strip()
+    if not jeton:
+        _log.warning("canaux_telegram: SHADOW_LOG_TOKEN absent — « %s » NON "
+                     "envoyé sur %s", titre, canal)
+        return False
+    base = os.getenv("INTERNAL_API_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
+    corps_json: dict = {"title": titre, "body": corps}
+    if dedup_key and cooldown_seconds:
+        corps_json["dedup_key"] = dedup_key
+        corps_json["cooldown_seconds"] = int(cooldown_seconds)
+    try:
+        import httpx
+        r = httpx.post(f"{base}/api/admin/notify-infra-telegram",
+                       params={"token": jeton, "channel": canal},
+                       json=corps_json, timeout=timeout)
+        r.raise_for_status()
+        return True
+    except Exception as e:  # noqa: BLE001
+        _log.warning("canaux_telegram: envoi sur %s échoué (%s) — « %s »",
+                     canal, str(e)[:120], titre)
+        return False
+
+
 if __name__ == "__main__":
     # Les scripts shell lisent la table ICI plutôt que d'en recopier une.
     #

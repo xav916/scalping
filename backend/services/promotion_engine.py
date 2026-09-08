@@ -739,16 +739,19 @@ def _notifier_les_comptes(demotions: list[dict]) -> None:
     """
     if not demotions:
         return
+    # ⛔ DEFAUT REPARE LE 2026-09-08, quelques heures apres l'ecriture de cette
+    # fonction : elle postait `channel` dans le CORPS et le jeton dans un
+    # EN-TETE `X-Admin-Token`, alors que l'endpoint lit les deux en parametres
+    # d'URL — et `INFRA_TELEGRAM_TOKEN` n'existe dans aucun `.env`. Donc :
+    # requete sans jeton ⇒ 403, avale par le `except` large.
+    #
+    # 🔑 L'alerte ecrite le matin pour reparer « l'or a cesse de s'auto-executer
+    # et RIEN ne l'a dit » etait elle-meme MUETTE. Elle passe desormais par
+    # `canaux_telegram.notifier`, le seul endroit qui sait appeler l'endpoint.
     try:
-        import httpx
-
         from backend.services.canaux_telegram import (
-            est_un_compte_de_trading, canal_pour, libelle_avec_picto)
+            est_un_compte_de_trading, canal_pour, libelle_avec_picto, notifier)
 
-        jeton = os.getenv("INFRA_TELEGRAM_TOKEN", "").strip()
-        if not jeton:
-            return
-        base = os.getenv("INTERNAL_API_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
         for d in demotions:
             destination = d.get("destination")
             if not est_un_compte_de_trading(destination):
@@ -762,17 +765,8 @@ def _notifier_les_comptes(demotions: list[dict]) -> None:
                 "l'execution automatique s'arrete. Aucune position ouverte "
                 "n'est fermee par cette decision."
             )
-            try:
-                r = httpx.post(
-                    f"{base}/api/admin/notify-infra-telegram",
-                    json={"title": f"{libelle_avec_picto(canal)} — "
-                                   "execution automatique suspendue",
-                          "body": corps, "channel": canal},
-                    headers={"X-Admin-Token": jeton}, timeout=10)
-                r.raise_for_status()
-            except Exception as e:  # noqa: BLE001
-                logger.warning(
-                    "promotion_engine: notif compte %s echouee : %s", destination, e)
+            notifier(canal, f"{libelle_avec_picto(canal)} — execution "
+                            "automatique suspendue", corps, timeout=10)
     except Exception as e:  # noqa: BLE001
         logger.warning(f"promotion_engine: notification par compte indisponible : {e}")
 
@@ -795,18 +789,10 @@ def _notify_telegram_infra(promotions: list[dict], demotions: list[dict]) -> Non
                 )
         body = "\n".join(lines) if lines else "Rien à signaler."
 
-        token = os.getenv("INFRA_TELEGRAM_TOKEN", "").strip()
-        if not token:
-            logger.debug("promotion_engine: INFRA_TELEGRAM_TOKEN not set, skip notif")
-            return
-
-        base_url = os.getenv("INTERNAL_API_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
-        r = httpx.post(
-            f"{base_url}/api/admin/notify-infra-telegram",
-            json={"title": title, "body": body},
-            headers={"X-Admin-Token": token},
-            timeout=10,
-        )
-        r.raise_for_status()
+        # ⛔ Meme defaut que `_notifier_les_comptes`, repare le 2026-09-08 :
+        # jeton en EN-TETE et variable inexistante ⇒ 403 avale. Le recapitulatif
+        # nocturne du moteur de promotion n'est donc **jamais arrive**.
+        from backend.services.canaux_telegram import notifier
+        notifier("infra", title, body, timeout=10)
     except Exception as e:
         logger.warning(f"promotion_engine: telegram notif failed: {e}")

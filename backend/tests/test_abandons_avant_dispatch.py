@@ -165,7 +165,20 @@ def _demotion(destination="admin_live", pair="XAU/USD", direction="buy"):
 
 @pytest.fixture
 def envois(monkeypatch):
-    """Capture les POST Telegram sans réseau."""
+    """Capture les POST Telegram sans réseau — PARAMÈTRES D'URL compris.
+
+    ## ⛔ Pourquoi cette version-ci
+
+    La première ne gardait que `kw["json"]`, et le test lisait `channel` DANS
+    LE CORPS. Or l'endpoint lit `token` et `channel` en **paramètres d'URL** :
+    le test passait donc sur du code qui, en production, partait sans jeton et
+    recevait un **403** avalé par un `except` large.
+
+    🔑 C'est comme ça que l'alerte écrite le matin du 2026-09-08 pour réparer
+    « l'or a cessé de s'auto-exécuter et rien ne l'a dit » est restée MUETTE
+    tout en ayant trois tests verts. Un faux qui accepte n'importe quelle forme
+    d'appel ne teste pas l'appel — il teste qu'on a appelé quelque chose.
+    """
     faits: list[dict] = []
 
     class _Rep:
@@ -173,9 +186,12 @@ def envois(monkeypatch):
             return None
 
     import httpx
-    monkeypatch.setattr(httpx, "post",
-                        lambda url, **kw: (faits.append(kw.get("json") or {}), _Rep())[1])
-    monkeypatch.setenv("INFRA_TELEGRAM_TOKEN", "jeton-de-test")
+    monkeypatch.setattr(
+        httpx, "post",
+        lambda url, **kw: (faits.append({**(kw.get("json") or {}),
+                                         "_params": kw.get("params") or {}}),
+                           _Rep())[1])
+    monkeypatch.setenv("SHADOW_LOG_TOKEN", "jeton-de-test")
     return faits
 
 
@@ -183,7 +199,10 @@ def test_une_retrogradation_part_dans_le_fil_du_COMPTE(envois):
     from backend.services import promotion_engine as pe
     pe._notifier_les_comptes([_demotion()])
     assert len(envois) == 1
-    assert envois[0]["channel"] == "ic_markets"
+    # ⛔ Dans les paramètres d'URL, pas dans le corps : c'est le seul endroit
+    # que l'endpoint lit.
+    assert envois[0]["_params"]["channel"] == "ic_markets"
+    assert envois[0]["_params"]["token"] == "jeton-de-test"
 
 
 def test_le_message_dit_que_le_SIGNAL_continue(envois):
