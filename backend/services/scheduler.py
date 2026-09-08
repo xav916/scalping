@@ -661,6 +661,26 @@ def start_scheduler() -> AsyncIOScheduler:
         name="Promotion engine — gates + démotions",
         replace_existing=True,
     )
+
+    # Laboratoire de l'or : mesurer chaque nuit ce qui marche, fermer ce qui
+    # perd de facon nette (2026-09-08).
+    #
+    # ⛔ DANS le conteneur, pas en cron sur l'hote : `/opt/scalping/scripts` a
+    # deja diverge du depot et huit correctifs y sont restes morts une journee.
+    # Ici, ce qui est deploye est forcement ce qui s'execute.
+    #
+    # 03h40 UTC, apres le moteur de promotion : les deux touchent aux memes
+    # regles, autant qu'ils ne se croisent pas.
+    def _laboratoire_or_nuit():
+        from backend.services.reglage_or import cycle_nocturne
+        cycle_nocturne()
+    _scheduler.add_job(
+        _laboratoire_or_nuit,
+        CronTrigger(hour=3, minute=40, timezone="UTC"),
+        id="laboratoire_or_nightly",
+        name="Laboratoire de l'or — mesure et réajustement",
+        replace_existing=True,
+    )
     # Sync bridge MT5 → personal_trades : pull incrémental depuis /audit
     # pour que les ordres auto apparaissent dans le dashboard.
     from backend.services.mt5_sync import sync_from_bridge

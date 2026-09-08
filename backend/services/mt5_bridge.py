@@ -649,6 +649,26 @@ def _patterns_autorises(setup, dest):
     extras = getattr(dest, "extra_patterns", None) if dest is not None else None
     if extras:
         base |= set(extras)
+
+    # ⛔ Couche SOUSTRACTIVE du laboratoire de l'or, appliquee EN DERNIER
+    # (2026-09-08). Ce que le labo ferme ne peut etre re-ouvert par aucune
+    # couche au-dessus : c'est le seul ordre qui rende la decision sure.
+    #
+    # 🔑 Le mecanisme ne sait que RESSERRER. Il ferme un motif qui perd de
+    # l'argent avec un |t| au-dessus du plafond du hasard, trois nuits de
+    # suite ; il ne peut rouvrir que ce qu'il a lui-meme ferme.
+    try:
+        from backend.services.reglage_or import fermetures as _fermetures_labo
+        _pair = getattr(setup, "pair", None)
+        _horizon = getattr(setup, "horizon", None)
+        if _pair and _horizon:
+            _fermes = {m for h, m in _fermetures_labo(str(_pair))
+                       if h == str(_horizon)}
+            if _fermes:
+                base = base - _fermes
+    except Exception as e:  # noqa: BLE001
+        # ⛔ fail-OUVERT : une panne du labo ne doit pas fermer des motifs.
+        logger.debug("reglage_or indisponible : %s", e)
     return base
 
 
