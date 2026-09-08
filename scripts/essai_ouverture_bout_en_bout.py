@@ -150,9 +150,15 @@ async def _ouverture(did, libelle, setup, volume, motif, envoyer):
     canal = canal_pour(did)
     jeton, destinataires = ts._canal_trade(did)
     montants = ts._montants_du_trade(setup, volume, did)
+    # ⛔ Sans `etat_risque`, `lignes(None)` rend une liste vide : le bloc de
+    # risque du 08/09 serait ABSENT du rendu, et la batterie declarerait
+    # « aucune anomalie » sur un message ampute. Un essai qui n'emprunte pas
+    # tout le chemin ne prouve pas le chemin.
+    from backend.services.bloc_risque import etat as _etat_risque
     texte = ts._format_trade_opened(
         setup, ticket="ESSAI", fill_price=setup.entry_price, volume=volume,
-        mode="live", destination_id=did, essai=True)
+        mode="live", destination_id=did, essai=True,
+        etat_risque=_etat_risque(did))
 
     print(f"\n{SEP}")
     print(f"{libelle}  {setup.pair}  — OUVERTURE  ({motif})")
@@ -218,7 +224,8 @@ async def _cloture(did, libelle, setup, volume, gain_eur, envoyer):
 
     trade = _cloture_depuis(setup, volume, gain_eur)
     canal = canal_pour(did)
-    texte = ts._format_close(trade, did, essai=True)
+    texte = ts._format_close(trade, did, essai=True,
+                             etat_risque=_etat_risque(did))
 
     print(f"\n{SOUS_SEP}")
     print(f"{libelle}  {setup.pair}  — CLÔTURE")
