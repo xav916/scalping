@@ -202,6 +202,43 @@ async def run_analysis_cycle() -> None:
             if candles:
                 patterns = detect_patterns(candles, pair)
                 all_patterns.extend(patterns)
+                # ⚠️ Echelles AGREGEES (2026-09-08). Le chemin 5 min ne voit
+                # jamais plus de 2 h 30 et n'agrege rien. Mesure prealable sur
+                # 60 jours, spread facture : le R moyen CROIT avec l'echelle
+                # sur XAU/USD comme sur EUR/USD, et le spread paye en R
+                # s'effondre (0,029 -> 0,013 sur l'or).
+                #
+                # ⛔ PORTEE : ces setups portent `15min`/`30min`, et
+                # `admin_live` n'autorise que `5min,4h`. Ils sont donc refuses
+                # d'office sur l'argent reel -- aucun reglage a ne pas oublier
+                # de remettre.
+                #
+                # ⛔ Ils passent par le MEME enrichissement que le chemin
+                # 5 min. Sans score de confiance, `filter_high_confidence_setups`
+                # les ecarterait en silence -- defaut attrape avant deploiement.
+                try:
+                    from backend.services.echelle_agregee import setups_agreges
+                    for _s in setups_agreges(
+                            candles, pair,
+                            is_simulated=simulated_pairs.get(pair, False)):
+                        enrich_trade_setup(
+                            _s,
+                            volatility=vol_map.get(pair),
+                            trend=trend_map.get(pair),
+                            events=economic_events,
+                        )
+                        _v = coaching.compute_verdict(
+                            _s, volatility=vol_map.get(pair),
+                            trend=trend_map.get(pair), events=economic_events,
+                            h1_trend=compute_h1_trend(h1_candles.get(pair, [])))
+                        _s.verdict_action = _v["action"]
+                        _s.verdict_summary = _v["summary"]
+                        _s.verdict_reasons = _v["reasons"]
+                        _s.verdict_warnings = _v["warnings"]
+                        _s.verdict_blockers = _v["blockers"]
+                        all_trade_setups.append(_s)
+                except Exception as _e:  # noqa: BLE001
+                    logger.debug(f"echelles agregees {pair} : {_e}")
 
                 # Calculer les setups de trade pour chaque pattern
                 for pattern in patterns:

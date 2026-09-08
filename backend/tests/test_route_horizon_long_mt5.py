@@ -76,7 +76,7 @@ def test_horizon_de_base_illisible_reste_sans_filtre(monkeypatch):
     scalping — le mode de défaillance silencieux qu'on cherche à éviter.
     """
     import config.settings
-    monkeypatch.setattr(config.settings, "CANDLE_INTERVAL", "30min")
+    monkeypatch.setattr(config.settings, "CANDLE_INTERVAL", "7min")
     monkeypatch.setenv("MT5_LONG_HORIZON_ROUTES", "admin_legacy,admin_live")
     assert bd._mt5_scalping_horizons() is None
     assert bd._mt5_horizons("admin_legacy") is None

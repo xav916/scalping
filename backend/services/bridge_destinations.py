@@ -212,8 +212,10 @@ def _mt5_scalping_horizons() -> frozenset[str] | None:
     d'un kill-switch oublié (cf. incident 2026-07-13).
 
     ``normalize`` rend ``None`` sur une valeur hors du vocabulaire d'horizon
-    (ex: ``CANDLE_INTERVAL=1min`` ou ``30min``, valides côté source de
-    données mais absents de ``horizon.HORIZONS``). On retombe alors sur
+    (ex: ``CANDLE_INTERVAL=1min`` ou ``7min``, valides côté source de
+    données mais absents de ``horizon.HORIZONS`` — ⚠️ ``30min`` était cité ici
+    jusqu'au 08/09/2026, il est depuis ENTRÉ dans le vocabulaire avec les
+    échelles agrégées, et vaut donc désormais filtre). On retombe alors sur
     « aucun filtre » — le comportement d'avant le 2026-08-05 — plutôt que de
     bloquer aveuglément sur une valeur qu'on ne sait pas interpréter.
     """
@@ -249,6 +251,47 @@ def _mt5_long_horizon_routes() -> frozenset[str]:
     return frozenset(d.strip() for d in raw.split(",") if d.strip())
 
 
+def _mt5_echelles_agregees_routes() -> frozenset[str]:
+    """Destinations autorisées à recevoir les horizons AGRÉGÉS (15min, 30min).
+
+    ⛔ **Vide par défaut** — donc fermé. Renseigner ``admin_legacy`` ouvre la
+    route sur le démo. C'est le même dispositif que ``MT5_LONG_HORIZON_ROUTES``,
+    et pour la même raison : une piste en observation ne s'ouvre pas toute
+    seule parce qu'on a écrit son code.
+
+    **Pourquoi cette route existe** (mesuré le 2026-09-08, rejeu séquentiel,
+    60 jours, spread facturé) : le R moyen croît de façon monotone avec
+    l'échelle sur les DEUX instruments testés — or +0,029 → +0,142 → +0,561 R,
+    EUR/USD −0,324 → −0,156 → +0,004 R — et le mécanisme est visible, le
+    spread payé en R s'effondre quand le stop s'élargit (or 0,029 → 0,013).
+
+    ⚠️ n=19 à 24 sur M30 : une piste DÉCLARÉE, pas une conclusion.
+
+    ⛔ **L'argent réel est protégé DEUX fois** : par le défaut vide ici, et
+    par ``MT5_BRIDGE_LIVE_ALLOWED_HORIZONS=5min,4h`` qui restreint par
+    intersection. Ajouter ``admin_live`` ici ne suffirait donc pas à ouvrir —
+    il faudrait aussi défaire la déclaration du réel.
+    """
+    raw = os.getenv("MT5_ECHELLES_AGREGEES_ROUTES", "").strip()
+    return frozenset(d.strip() for d in raw.split(",") if d.strip())
+
+
+def _horizons_agreges() -> frozenset[str]:
+    """Les horizons servis par les échelles agrégées, DÉRIVÉS de leur réglage.
+
+    ⛔ Jamais codés en dur : ``ECHELLES_AGREGEES`` pilote à la fois ce que le
+    scheduler produit et ce que la route accepte. Figer ``{15min, 30min}`` ici
+    désynchroniserait les deux au premier changement d'échelle — des setups
+    produits puis refusés en ``horizon_not_allowed``, sans autre trace.
+    """
+    try:
+        from backend.services.echelle_agregee import FACTEURS, horizon_pour
+        return frozenset(horizon_pour(f) for f in FACTEURS)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("horizons agrégés illisibles (%s) — aucun ouvert", e)
+        return frozenset()
+
+
 def _mt5_horizons(destination_id: str) -> frozenset[str] | None:
     """Horizons servis par une route MT5, scalping plus horizons longs opt-in.
 
@@ -263,6 +306,8 @@ def _mt5_horizons(destination_id: str) -> frozenset[str] | None:
     if destination_id in _mt5_long_horizon_routes():
         from backend.services.horizon import LONG_HORIZONS
         base = frozenset(base | LONG_HORIZONS)
+    if destination_id in _mt5_echelles_agregees_routes():
+        base = frozenset(base | _horizons_agreges())
     return _restreindre_horizons(destination_id, base)
 
 

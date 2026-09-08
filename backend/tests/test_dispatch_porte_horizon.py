@@ -142,7 +142,7 @@ def test_horizon_mt5_retombe_sur_aucun_filtre_si_candle_interval_inconnu(monkeyp
     monkeypatch.setattr(st, "CANDLE_INTERVAL", "1min")
     assert bd._mt5_scalping_horizons() is None
 
-    monkeypatch.setattr(st, "CANDLE_INTERVAL", "30min")
+    monkeypatch.setattr(st, "CANDLE_INTERVAL", "7min")
     assert bd._mt5_scalping_horizons() is None
 
 

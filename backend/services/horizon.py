@@ -18,7 +18,9 @@ scalping et le router vers de l'argent réel.
 from __future__ import annotations
 
 # Horizons connus, du plus court au plus long.
-HORIZONS: tuple[str, ...] = ("5min", "15min", "1h", "4h", "1d")
+# ⚠️ `30min` ajoute le 2026-09-08 avec les echelles agregees. `15min`
+# existait deja mais n'etait produit par personne.
+HORIZONS: tuple[str, ...] = ("5min", "15min", "30min", "1h", "4h", "1d")
 
 # Horizons à partir desquels une position se **détient** : elle paie un
 # portage (funding, swap) et traverse des événements (earnings, week-end)
@@ -28,6 +30,7 @@ LONG_HORIZONS: frozenset[str] = frozenset({"4h", "1d"})
 _MINUTES: dict[str, int] = {
     "5min": 5,
     "15min": 15,
+    "30min": 30,
     "1h": 60,
     "4h": 240,
     "1d": 1440,
@@ -37,6 +40,7 @@ _MINUTES: dict[str, int] = {
 _ALIASES: dict[str, str] = {
     "5m": "5min",
     "15m": "15min",
+    "30m": "30min",
     "60min": "1h",
     "1hour": "1h",
     "4hour": "4h",
