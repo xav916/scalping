@@ -60,6 +60,11 @@ REASON_LABELS_FR = {
     "horizon_not_allowed": "horizon non servi par cette route",
     "earnings_blackout": "résultats publiés pendant la détention",
     "weekend_hold_blocked": "détention à travers le week-end",
+    # ⛔ Écarté AVANT toute destination (2026-09-08) : ce cas ne produisait
+    # aucune ligne, donc « aucun signal » et « signal écarté » se lisaient
+    # pareil. `destination_id` est NULL, et c'est exact.
+    "score_sous_seuil_avant_dispatch":
+        "score sous le seuil — écarté avant le dispatch",
 }
 
 

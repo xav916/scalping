@@ -1304,9 +1304,62 @@ def enrich_trade_setup(
     return setup
 
 
+MOTIF_ABANDON_AVANT_DISPATCH = "score_sous_seuil_avant_dispatch"
+
+
+def _journaliser_abandons(ecartes: list) -> None:
+    """Trace les setups ecartes AVANT toute destination (2026-09-08).
+
+    ⛔ Le trou que ceci comble : ce filtre tourne avant `resolve_destinations`,
+    donc un setup ecarte ici ne produit AUCUN refus. Il disparait sans trace,
+    et « aucun signal » devient indiscernable de « signal ecarte en silence ».
+
+    🔑 C'est exactement ce qui rendait indecidable le constat du 08/09 : sur
+    l'or du compte reel, 353 achats evalues et ZERO vente depuis le 04/09,
+    alors que le detecteur produit 399 setups vendeurs pour 164 acheteurs sur
+    950 fenetres. L'ecart naissait quelque part entre les deux, et aucun
+    journal ne couvrait cet intervalle.
+
+    ⚠️ `destination_id=None` est dit exprès : l'abandon precede la resolution
+    des destinations. L'imputer a un compte serait faux.
+
+    Best-effort : toute erreur est avalee. Une sonde ne doit jamais casser le
+    pipeline qu'elle observe.
+    """
+    if not ecartes:
+        return
+    try:
+        from backend.services.rejection_service import record_rejection
+        for s in ecartes:
+            direction = getattr(getattr(s, "direction", None), "value", None)                 or str(getattr(s, "direction", "") or "")
+            motif = getattr(getattr(s, "pattern", None), "pattern", None)
+            motif = getattr(motif, "value", None) or (
+                str(motif) if motif is not None else None)
+            record_rejection(
+                pair=getattr(s, "pair", None),
+                direction=direction or None,
+                confidence=getattr(s, "confidence_score", None),
+                reason_code=MOTIF_ABANDON_AVANT_DISPATCH,
+                details={"signal_pattern": motif,
+                         "horizon": getattr(s, "horizon", None),
+                         "seuil": MIN_CONFIDENCE_SCORE},
+                destination_id=None,
+            )
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"journal des abandons indisponible : {e}")
+
+
 def filter_high_confidence_setups(setups: list[TradeSetup]) -> list[TradeSetup]:
-    """Filtre les setups pour ne garder que ceux au-dessus du seuil de confiance."""
-    filtered = [s for s in setups if s.confidence_score >= MIN_CONFIDENCE_SCORE]
+    """Filtre les setups pour ne garder que ceux au-dessus du seuil de confiance.
+
+    ⚠️ Depuis le 08/09, ce qui est ECARTE est journalise. Le comportement du
+    filtre est inchange — seule son opacite l'etait.
+    """
+    filtered, ecartes = [], []
+    for s in setups:
+        (filtered if s.confidence_score >= MIN_CONFIDENCE_SCORE
+         else ecartes).append(s)
+    _journaliser_abandons(ecartes)
     filtered.sort(key=lambda s: s.confidence_score, reverse=True)
     return filtered
 
