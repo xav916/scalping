@@ -493,3 +493,25 @@ def test_le_delai_est_INFERIEUR_au_cycle():
     # test sur du code juste — la lecon deja servie deux fois aujourd'hui.
     from config.settings import MATAF_POLL_INTERVAL as cycle
     assert ea.SECONDES_ENTRE_PREREMPLISSAGES < cycle
+
+
+def test_AUCUNE_destination_hors_demo_ne_recoit_les_horizons_agreges(monkeypatch):
+    """⛔ Le contrôle COMPLET, pas trois verifications ponctuelles.
+
+    Kraken est de l'argent REEL et ne passe pas par la porte d'horizon MT5 —
+    il a la sienne (`allowed_horizons={4h,1d}`), appliquee par le meme
+    `_check_rejection`. Verifie en production : seul `admin_legacy` sert
+    15min/30min.
+
+    ⚠️ Ce test tombera si une destination ouvre un jour un horizon court. C'est
+    le but : l'essai ne doit pas glisser vers l'argent reel en silence.
+    """
+    from backend.services.bridge_destinations import admin_destinations
+    monkeypatch.setenv("MT5_ECHELLES_AGREGEES_ROUTES", "admin_legacy")
+    agreges = {ea.horizon_pour(f) for f in ea.FACTEURS}
+    for d in admin_destinations():
+        admis = getattr(d, "allowed_horizons", None)
+        recus = agreges if admis is None else (agreges & set(admis))
+        if d.destination_id == "admin_legacy":
+            continue
+        assert not recus, (d.destination_id, sorted(recus))
