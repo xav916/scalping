@@ -255,6 +255,46 @@ LIMITE_PAR_PAIRE: dict[tuple[str, str], int] = {
 }
 
 
+# ⛔ Ce que rend une destination QU'ON NE SAIT PAS identifier (2026-09-08).
+#
+# Avant : `0`, c'est-à-dire ILLIMITÉ — le garde-fou se désarmait tout seul, en
+# silence, sur un chemin d'argent réel. Découvert en passant par erreur un
+# `Destination` du registre (qui porte `id`) là où le code attend un
+# `BridgeConfig` (qui porte `destination_id`) : `limite()` rendait 0 pour les
+# six comptes, et rien ne le disait.
+#
+# 🔑 Les deux destinations réellement illimitées — `user:N` et `admin_binance`
+# — sont DÉCLARÉES à 0 et passent par le registre. Le chemin « inconnu » ne
+# sert donc qu'aux bugs : le fermer ne peut rien casser de légitime.
+#
+# ⚠️ `dest is None` garde son 0 : c'est le contrat documenté de ce module —
+# il réduit la concentration, il ne protège pas d'une panne et ne doit pas
+# bloquer sur une panne.
+LIMITE_INCONNUE = 1
+
+
+def _identifiant(dest) -> str | None:
+    """L'identifiant de la destination, quel que soit l'objet reçu.
+
+    ⛔ Le piège : `BridgeConfig` porte `destination_id`, le `Destination` du
+    registre porte `id`. Les deux circulent dans ce dépôt, et confondre les
+    deux désarmait le garde-fou sans lever la moindre erreur.
+    """
+    did = getattr(dest, "destination_id", None)
+    if did:
+        return str(did)
+    autre = getattr(dest, "id", None)
+    if autre:
+        # Ce n'est pas une panne, c'est une confusion de type : on la NOMME
+        # au lieu de la rattraper en silence.
+        logger.warning(
+            "correlation_guard: objet sans `destination_id` (%s) — repli sur "
+            "`id`=%s ; un BridgeConfig etait attendu",
+            type(dest).__name__, autre)
+        return str(autre)
+    return None
+
+
 def limite(dest, pair: str | None = None) -> int:
     """Nombre maximum de positions constituant un même pari. ``0`` ⇒ illimité.
 
@@ -263,14 +303,19 @@ def limite(dest, pair: str | None = None) -> int:
     """
     if dest is None:
         return 0
-    did = getattr(dest, "destination_id", None)
+    did = _identifiant(dest)
     if pair:
         derogation = LIMITE_PAR_PAIRE.get((str(did or ""), str(pair)))
         if derogation is not None:
             return int(derogation)
     from backend.services import destinations_registry as _reg
     d = _reg.get(did)
-    return int(d.max_correlated_positions) if d else 0
+    if d is None:
+        logger.warning(
+            "correlation_guard: destination inconnue (%s) — on retient %d "
+            "position(s) par pari, jamais l'illimite", did, LIMITE_INCONNUE)
+        return LIMITE_INCONNUE
+    return int(d.max_correlated_positions)
 
 
 def _trier(ouvertes, pair: str, direction: str) -> tuple[list[str], list[str]]:

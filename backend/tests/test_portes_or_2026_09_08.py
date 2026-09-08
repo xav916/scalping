@@ -277,3 +277,61 @@ def test_le_risque_d_un_lot_d_argent_est_VRAISEMBLABLE():
     r = calculer(pair="XAG/USD", entry=48.0, sl=47.7, tp=48.54,
                  volume=0.01, bridge_type="mt5")
     assert 1.5 <= r["risque_eur"] <= 6.0, r
+
+
+# ── Le fail-OUVERT de `limite()` (2026-09-08) ────────────────────────
+#
+# ⛔ Trouvé en vérifiant mon propre travail : j'avais passé un `Destination` du
+# registre (qui porte `id`) là où le code attend un `BridgeConfig` (qui porte
+# `destination_id`). `limite()` rendait alors **0 = illimité** pour les six
+# comptes — le garde-fou de concentration se désarmait tout seul, en silence,
+# sur un chemin d'argent réel.
+
+@dataclass
+class DestRegistreFictive:
+    """Le `Destination` du registre : il porte `id`, pas `destination_id`."""
+    id: str = "admin_live"
+    max_correlated_positions: int = 1
+
+
+def test_un_objet_du_REGISTRE_ne_desarme_plus_le_garde_fou():
+    """⛔ LE défaut. Avant : 0, c'est-à-dire illimité, sans une ligne de log."""
+    assert cg.limite(DestRegistreFictive()) == 1
+
+
+def test_la_derogation_marche_AUSSI_avec_l_objet_du_registre():
+    """⚠️ Sans résolution de l'identifiant, la clé de dérogation était ('', …)
+    et ne correspondait à rien : la dérogation était muette, elle aussi."""
+    assert cg.limite(DestRegistreFictive(), "XAU/USD") == 2
+
+
+def test_une_destination_INCONNUE_ne_rend_JAMAIS_l_illimite():
+    """🔑 Les deux destinations réellement illimitées (`user:N`,
+    `admin_binance`) sont DÉCLARÉES à 0 et passent par le registre. Le chemin
+    « inconnu » ne sert donc qu'aux bugs : le fermer ne casse rien de
+    légitime."""
+    assert cg.limite(DestFictive(destination_id="admin_martien")) == cg.LIMITE_INCONNUE
+    assert cg.LIMITE_INCONNUE >= 1
+
+
+def test_l_illimite_DECLARE_est_preserve():
+    """⛔ Le contre-test : fermer le trou ne doit pas fermer ce qui est ouvert
+    exprès. `user:N` sert les comptes clients."""
+    assert cg.limite(DestFictive(destination_id="user:2")) == 0
+
+
+def test_dest_None_garde_son_contrat():
+    """⚠️ Documenté : ce module réduit la concentration, il ne protège pas
+    d'une panne et ne doit pas bloquer sur une panne."""
+    assert cg.limite(None) == 0
+    assert cg.limite(None, "XAU/USD") == 0
+
+
+def test_la_confusion_de_type_est_JOURNALISEE(caplog):
+    """⛔ Un repli silencieux se lit comme un fonctionnement normal. C'est
+    précisément ce qui a laissé ce défaut vivre sans être vu."""
+    import logging
+    with caplog.at_level(logging.WARNING, logger=cg.logger.name):
+        cg.limite(DestRegistreFictive())
+    assert any("destination_id" in r.message or "destination_id" in r.getMessage()
+               for r in caplog.records), caplog.text
