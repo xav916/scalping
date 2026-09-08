@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -78,6 +79,18 @@ _memoire: dict[str, dict] = {}
 _dit: dict[tuple, bool] = {}
 # Les paires deja preremplies — une seule tentative par processus.
 _preremplies: set[str] = set()
+
+# ⛔ ETALEMENT. La premiere version preremplissait les 23 paires dans la meme
+# seconde : 23 requetes de 246 bougies d'un coup sur une API plafonnee A LA
+# MINUTE. C'est un burst par construction, et le quota Twelve Data a deja
+# sature une fois (954 refus 429) — « la concurrence n'est pas le debit ».
+#
+# 🔑 Une seule paire par passage. 23 paires × 3 min de cycle ≈ 70 minutes pour
+# tout remplir, contre ~16 h sans prechargement. Le cout devient +1 requete par
+# cycle pendant une heure, puis zero.
+SECONDES_ENTRE_PREREMPLISSAGES = float(
+    os.getenv("ECHELLES_DELAI_PREREMPLISSAGE_S", "30"))
+_dernier_preremplissage: list[float] = [0.0]
 
 
 def memoriser(pair: str, candles: list) -> list:
@@ -127,11 +140,16 @@ async def preremplir(pair: str, fetch, interval: str = "5min") -> int:
     """
     if pair in _preremplies or not FACTEURS:
         return 0
+    maintenant = time.monotonic()
+    if maintenant - _dernier_preremplissage[0] < SECONDES_ENTRE_PREREMPLISSAGES:
+        # ⚠️ Pas marquée : cette paire sera reprise au passage suivant.
+        return 0
+    manque = bougies_manquantes(pair)
     _preremplies.add(pair)              # ⛔ posé AVANT l'appel : un échec ne
                                         # doit pas se retenter à chaque cycle
-    manque = bougies_manquantes(pair)
     if manque <= 0:
         return 0
+    _dernier_preremplissage[0] = maintenant
     taille = min(MAX_MEMOIRE, MIN_BOUGIES * max(FACTEURS) + max(FACTEURS))
     recues = await fetch(pair, interval=interval, outputsize=taille)
     # ⛔ `fetch_candles` rend un TUPLE `(bougies, simule)`. Le passer tel quel

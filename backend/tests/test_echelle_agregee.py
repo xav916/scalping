@@ -423,3 +423,46 @@ async def test_la_lecture_sans_cache_NE_LIT_ni_n_ECRIT_le_cache(monkeypatch):
     bougies, _ = await ps.fetch_candles_sans_cache("XAU/USD", "5min", 280)
     assert len(bougies) == 280
     assert appels == {"lu": 0, "ecrit": 0}
+
+
+# ── L'etalement ──────────────────────────────────────────────────────
+#
+# ⛔ Ma premiere version preremplissait les 23 paires dans la meme seconde :
+# 23 requetes de 246 bougies sur une API plafonnee A LA MINUTE. Vu en
+# production — 14 refus 429 dans les minutes qui ont suivi.
+
+@pytest.fixture(autouse=True)
+def _etalement_neuf():
+    ea._dernier_preremplissage[0] = 0.0
+    yield
+    ea._dernier_preremplissage[0] = 0.0
+
+
+@pytest.mark.asyncio
+async def test_UNE_SEULE_paire_est_preremplie_par_passage():
+    """🔑 « La concurrence n'est pas le debit » — la lecon des 954 refus 429."""
+    appels = []
+    f = await _fetch_factice(appels)
+    for p in ("XAU/USD", "EUR/USD", "WTI/USD", "BTC/USD"):
+        await ea.preremplir(p, f)
+    assert len(appels) == 1, appels
+
+
+@pytest.mark.asyncio
+async def test_la_paire_ECARTEE_est_reprise_au_passage_suivant(monkeypatch):
+    """⛔ Sinon l'etalement ne retarderait pas le remplissage : il l'annulerait,
+    et les paires suivantes ne seraient JAMAIS preremplies."""
+    appels = []
+    f = await _fetch_factice(appels)
+    await ea.preremplir("XAU/USD", f)
+    assert "EUR/USD" not in ea._preremplies
+    ea._dernier_preremplissage[0] -= 1000          # le cycle suivant
+    await ea.preremplir("EUR/USD", f)
+    assert [a[0] for a in appels] == ["XAU/USD", "EUR/USD"]
+
+
+@pytest.mark.asyncio
+async def test_le_delai_est_REGLABLE_sans_redeploiement():
+    import io as _io
+    src = _io.open("backend/services/echelle_agregee.py", encoding="utf-8").read()
+    assert 'os.getenv("ECHELLES_DELAI_PREREMPLISSAGE_S"' in src
