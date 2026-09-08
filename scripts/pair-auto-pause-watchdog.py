@@ -158,9 +158,13 @@ def check_pair(con, pair, env):
         reason_parts.append(f"PnL 24h {pnl_24h:+.2f} USD sur {n_24h} trades")
     reason = "auto-watchdog: " + " ; ".join(reason_parts)
 
+    # ⛔ `datetime('now')` ecrivait une ESPACE dans une colonne stockee en ISO
+    # avec un `T` : 13 lignes polluees, et toute comparaison ulterieure sur
+    # cette colonne devient hasardeuse. On ecrit le MEME format que le reste.
     con.execute(
-        "UPDATE pair_admission_state SET state='PAUSED', state_since=datetime('now'), reason=? WHERE pair=? AND state='AUTO_EXEC'",
-        (reason, pair),
+        "UPDATE pair_admission_state SET state='PAUSED', state_since=?, "
+        "reason=? WHERE pair=? AND state='AUTO_EXEC'",
+        (datetime.now(timezone.utc).isoformat(), reason, pair),
     )
     con.commit()
 

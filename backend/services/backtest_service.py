@@ -264,8 +264,14 @@ def record_setups(setups: list[TradeSetup]) -> None:
         for s in setups:
             # Deduplication : meme setup deja enregistre dans la derniere heure ?
             cur = c.execute(
+                # ⛔ `replace(emitted_at,'T',' ')` : les dates sont stockees
+                # en ISO avec un `T`, `datetime('now',...)` rend une ESPACE, et
+                # `T` (0x54) > espace (0x20). La fenetre d'une heure ne
+                # filtrait RIEN : la dedup portait sur la JOURNEE entiere, donc
+                # elle ecartait des setups legitimes.
                 "SELECT id FROM trades WHERE pair=? AND direction=? AND entry_price=? "
-                "AND emitted_at >= datetime('now', '-1 hour') LIMIT 1",
+                "AND replace(emitted_at,'T',' ') >= datetime('now', '-1 hour') "
+                "LIMIT 1",
                 (s.pair, s.direction.value, s.entry_price),
             )
             if cur.fetchone():

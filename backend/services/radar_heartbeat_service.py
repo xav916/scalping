@@ -92,8 +92,12 @@ def trim_old_heartbeats(keep_days: int = 14) -> int:
         with sqlite3.connect(_db_path()) as c:
             cur = c.execute(
                 """
+                -- ⛔ `replace(...,'T',' ')` : stockage ISO avec `T`,
+                -- `datetime('now',...)` avec une ESPACE, et `T` > espace en
+                -- comparaison de chaines. Sans cela la purge ne supprimait
+                -- JAMAIS rien -- 52 663 lignes accumulees.
                 DELETE FROM radar_cycle_heartbeat
-                WHERE cycle_completed_at < datetime('now', ?)
+                WHERE replace(cycle_completed_at,'T',' ') < datetime('now', ?)
                 """,
                 (f"-{keep_days} days",),
             )

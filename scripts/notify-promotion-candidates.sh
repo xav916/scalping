@@ -28,12 +28,13 @@ FROM (
   SELECT
     pair,
     direction,
-    SUM(CASE WHEN pushed_at > datetime('now','-7 days') THEN 1 ELSE 0 END) as n_7d,
+    SUM(CASE WHEN replace(pushed_at,'T',' ') > datetime('now','-7 days')
+             THEN 1 ELSE 0 END) as n_7d,
     COUNT(*) as n_30d
   FROM mt5_pushes
   WHERE destination_id='user:2'
     AND pair IN ('BTC/USD','ETH/USD','AAPL','TSLA','NVDA','MSFT','MSTR','HOOD','SPY','QQQ')
-    AND pushed_at > datetime('now','-30 days')
+    AND replace(pushed_at,'T',' ') > datetime('now','-30 days')
   GROUP BY pair, direction
   HAVING n_30d >= 1
 );

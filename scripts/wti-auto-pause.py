@@ -101,7 +101,15 @@ def main():
 
     if all(are_sl):
         # Pause WTI admin state for both directions
-        con.execute("UPDATE pair_admission_state SET state='PAUSED', state_since=datetime('now'), reason=? WHERE pair='WTI/USD' AND state='AUTO_EXEC'", (f"auto-watchdog: 2 SL consecutifs Live ({last_two[0]['mt5_ticket']} + {last_two[1]['mt5_ticket']})",))
+        # ⛔ Meme format que la colonne (ISO avec `T`) : `datetime('now')`
+        # y ecrivait une espace, polluant les comparaisons ulterieures.
+        con.execute(
+            "UPDATE pair_admission_state SET state='PAUSED', state_since=?, "
+            "reason=? WHERE pair='WTI/USD' AND state='AUTO_EXEC'",
+            (datetime.now(timezone.utc).isoformat(),
+             f"auto-watchdog: 2 SL consecutifs Live "
+             f"({last_two[0]['mt5_ticket']} + {last_two[1]['mt5_ticket']})"),
+        )
         con.commit()
         total_pnl = (last_two[0].get("pnl") or 0) + (last_two[1].get("pnl") or 0)
         msg = (

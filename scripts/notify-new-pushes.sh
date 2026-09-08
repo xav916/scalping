@@ -112,7 +112,7 @@ lignes=$(lire_base "
     FROM mt5_pushes
    WHERE id > $dernier
      AND ok = 0
-     AND pushed_at < datetime('now','-${DELAI_MIN} minutes')
+     AND replace(pushed_at,'T',' ') < datetime('now','-${DELAI_MIN} minutes')
    ORDER BY id ASC LIMIT 10;") || {
   echo "  ⚠️ curseur CONSERVE a $dernier — rien n'est conclu d'une lecture ratee" >&2
   exit 3

@@ -51,7 +51,7 @@ dernier = int(sys.argv[1])
 c = sqlite3.connect(str(_DB_PATH))
 q = """SELECT id, pushed_at, pair, direction, ok,
               substr(bridge_response, 1, 260),
-              (pushed_at < datetime('now', '-{} minutes')) AS tranche
+              (replace(pushed_at,'T',' ') < datetime('now', '-{} minutes')) AS tranche
          FROM mt5_pushes
         WHERE destination_id = 'admin_kraken' AND id > ?
         ORDER BY id""".format(DELAI_MIN)
