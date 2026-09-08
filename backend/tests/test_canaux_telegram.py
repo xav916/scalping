@@ -48,10 +48,44 @@ def test_IBKR_a_SON_fil_depuis_le_07_09():
     En rallumant la Voie C sur les ETF sectoriels, Xavier a demandé un fil
     dédié — l'application mobile IBKR est inutilisable tant que le Gateway
     occupe la session, donc Telegram est le SEUL moyen de suivre ce compte
-    depuis un téléphone."""
-    assert ct.canal_pour("admin_ibkr") == "ibkr"
-    assert ct.est_un_compte_de_trading("admin_ibkr") is True
+    depuis un téléphone.
+
+    ⛔ CORRIGÉ LE 08/09. La table disait « admin_ibkr » ; le VRAI identifiant
+    est `admin_ibkr_us` — celui que `bridge_destinations` inscrit dans chaque
+    ordre et que le registre déclare. Ce test le vérifiait avec le mauvais nom,
+    donc il passait au vert sur une serrure qui n'ouvrait rien : un trade IBKR
+    retombait sur `infra`, `est_un_compte_de_trading` rendait False, et il
+    n'aurait produit AUCUN message.
+
+    🔑 Un test qui invente sa clé teste son invention. On lit l'identifiant
+    dans le registre au lieu de le retaper.
+    """
+    from backend.services.destinations_registry import DESTINATIONS
+    ibkr = [d.id for d in DESTINATIONS.values() if d.bridge_type == "ibkr"]
+    assert len(ibkr) == 1, ibkr
+    assert ct.canal_pour(ibkr[0]) == "ibkr"
+    assert ct.est_un_compte_de_trading(ibkr[0]) is True
     assert ct.libelle("ibkr") == "[RÉEL · IBKR]"
+
+
+def test_TOUT_compte_en_argent_REEL_a_un_fil_de_trading():
+    """⛔ La propriété qui rend la classe entière impossible.
+
+    Le 08/09, DEUX destinations en argent réel étaient muettes : `admin_ibkr_us`
+    (nom désaligné) et `admin_kraken_stocks` (jamais déclaré). Toutes deux
+    retombaient sur `infra` avec `est_un_compte_de_trading` à False — leurs
+    trades n'auraient produit aucun message, sans la moindre erreur.
+
+    🔑 Vérifier la PROPRIÉTÉ, pas la liste : une destination ajoutée demain
+    fera échouer ce test tant qu'elle n'a pas de fil. C'est la leçon du test
+    qui comptait « == 4 bots ».
+    """
+    from backend.services.destinations_registry import DESTINATIONS
+    muets = [d.id for d in DESTINATIONS.values()
+             if d.reel and not ct.est_un_compte_de_trading(d.id)]
+    assert not muets, (
+        f"argent réel sans fil de trading — leurs trades seraient muets : "
+        f"{muets}")
 
 
 def test_un_compte_INCONNU_part_sur_infra_jamais_sur_un_fil_de_trading():

@@ -2932,7 +2932,7 @@ async def _build_sales_recap_text(date_iso: str | None = None) -> str:
 # ⚠️ Un compte injoignable rend « illisible », jamais un zéro : IBKR
 # éteint le dira, ce qui vaut mieux que de le passer sous silence.
 _RISQUE_DESTINATIONS = ("admin_live", "admin_legacy", "admin_kraken",
-                        "admin_ibkr")
+                        "admin_ibkr_us")
 
 
 def _eur(x: float) -> str:

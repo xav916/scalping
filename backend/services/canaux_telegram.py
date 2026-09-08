@@ -90,7 +90,15 @@ _PAR_DESTINATION: dict[str, str] = {
     "admin_kraken": "kraken",
     "admin_kraken_spot": "kraken",
     "admin_legacy": "demo",
-    "admin_ibkr": "ibkr",
+    # ⛔ Ecrit « admin_ibkr » le 07/09. Le VRAI identifiant est
+    # `admin_ibkr_us` — celui que `bridge_destinations` met dans chaque
+    # ordre et que le registre declare. Un trade IBKR retombait donc sur
+    # `infra`, et `est_un_compte_de_trading` rendait False : il n'aurait
+    # produit AUCUN message. Le fil etait pret, la serrure ne l'etait pas.
+    "admin_ibkr_us": "ibkr",
+    # ⛔ xStocks manquait depuis toujours : argent REEL, et muet pour la
+    # meme raison. Il partage le fil Kraken, comme le spot.
+    "admin_kraken_stocks": "kraken",
 }
 
 

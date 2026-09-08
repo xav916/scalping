@@ -209,9 +209,9 @@ def _compte(dest):
 # est arrive a Kraken pendant des semaines.
 DEVISES = {{"admin_live": "EUR", "admin_legacy": "EUR",
             "admin_kraken": "USD", "admin_kraken_spot": "USD",
-            "admin_ibkr": "USD"}}
+            "admin_ibkr_us": "USD"}}
 for dest in ("admin_live", "admin_kraken", "admin_kraken_spot",
-             "admin_ibkr", "admin_legacy"):
+             "admin_ibkr_us", "admin_legacy"):
     # ⚠️ Une destination absente du registre n'a pas de section : inventer une
     # ligne « 0 trade » pour un compte qui n'existe pas ferait croire a un
     # compte silencieux la ou il n'y a pas de compte.
