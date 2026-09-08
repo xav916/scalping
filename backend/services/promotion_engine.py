@@ -597,6 +597,7 @@ def run_promotion_cycle() -> dict:
 
     if promotions_proposed or demotions_applied:
         _notify_telegram_infra(promotions_proposed, demotions_applied)
+        _notifier_les_comptes(demotions_applied)
 
     summary = {
         "promotions_proposed": len(promotions_proposed),
@@ -612,6 +613,64 @@ def run_promotion_cycle() -> dict:
         f"{len(demotions_applied)} demoted, {len(errors)} errors"
     )
     return summary
+
+
+def _notifier_les_comptes(demotions: list[dict]) -> None:
+    """Une retrogradation sur un compte de TRADING part dans le fil de CE compte.
+
+    ⛔ Le defaut repare (2026-09-08). Le 03/09 `XAU/USD sell` a ete retrograde,
+    puis le 08/09 a 03:00 `XAU/USD buy` sur `admin_live` : l'or a cesse de
+    s'auto-executer sur l'argent reel, en deux etapes, et **rien ne l'a dit**.
+    Le refus qui en decoule rend `_not_admitted`, un code prive NON enregistre :
+    le signal disparaissait sans laisser ni message ni ligne de refus.
+
+    ⚠️ Le recapitulatif du moteur partait bien sur `infra` -- mais un evenement
+    qui touche l'argent reel d'un compte precis s'y noie parmi les messages
+    d'infrastructure. C'est le motif de la sauvegarde S3 : *l'alerte ARRIVAIT,
+    elle s'est noyee dans le bruit.*
+
+    🔑 Ce que le message doit dire, et que l'etat ne dit pas tout seul : le
+    signal CONTINUE d'etre produit et notifie, seule l'execution automatique
+    s'arrete. Sans cette phrase, « demote » se lit comme « la paire est morte ».
+    """
+    if not demotions:
+        return
+    try:
+        import httpx
+
+        from backend.services.canaux_telegram import (
+            est_un_compte_de_trading, canal_pour, libelle_avec_picto)
+
+        jeton = os.getenv("INFRA_TELEGRAM_TOKEN", "").strip()
+        if not jeton:
+            return
+        base = os.getenv("INTERNAL_API_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
+        for d in demotions:
+            destination = d.get("destination")
+            if not est_un_compte_de_trading(destination):
+                continue          # deja couvert par le recap infra
+            canal = canal_pour(destination)
+            corps = (
+                f"*{d.get('pair')} {d.get('direction')}* n'est plus "
+                "auto-executee sur ce compte.\n\n"
+                f"Motif : `{d.get('trigger')}`\n\n"
+                "Le signal continue d'etre produit et annonce ici — seule "
+                "l'execution automatique s'arrete. Aucune position ouverte "
+                "n'est fermee par cette decision."
+            )
+            try:
+                r = httpx.post(
+                    f"{base}/api/admin/notify-infra-telegram",
+                    json={"title": f"{libelle_avec_picto(canal)} — "
+                                   "execution automatique suspendue",
+                          "body": corps, "channel": canal},
+                    headers={"X-Admin-Token": jeton}, timeout=10)
+                r.raise_for_status()
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    "promotion_engine: notif compte %s echouee : %s", destination, e)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"promotion_engine: notification par compte indisponible : {e}")
 
 
 def _notify_telegram_infra(promotions: list[dict], demotions: list[dict]) -> None:

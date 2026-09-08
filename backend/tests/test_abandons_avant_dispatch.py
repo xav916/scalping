@@ -147,3 +147,83 @@ def test_le_motif_est_TRADUIT():
     """Un code non traduit s'affiche brut dans les récaps."""
     from backend.services.rejection_service import REASON_LABELS_FR
     assert ae.MOTIF_ABANDON_AVANT_DISPATCH in REASON_LABELS_FR
+
+
+# ── La rétrogradation part dans le fil de SON compte (2026-09-08) ────
+#
+# ⛔ Le vrai coupable, trouvé en cherchant où mourait la vente or : deux
+# rétrogradations automatiques ont éteint l'or sur `admin_live` — la vente le
+# 03/09, l'achat le 08/09 à 03:00 — et **rien ne l'a dit**. Le récapitulatif
+# du moteur partait sur `infra`, où un événement touchant l'argent réel d'un
+# compte se noie. Motif de la sauvegarde S3 : *l'alerte arrivait, elle s'est
+# noyée dans le bruit.*
+
+def _demotion(destination="admin_live", pair="XAU/USD", direction="buy"):
+    return {"pair": pair, "direction": direction, "destination": destination,
+            "trigger": "dd_above_10.0%_7d:13.96"}
+
+
+@pytest.fixture
+def envois(monkeypatch):
+    """Capture les POST Telegram sans réseau."""
+    faits: list[dict] = []
+
+    class _Rep:
+        def raise_for_status(self):
+            return None
+
+    import httpx
+    monkeypatch.setattr(httpx, "post",
+                        lambda url, **kw: (faits.append(kw.get("json") or {}), _Rep())[1])
+    monkeypatch.setenv("INFRA_TELEGRAM_TOKEN", "jeton-de-test")
+    return faits
+
+
+def test_une_retrogradation_part_dans_le_fil_du_COMPTE(envois):
+    from backend.services import promotion_engine as pe
+    pe._notifier_les_comptes([_demotion()])
+    assert len(envois) == 1
+    assert envois[0]["channel"] == "ic_markets"
+
+
+def test_le_message_dit_que_le_SIGNAL_continue(envois):
+    """🔑 Sans cette phrase, « rétrogradé » se lit comme « la paire est morte ».
+    L'état TELEGRAM produit encore le signal — seule l'exécution s'arrête."""
+    from backend.services import promotion_engine as pe
+    pe._notifier_les_comptes([_demotion()])
+    corps = envois[0]["body"]
+    assert "signal continue" in corps
+    assert "execution automatique s'arrete" in corps
+    assert "Aucune position ouverte" in corps
+
+
+def test_le_message_porte_le_MOTIF_de_la_retrogradation(envois):
+    from backend.services import promotion_engine as pe
+    pe._notifier_les_comptes([_demotion()])
+    assert "dd_above_10.0%_7d:13.96" in envois[0]["body"]
+
+
+def test_une_destination_HORS_trading_ne_double_pas_le_recap(envois):
+    """⚠️ Le récap infra les couvre déjà. Les envoyer deux fois ferait du bruit
+    exactement là où on vient d'en retirer."""
+    from backend.services import promotion_engine as pe
+    pe._notifier_les_comptes([_demotion(destination=None)])
+    assert envois == []
+
+
+def test_SANS_retrogradation_aucun_message(envois):
+    from backend.services import promotion_engine as pe
+    pe._notifier_les_comptes([])
+    assert envois == []
+
+
+def test_un_envoi_en_echec_ne_casse_PAS_le_moteur(monkeypatch):
+    """⛔ Une notification n'est jamais assez importante pour interrompre le
+    cycle de promotion qu'elle décrit."""
+    import httpx
+
+    from backend.services import promotion_engine as pe
+    monkeypatch.setenv("INFRA_TELEGRAM_TOKEN", "jeton-de-test")
+    monkeypatch.setattr(httpx, "post",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("reseau")))
+    pe._notifier_les_comptes([_demotion()])      # ne doit pas lever
