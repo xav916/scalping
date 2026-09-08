@@ -180,3 +180,100 @@ def test_AUCUNE_derogation_de_concurrence_sans_plafond_par_trade():
         "risque par trade est désarmé — le pire cas double sans contrepartie")
     for (compte, paire), n in cg.LIMITE_PAR_PAIRE.items():
         assert n <= 2, f"{compte}:{paire} à {n} places — non mesuré"
+
+
+# ── Les 15 % réservés à l'OR SEUL (2026-09-08) ───────────────────────
+#
+# Xavier : « un risque cumulé engagé à 20 % du capital dont 15 % réservés
+# uniquement à l'or ». Le total de 20 % existait déjà ; ce qui change est la
+# PORTÉE de la poche des 15 %, dont l'argent sort.
+
+def _bloc_poches(argent_dans_la_poche_or: bool):
+    """Exécute le bloc des poches du bridge MT5, seul.
+
+    ⚠️ `mt5-bridge/bridge.py` importe MetaTrader5, absent des tests. Le dépôt
+    en extrait donc les fonctions depuis la source — même méthode ici.
+
+    ⛔ Le drapeau est INJECTÉ, pas lu dans l'environnement : le bloc consulte
+    `globals()`, parce que douze fichiers de tests l'exécutent sans `os`. Un
+    `os.getenv` à cet endroit cassait 66 tests sur du code juste.
+    """
+    src = io.open("mt5-bridge/bridge.py", encoding="utf-8").read()
+    debut = src.index("# ⛔ L'etiquette SUIT le contenu.")
+    fin = src.index("# MT5 : POSITION_TYPE_BUY")
+    ns: dict = {"_ARGENT_DANS_LA_POCHE_OR": argent_dans_la_poche_or}
+    exec(compile(src[debut:fin], "bloc_poches", "exec"), ns)
+    return ns
+
+
+def test_l_ARGENT_sort_de_la_poche_des_15_pct():
+    ns = _bloc_poches(False)
+    assert ns["_poche_du_symbole"]("XAUUSD") == "or"
+    assert ns["_poche_du_symbole"]("XAGUSD") == "autres"
+    assert ns["_poche_du_symbole"]("EURUSD") == "autres"
+
+
+def test_l_etiquette_de_la_poche_SUIT_son_contenu():
+    """⛔ Un nom qui ment est pire qu'un nom absent : `/health`, le détail des
+    poches et les messages Telegram sont tous alimentés par cette chaîne."""
+    assert _bloc_poches(False)["_POCHE_OR_ARGENT"] == "or"
+    assert _bloc_poches(True)["_POCHE_OR_ARGENT"] == "or_argent"
+
+
+def test_l_etat_d_avant_reste_ATTEIGNABLE_sans_redeploiement():
+    """🔑 Une décision qui s'est déjà inversée une fois doit pouvoir se
+    re-inverser — l'argent est entré dans cette poche le 28/08, il en sort le
+    08/09."""
+    ns = _bloc_poches(True)
+    assert ns["_poche_du_symbole"]("XAGUSD") == "or_argent"
+
+
+def test_le_total_reste_a_20_pct():
+    """⚠️ 5 % + 15 % = 20 %. Les deux réglages vivent dans le bridge et rien
+    ne les additionne : un test le fait."""
+    src = io.open("mt5-bridge/bridge.py", encoding="utf-8").read()
+    import re
+    autres = float(re.search(r'MAX_RISQUE_ENGAGE_PCT[^\n]*?"([\d.]+)"', src).group(1))
+    metaux = float(re.search(r'or\s*"([\d.]+)"\s*\)', src).group(1))
+    assert autres + metaux == 20.0, (autres, metaux)
+    assert metaux == 15.0
+
+
+def test_le_bloc_de_risque_reconnait_les_DEUX_etiquettes():
+    """⛔ Épingler « or_argent » ferait disparaître la ligne « Or » du message
+    le jour de la bascule — un affichage muet, sans erreur."""
+    for nom in ("or", "or_argent"):
+        etat = {"lisible": True, "desarme": False, "indecidable": False,
+                "engage_eur": 20.0, "plafond_eur": 97.5, "restant_eur": 22.5,
+                "pct": 30.0, "poche": nom, "positions": 2,
+                "metaux": {"libre_eur": 80.0, "pct": 18.0,
+                           "plafond_eur": 97.5, "nom": nom},
+                "converti": False, "taux_vivant": True}
+        from backend.services.bloc_risque import lignes
+        texte = "\n".join(lignes(etat))
+        assert "🥇 Or" in texte, nom
+        assert nom.replace("_", "/") in texte, nom
+
+
+# ── La taille de contrat de l'ARGENT (2026-09-08) ────────────────────
+
+def test_l_argent_ne_partage_PAS_la_taille_de_contrat_de_l_or():
+    """⛔ Défaut trouvé le 08/09 : `TAILLE_CONTRAT_MT5` est indexée par CLASSE,
+    et or comme argent y valent « metal ». Le risque de l'argent était donc
+    sous-estimé d'un facteur 10.
+
+    🔑 Dérivé des trades réels — `contrat = pnl / ((sortie−entrée) × sens ×
+    volume)` — : 100,4 sur 21 trades or (table : 100 ✅) et **1 002,4 sur
+    9 trades argent** (table : 100 ⛔).
+    """
+    from backend.services.risk_eur import taille_contrat
+    assert taille_contrat("XAU/USD", "mt5") == 100
+    assert taille_contrat("XAG/USD", "mt5") == 1000
+
+
+def test_le_risque_d_un_lot_d_argent_est_VRAISEMBLABLE():
+    """La borne qui aurait attrapé les 0,25 €."""
+    from backend.services.risk_eur import calculer
+    r = calculer(pair="XAG/USD", entry=48.0, sl=47.7, tp=48.54,
+                 volume=0.01, bridge_type="mt5")
+    assert 1.5 <= r["risque_eur"] <= 6.0, r

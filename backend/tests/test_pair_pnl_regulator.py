@@ -634,9 +634,16 @@ def test_un_compte_qui_saigne_ne_ferme_plus_l_autre(_isolated_db, monkeypatch,
     monkeypatch.setattr(st, "TRADING_CAPITAL", 650.0)
     plancher(90)
     for _ in range(12):
-        _insert_trade(_isolated_db, "XAG/USD", -20.0, destination="admin_legacy")
+        # ⚠️ Distance divisee par 10 le 08/09 : la taille de contrat de
+        # l'argent est passee de 100 a 1 000 (elle etait FAUSSE), donc le
+        # risque en euros decuple et le R divise par 10. On garde le meme
+        # R qu'avant en resserrant le stop — ce test porte sur le
+        # REGULATEUR, pas sur la table des contrats.
+        _insert_trade(_isolated_db, "XAG/USD", -20.0, risque=1.0,
+                      destination="admin_legacy")
     for _ in range(12):
-        _insert_trade(_isolated_db, "XAG/USD", +5.0, destination="admin_live")
+        _insert_trade(_isolated_db, "XAG/USD", +5.0, risque=1.0,
+                      destination="admin_live")
 
     assert pair_pnl_regulator.evaluate_pair(
         "XAG/USD", destination="admin_legacy")["action"] == "pause"
@@ -737,7 +744,7 @@ def test_une_fenetre_VRAIMENT_perdante_en_R_pause_toujours(
     monkeypatch.setattr(st, "PAIR_PNL_REGULATOR_PAUSE_THRESHOLD_PCT", -10.0)
 
     for i in range(15):                       # −1 R chacun, stops varies
-        _insert_trade(_isolated_db, "XAG/USD", pnl=-20.0, risque=20.0,
+        _insert_trade(_isolated_db, "XAG/USD", pnl=-20.0, risque=2.0,
                       destination="admin_live",
                       closed_at=(datetime.now(timezone.utc)
                                  - timedelta(minutes=60 - i)).isoformat())
@@ -815,7 +822,7 @@ def test_la_raison_de_la_pause_dit_les_DEUX_unites(_isolated_db, monkeypatch):
     monkeypatch.setattr(st, "TRADING_CAPITAL", 650.0)
     monkeypatch.setattr(st, "PAIR_PNL_REGULATOR_PAUSE_THRESHOLD_PCT", -10.0)
     for i in range(15):
-        _insert_trade(_isolated_db, "XAG/USD", pnl=-20.0, risque=20.0,
+        _insert_trade(_isolated_db, "XAG/USD", pnl=-20.0, risque=2.0,
                       destination="admin_live")
 
     d = pair_pnl_regulator.evaluate_pair("XAG/USD", destination="admin_live")

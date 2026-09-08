@@ -372,7 +372,7 @@ def test_la_poche_de_l_or_SATUREE_ne_se_dilue_pas_dans_le_forex(s):
     positions = [_or(ticket=t) for t in (91, 92, 93)]
     e = s.evaluer(positions, equity=552.0, plafond_pct=6.0, marge_min_r=1.0,
                   plafond_metaux_pct=14.0)
-    assert e["poche"] == "or_argent"
+    assert e["poche"] == s.POCHE_METAUX
     assert e["pct"] == pytest.approx(77.6, abs=0.5)
     assert s.verdict(e, 72.0) == "sature"
 
@@ -383,7 +383,7 @@ def test_le_forex_VIDE_ne_sauve_pas_une_poche_or_pleine(s):
     e = s.evaluer([_or(ticket=t) for t in (91, 92, 93)], 552.0, 6.0, 1.0,
                   plafond_metaux_pct=14.0)
     assert e["detail_poches"]["autres"]["risque"] == 0.0
-    assert e["detail_poches"]["or_argent"]["risque"] == pytest.approx(60.0, abs=0.5)
+    assert e["detail_poches"][s.POCHE_METAUX]["risque"] == pytest.approx(60.0, abs=0.5)
 
 
 def test_c_est_la_poche_la_PLUS_saturee_qui_est_annoncee(s):
@@ -393,24 +393,31 @@ def test_c_est_la_poche_la_PLUS_saturee_qui_est_annoncee(s):
     e = s.evaluer(positions, equity=552.0, plafond_pct=6.0, marge_min_r=1.0,
                   plafond_metaux_pct=14.0)
     assert e["poche"] == "autres"
-    assert e["pct"] > e["detail_poches"]["or_argent"]["pct"]
+    assert e["pct"] > e["detail_poches"][s.POCHE_METAUX]["pct"]
 
 
-def test_l_ARGENT_compte_dans_la_poche_des_14_pct(s):
-    """Renverse le 28/08 sur mesure : 11,80 EUR de risque pour un 0,01 lot
-    d'argent, soit le tiers de la poche des 6 % a lui seul."""
+def test_l_ARGENT_est_SORTI_de_la_poche_des_15_pct(s):
+    """⛔ Renverse le 28/08, qui renversait deja le 28/08 au matin.
+
+    Le motif d'alors — « 11,80 EUR pour un 0,01 lot d'argent, le tiers de la
+    poche » — reposait sur une taille de contrat FAUSSE : 100 au lieu de 1 000
+    dans `risk_eur`, corrige le 08/09. Mesure refaite sur 9 trades argent
+    reels : ~2,50 EUR au lot minimum, moins qu'un trade forex median.
+
+    🔑 Xavier, le 08/09 : « 20 % dont 15 % reserves UNIQUEMENT a l'or ».
+    ⚠️ La sonde DOIT trancher comme le bridge — un test epingle les deux.
+    """
     e = s.evaluer([_or(symbol="XAGUSD", ticket=95)], 552.0, 6.0, 1.0,
                   plafond_metaux_pct=14.0)
-    assert e["detail_poches"]["autres"]["risque"] == 0.0
-    assert e["detail_poches"]["or_argent"]["risque"] == pytest.approx(20.0,
-                                                                      abs=0.5)
+    assert e["detail_poches"][s.POCHE_METAUX]["risque"] == 0.0
+    assert e["detail_poches"]["autres"]["risque"] == pytest.approx(20.0, abs=0.5)
 
 
 def test_le_PLATINE_reste_dans_la_poche_des_6_pct(s):
     """⛔ Nommes un par un : filtrer sur « metal » embarquerait XPT et XPD."""
     e = s.evaluer([_or(symbol="XPTUSD", ticket=96)], 552.0, 6.0, 1.0,
                   plafond_metaux_pct=14.0)
-    assert e["detail_poches"]["or_argent"]["risque"] == 0.0
+    assert e["detail_poches"][s.POCHE_METAUX]["risque"] == 0.0
     assert e["detail_poches"]["autres"]["risque"] == pytest.approx(20.0,
                                                                    abs=0.5)
 
@@ -454,8 +461,8 @@ def test_le_message_NOMME_la_poche_saturee(s):
     e["login"] = 13137475
     e["marge_min_r"] = 1.0
     titre, corps = s._message("admin_live", e, "sature")
-    assert "[or_argent]" in titre
-    assert "poche or_argent" in corps
+    assert f"[{s.POCHE_METAUX}]" in titre
+    assert f"poche {s.POCHE_METAUX}" in corps
     assert "Autre poche autres" in corps
 
 
@@ -492,8 +499,8 @@ def test_le_corps_ne_porte_AUCUNE_balise(s):
     rare est exactement ce qui survit à une relecture.
     """
     cas = [
-        (_eval_deux_poches_pour_message(), "sature"),
-        (_eval_deux_poches_pour_message(), "ok"),
+        (_eval_deux_poches_pour_message(s), "sature"),
+        (_eval_deux_poches_pour_message(s), "ok"),
         (s.evaluer([_pos(sl=0.0)], 552.0, 6.0, 1.0), "indecidable"),
         (s.evaluation_illisible(), "illisible"),
     ]
@@ -507,12 +514,14 @@ def test_le_corps_ne_porte_AUCUNE_balise(s):
         assert "&amp;" not in corps and "&lt;" not in corps, (verdict, corps)
 
 
-def _eval_deux_poches_pour_message():
+# ⚠️ Prend le module : l'etiquette de la poche s'y LIT (elle est passee de
+# « or_argent » a « or » le 08/09). La retaper ici la ferait diverger.
+def _eval_deux_poches_pour_message(s):
     """Une évaluation saturée, à deux poches, prête pour `_message`."""
     poches = {
         "autres": {"risque": 28.75, "plafond": 33.12, "pct": 86.8,
                    "candidats": 0, "liberable": 0.0},
-        "or_argent": {"risque": 60.0, "plafond": 77.28, "pct": 77.6,
+        s.POCHE_METAUX: {"risque": 60.0, "plafond": 77.28, "pct": 77.6,
                       "candidats": 0, "liberable": 0.0},
     }
     return {
@@ -539,7 +548,7 @@ def test_DRY_RUN_n_ecrit_AUCUN_etat(s, monkeypatch):
     monkeypatch.setattr(s, "_charger_etats", lambda: {"admin_live": "ok"})
     monkeypatch.setattr(s, "_ecrire_etats", lambda e: ecrits.append(e))
     monkeypatch.setattr(s, "_lire_destination",
-                        lambda dest: _eval_deux_poches_pour_message())
+                        lambda dest: _eval_deux_poches_pour_message(s))
     assert s.main() == 0
     assert ecrits == []
 
@@ -551,7 +560,7 @@ def test_hors_DRY_RUN_l_etat_est_bien_ecrit(s, monkeypatch):
     monkeypatch.setattr(s, "_charger_etats", lambda: {})
     monkeypatch.setattr(s, "_ecrire_etats", lambda e: ecrits.append(e))
     monkeypatch.setattr(s, "_lire_destination",
-                        lambda dest: _eval_deux_poches_pour_message())
+                        lambda dest: _eval_deux_poches_pour_message(s))
     monkeypatch.setattr(s, "_notifier",
                         lambda t, c, dedup, destination_id=None: None)
     assert s.main() == 0

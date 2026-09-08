@@ -26,6 +26,22 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# ⛔ Surcharge PAR SYMBOLE — la classe ne suffit pas (2026-09-08).
+#
+# L'or et l'argent partagent la classe « metal », mais PAS la taille de
+# contrat : 100 onces pour l'or, **1 000 pour l'argent**. La table unique
+# sous-estimait donc le risque de l'argent d'un facteur 10.
+#
+# 🔑 Mesuré, pas supposé : la taille se DÉRIVE des trades réels par
+# `contrat = pnl / ((sortie − entrée) × sens × volume)`. Sur 21 trades or elle
+# rend 100,4 (table : 100 ✅) et sur 9 trades argent **1 002,4** (table : 100 ⛔).
+# ⚠️ La dérivation n'est exacte que pour les paires cotées en DOLLARS — sur
+# USD/JPY elle rend 641 au lieu de 100 000, parce que la distance de prix est
+# en yens. AUD/USD, elle, rend 101 027 et confirme la méthode.
+TAILLE_CONTRAT_PAR_SYMBOLE_MT5: dict[str, int] = {
+    "XAG": 1000,
+}
+
 # Taille de contrat par classe d'actif chez IC Markets (compte EUR).
 TAILLE_CONTRAT_MT5: dict[str, int] = {
     "metal": 100,          # XAU/XAG : 100 onces par lot
@@ -87,6 +103,10 @@ def taille_contrat(pair: str, bridge_type: str) -> int:
     # Le mettre ici protege meme si la classification se trompe a nouveau.
     if bridge_type in ("kraken", "kraken_spot", "binance", "ibkr"):
         return 1
+    p = (pair or "").upper()
+    for prefixe, taille in TAILLE_CONTRAT_PAR_SYMBOLE_MT5.items():
+        if p.startswith(prefixe):
+            return taille
     return TAILLE_CONTRAT_MT5.get(classe_d_actif(pair), 1)
 
 

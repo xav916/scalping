@@ -44,7 +44,13 @@ logger = logging.getLogger(__name__)
 # en silence — le défaut apparié du seuil de saturation, déjà vu.
 RISQUE_TRADE_TYPIQUE_EUR = 9.0
 
-POCHE_METAUX = "or_argent"
+# ⚠️ DEUX étiquettes possibles depuis le 08/09 : la poche des 15 % ne tient
+# plus que l'or, et son nom SUIT son contenu côté bridge (`or` / `or_argent`
+# selon `POCHE_OR_INCLUT_ARGENT`). Épingler une seule chaîne ici ferait
+# disparaître la ligne « Or » du message le jour où le réglage bascule — un
+# affichage muet, sans erreur. On accepte donc les deux.
+POCHES_METAUX = ("or", "or_argent")
+POCHE_METAUX = POCHES_METAUX[1]      # conservé : d'anciens tests l'importent
 
 
 def _taux_eur_usd() -> tuple[float, bool]:
@@ -151,13 +157,19 @@ def etat(destination_id: str | None) -> dict:
               if detail else e.get("risque_total"))
 
     metaux = None
-    if detail.get(POCHE_METAUX):
-        d = detail[POCHE_METAUX]
+    cle_metaux = next((q for q in POCHES_METAUX if detail.get(q)), None)
+    if cle_metaux:
+        d = detail[cle_metaux]
         plafond_m = d.get("plafond")
         libre = (None if plafond_m is None
                  else plafond_m - (d.get("risque") or 0.0))
         metaux = {"libre_eur": libre, "pct": d.get("pct"),
-                  "plafond_eur": plafond_m}
+                  "plafond_eur": plafond_m,
+                  # ⛔ Le nom vient du BRIDGE, il n'est pas recopié : depuis le
+                  # 08/09 la poche s'appelle « or » et non plus « or_argent ».
+                  # Écrire « or/argent » en dur ferait mentir le message le
+                  # jour où le contenu change — ce qui vient d'arriver.
+                  "nom": cle_metaux}
 
     return {
         "lisible": True,
@@ -285,7 +297,8 @@ def _ligne_or(etat_risque: dict, restant: float | None) -> list[str]:
     libre = m.get("libre_eur") if m else restant
     if libre is None:
         return ["🥇 Or : place *inconnue* — la poche n'est pas mesurable."]
-    ou = "poche or/argent" if m else "plafond commun"
+    ou = ("poche %s" % str(m.get("nom") or "or").replace("_", "/")
+          if m else "plafond commun")
     typique = f"{RISQUE_TRADE_TYPIQUE_EUR:.0f}"
     verdict = (f"✅ un trade or type ({typique} €) tient, côté risque"
                if libre >= RISQUE_TRADE_TYPIQUE_EUR

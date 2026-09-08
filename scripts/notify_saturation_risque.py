@@ -226,11 +226,19 @@ def sigma_journalier(clotures) -> float | None:
 
 # Nommés UN PAR UN, jamais par classe d'actif : « métal » embarquerait le
 # platine et le palladium, que personne n'a demandé à financer sur ce budget.
-_SYMBOLES_OR_ARGENT = ("XAU", "GOLD", "XAG", "SILVER")
+# ⛔ RESSERRÉ À L'OR SEUL le 2026-09-08, en miroir du bridge : Xavier a demandé
+# « 20 % de risque cumulé dont 15 % réservés UNIQUEMENT à l'or ». L'argent
+# retombe dans la poche commune — sa taille de contrat était fausse d'un
+# facteur 10, et il n'y coûte que ~2,50 € au lot minimum.
+_ARGENT_DANS_LA_POCHE_OR = os.environ.get("POCHE_OR_INCLUT_ARGENT", "0") == "1"
+_SYMBOLES_OR_ARGENT = (("XAU", "GOLD", "XAG", "SILVER")
+                       if _ARGENT_DANS_LA_POCHE_OR else ("XAU", "GOLD"))
+# L'étiquette suit le contenu, comme côté bridge.
+POCHE_METAUX = "or_argent" if _ARGENT_DANS_LA_POCHE_OR else "or"
 
 
 def poche_du_symbole(symbole: str) -> str:
-    """Poche de risque : or et argent d'un côté, tout le reste de l'autre.
+    """Poche de risque : l'or d'un côté, tout le reste de l'autre.
 
     ⚠️ **Règle DUPLIQUÉE depuis `bridge.py::_poche_du_symbole`** — même raison
     que `sigma_journalier` : les deux tournent sur des machines différentes et
@@ -238,7 +246,7 @@ def poche_du_symbole(symbole: str) -> str:
     être répercutée là-bas ; un test épingle les deux sur les mêmes entrées.
     """
     s = (symbole or "").upper()
-    return ("or_argent" if any(m in s for m in _SYMBOLES_OR_ARGENT)
+    return (POCHE_METAUX if any(m in s for m in _SYMBOLES_OR_ARGENT)
             else "autres")
 
 
@@ -267,7 +275,7 @@ def evaluer(positions: list, equity: float, plafond_pct: float,
     `plafond_metaux_pct <= 0` ⇒ une seule poche : l'état d'avant, au bit près.
     """
     or_separe = plafond_metaux_pct > 0
-    poches = ("autres", "or_argent") if or_separe else ("autres",)
+    poches = ("autres", POCHE_METAUX) if or_separe else ("autres",)
     total = {q: 0.0 for q in poches}
     candidats = {q: 0 for q in poches}
     liberable = {q: 0.0 for q in poches}

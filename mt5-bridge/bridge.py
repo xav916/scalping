@@ -151,6 +151,25 @@ MARGE_LIBRE_MIN_PCT = float(os.getenv("MARGE_LIBRE_MIN_PCT", "30.0"))
 # `MAX_RISQUE_ENGAGE_OR_PCT` reste accepte comme alias : renommer une variable
 # d'environnement sans la lire ferait retomber le reglage a son defaut EN
 # SILENCE, ce qui est exactement la panne qu'on ne verrait pas.
+# ⛔ RESSERRE A L'OR SEUL le 2026-09-08, a la demande de Xavier : « 20 % de
+# risque cumule dont 15 % reserves UNIQUEMENT a l'or ». L'argent retombe dans
+# la poche commune des 5 %.
+#
+# ⚠️ C'est l'inverse de la decision du 28/08, et son motif ne tient plus : il
+# reposait sur « un 0,01 lot d'argent risque ~11,80 EUR, le tiers de la poche ».
+# La taille de contrat de l'argent etait fausse d'un FACTEUR 10 dans
+# `risk_eur` (100 au lieu de 1 000, corrige le meme jour). Mesure refaite sur
+# 9 trades argent reels : ~2,50 EUR au lot minimum, MOINS qu'un trade forex
+# median (3,93 EUR). L'argent ne mange pas la poche commune.
+#
+# 🔑 `POCHE_OR_INCLUT_ARGENT=1` restaure l'etat d'avant sans redeploiement :
+# une decision qui s'est deja inversee une fois doit pouvoir se re-inverser.
+#
+# ⚠️ Lu ICI, et non pres des poches : douze fichiers de tests extraient ce
+# bloc-la du source et l'executent SANS `os`. Un `os.getenv` a cet endroit
+# cassait 66 tests sur du code juste.
+_ARGENT_DANS_LA_POCHE_OR = os.getenv("POCHE_OR_INCLUT_ARGENT", "0") == "1"
+
 MAX_RISQUE_ENGAGE_OR_ARGENT_PCT = float(
     os.getenv("MAX_RISQUE_ENGAGE_OR_ARGENT_PCT")
     or os.getenv("MAX_RISQUE_ENGAGE_OR_PCT")
@@ -2492,7 +2511,12 @@ def _risque_realise(entry: float, sl: float, lots: float,
     return (distance / point) * tick_value * lots
 
 
-_POCHE_OR_ARGENT = "or_argent"
+# ⛔ L'etiquette SUIT le contenu. Depuis le 08/09 la poche ne tient que l'or :
+# continuer a l'appeler « or_argent » ferait mentir `/health`, le detail des
+# poches et les messages Telegram, tous alimentes par cette chaine. Un nom qui
+# ne peut pas mentir, comme « autres » qui se definit par complement.
+_POCHE_OR_ARGENT = ("or_argent"
+                    if globals().get("_ARGENT_DANS_LA_POCHE_OR") else "or")
 _POCHE_AUTRES = "autres"
 
 # Nommes UN PAR UN, jamais par classe d'actif. `_asset_class_for_symbol` rend
@@ -2500,7 +2524,21 @@ _POCHE_AUTRES = "autres"
 # instruments que personne n'a demande a financer sur ce budget et qui
 # entreraient sans qu'aucune ligne ne change. La liste explicite, elle, ne
 # derive pas toute seule.
-_SYMBOLES_OR_ARGENT = ("XAU", "GOLD", "XAG", "SILVER")
+# ⛔ RESSERRE A L'OR SEUL le 2026-09-08, a la demande de Xavier : « 20 % de
+# risque cumule dont 15 % reserves UNIQUEMENT a l'or ». L'argent retombe donc
+# dans la poche commune des 5 %.
+#
+# ⚠️ C'est l'inverse de la decision du 28/08, et le motif d'alors ne tient
+# plus : il reposait sur « un 0,01 lot d'argent risque ~11,80 EUR, soit le
+# tiers de la poche ». Or la taille de contrat de l'argent etait fausse d'un
+# FACTEUR 10 dans `risk_eur` (100 au lieu de 1 000, corrige le meme jour).
+# Mesure refaite sur 9 trades argent reels : ~2,50 EUR au lot minimum, soit
+# MOINS qu'un trade forex median (3,93 EUR). L'argent ne mange donc pas la
+# poche commune, il s'y comporte comme du forex.
+#
+_SYMBOLES_OR_ARGENT = (("XAU", "GOLD", "XAG", "SILVER")
+                       if globals().get("_ARGENT_DANS_LA_POCHE_OR")
+                       else ("XAU", "GOLD"))
 
 
 def _poche_du_symbole(symbole: str) -> str:

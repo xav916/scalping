@@ -365,18 +365,26 @@ def test_l_or_et_le_forex_ne_comptent_PAS_dans_la_meme_poche(m):
     totaux, nus = m._risque_engage_par_poche(positions, _specs)
     assert nus == []
     assert totaux["autres"] == pytest.approx(8.90, abs=0.05)
-    assert totaux["or_argent"] == pytest.approx(8.90, abs=0.05)
+    assert totaux[m._POCHE_OR_ARGENT] == pytest.approx(8.90, abs=0.05)
 
 
-def test_l_ARGENT_partage_la_poche_des_14_pct(m):
-    """⚠️ Renverse le 28/08, quelques heures apres la pose, SUR MESURE : un
-    0,01 lot d'argent risque **11,80 EUR** (mediane de 262 ordres reels) contre
-    7,71 EUR pour l'or et 2,50 a 3,00 EUR pour du forex. Un seul trade argent
-    consommait donc le TIERS de la poche des 6 % — quatre trades forex."""
-    assert m._poche_du_symbole("XAGUSD") == "or_argent"
-    assert m._poche_du_symbole("SILVER") == "or_argent"
-    assert m._poche_du_symbole("XAUUSD") == "or_argent"
-    assert m._poche_du_symbole("GOLD") == "or_argent"
+def test_l_ARGENT_est_SORTI_de_la_poche_des_15_pct(m):
+    """⛔ Renverse le 28/08 — qui renversait deja le 28/08 au matin.
+
+    Motif d'alors : « un 0,01 lot d'argent risque 11,80 EUR (mediane de 262
+    ordres), le TIERS de la poche des 6 % ». Ce chiffre etait faux : la taille
+    de contrat de l'argent valait 100 dans `risk_eur` au lieu de **1 000** —
+    un facteur 10, corrige le 08/09. Mesure refaite sur 9 trades argent
+    reels : **~2,50 EUR** au lot minimum, MOINS qu'un trade forex median
+    (3,93 EUR). L'argent se comporte dans la poche commune comme du forex.
+
+    🔑 Xavier, le 08/09 : « 20 % de risque cumule dont 15 % reserves
+    UNIQUEMENT a l'or ».
+    """
+    assert m._poche_du_symbole("XAGUSD") == "autres"
+    assert m._poche_du_symbole("SILVER") == "autres"
+    assert m._poche_du_symbole("XAUUSD") == m._POCHE_OR_ARGENT
+    assert m._poche_du_symbole("GOLD") == m._POCHE_OR_ARGENT
     assert m._poche_du_symbole("") == "autres"
     assert m._poche_du_symbole(None) == "autres"
 
@@ -393,7 +401,7 @@ def test_les_deux_poches_existent_TOUJOURS_meme_vides(m):
     """⛔ 0.0, jamais une cle absente : un `.get()` rendrait `None` et un
     total absent finit toujours par se lire comme un total nul."""
     totaux, _ = m._risque_engage_par_poche([], _specs)
-    assert totaux == {"autres": 0.0, "or_argent": 0.0}
+    assert totaux == {"autres": 0.0, m._POCHE_OR_ARGENT: 0.0}
 
 
 def test_la_poche_de_l_or_desarmee_reverse_tout_dans_la_commune(m):
@@ -401,7 +409,7 @@ def test_la_poche_de_l_or_desarmee_reverse_tout_dans_la_commune(m):
     positions = [_Pos(1, "XAUUSD", 1.36073, 1.35183, 0.01)]
     totaux, _ = m._risque_engage_par_poche(positions, _specs,
                                            poches_separees=False)
-    assert totaux["or_argent"] == 0.0
+    assert totaux[m._POCHE_OR_ARGENT] == 0.0
     assert totaux["autres"] == pytest.approx(8.90, abs=0.05)
 
 
@@ -411,7 +419,7 @@ def test_une_position_NUE_n_appartient_a_aucune_poche(m):
     positions = [_Pos(9, "XAUUSD", 4450.0, 0.0, 0.01)]
     totaux, nus = m._risque_engage_par_poche(positions, _specs)
     assert nus == [9]
-    assert totaux == {"autres": 0.0, "or_argent": 0.0}
+    assert totaux == {"autres": 0.0, m._POCHE_OR_ARGENT: 0.0}
 
 
 def test_risque_engage_rend_toujours_le_TOTAL_toutes_poches(m):
@@ -428,8 +436,8 @@ def test_risque_engage_rend_toujours_le_TOTAL_toutes_poches(m):
 def test_le_refus_DIT_quelle_poche_a_mordu(m):
     """Un refus a 6 % et un refus a 14 % s'ecriraient pareil sans ca."""
     ok, raison = m._controle_risque_engage(70.0, [], 10.0, 552.0, 14.0,
-                                           poche="or_argent")
-    assert ok is False and "[or_argent]" in raison
+                                           poche=m._POCHE_OR_ARGENT)
+    assert ok is False and f"[{m._POCHE_OR_ARGENT}]" in raison
 
 
 # ── Branchement : les fonctions pures ne disent rien si la porte les ignore ─
@@ -474,7 +482,9 @@ def test_l_or_ne_deborde_PAS_au_dela_de_ses_14_pct(bridge, monkeypatch):
     ok, raison = bridge._check_safety_gates(
         "XAUUSD", "sell", lots=0.01, entry=4450.0, sl=4500.0)
     assert ok is False
-    assert "[or_argent]" in raison
+    # ⚠️ Ce test emploie la fixture `bridge`, pas `m` : l'etiquette se lit sur
+    # le module charge, sinon `m` designe la FONCTION de fixture.
+    assert f"[{bridge._POCHE_OR_ARGENT}]" in raison
 
 
 def test_le_FOREX_ne_touche_PAS_au_budget_de_l_or(bridge, monkeypatch):
@@ -539,7 +549,7 @@ def test_les_defauts_des_deux_poches_sont_5_et_15():
 
     metaux = re.search(r'or "([\d.]+)"\)', src)
     assert metaux and float(metaux.group(1)) == 15.0, (
-        "le defaut de la poche « or_argent » a change sans que ce test le dise")
+        "le defaut de la poche « or » a change sans que ce test le dise")
 
     assert float(autres.group(1)) + float(metaux.group(1)) == 20.0, (
         "le total des deux poches n'est plus 20 %")

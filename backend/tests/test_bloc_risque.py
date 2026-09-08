@@ -127,8 +127,13 @@ def test_3_la_marge_libre_chez_le_courtier():
 
 
 def test_4_un_trade_or_tient_encore():
+    """⚠️ Le libellé de la poche se DÉRIVE de l'état (`metaux["nom"]`) depuis
+    le 08/09 : elle s'appelle « or » et non plus « or_argent », l'argent en
+    étant sorti. Épingler la chaîne referait mentir ce test au prochain
+    changement de portée."""
     texte = "\n".join(br.lignes(_etat_ok()))
-    assert "✅" in texte and "or/argent" in texte
+    assert "✅" in texte
+    assert "🥇 Or" in texte and "poche" in texte
 
 
 def test_4bis_un_trade_or_serait_refuse():
