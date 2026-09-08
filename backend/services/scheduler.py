@@ -222,7 +222,11 @@ async def run_analysis_cycle() -> None:
                     # ⛔ Une seule fois par paire : sans ce prechargement le
                     # tampon met ~16 h a servir M30, et chaque redeploiement le
                     # vide. Le dispositif ne se serait jamais allume.
-                    await preremplir(pair, fetch_candles)
+                    # ⛔ SANS cache : il est indexe sur (paire, intervalle)
+                    # sans la taille, et resservirait les 50 bougies du cycle.
+                    from backend.services.price_service import (
+                        fetch_candles_sans_cache)
+                    await preremplir(pair, fetch_candles_sans_cache)
                     for _s in setups_agreges(
                             candles, pair,
                             is_simulated=simulated_pairs.get(pair, False)):

@@ -210,7 +210,35 @@ async def fetch_candles(
     cached = _cache_get_candles(pair, interval)
     if cached is not None:
         return cached, False
+    return await _fetch_depuis_source(pair, interval, outputsize)
 
+
+async def fetch_candles_sans_cache(
+    pair: str,
+    interval: str = "5min",
+    outputsize: int = 50,
+) -> tuple[list[Candle], bool]:
+    """Va CHERCHER les bougies à la source, sans lire ni écrire le cache.
+
+    ⛔ Le cache est indexé sur ``(paire, intervalle)`` — **pas sur la taille**.
+    Un appelant qui a besoin d'une série longue recevrait donc la série COURTE
+    du cycle en cours, sans erreur ni trace. C'est ce qui a fait rendre « 0
+    bougie » au pré-remplissage des échelles agrégées, le 2026-09-08.
+
+    ⚠️ Et il n'écrit pas non plus : ranger une série de 280 bougies sous la clé
+    du chemin 5 min la servirait au chemin qui TRADE pendant tout le TTL. Un
+    dispositif en observation ne change pas ce que voit la production.
+    """
+    return await _fetch_depuis_source(pair, interval, outputsize)
+
+
+async def _fetch_depuis_source(
+    pair: str,
+    interval: str,
+    outputsize: int,
+) -> tuple[list[Candle], bool]:
+    """La cascade de sources, sans la couche de cache. Extraite le 2026-09-08
+    pour que `fetch_candles_sans_cache` la partage au lieu de la recopier."""
     # Source MT5 (temps réel)
     if PRICE_SOURCE == "mt5":
         candles, is_sim = await mt5_service.fetch_candles(pair, interval, outputsize)

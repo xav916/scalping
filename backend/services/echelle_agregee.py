@@ -115,6 +115,11 @@ async def preremplir(pair: str, fetch, interval: str = "5min") -> int:
     bougie toutes les 5 minutes — et **chaque redéploiement le vide**. Le
     dispositif ne se serait probablement jamais allumé.
 
+    ⛔ Le `fetch` reçu doit IGNORER le cache. Celui-ci est indexé sur
+    ``(paire, intervalle)`` sans la taille : il resservirait les 50 bougies du
+    cycle en cours, et le tampon ne dépasserait jamais 50. C'est exactement ce
+    qui est arrivé le 2026-09-08 — voir `price_service.fetch_candles_sans_cache`.
+
     ⚠️ Best-effort et silencieux en cas d'échec côté appelant : un essai en
     observation ne doit pas pouvoir casser le cycle qui, lui, trade. Un seul
     appel par paire, donc négligeable devant le quota — qui a déjà saturé une
@@ -129,6 +134,12 @@ async def preremplir(pair: str, fetch, interval: str = "5min") -> int:
         return 0
     taille = min(MAX_MEMOIRE, MIN_BOUGIES * max(FACTEURS) + max(FACTEURS))
     recues = await fetch(pair, interval=interval, outputsize=taille)
+    # ⛔ `fetch_candles` rend un TUPLE `(bougies, simule)`. Le passer tel quel
+    # a `memoriser` n'ajoutait rien et ne levait rien : « 0 bougie », sans
+    # erreur. Mon test factice rendait une liste — il ne reproduisait pas le
+    # contrat, donc il passait sur du code faux.
+    if isinstance(recues, tuple):
+        recues = recues[0]
     avant = len(_memoire.get(pair) or {})
     apres = len(memoriser(pair, recues or []))
     logger.info("echelle_agregee: %s preremplie — %d bougies (etait %d)",

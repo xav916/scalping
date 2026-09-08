@@ -314,9 +314,16 @@ def _preremplies_neuves():
 
 
 async def _fetch_factice(appels, n=400):
+    """⛔ Rend le VRAI contrat : un tuple `(bougies, simule)`.
+
+    Ma premiere version rendait une liste. Le code de production passait donc
+    le tuple entier a `memoriser`, qui n'y trouvait aucune bougie et n'ajoutait
+    RIEN — « 0 bougie », sans erreur, et le test vert. Un faux qui ne
+    reproduit pas le contrat valide du code faux.
+    """
     async def _f(pair, interval="5min", outputsize=50):
         appels.append((pair, interval, outputsize))
-        return _serie(min(n, outputsize))
+        return _serie(min(n, outputsize)), False
     return _f
 
 
@@ -375,4 +382,44 @@ def test_le_scheduler_PREREMPLIT_avant_de_detecter():
     src = io.open("backend/services/scheduler.py", encoding="utf-8").read()
     debut = src.index("setups_agreges")
     bloc = src[max(0, debut - 400):debut + 1200]
-    assert "await preremplir(pair, fetch_candles)" in bloc
+    assert "await preremplir(pair, fetch_candles_sans_cache)" in bloc
+
+
+def test_le_preremplissage_passe_par_la_lecture_SANS_CACHE():
+    """⛔ Le cache est indexe sur (paire, intervalle) SANS la taille : avec
+    `fetch_candles`, le tampon aurait resservi les 50 bougies du cycle et ne
+    serait jamais monte. Trouve en production, pas en test."""
+    src = io.open("backend/services/scheduler.py", encoding="utf-8").read()
+    debut = src.index("preremplir(pair")
+    assert "fetch_candles_sans_cache" in src[debut - 200:debut + 120]
+
+
+@pytest.mark.asyncio
+async def test_un_fetch_qui_rend_un_TUPLE_est_compris():
+    """Le contrat reel de `price_service`."""
+    ea._memoire.clear(); ea._preremplies.clear()
+
+    async def _f(pair, interval="5min", outputsize=50):
+        return _serie(outputsize), False
+
+    assert await ea.preremplir("XAU/USD", _f) > 100
+
+
+@pytest.mark.asyncio
+async def test_la_lecture_sans_cache_NE_LIT_ni_n_ECRIT_le_cache(monkeypatch):
+    """⚠️ Ecrire 280 bougies sous la cle du chemin 5 min les servirait au
+    chemin qui TRADE pendant tout le TTL. Un essai ne change pas la production."""
+    from backend.services import price_service as ps
+    appels = {"lu": 0, "ecrit": 0}
+    monkeypatch.setattr(ps, "_cache_get_candles",
+                        lambda *a: appels.__setitem__("lu", appels["lu"] + 1))
+    monkeypatch.setattr(ps, "_cache_store_candles",
+                        lambda *a: appels.__setitem__("ecrit", appels["ecrit"] + 1))
+
+    async def _source(pair, interval, outputsize):
+        return _serie(outputsize), False
+
+    monkeypatch.setattr(ps, "_fetch_depuis_source", _source)
+    bougies, _ = await ps.fetch_candles_sans_cache("XAU/USD", "5min", 280)
+    assert len(bougies) == 280
+    assert appels == {"lu": 0, "ecrit": 0}
