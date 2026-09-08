@@ -246,6 +246,44 @@ def test_KRAKEN_expose_une_marge_libre():
     assert "plafond_usd" in inspect.getsource(ns._lire_kraken)
 
 
+def test_la_batterie_importe_le_risque_partout_ou_elle_l_emploie():
+    """⛔ Défaut que j'ai introduit le 08/09 : `_etat_risque` n'était importé
+    que dans `_ouverture`, alors que `_cloture` s'en sert. La batterie mourait
+    sur la première clôture — APRÈS avoir affiché « aucune anomalie ».
+
+    🔑 Un `NameError` dans un script qui annonce son propre succès juste avant
+    est invisible : c'est le COMPTE des cas rendus (1 au lieu de 6) qui l'a
+    dit, jamais le message final.
+    """
+    import ast
+    import io
+
+    src = io.open("scripts/essai_ouverture_bout_en_bout.py",
+                  encoding="utf-8").read()
+    arbre = ast.parse(src)
+    NOM = "_etat_risque"
+
+    importe_au_module = any(
+        isinstance(n, ast.ImportFrom)
+        and any(a.asname == NOM or a.name == NOM for a in n.names)
+        for n in arbre.body)
+
+    for fn in ast.walk(arbre):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        emploie = any(isinstance(n, ast.Name) and n.id == NOM
+                      and isinstance(n.ctx, ast.Load)
+                      for n in ast.walk(fn))
+        if not emploie:
+            continue
+        importe_ici = any(
+            isinstance(n, ast.ImportFrom)
+            and any(a.asname == NOM or a.name == NOM for a in n.names)
+            for n in ast.walk(fn))
+        assert importe_ici or importe_au_module, (
+            f"{fn.name}() emploie {NOM} sans l'importer — NameError garanti")
+
+
 def test_le_trade_typique_reste_lie_au_seuil_de_saturation():
     """🔑 `SEUIL_PCT` est DÉRIVÉ de ce chiffre (100 × (1 − 9/plafond) ≈ 67 %).
     Les laisser diverger rendrait l'alerte tardive sans que rien ne le dise."""
