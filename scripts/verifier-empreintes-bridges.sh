@@ -103,12 +103,18 @@ import json, sys
 # Et l'etat reste AFFICHE, avec son motif. Une derive invisible serait le
 # defaut qu'on evite : une alarme qui crie tous les matins finit par ne
 # plus etre lue, et la vraie derive suivante passe avec elle.
-ACCEPTEES = {
-    ('admin_live', 'b0cc7eaa8606', 'dd8af8d61b7b'):
-        'commentaire seul, renommage du 06/09 — non redemarre sur decision',
-    ('admin_legacy', 'b0cc7eaa8606', 'dd8af8d61b7b'):
-        'commentaire seul, idem admin_live',
-}
+#
+# ⛔ VIDE depuis le 2026-09-08. Les deux epingles qui vivaient ici couvraient
+# la derive de commentaire du 06/09 (depot b0cc7eaa8606 / bridge dd8af8d61b7b),
+# reconnue et non redemarree sur decision. Le deploiement de la poche « or »
+# a redemarre les deux bridges MT5 : ils annoncent desormais 128abbd77203,
+# identique au depot, et les QUATRE bridges sont conformes.
+#
+# 🔑 Une exception qui SURVIT a la derive qu'elle couvre est un trou : elle
+# accepterait en silence ce couple exact s'il revenait. On la retire donc en
+# meme temps que la cause — c'est le geste qu'on oublie, parce que rien ne
+# crie quand une exception devient inutile.
+ACCEPTEES = {}
 d = json.load(sys.stdin)
 for b in d['bridges']:
     if not b['lisible']:
