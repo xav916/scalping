@@ -2957,10 +2957,30 @@ def _mesurer_risque_destinations() -> list[dict]:
         SEUIL_PCT, _lire_destination, verdict,
     )
 
+    # ⛔ ÉTEINT VOLONTAIREMENT ≠ MUET INOPINÉMENT. Sans cette distinction,
+    # IBKR débranché rendait « illisible » et le total tous comptes était
+    # REFUSÉ à chaque appel — une régression introduite le 07/09 en élargissant
+    # la couverture. « On ne sait pas » est la bonne réponse pour un bridge qui
+    # DEVRAIT répondre ; c'est du bruit pour un compte qu'on a choisi d'éteindre.
+    #
+    # 🔑 `admin_destinations()` fait autorité : elle ne construit que ce qui est
+    # réellement armé. Le jour où IBKR est rallumé, il revient dans le total
+    # SEUL — aucun drapeau à repenser, donc aucun drapeau à oublier.
+    from backend.services.bridge_destinations import admin_destinations
+    try:
+        actifs = {d.destination_id for d in admin_destinations()}
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"destinations actives illisibles : {e}")
+        actifs = set(_RISQUE_DESTINATIONS)   # ⚠️ on ne masque rien par erreur
+
     mesures = []
     for did in _RISQUE_DESTINATIONS:
         dest = DESTINATIONS.get(did)
         if dest is None:
+            continue
+        if did not in actifs:
+            mesures.append({"id": did, "badge": dest.badge, "actif": False,
+                            "evaluation": None, "verdict": "eteint"})
             continue
         # Tout en euros avant tout affichage : le formateur écrit « € »
         # et n'a aucun moyen de savoir que Kraken parle dollars.
@@ -2969,6 +2989,7 @@ def _mesurer_risque_destinations() -> list[dict]:
         mesures.append({
             "id": did,
             "badge": dest.badge,
+            "actif": True,
             "evaluation": evaluation,
             "verdict": verdict(evaluation, SEUIL_PCT),
         })
@@ -2998,6 +3019,14 @@ def _formater_risque(mesures: list[dict]) -> str:
         entete = f"<b>{badge}</b>" + (f" · compte {_html.escape(str(login))}"
                                       if login else "")
         lignes += ["", entete]
+
+        if m.get("actif") is False:
+            # ⚠️ Il FIGURE quand même : un compte qu'on cesse de voir est un
+            # compte qu'on oublie de rallumer. Mais il ne casse pas le total —
+            # il n'engage rien, et zéro est ici la vérité, pas un aveuglement.
+            lignes.append("⚪ <b>Éteint</b> — ce compte ne trade pas, il "
+                          "n'engage donc aucun risque.")
+            continue
 
         if v == "illisible":
             complet = False

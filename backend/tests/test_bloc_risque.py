@@ -288,3 +288,58 @@ def test_le_trade_typique_reste_lie_au_seuil_de_saturation():
     """🔑 `SEUIL_PCT` est DÉRIVÉ de ce chiffre (100 × (1 − 9/plafond) ≈ 67 %).
     Les laisser diverger rendrait l'alerte tardive sans que rien ne le dise."""
     assert br.RISQUE_TRADE_TYPIQUE_EUR == 9.0
+
+
+# ── Éteint ≠ muet (2026-09-08) ────────────────────────────────────────
+
+def test_un_compte_ETEINT_ne_casse_PAS_le_total():
+    """⛔ Régression introduite le 07/09 en élargissant `/risque` à IBKR :
+    le bridge étant débranché, chaque appel rendait « Total impossible ».
+
+    🔑 « On ne sait pas » est la bonne réponse pour un bridge qui DEVRAIT
+    répondre. C'est du bruit pour un compte qu'on a choisi d'éteindre — il
+    n'engage rien, et zéro est alors la vérité."""
+    import backend.app as app
+
+    mesures = [
+        {"id": "admin_live", "badge": "💰 Live", "actif": True,
+         "evaluation": {"lisible": True, "indecidable": False, "pct": 10.0,
+                        "risque_total": 12.0, "plafond": 120.0,
+                        "restant": 108.0, "positions": 2,
+                        "detail_poches": {}, "candidats": 0, "liberable": 0.0},
+         "verdict": "ok"},
+        {"id": "admin_ibkr_us", "badge": "💼 IBKR", "actif": False,
+         "evaluation": None, "verdict": "eteint"},
+    ]
+    texte = app._formater_risque(mesures)
+    assert "Éteint" in texte
+    assert "Total tous comptes" in texte and "impossible" not in texte
+
+
+def test_un_bridge_MUET_casse_toujours_le_total():
+    """⚠️ Le contre-test : sans lui, la correction ci-dessus pourrait avoir
+    rendu le total complaisant pour TOUS les cas, y compris celui qu'il doit
+    refuser."""
+    import backend.app as app
+
+    mesures = [
+        {"id": "admin_live", "badge": "💰 Live", "actif": True,
+         "evaluation": {"lisible": True, "indecidable": False, "pct": 10.0,
+                        "risque_total": 12.0, "plafond": 120.0,
+                        "restant": 108.0, "positions": 2,
+                        "detail_poches": {}, "candidats": 0, "liberable": 0.0},
+         "verdict": "ok"},
+        {"id": "admin_kraken", "badge": "🐙 Kraken", "actif": True,
+         "evaluation": {"lisible": False}, "verdict": "illisible"},
+    ]
+    texte = app._formater_risque(mesures)
+    assert "impossible" in texte, "un compte muet doit encore refuser le total"
+
+
+def test_l_activite_se_DEDUIT_jamais_ne_se_declare():
+    """🔑 La liste des comptes actifs vient de `admin_destinations()`, qui ne
+    construit que ce qui est réellement armé. Un drapeau recopié ici serait à
+    repenser — donc à oublier — le jour du rallumage."""
+    import backend.app as app
+    src = _code_seul(app._mesurer_risque_destinations)
+    assert "admin_destinations()" in src
