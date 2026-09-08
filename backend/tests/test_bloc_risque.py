@@ -222,6 +222,30 @@ def test_la_commande_risque_couvre_TOUS_les_comptes_de_trading():
     assert "admin_live" in app._RISQUE_DESTINATIONS
 
 
+def test_une_part_SUPERIEURE_a_100_pct_est_nommee_pas_corrigee():
+    """⛔ Vue en production le 08/09. Le message part dès le fill, et
+    `/positions` peut ne pas encore lister la position : l'état lu est alors
+    ANTÉRIEUR au trade. « 118 % » est absurde ; ramener à 100 % en silence
+    serait pire — cela ferait croire que le total inclut le trade."""
+    etat = _etat_ok(engage_eur=6.12, metaux=None)
+    texte = "\n".join(br.lignes(etat, risque_trade_eur=7.20))
+    assert "pas encore compté" in texte
+    assert "118 %" not in texte and "100 %" not in texte
+
+
+def test_KRAKEN_expose_une_marge_libre():
+    """⛔ `_lire_kraken` ne posait jamais `restant` : le bloc n'affichait ni
+    marge libre ni verdict sur l'or, précisément sur le compte dont le plafond
+    est le plus large (50 %). Une clé absente ne lève pas — elle se lit comme
+    « non mesurable »."""
+    import inspect
+
+    from scripts import notify_saturation_risque as ns
+    src = _code_seul(ns._lire_kraken)
+    assert '"restant"' in src, "Kraken ne rend toujours pas de marge libre"
+    assert "plafond_usd" in inspect.getsource(ns._lire_kraken)
+
+
 def test_le_trade_typique_reste_lie_au_seuil_de_saturation():
     """🔑 `SEUIL_PCT` est DÉRIVÉ de ce chiffre (100 × (1 − 9/plafond) ≈ 67 %).
     Les laisser diverger rendrait l'alerte tardive sans que rien ne le dise."""

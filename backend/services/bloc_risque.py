@@ -220,10 +220,21 @@ def lignes(etat_risque: dict | None, risque_trade_eur: float | None = None,
     restant = etat_risque.get("restant_eur")
 
     # 1. La part de CE trade dans l'engagé.
+    #
+    # ⛔ La part peut dépasser 100 %, et ce n'est pas une aberration : le
+    # message part dès le fill, et `/positions` du courtier peut ne pas encore
+    # lister la position. L'état lu est alors ANTÉRIEUR au trade. Afficher
+    # « 118 % » serait absurde ; le corriger en silence à 100 % serait pire,
+    # car cela ferait croire que le total inclut le trade. On le NOMME.
     if risque_trade_eur and engage:
         part = 100.0 * risque_trade_eur / engage
-        out.append(f"Ce trade : {_fr(risque_trade_eur)} € — *{part:.0f} %* "
-                   "du risque engagé")
+        if part > 100.0:
+            out.append(f"Ce trade : {_fr(risque_trade_eur)} € — "
+                       "*pas encore compté* dans le total ci-dessous "
+                       "(position non encore vue chez le courtier)")
+        else:
+            out.append(f"Ce trade : {_fr(risque_trade_eur)} € — *{part:.0f} %* "
+                       "du risque engagé")
     elif apres_cloture:
         out.append("Position refermée — voici ce qui reste engagé :")
 

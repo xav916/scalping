@@ -446,11 +446,20 @@ def _lire_kraken(dest) -> dict:
         return evaluation_illisible()
 
     e = evaluation_illisible()
+    engage = charge.get("risque_ouvert_usd")
+    plafond = charge.get("plafond_usd")
     e.update({
         "lisible": True,
         "positions": int(charge.get("positions") or 0),
-        "risque_total": charge.get("risque_ouvert_usd"),
-        "plafond": charge.get("plafond_usd"),
+        "risque_total": engage,
+        "plafond": plafond,
+        # ⛔ `restant` n'etait JAMAIS pose ici, alors que le chemin MT5 le
+        # pose. Consequence vue en production le 08/09 : le bloc de risque
+        # n'affichait ni marge libre ni verdict sur l'or pour Kraken —
+        # c'est-a-dire precisement sur le compte au plafond le plus large.
+        # Une cle absente ne leve pas : elle se lit comme « non mesurable ».
+        "restant": (None if (engage is None or plafond is None)
+                    else float(plafond) - float(engage)),
         "poche": "kraken",
         "devise": "USD",
     })
