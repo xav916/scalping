@@ -112,6 +112,86 @@ def plafond_hasard(k: int) -> float:
     return PLAFOND_HASARD[-1][1]
 
 
+
+# ─────────────────────────────────────────────────────────────────────
+# La validation croisee : un verdict sur UN instrument ne vaut rien
+# ─────────────────────────────────────────────────────────────────────
+#
+# ⛔ POURQUOI. Le laboratoire mesure toutes ses cellules sur XAU/USD. Sur 120
+# tests, une cellule finit par depasser le plafond PAR HASARD ; le plafond
+# corrige ce risque, mais il ne dit pas si le resultat SE REPRODUIT ailleurs.
+#
+# Or c'est exactement ce que la mesure du 25/08 a etabli : `PBO = 0,579` sur
+# l'argent reel — selectionner sur la performance mesuree ne generalise pas,
+# pire que pile ou face. Un motif valide sur un seul instrument est l'objet meme
+# que le PBO condamne.
+#
+# ⇒ Un motif qui bat le plafond sur 6 instruments sur 20 est une information
+# d'une tout autre nature qu'un motif qui le bat sur l'or seul.
+
+# En dessous, une cellule n'est pas un resultat mais un petit echantillon.
+CONCORDANCE_MIN_N = int(os.getenv("LABO_CONCORDANCE_MIN_N", "30"))
+
+
+def plafond_commun(par_paire: dict[str, list]) -> float:
+    """Le plafond du hasard calcule sur TOUTES les cellules, tous instruments.
+
+    ⛔ LE PIEGE QUE CETTE FONCTION EXISTE POUR FERMER. `mesurer()` calcule
+    `plafond_hasard(len(cellules))` — les cellules de CETTE paire. Lancer la
+    mesure sur vingt instruments produirait vingt plafonds calcules chacun comme
+    si l'on n'avait fait que 120 tests, alors qu'on en a fait 2 400.
+
+    Ce serait la porte grande ouverte aux fausses decouvertes : plus on ajoute
+    d'instruments, plus on tire de billets, et un plafond par instrument ne le
+    voit pas.
+
+        120 cellules   -> 2,81
+      2 400 cellules   -> 3,66
+
+    ⚠️ Cout assume : la barre monte pour tout le monde. C'est le prix d'une
+    preuve qui vaut quelque chose.
+    """
+    total = sum(len(c or []) for c in (par_paire or {}).values())
+    return plafond_hasard(max(total, 1))
+
+
+def concordance(par_paire: dict[str, list], plafond: float) -> dict[str, dict]:
+    """`{motif: {instruments, sur, paires}}` — ou la meme regle tient ailleurs.
+
+    Ne retient qu'une cellule qui bat le plafond ET porte assez de trades :
+    un `t` eleve sur n=4 n'est pas une victoire, c'est un petit echantillon.
+
+    ⛔ LE SIGNE COMPTE. Un motif qui gagne sur une paire et PERD sur une autre
+    n'est pas « valide sur deux instruments » : c'est du bruit qui change de
+    signe. Les compter ensemble fabriquerait une concordance — on ne retient
+    donc que le sens MAJORITAIRE, et l'autre est ignore.
+
+    ⚠️ Un motif isole n'est pas ecarte : il ressort avec son « 1 sur 20 », pour
+    qu'on LISE l'isolement au lieu de le deviner.
+    """
+    retenues: dict[str, dict[int, set]] = {}
+    total_paires = len(par_paire or {})
+    for paire, cellules in (par_paire or {}).items():
+        for c in (cellules or []):
+            if (c.get("n") or 0) < CONCORDANCE_MIN_N:
+                continue
+            t = c.get("t") or 0.0
+            if abs(t) <= plafond:
+                continue
+            signe = 1 if t > 0 else -1
+            retenues.setdefault(c["motif"], {}).setdefault(signe, set()).add(paire)
+
+    out: dict[str, dict] = {}
+    for motif, par_signe in retenues.items():
+        # Le sens MAJORITAIRE : compter les deux ensemble fabriquerait une
+        # concordance la ou il n'y a qu'un signe qui bascule.
+        signe = max(par_signe, key=lambda s: len(par_signe[s]))
+        paires = sorted(par_signe[signe])
+        out[motif] = {"instruments": len(paires), "sur": total_paires,
+                      "paires": paires, "sens": "gagnant" if signe > 0 else "perdant"}
+    return out
+
+
 # ─────────────────────────────────────────────────────────────────────
 # Le rejeu
 # ─────────────────────────────────────────────────────────────────────
