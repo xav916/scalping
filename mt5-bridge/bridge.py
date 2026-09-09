@@ -3172,11 +3172,43 @@ def _compute_lots_from_symbol(symbol: str, entry: float, sl: float, risk_money: 
     if risk_per_lot <= 0:
         return 0.01
     raw_lots = risk_money / risk_per_lot
-    # Clamp sur les bornes broker + sur MAX_LOT interne
     step = info.volume_step or 0.01
-    lots = round(raw_lots / step) * step
-    lots = max(info.volume_min or 0.01, min(info.volume_max or 100.0, lots))
-    lots = min(_max_lot_for_symbol(symbol), lots)
+    voulu = round(round(raw_lots / step) * step, 2)
+
+    # ⛔ LE RABOTAGE DOIT SE VOIR (2026-09-09). Ces deux bornes ecrivaient le
+    # lot en silence. Elles sont de natures OPPOSEES, et les confondre ferait
+    # lire une sous-exposition comme une sur-exposition :
+    #
+    #   plancher courtier  ->  lot MONTE  ->  le risque est SUBI, plus grand
+    #                          que voulu. C'est l'etat actuel de l'or : le
+    #                          calcul demande 0,005 et le courtier impose 0,01,
+    #                          soit 2,87 % de risque median pour 1 % vise.
+    #
+    #   plafond de classe  ->  lot BAISSE ->  le risque est BRIDE, plus petit
+    #                          que voulu. Sans effet aujourd'hui, mais vers
+    #                          3 085 EUR de capital le calcul demandera 0,02 sur
+    #                          l'or et `metal: 0.01` le ramenera a 0,01 — le
+    #                          risque par trade se mettrait alors a BAISSER
+    #                          relativement au capital, sans que rien ne le dise.
+    #
+    # ⚠️ On rend le rabotage VISIBLE, on ne le modifie pas. Relever `metal` a
+    # 0,02 est un desserrage, et il appartient a Xavier.
+    plancher = info.volume_min or 0.01
+    lots = max(plancher, min(info.volume_max or 100.0, voulu))
+    if lots > voulu:
+        logger.warning(
+            "[SIZING] %s: lot MONTE au plancher du courtier %.2f (calcul %.4f) "
+            "— le risque est SUBI, plus grand que la cible",
+            symbol, lots, raw_lots)
+
+    plafond = _max_lot_for_symbol(symbol)
+    if plafond < lots:
+        logger.warning(
+            "[SIZING] %s: lot RABOTE par le plafond de classe, %.2f -> %.2f "
+            "— le risque est BRIDE, plus petit que la cible. Relever "
+            "MAX_LOT_PER_CLASS si c'est devenu la norme.",
+            symbol, lots, plafond)
+        lots = plafond
     return round(lots, 2)
 
 
