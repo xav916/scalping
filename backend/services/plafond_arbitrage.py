@@ -57,6 +57,16 @@ logger = logging.getLogger(__name__)
 EN_ATTENTE = "EN_ATTENTE"
 GELER = "GELER"
 CONTINUER = "CONTINUER"
+# ⛔ Ni une decision, ni une attente : une question devenue SANS OBJET.
+# Le 07/09, une demande posee a 01h19 Paris est restee `EN_ATTENTE` pour
+# toujours — alors que 41 minutes plus tard le jour changeait, le plafond se
+# remettait a zero et le compte retradait seul. Un etat qui affirme attendre
+# une decision qui n'a plus d'objet ne dit pas la verite sur lui-meme.
+#
+# ⚠️ Purement DESCRIPTIF : toutes les requetes de ce module filtrent deja sur
+# `jour`, donc une ligne de la veille etait DEJA invisible. Renommer son etat
+# ne peut pas rouvrir un compte — verifie avant d'ecrire.
+EXPIRE = "EXPIRE"
 
 
 def _conn() -> sqlite3.Connection:
@@ -184,6 +194,38 @@ def marquer_question_posee(destination_id: str, palier: int) -> None:
             "AND jour=? AND palier=? AND demande_le IS NULL",
             (datetime.now(timezone.utc).isoformat(), destination_id,
              _aujourdhui(), palier))
+
+
+def expirer_demandes_perimees(aujourdhui: str | None = None) -> int:
+    """Marque `EXPIRE` les demandes en attente des jours PASSES. Rend le compte.
+
+    Une demande n'a de sens que dans sa journee : a minuit UTC le plafond se
+    remet a zero et le compte retrade, reponse ou pas. La laisser `EN_ATTENTE`
+    fait dire a la base qu'une decision est attendue alors qu'elle est sans
+    objet — et rend la table illisible pour un humain qui la consulte.
+
+    ⚠️ Ne touche QUE `EN_ATTENTE`. `CONTINUER` et `GELER` sont des decisions
+    prises : les ecraser effacerait la trace de ce que Xavier a repondu.
+
+    ⛔ Ne leve jamais : cette fonction est appelee par le job qui POSE les
+    questions, et c'est lui qui empeche un blocage muet. Le faire tomber sur
+    une question d'hygiene serait echanger un defaut mineur contre un grave.
+    """
+    try:
+        _init_schema()
+        with _conn() as c:
+            cur = c.execute(
+                "UPDATE plafond_arbitrage SET etat=? WHERE etat=? AND jour<?",
+                (EXPIRE, EN_ATTENTE, aujourdhui or _aujourdhui()))
+            n = cur.rowcount or 0
+        if n:
+            logger.info(
+                "arbitrage: %d demande(s) d'un jour passe marquee(s) EXPIRE — "
+                "le plafond s'etait deja remis a zero a minuit UTC", n)
+        return n
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"arbitrage: expiration impossible ({e})")
+        return 0
 
 
 def demandes_en_attente() -> list[dict[str, Any]]:
@@ -350,9 +392,27 @@ def resoudre_cible(cible: str | None, decision: str
 
 # ── Le message ────────────────────────────────────────────────────────────
 
-def construire_question(demandes: list[dict[str, Any]]) -> str:
+def _restant_avant_minuit(maintenant: datetime) -> str:
+    """« 8h53 » ou « 41min » avant la remise a zero du plafond (minuit UTC)."""
+    fin = maintenant.replace(hour=23, minute=59, second=59, microsecond=0)
+    reste = int((fin - maintenant).total_seconds()) + 1
+    h, m = divmod(max(reste, 0) // 60, 60)
+    return f"{h}h{m:02d}" if h else f"{m}min"
+
+
+def construire_question(demandes: list[dict[str, Any]],
+                        maintenant: datetime | None = None) -> str:
     """Texte simple, sans chevrons : le canal poste en HTML et Telegram refuse
-    le message ENTIER sur une balise mal formée — échec silencieux."""
+    le message ENTIER sur une balise mal formée — échec silencieux.
+
+    ⛔ Il DIT desormais quand la question expire. L'ancienne formule — « sans
+    reponse, il reste bloque » — etait FAUSSE au-dela de minuit UTC : le jour
+    change, le plafond se remet a zero et le compte retrade tout seul. Le
+    07/09, une question posee a 01h19 Paris a ete rendue sans objet 41 minutes
+    plus tard ; elle n'a jamais recu de reponse, et n'en avait plus besoin.
+
+    Sans le temps restant, on ne peut pas savoir s'il y a urgence — donc on ne
+    peut pas decider de repondre."""
     lignes = ["PLAFOND DE PERTE FRANCHI - ta decision", ""]
     for d in demandes:
         lignes.append(
@@ -376,10 +436,13 @@ def construire_question(demandes: list[dict[str, Any]]) -> str:
             "  continue " + str(demandes[0]["destination_id"]),
             "« gele » sans nom les bloque TOUS.",
         ]
+    reste = _restant_avant_minuit(maintenant or datetime.now(timezone.utc))
     lignes += [
         "",
-        "Sans reponse, il reste bloque. Une nouvelle question sera posee si la",
-        "perte franchit un plafond de plus.",
+        f"Sans reponse il reste bloque, mais SEULEMENT {reste} : a 02h00 Paris",
+        "le jour change, le plafond se remet a zero et il RETRADE sans que tu",
+        "aies decide. Une nouvelle question sera posee si la perte franchit un",
+        "plafond de plus.",
     ]
     return "\n".join(lignes)
 
@@ -451,6 +514,10 @@ async def executer() -> int:
     dispositif qui, si elle tombe en panne, laisse un blocage muet.
     """
     _init_schema()
+    # ⛔ Branche ICI, et pas ailleurs : ce job tourne chaque minute, il touche
+    # deja cette table, et un correctif qu'on ecrit sans l'appeler est un
+    # correctif mort. Il ne change rien a ce qui bloque — voir la fonction.
+    expirer_demandes_perimees()
     a_poser = [d for d in demandes_en_attente() if not d.get("demande_le")]
     if not a_poser:
         return 0
