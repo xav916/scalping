@@ -339,7 +339,12 @@ def couples_non_mesures(dest, pair: str, direction: str) -> list[str]:
     """
     if dest is None or limite(dest, pair) <= 0:
         return []
-    ouvertes = positions_ouvertes(getattr(dest, "destination_id", ""))
+    ouvertes = positions_ouvertes(_identifiant(dest) or "")
+    # ⛔ `_identifiant`, pas `getattr(dest, "destination_id")` : les deux
+    # formes d'objet circulent, et lire la mauvaise rendait `""` — donc
+    # AUCUNE position ouverte, donc aucun pari en cause, donc rien de
+    # bloque. `limite()` a ete durci le 08/09 ; ces deux jumelles ne
+    # l'avaient pas ete. Un correctif ne se propage pas seul.
     return _trier(ouvertes, pair, direction)[1]
 
 
@@ -368,7 +373,12 @@ def pari_deja_pris(dest, pair: str, direction: str) -> tuple[bool, list[str]]:
     if maxi <= 0 or dest is None:
         return False, []
 
-    ouvertes = positions_ouvertes(getattr(dest, "destination_id", ""))
+    ouvertes = positions_ouvertes(_identifiant(dest) or "")
+    # ⛔ `_identifiant`, pas `getattr(dest, "destination_id")` : les deux
+    # formes d'objet circulent, et lire la mauvaise rendait `""` — donc
+    # AUCUNE position ouverte, donc aucun pari en cause, donc rien de
+    # bloque. `limite()` a ete durci le 08/09 ; ces deux jumelles ne
+    # l'avaient pas ete. Un correctif ne se propage pas seul.
     en_cause, non_mesures = _trier(ouvertes, pair, direction)
     if non_mesures:
         logger.warning(
