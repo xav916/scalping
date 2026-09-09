@@ -242,6 +242,7 @@ def detect_patterns(candles: list[Candle], pair: str = "XAU/USD") -> list[Patter
     patterns.extend(_detect_poc_return(candles, pair))
     patterns.extend(_detect_fvg(candles, pair))
     patterns.extend(_detect_gap_par_troisieme_bougie(candles, pair))
+    patterns.extend(_detect_liquidity_sweep(candles, pair))
 
     # Enrichir chaque pattern avec explication et fiabilité
     for p in patterns:
@@ -374,6 +375,63 @@ def _detect_gap_par_troisieme_bougie(
             _ajouter(PatternType.GAP_BREAKAWAY_DOWN, "Gap de continuation baissier")
         elif b.low <= c.close <= b.high:
             _ajouter(PatternType.GAP_RETRACE_DOWN, "Gap avec retracement attendu")
+    return patterns
+
+
+
+def _detect_liquidity_sweep(candles: list[Candle], pair: str) -> list[PatternDetection]:
+    """Balayage de liquidite : la meche prend les stops, le corps les rejette.
+
+    Les stops s'accumulent juste au-dela d'un extreme recent. L'idee du concept
+    est que le prix va les CHERCHER, puis repart en sens inverse :
+
+        haut[derniere] > max(haut des 30 precedentes)   l'extreme est depasse
+        ET cloture < ce meme max                        le prix est REVENU dessous
+
+    C'est donc un signal de RETOURNEMENT — balayer les hauts fait VENDRE.
+
+    ⛔ EXCLUSIF DE `breakout` PAR CONSTRUCTION. Le breakout exige une cloture
+    AU-DELA du niveau, le sweep une cloture EN DECA. Le meme evenement ne peut
+    pas produire les deux : sans cela, comparer leurs R moyens n'aurait aucun
+    sens, chaque fenetre alimentant les deux cellules.
+
+    ⚠️ Les 30 bougies de reference sont REPRISES de `_detect_breakout`, pas
+    choisies : un reglage de plus serait un degre de liberte de plus.
+
+    ⚠️ Recouvrement ATTENDU avec `pin_bar` — un balayage est souvent une pin
+    bar. Deux cellules distinctes, mais PAS deux tests independants.
+    """
+    patterns: list[PatternDetection] = []
+    if len(candles) < 31:
+        return patterns
+    now = datetime.now(timezone.utc)
+    last = candles[-1]
+    reference = candles[-31:-1]
+    atr = _calculate_atr(candles, period=14)
+    if atr <= 0:
+        return patterns
+
+    plus_haut = max(c.high for c in reference)
+    plus_bas = min(c.low for c in reference)
+
+    if last.high > plus_haut and last.close < plus_haut:
+        depassement = last.high - plus_haut
+        patterns.append(PatternDetection(
+            pattern=PatternType.LIQUIDITY_SWEEP_DOWN,
+            confidence=round(min(0.80, 0.60 + depassement / atr * 0.1), 2),
+            description=(f"Balayage des hauts: meche a {last.high:.2f} au-dessus "
+                         f"de {plus_haut:.2f}, cloture rejetee a {last.close:.2f}"),
+            detected_at=now,
+        ))
+    if last.low < plus_bas and last.close > plus_bas:
+        depassement = plus_bas - last.low
+        patterns.append(PatternDetection(
+            pattern=PatternType.LIQUIDITY_SWEEP_UP,
+            confidence=round(min(0.80, 0.60 + depassement / atr * 0.1), 2),
+            description=(f"Balayage des bas: meche a {last.low:.2f} sous "
+                         f"{plus_bas:.2f}, cloture rejetee a {last.close:.2f}"),
+            detected_at=now,
+        ))
     return patterns
 
 

@@ -440,6 +440,10 @@ _PATTERN_EXPLAIN_FR: dict[str, str] = {
     "gap_retrace_down": "poussée baissière qui souffle — le prix est remonté dans la bougie qui l'a portée, un retour dans la zone est attendu avant qu'il reparte",
     "gap_breakaway_up": "poussée haussière qui ne souffle pas — le prix a clôturé au-dessus de la bougie qui l'a portée, la hausse continuerait sans revenir en arrière",
     "gap_breakaway_down": "poussée baissière qui ne souffle pas — le prix a clôturé sous la bougie qui l'a portée, la baisse continuerait sans revenir en arrière",
+    # Balayage de liquidite (2026-09-09) — vulgarise : Xavier lit ces libelles
+    # sur Telegram, pas le code.
+    "liquidity_sweep_up": "chasse aux stops sous le plancher — le prix est allé chercher les ordres placés sous le plus bas récent, puis est remonté aussitôt : le creux a été rejeté",
+    "liquidity_sweep_down": "chasse aux stops au-dessus du plafond — le prix est allé chercher les ordres placés au-dessus du plus haut récent, puis est redescendu aussitôt : le sommet a été rejeté",
     # Ajoutés le 2026-08-04 : sans libellé, le repli affichait la valeur brute
     # `mean_reversion_up`, dont les underscores cassaient le Markdown et
     # faisaient perdre TOUT le message.

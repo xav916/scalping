@@ -91,6 +91,12 @@ class PatternType(str, Enum):
     GAP_RETRACE_DOWN = "gap_retrace_down"
     GAP_BREAKAWAY_UP = "gap_breakaway_up"     # 3e cloture AU-DELA, hausse
     GAP_BREAKAWAY_DOWN = "gap_breakaway_down"
+    # ─── Balayage de liquidite (2026-09-09) ───────────────────────────
+    # La meche prend les stops au-dela d'un extreme recent, le corps les
+    # rejette. Signal de RETOURNEMENT : balayer les hauts fait VENDRE.
+    # ⚠️ Exclusif de `breakout` par construction — voir le detecteur.
+    LIQUIDITY_SWEEP_UP = "liquidity_sweep_up"      # bas balayes -> on achete
+    LIQUIDITY_SWEEP_DOWN = "liquidity_sweep_down"  # hauts balayes -> on vend
 
 
 class TradeDirection(str, Enum):

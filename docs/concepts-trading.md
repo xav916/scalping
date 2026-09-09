@@ -55,6 +55,35 @@ dispositif — c'est le dispositif qui fonctionne.
 - **Posé** : 2026-09-09 (`4de0f36`). Sonde dédiée : `mesurer_face_a_face_gaps.py`,
   06:00 UTC sur le fil `infra`.
 
+### Liquidity sweep (balayage de liquidité)
+
+- **Tradition** : ICT / Smart Money Concepts. Aussi appelé *stop hunt*.
+- **Idée** : les stops s'accumulent juste au-delà d'un extrême récent. Le prix
+  va les chercher, puis repart en sens inverse — la mèche prend la liquidité,
+  le corps la rejette.
+- **Règle** (miroir pour le sens opposé) :
+  - `haut[dernière] > max(haut des 30 précédentes)` — l'extrême est dépassé ;
+  - **et** `clôture[dernière] < ce même max` — le prix est REVENU dessous.
+- **Prédiction falsifiable** : après un balayage des plus-hauts, le prix va
+  **baisser** (et inversement). C'est un signal de **retournement**, pas de
+  continuation.
+- **Motifs** : `liquidity_sweep_down` (balayage des hauts ⇒ on vend) ·
+  `liquidity_sweep_up`.
+- **Seuil** : 30 bougies de référence, **repris de `_detect_breakout`** pour ne
+  pas introduire un réglage de plus. Arbitraire, posé une fois, jamais ajusté.
+- ⛔ **J'avais écrit « exclusif de `breakout` par construction ». C'était FAUX**,
+  et mes données synthétiques ne pouvaient pas le montrer : `_detect_breakout`
+  compare à `_find_level` (un niveau aggloméré), pas au maximum. Le prix peut
+  clôturer au-dessus de ce niveau tout en restant sous le plus-haut. Mesuré sur
+  4 950 fenêtres réelles : **26 co-occurrences, soit 0,53 %**. Aligner le sweep
+  sur `_find_level` dénaturerait le concept — les stops s'accumulent à
+  l'**extrême**. On garde la règle fidèle, et un test **borne** le recouvrement
+  à 1 %.
+- ⚠️ **Recouvrement attendu avec `pin_bar`** : un balayage est souvent une pin
+  bar. Ce sont deux cellules distinctes, mais elles ne constituent PAS deux
+  tests indépendants. À garder en tête si les deux ressortent ensemble.
+- **Posé** : 2026-09-09.
+
 ---
 
 ## 🕐 Candidats
@@ -64,7 +93,6 @@ Même famille que le FVG, tous codables sur de l'OHLC seul.
 | concept | règle pressentie | prédiction falsifiable |
 |---|---|---|
 | **Order Block** | la dernière bougie de sens opposé avant l'impulsion | elle est retestée, puis tient |
-| **Liquidity sweep** | mèche qui dépasse le plus-haut récent puis clôture dessous | le prix repart en sens inverse |
 | **Break of Structure** | clôture au-dessus du dernier sommet de structure | la tendance continue |
 | **CHoCH** | en tendance haussière, clôture sous le dernier creux | retournement |
 | **Inversion FVG** | un FVG traversé de part en part | il devient résistance au lieu de support |
