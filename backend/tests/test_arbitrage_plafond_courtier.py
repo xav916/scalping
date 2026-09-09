@@ -133,3 +133,57 @@ def test_un_health_INCOMPLET_ne_rend_rien_pour_ce_compte(monkeypatch):
         monkeypatch.setattr(pa, "_lire_health", lambda d, c=creux: c,
                             raising=False)
         assert pa.plafond_du_courtier(["admin_live"]) == {}
+
+
+# ─── Le test qui aurait attrapé le vrai défaut ───────────────────────
+
+def test_lire_health_interroge_les_DEUX_endpoints(monkeypatch):
+    """⛔ Le défaut réel, trouvé APRÈS déploiement : `_lire_health` ne lisait
+    que `/health`, où `balance` N'EXISTE PAS. Le correctif se déployait, les
+    tests passaient — et il ne lisait rien en production.
+
+    Les tests ci-dessus remplacent `_lire_health` : ils auraient laissé passer
+    cette version cassée. Celui-ci exerce la vraie fonction.
+
+        /health   garde_fous.max_daily_loss_pct   (sans clé)
+        /account  balance                         (clé X-API-Key requise)
+    """
+    import json
+    import urllib.request
+
+    vus: list[str] = []
+    reponses = {
+        "/health": {"garde_fous": {"max_daily_loss_pct": 3.0}},
+        "/account": {"balance": 715.69},
+    }
+
+    class _Rep:
+        def __init__(self, charge):
+            self._c = json.dumps(charge).encode()
+
+        def read(self):
+            return self._c
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def _faux_urlopen(req, timeout=None):
+        url = req if isinstance(req, str) else req.full_url
+        chemin = "/health" if url.endswith("/health") else "/account"
+        vus.append(chemin)
+        return _Rep(reponses[chemin])
+
+    monkeypatch.setattr(urllib.request, "urlopen", _faux_urlopen)
+    monkeypatch.setattr(json, "load", lambda f: json.loads(f.read()))
+    monkeypatch.setenv("MT5_BRIDGE_LIVE_URL", "http://bridge:8788")
+    monkeypatch.setenv("MT5_BRIDGE_LIVE_API_KEY", "secret")
+
+    h = pa._lire_health("admin_live")
+
+    assert vus == ["/health", "/account"], (
+        f"les deux endpoints ne sont pas interroges : {vus}")
+    assert h["balance"] == 715.69
+    assert h["garde_fous"]["max_daily_loss_pct"] == 3.0

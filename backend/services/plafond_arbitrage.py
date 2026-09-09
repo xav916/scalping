@@ -418,7 +418,16 @@ def _restant_avant_minuit(maintenant: datetime) -> str:
 # dernier garde-fou avant l'argent.
 
 def _lire_health(destination_id: str) -> dict[str, Any] | None:
-    """Le `/health` du bridge de cette destination. `None` si illisible.
+    """Ce qu'il faut du bridge : le POURCENTAGE et le SOLDE. `None` si illisible.
+
+    ⛔ Les deux ne vivent pas au meme endroit — decouvert en verifiant le
+    correctif APRES deploiement, ou il ne lisait rien :
+
+        /health   garde_fous.max_daily_loss_pct    (sans cle)
+        /account  balance                          (cle X-API-Key requise)
+
+    Rendu sous la forme d'un seul dict `{garde_fous, balance}` pour que
+    l'appelant n'ait pas a connaitre cette separation.
 
     ⚠️ Isolee pour etre remplacable en test : ce chemin fait du RESEAU, et un
     test qui appelle le reseau accuse le voisinage, pas le code.
@@ -428,12 +437,22 @@ def _lire_health(destination_id: str) -> dict[str, Any] | None:
     import urllib.request
     from backend.services import destinations_registry as reg
     d = reg.get(destination_id)
-    var = getattr(d, "url_env", None) if d else None
-    base = os.environ.get(var or "", "").rstrip("/")
+    if d is None:
+        return None
+    base = os.environ.get(getattr(d, "url_env", "") or "", "").rstrip("/")
     if not base:
         return None
     with urllib.request.urlopen(f"{base}/health", timeout=5) as r:
-        return json.load(r)
+        sante = json.load(r)
+    entetes = {}
+    cle = os.environ.get(getattr(d, "key_env", "") or "", "")
+    if cle:
+        entetes[getattr(d, "key_header", "X-API-Key") or "X-API-Key"] = cle
+    req = urllib.request.Request(f"{base}/account", headers=entetes)
+    with urllib.request.urlopen(req, timeout=5) as r:
+        compte = json.load(r)
+    return {"garde_fous": sante.get("garde_fous") or {},
+            "balance": compte.get("balance")}
 
 
 def plafond_du_courtier(destinations) -> dict[str, dict[str, float]]:
