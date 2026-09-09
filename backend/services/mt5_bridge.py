@@ -1432,6 +1432,57 @@ async def _mirror_fill_to_live(setup, sz: dict, fill: dict, source_id: str) -> N
             )
 
 
+def _alerter_position_sans_stop(destination_id: str | None, pair: str,
+                                direction: str, data: dict) -> None:
+    """Une position ouverte SANS stop le dit SUR LE FIL DE SON COMPTE.
+
+    ⛔ Mesure du 2026-09-09, compte réel : **6 positions ouvertes sans stop**
+    (5,2 % des poussées où le champ existe), dont 3 sur l'or. Le bridge le
+    disait honnêtement — `protected:false`, `sl_error:"Invalid request"` — et
+    ce code émettait bien une alerte. **Zéro alerte reçue en 7 jours.**
+
+    Deux causes empilées, toutes deux déjà connues :
+
+    1. Elle partait sur `infra`, où un événement qui engage de l'argent réel se
+       noie. Motif identique au récap du moteur de promotion et au backup cassé
+       — *l'alerte arrivait, elle s'est noyée dans le bruit.*
+    2. Les notifications Python étaient MUETTES jusqu'au 2026-09-08 (jeton en
+       en-tête ⇒ 403 avalé).
+
+    🔑 Une SEULE porte : `canaux_telegram.notifier`. Elle sait appeler
+    l'endpoint, et `canal_pour` retombe de lui-même sur `infra` quand la
+    destination n'a pas de fil. Deux portes seraient deux façons d'échouer.
+
+    ⚠️ `is False`, jamais `not ...` : `protected` n'existe que depuis le
+    2026-08-06 et son ABSENCE ne distingue pas « non protégé » de « bridge pas
+    encore patché ». On ne suppose rien.
+    """
+    if data.get("protected") is not False:
+        return
+    try:
+        from backend.services.canaux_telegram import canal_pour, notifier
+
+        canal = canal_pour(destination_id)
+        notifier(
+            canal,
+            "🚨 Position ouverte SANS stop",
+            f"*{pair} {direction.upper()}* est ouverte et **n'a pas de "
+            "stop-loss confirme chez le courtier**.\n\n"
+            f"Compte : `{destination_id}`\n"
+            f"Ticket : `{data.get('ticket')}`\n"
+            f"Cause : `{data.get('sl_error') or '?'}`\n\n"
+            "Le garde-fou SL/TP repasse toutes les minutes et posera un stop. "
+            "Si ce message se repete, la pose automatique ne fonctionne plus.",
+            timeout=10,
+        )
+    except Exception as e:  # noqa: BLE001
+        # ⛔ Journalisé, jamais avalé en silence : c'est un `except` large qui
+        # a caché le 403 pendant des semaines.
+        logger.warning(
+            "alerte position sans stop NON envoyee (%s/%s ticket=%s) : %s",
+            destination_id, pair, data.get("ticket"), e)
+
+
 def _build_order_payload(setup, sz: dict, dest=None) -> dict:
     """Construit le dict envoyé à l'EA MQL5 / bridge.py.
 
@@ -1833,21 +1884,8 @@ async def _push_to_destination(setup, dest) -> None:
                     # "bridge pas encore patché" sans le champ, donc on ne
                     # suppose rien dans ce cas (`.get(...) is False`, pas
                     # `not .get(...)`).
-                    if data.get("protected") is False:
-                        try:
-                            from backend.services import telegram_service as _tg
-                            await _tg.send_infra_text(
-                                "🚨 <b>Position LIVE ouverte SANS stop</b>\n"
-                                f"Destination : <code>{dest.destination_id}</code>\n"
-                                f"Pair : <code>{setup.pair}</code> {direction.upper()}\n"
-                                f"Ticket : <code>{data.get('ticket')}</code>\n"
-                                f"SL error : <code>{data.get('sl_error') or '?'}</code>\n"
-                                "\n👉 Vérifier immédiatement côté MT5 — la position "
-                                "n'a pas de stop-loss confirmé.",
-                                parse_mode="HTML",
-                            )
-                        except Exception as _e:
-                            logger.warning(f"protected=False alert failed: {_e}")
+                    _alerter_position_sans_stop(
+                        dest.destination_id, setup.pair, direction, data)
                     # Alerte infra one-shot : premier push Live (admin_live)
                     # réussi depuis l'activation 2026-06-12. Marker fichier sur
                     # disque pour idempotence à travers les restarts container.

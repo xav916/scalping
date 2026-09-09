@@ -1043,6 +1043,18 @@ def _send_market_order(
     #
     # `None` si l'ordre n'a pas abouti — jamais 0.0, qui se confondrait avec
     # un prix valide.
+    # ⛔ ATTENDRE QUE LE COURTIER ENREGISTRE LA POSITION (2026-09-09).
+    #
+    # Doit venir AVANT la résolution du prix et AVANT la pose du stop : les
+    # deux interrogent la même position, et les deux échouaient ensemble quand
+    # elle n'était pas encore là. Cf. `_attendre_la_position` pour la mesure.
+    #
+    # On ne teste pas le retour : `False` veut dire « pas vue dans le délai »,
+    # et la suite se comporte alors exactement comme avant ce correctif —
+    # replis de prix, puis garde-fou SL/TP en filet.
+    if ok:
+        _attendre_la_position(result.order)
+
     fill_price, fill_source = (
         _resolve_fill_price(result, price) if ok else (None, None)
     )
@@ -1128,6 +1140,67 @@ def _prix_pour_audit(result: dict) -> float | None:
         if v > 0:
             return v
     return None
+
+
+def _attendre_la_position(ticket: int, delai_max_s: float = 2.0,
+                          pas_s: float = 0.05) -> bool:
+    """Attend que le courtier ENREGISTRE la position. Rend True si elle est vue.
+
+    ⛔ **Pourquoi cette attente existe** (mesuré le 2026-09-09, compte réel,
+    sur les 116 poussées où le champ existe) :
+
+        fill_source   sl_applied=True   sl_applied=False
+        result              56                 0
+        position            35                 0
+        None                 5                 0
+        requested           14                 6      <- les SIX echecs
+
+    `fill_source="requested"` est le DERNIER repli de `_resolve_fill_price` :
+    on ne l'atteint qu'après avoir interrogé `positions_get(ticket)` et n'avoir
+    **rien trouvé**. Il dit donc littéralement « la position n'était pas
+    visible ». Et la ligne suivante envoyait `TRADE_ACTION_SLTP` avec
+    `"position": ticket` sur cette même position invisible : MT5 répondait
+    `Invalid request`, le stop n'était pas posé, et la position vivait NUE
+    jusqu'au passage du garde-fou — jusqu'à 60 s.
+
+    🔑 Les 14 `requested` qui réussissent quand même prouvent que ce n'est pas
+    déterministe : la position est apparue entre les deux appels. **C'est une
+    course.** Preuve indépendante : le garde-fou rejoue exactement la même
+    requête ~50 s plus tard, même ticket, et obtient `retcode=10009`.
+
+    Attendre répare les DEUX symptômes d'un coup : le prix de remplissage
+    redevient mesurable (`position` au lieu de `requested`, ce dont dépend
+    toute la statistique de glissement) et le stop se pose.
+
+    ⚠️ **Bornée.** Un `/order` qui bloque serait pire que le défaut réparé.
+    Passé le délai on rend False et l'appelant fait ce qu'il faisait avant :
+    le garde-fou SL/TP reste le filet, il n'est pas remplacé.
+
+    ⚠️ **Ne lève jamais.** L'ordre est DÉJÀ passé quand on arrive ici — une
+    exception perdrait le ticket d'une position bien ouverte.
+    """
+    fin = time.monotonic() + delai_max_s
+    tours = 0
+    while True:
+        tours += 1
+        try:
+            positions = mt5.positions_get(ticket=ticket)
+            if positions:
+                if tours > 1:
+                    logger.info(
+                        f"[ATTENTE] position #{ticket} vue apres {tours} tours"
+                    )
+                return True
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[ATTENTE] positions_get a leve pour #{ticket}: {e}")
+        if time.monotonic() >= fin:
+            logger.warning(
+                f"[ATTENTE] position #{ticket} TOUJOURS invisible apres "
+                f"{delai_max_s}s — le stop risque d'echouer (Invalid request). "
+                f"Le garde-fou SL/TP prendra le relais."
+            )
+            return False
+        time.sleep(pas_s)
 
 
 def _resolve_fill_price(result, requested_price: float) -> tuple[float, str]:
