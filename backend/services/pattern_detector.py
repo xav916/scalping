@@ -244,6 +244,8 @@ def detect_patterns(candles: list[Candle], pair: str = "XAU/USD") -> list[Patter
     patterns.extend(_detect_gap_par_troisieme_bougie(candles, pair))
     patterns.extend(_detect_liquidity_sweep(candles, pair))
     patterns.extend(_detect_order_block(candles, pair))
+    patterns.extend(_detect_structure(candles, pair))
+    patterns.extend(_detect_fvg_inverse(candles, pair))
 
     # Enrichir chaque pattern avec explication et fiabilité
     for p in patterns:
@@ -508,6 +510,136 @@ def _detect_order_block(candles: list[Candle], pair: str) -> list[PatternDetecti
                 detected_at=now,
             ))
         return patterns
+    return patterns
+
+
+
+def _tendance_de_structure(reference: list[Candle]) -> str:
+    """`haussiere` / `baissiere` / `indecise`, lue sur les SOMMETS et CREUX.
+
+    AUCUN REGLAGE NEUF : on coupe en deux la fenetre de 30 deja utilisee par
+    `_detect_breakout` et le liquidity sweep. Haussiere si la moitie recente a
+    A LA FOIS un plus-haut ET un plus-bas superieurs a l'ancienne.
+
+    Exiger les DEUX est ce qui distingue une tendance d'une simple poussee : un
+    plus-haut plus haut avec un plus-bas plus bas, c'est un elargissement, pas
+    une direction.
+    """
+    n = len(reference) // 2
+    if n < 2:
+        return "indecise"
+    vieux, neuf = reference[:n], reference[n:]
+    vh, vb = max(c.high for c in vieux), min(c.low for c in vieux)
+    nh, nb = max(c.high for c in neuf), min(c.low for c in neuf)
+    if nh > vh and nb > vb:
+        return "haussiere"
+    if nh < vh and nb < vb:
+        return "baissiere"
+    return "indecise"
+
+
+def _detect_structure(candles: list[Candle], pair: str) -> list[PatternDetection]:
+    """BOS et CHoCH : la meme cassure, lue dans un contexte de tendance.
+
+        tendance haussiere + cassure du SOMMET  ->  BOS,   continuation
+        tendance haussiere + cassure du CREUX   ->  CHoCH, retournement
+
+    PREDICTION FORTE : leurs R moyens doivent etre de SIGNES OPPOSES. S'ils
+    sont identiques, le contexte de tendance n'apporte rien et les deux ne sont
+    qu'un `breakout` sous un autre nom. C'est ce qui rend le concept refutable.
+
+    BOS et CHoCH ne sortent JAMAIS ensemble : ils decrivent des issues
+    opposees, et les laisser coexister rendrait la comparaison de leurs R
+    moyens — toute la prediction — depourvue de sens.
+
+    Recouvrement ATTENDU et FORT avec `breakout` : c'est la meme cassure.
+    Mesure, jamais supposee.
+    """
+    patterns: list[PatternDetection] = []
+    if len(candles) < 31:
+        return patterns
+    now = datetime.now(timezone.utc)
+    last = candles[-1]
+    reference = candles[-31:-1]
+    atr = _calculate_atr(candles, period=14)
+    if atr <= 0:
+        return patterns
+
+    tendance = _tendance_de_structure(reference)
+    if tendance == "indecise":
+        return patterns
+    sommet = max(c.high for c in reference)
+    creux = min(c.low for c in reference)
+
+    def _ajouter(motif, quoi, ecart):
+        patterns.append(PatternDetection(
+            pattern=motif,
+            confidence=round(min(0.80, 0.60 + abs(ecart) / atr * 0.1), 2),
+            description=f"{quoi} en tendance {tendance} (cloture {last.close:.2f})",
+            detected_at=now,
+        ))
+
+    if tendance == "haussiere":
+        if last.close > sommet:
+            _ajouter(PatternType.BOS_UP, "Sommet casse, continuation",
+                     last.close - sommet)
+        elif last.close < creux:
+            _ajouter(PatternType.CHOCH_DOWN, "Creux casse, retournement",
+                     creux - last.close)
+    else:
+        if last.close < creux:
+            _ajouter(PatternType.BOS_DOWN, "Creux casse, continuation",
+                     creux - last.close)
+        elif last.close > sommet:
+            _ajouter(PatternType.CHOCH_UP, "Sommet casse, retournement",
+                     last.close - sommet)
+    return patterns
+
+
+def _detect_fvg_inverse(candles: list[Candle], pair: str) -> list[PatternDetection]:
+    """Un trou traverse de part en part ne soutient plus : il repousse.
+
+    Prolonge directement le FVG. Sa prediction est de SIGNE OPPOSE a celle du
+    `fvg_up` d'origine — c'est ce qui le rend testable plutot que decoratif.
+
+    AUCUN SEUIL, comme le FVG dont il derive.
+    """
+    patterns: list[PatternDetection] = []
+    if len(candles) < 6:
+        return patterns
+    now = datetime.now(timezone.utc)
+    last = candles[-1]
+    atr = _calculate_atr(candles, period=14)
+    if atr <= 0:
+        return patterns
+
+    # Le trou le plus RECENT, forme avant la bougie courante.
+    for i in range(len(candles) - 2, 1, -1):
+        a, c = candles[i - 2], candles[i]
+        if c.low > a.high:                        # trou haussier [a.high, c.low]
+            bas, haut = a.high, c.low
+            traverse = any(x.close < bas for x in candles[i + 1:-1])
+            if traverse and last.high >= bas and last.close < bas:
+                patterns.append(PatternDetection(
+                    pattern=PatternType.FVG_INVERSE_DOWN,
+                    confidence=round(min(0.80, 0.60 + (haut - bas) / atr * 0.1), 2),
+                    description=(f"Trou haussier [{bas:.2f}-{haut:.2f}] traverse "
+                                 f"puis refuse par dessous ({last.close:.2f})"),
+                    detected_at=now,
+                ))
+            return patterns
+        if c.high < a.low:                        # trou baissier [c.high, a.low]
+            bas, haut = c.high, a.low
+            traverse = any(x.close > haut for x in candles[i + 1:-1])
+            if traverse and last.low <= haut and last.close > haut:
+                patterns.append(PatternDetection(
+                    pattern=PatternType.FVG_INVERSE_UP,
+                    confidence=round(min(0.80, 0.60 + (haut - bas) / atr * 0.1), 2),
+                    description=(f"Trou baissier [{bas:.2f}-{haut:.2f}] traverse "
+                                 f"puis refuse par dessus ({last.close:.2f})"),
+                    detected_at=now,
+                ))
+            return patterns
     return patterns
 
 

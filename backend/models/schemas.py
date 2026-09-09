@@ -103,6 +103,18 @@ class PatternType(str, Enum):
     # ⚠️ Aucune exclusivite declaree — le recouvrement est mesure, pas suppose.
     ORDER_BLOCK_UP = "order_block_up"
     ORDER_BLOCK_DOWN = "order_block_down"
+    # ─── Structure et inversion (2026-09-09) ──────────────────────────
+    # BOS et CHoCH sont le MEME evenement — une cassure — lu dans un contexte
+    # de tendance : sommet casse = continuation, creux casse = retournement.
+    # Leurs R moyens doivent etre de SIGNES OPPOSES, sinon le contexte
+    # n'apporte rien et les deux ne sont qu'un breakout.
+    BOS_UP = "bos_up"
+    BOS_DOWN = "bos_down"
+    CHOCH_UP = "choch_up"
+    CHOCH_DOWN = "choch_down"
+    # Un trou traverse de part en part ne soutient plus : il repousse.
+    FVG_INVERSE_UP = "fvg_inverse_up"
+    FVG_INVERSE_DOWN = "fvg_inverse_down"
 
 
 class TradeDirection(str, Enum):

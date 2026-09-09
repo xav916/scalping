@@ -108,17 +108,46 @@ dispositif — c'est le dispositif qui fonctionne.
   Le recouvrement est **mesuré**, pas supposé.
 - **Posé** : 2026-09-09.
 
+### Break of Structure (BOS) et Change of Character (CHoCH)
+
+- **Tradition** : ICT / Smart Money Concepts. Les deux sont le **même
+  événement** — une cassure — lu dans un **contexte de tendance** :
+  - en tendance haussière, casser le dernier **sommet** ⇒ **BOS**, continuation ;
+  - en tendance haussière, casser le dernier **creux** ⇒ **CHoCH**, retournement.
+- **Structure, sans nouveau réglage** : la fenêtre de **30 bougies** est reprise
+  de `_detect_breakout` et du *liquidity sweep*. La tendance se lit en coupant
+  cette fenêtre **en deux** : haussière si la moitié récente a **à la fois** un
+  plus-haut ET un plus-bas supérieurs à l'ancienne (sommets et creux qui
+  montent). Aucun seuil numérique nouveau.
+- **Prédiction falsifiable** : le BOS et le CHoCH doivent avoir des R moyens de
+  **signes opposés** — l'un continue, l'autre retourne. S'ils sont identiques,
+  le contexte de tendance n'apporte rien et les deux ne sont qu'un breakout.
+- **Motifs** : `bos_up` · `bos_down` · `choch_up` · `choch_down`.
+- ⚠️ **Recouvrement ATTENDU et fort avec `breakout`** : c'est la même cassure,
+  seule la lecture change. Mesuré, jamais supposé.
+- **Posé** : 2026-09-09.
+
+### Inversion FVG
+
+- **Tradition** : ICT. Prolonge directement le FVG déjà posé.
+- **Idée** : un trou qui servait de support devient **résistance** une fois
+  traversé de part en part.
+- **Règle** : un `fvg_up` existe dans la fenêtre ; le prix est **repassé
+  entièrement dessous** (clôture < bas du trou) ; puis il **revient toucher** la
+  zone sans la reprendre (haut ≥ bas du trou, clôture < bas du trou).
+- **Prédiction falsifiable** : après ce retour refusé, le prix **baisse**. Signe
+  opposé à celui du `fvg_up` d'origine — c'est ce qui rend le concept testable.
+- **Motifs** : `fvg_inverse_up` · `fvg_inverse_down`.
+- **Seuil** : **aucun**, comme le FVG dont il dérive.
+- **Posé** : 2026-09-09.
+
 ---
 
 ## 🕐 Candidats
 
-Même famille que le FVG, tous codables sur de l'OHLC seul.
-
-| concept | règle pressentie | prédiction falsifiable |
-|---|---|---|
-| **Break of Structure** | clôture au-dessus du dernier sommet de structure | la tendance continue |
-| **CHoCH** | en tendance haussière, clôture sous le dernier creux | retournement |
-| **Inversion FVG** | un FVG traversé de part en part | il devient résistance au lieu de support |
+**La file est vide.** Les cinq concepts déclarés le 2026-09-09 sont tous passés
+en 🔬 *en mesure*. Le prochain se déclare ici, avec sa prédiction falsifiable,
+**avant** d'être codé.
 
 ⚠️ Avant d'en coder un : vérifier qu'il n'est pas déjà **⛔ réfuté** ci-dessous,
 et écrire sa prédiction falsifiable dans le tableau ci-dessus.

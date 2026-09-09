@@ -446,6 +446,12 @@ _PATTERN_EXPLAIN_FR: dict[str, str] = {
     "liquidity_sweep_down": "chasse aux stops au-dessus du plafond — le prix est allé chercher les ordres placés au-dessus du plus haut récent, puis est redescendu aussitôt : le sommet a été rejeté",
     "order_block_up": "retour sur la zone de départ, qui a tenu — le prix est redescendu là où la hausse s'était élancée, et il en est reparti vers le haut",
     "order_block_down": "retour sur la zone de départ, qui a tenu — le prix est remonté là où la baisse s'était élancée, et il en est reparti vers le bas",
+    "bos_up": "le plafond cède dans une tendance qui montait déjà — la hausse confirme sa direction",
+    "bos_down": "le plancher cède dans une tendance qui baissait déjà — la baisse confirme sa direction",
+    "choch_up": "le plafond cède alors que le marché baissait — premier signe que la tendance se retourne à la hausse",
+    "choch_down": "le plancher cède alors que le marché montait — premier signe que la tendance se retourne à la baisse",
+    "fvg_inverse_up": "un trou baissier franchi puis refusé par le haut — la zone qui repoussait le prix le soutient désormais",
+    "fvg_inverse_down": "un trou haussier franchi puis refusé par le bas — la zone qui soutenait le prix le repousse désormais",
     # Ajoutés le 2026-08-04 : sans libellé, le repli affichait la valeur brute
     # `mean_reversion_up`, dont les underscores cassaient le Markdown et
     # faisaient perdre TOUT le message.
