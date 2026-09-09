@@ -84,6 +84,30 @@ dispositif — c'est le dispositif qui fonctionne.
   tests indépendants. À garder en tête si les deux ressortent ensemble.
 - **Posé** : 2026-09-09.
 
+### Order Block
+
+- **Tradition** : ICT / Smart Money Concepts.
+- **Idée** : la dernière bougie de sens **opposé** juste avant une impulsion est
+  la zone où les gros ordres ont été placés. Le prix devrait y revenir, et elle
+  devrait **tenir**.
+- **Règle** (miroir pour le sens opposé) :
+  1. une bougie d'**impulsion** haussière dans la fenêtre (corps > 0,5 × ATR) ;
+  2. la dernière bougie **rouge** avant elle est l'*order block* — sa zone est
+     son `[bas, haut]` ;
+  3. la bougie courante **redescend dans la zone** (`bas ≤ haut_OB`) ;
+  4. **et clôture au-dessus** (`clôture > haut_OB`) — la zone a tenu.
+- **Prédiction falsifiable** : après ce retest tenu, le prix repart **dans le
+  sens de l'impulsion**. Si son R moyen est nul, le concept est réfuté.
+- **Motifs** : `order_block_up` · `order_block_down`.
+- **Seuil** : **aucun nouveau** — `_IMPULSION_MIN_ATR = 0,5` est repris du
+  détecteur de gap. Un réglage de plus serait un degré de liberté de plus.
+- ⚠️ **Recouvrement ATTENDU avec `range_bounce` et `fvg`** — un retest tenu
+  ressemble à un rebond sur support, et l'impulsion laisse souvent un FVG.
+  ⛔ On ne déclare **aucune exclusivité** : c'est précisément ce que j'ai
+  affirmé à tort pour le *liquidity sweep*, et que le vrai marché a démenti.
+  Le recouvrement est **mesuré**, pas supposé.
+- **Posé** : 2026-09-09.
+
 ---
 
 ## 🕐 Candidats
@@ -92,7 +116,6 @@ Même famille que le FVG, tous codables sur de l'OHLC seul.
 
 | concept | règle pressentie | prédiction falsifiable |
 |---|---|---|
-| **Order Block** | la dernière bougie de sens opposé avant l'impulsion | elle est retestée, puis tient |
 | **Break of Structure** | clôture au-dessus du dernier sommet de structure | la tendance continue |
 | **CHoCH** | en tendance haussière, clôture sous le dernier creux | retournement |
 | **Inversion FVG** | un FVG traversé de part en part | il devient résistance au lieu de support |

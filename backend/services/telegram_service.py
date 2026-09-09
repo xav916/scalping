@@ -444,6 +444,8 @@ _PATTERN_EXPLAIN_FR: dict[str, str] = {
     # sur Telegram, pas le code.
     "liquidity_sweep_up": "chasse aux stops sous le plancher — le prix est allé chercher les ordres placés sous le plus bas récent, puis est remonté aussitôt : le creux a été rejeté",
     "liquidity_sweep_down": "chasse aux stops au-dessus du plafond — le prix est allé chercher les ordres placés au-dessus du plus haut récent, puis est redescendu aussitôt : le sommet a été rejeté",
+    "order_block_up": "retour sur la zone de départ, qui a tenu — le prix est redescendu là où la hausse s'était élancée, et il en est reparti vers le haut",
+    "order_block_down": "retour sur la zone de départ, qui a tenu — le prix est remonté là où la baisse s'était élancée, et il en est reparti vers le bas",
     # Ajoutés le 2026-08-04 : sans libellé, le repli affichait la valeur brute
     # `mean_reversion_up`, dont les underscores cassaient le Markdown et
     # faisaient perdre TOUT le message.

@@ -97,6 +97,12 @@ class PatternType(str, Enum):
     # ⚠️ Exclusif de `breakout` par construction — voir le detecteur.
     LIQUIDITY_SWEEP_UP = "liquidity_sweep_up"      # bas balayes -> on achete
     LIQUIDITY_SWEEP_DOWN = "liquidity_sweep_down"  # hauts balayes -> on vend
+    # ─── Order Block (2026-09-09) ─────────────────────────────────────
+    # La derniere bougie de sens OPPOSE avant une impulsion : la zone d'ou le
+    # mouvement est parti. Signal quand elle est RETESTEE et qu'elle TIENT.
+    # ⚠️ Aucune exclusivite declaree — le recouvrement est mesure, pas suppose.
+    ORDER_BLOCK_UP = "order_block_up"
+    ORDER_BLOCK_DOWN = "order_block_down"
 
 
 class TradeDirection(str, Enum):

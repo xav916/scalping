@@ -243,6 +243,7 @@ def detect_patterns(candles: list[Candle], pair: str = "XAU/USD") -> list[Patter
     patterns.extend(_detect_fvg(candles, pair))
     patterns.extend(_detect_gap_par_troisieme_bougie(candles, pair))
     patterns.extend(_detect_liquidity_sweep(candles, pair))
+    patterns.extend(_detect_order_block(candles, pair))
 
     # Enrichir chaque pattern avec explication et fiabilité
     for p in patterns:
@@ -432,6 +433,81 @@ def _detect_liquidity_sweep(candles: list[Candle], pair: str) -> list[PatternDet
                          f"{plus_bas:.2f}, cloture rejetee a {last.close:.2f}"),
             detected_at=now,
         ))
+    return patterns
+
+
+
+def _detect_order_block(candles: list[Candle], pair: str) -> list[PatternDetection]:
+    """Order Block : la zone d'ou l'impulsion est partie, retestee et TENUE.
+
+    L'idee ICT : la derniere bougie de sens OPPOSE juste avant une impulsion est
+    la zone ou les gros ordres ont ete places. Le prix devrait y revenir, et
+    elle devrait tenir.
+
+        1. une bougie d'impulsion haussiere (corps > 0,5 x ATR) dans la fenetre
+        2. la derniere bougie ROUGE avant elle est l'order block, zone [bas,haut]
+        3. la bougie courante REDESCEND dans la zone   (bas <= haut_OB)
+        4. et CLOTURE au-dessus                        (cloture > haut_OB)
+
+    ⇒ Le signal n'est pas la formation de la zone, c'est son RETEST TENU. Sans
+    le point 4, la zone n'a pas tenu et le concept ne dit rien de ce cas —
+    inventer un signal la serait fabriquer de l'edge.
+
+    ⚠️ AUCUN SEUIL NEUF : `_IMPULSION_MIN_ATR` est repris du detecteur de gap.
+
+    ⚠️ AUCUNE EXCLUSIVITE DECLAREE. Le recouvrement avec `range_bounce` et
+    `fvg` est ATTENDU — un retest tenu ressemble a un rebond sur support, et
+    l'impulsion laisse souvent un trou. ⛔ C'est exactement ce que j'ai affirme
+    a tort pour le liquidity sweep, et que 4 950 fenetres reelles ont dementi.
+    Ici le recouvrement est MESURE par un test, pas suppose.
+    """
+    patterns: list[PatternDetection] = []
+    if len(candles) < 5:
+        return patterns
+    now = datetime.now(timezone.utc)
+    atr = _calculate_atr(candles, period=14)
+    if atr <= 0:
+        return patterns
+    mini = atr * _IMPULSION_MIN_ATR
+    courante = candles[-1]
+
+    # L'impulsion la plus RECENTE, hors bougie courante : c'est son order block
+    # qui fait autorite. Une impulsion plus ancienne a deja ete arbitree.
+    for i in range(len(candles) - 2, 1, -1):
+        imp = candles[i]
+        corps = abs(imp.close - imp.open)
+        if corps < mini:
+            continue
+        haussiere = imp.close > imp.open
+        # La derniere bougie de sens OPPOSE avant l'impulsion
+        bloc = None
+        for j in range(i - 1, max(i - 11, -1), -1):
+            c = candles[j]
+            if (c.close < c.open) if haussiere else (c.close > c.open):
+                bloc = c
+                break
+        if bloc is None:
+            return patterns
+
+        if haussiere and courante.low <= bloc.high and courante.close > bloc.high:
+            patterns.append(PatternDetection(
+                pattern=PatternType.ORDER_BLOCK_UP,
+                confidence=round(min(0.80, 0.60 + corps / atr * 0.1), 2),
+                description=(f"Order block haussier tenu: retour dans "
+                             f"[{bloc.low:.2f}-{bloc.high:.2f}], cloture a "
+                             f"{courante.close:.2f} au-dessus"),
+                detected_at=now,
+            ))
+        elif (not haussiere) and courante.high >= bloc.low and courante.close < bloc.low:
+            patterns.append(PatternDetection(
+                pattern=PatternType.ORDER_BLOCK_DOWN,
+                confidence=round(min(0.80, 0.60 + corps / atr * 0.1), 2),
+                description=(f"Order block baissier tenu: retour dans "
+                             f"[{bloc.low:.2f}-{bloc.high:.2f}], cloture a "
+                             f"{courante.close:.2f} en dessous"),
+                detected_at=now,
+            ))
+        return patterns
     return patterns
 
 
