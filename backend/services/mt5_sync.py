@@ -165,6 +165,50 @@ def _upsert_open_trade(row: dict[str, Any], user: str,
     if not ticket:
         return
 
+    # ⛔ UNE LIGNE D'ACTION N'EST PAS UNE POSITION (2026-09-09).
+    #
+    # Le bridge journalise TOUT geste réussi avec `status="filled"` — pas
+    # seulement les remplissages. Le garde-fou SL/TP (`/position/sltp`), la
+    # fermeture (`/position/close`) et le kill-switch écrivent la même valeur.
+    # `_sync_one` ne regarde que ce statut : il prenait donc chaque geste pour
+    # une nouvelle position.
+    #
+    # Deux replis s'additionnaient alors, et chacun cassait une garde :
+    #   `pair`      → `symbol` du courtier (`XAUUSD`), invisible à tout filtre
+    #                 `pair = 'XAU/USD'` ;
+    #   `direction` → `''`, une valeur DISTINCTE de `'sell'`, donc la clé
+    #                 unique `(mt5_ticket, direction)` ne voyait aucun conflit.
+    # La clôture retrouvait ensuite les deux lignes par `WHERE mt5_ticket = ?`
+    # et leur recopiait le MÊME P&L.
+    #
+    # Mesuré sur le compte réel : 6 lignes fantômes, dont 2 sur l'or. Le
+    # plafond journalier somme `personal_trades` par destination SANS filtre de
+    # paire — le 01/09 il a vu +37,85 EUR de gain qui n'existaient pas. Un gain
+    # fantôme DESSERRE une garde de perte sur de l'argent réel.
+    #
+    # 🔑 Chaque fois que le filet de sécurité sauvait le compte d'une position
+    # nue, il faussait les comptes du compte.
+    #
+    # La règle porte sur le SENS, seul champ qui distingue un ordre d'un geste :
+    # un remplissage dit `buy` ou `sell`, un geste dit `''`, `close-buy` ou
+    # `close-sell`. On ne se fie PAS à `client_comment` (libre) ni à l'absence
+    # d'`entry` (légitimement nul sur les trades réels d'avant le 2026-08-24).
+    direction = (row.get("direction") or "").lower()
+    if direction not in ("buy", "sell"):
+        # ⚠️ Bruyant par construction. Le WARNING qui existait ici avant
+        # (« entry ABSENT … Verifier `_prix_pour_audit` cote bridge »)
+        # se déclenchait bien, mais désignait la mauvaise cause : il envoyait
+        # chercher un bug de prix côté bridge. Une alerte qui accuse le mauvais
+        # coupable coûte plus cher que pas d'alerte — elle a été lue.
+        logger.warning(
+            "mt5_sync[%s]: ligne d'ACTION ignoree (ticket=%s symbole=%s "
+            "sens=%r) — ce n'est pas un ordre, aucune position creee. "
+            "Geste probable : garde-fou SL/TP, fermeture ou kill-switch.",
+            destination_id, ticket, row.get("symbol") or row.get("pair"),
+            row.get("direction"),
+        )
+        return
+
     ctx_json = None
     snap = macro_context_service.get_macro_snapshot()
     if snap is not None and macro_context_service.is_fresh(snap.fetched_at):
@@ -180,8 +224,10 @@ def _upsert_open_trade(row: dict[str, Any], user: str,
     # Prix planifié (entry) vs prix réellement exécuté (fill). Le bridge
     # peut remonter plusieurs conventions selon sa version — on regarde
     # les noms habituels.
+    # `direction` est résolu et VALIDÉ plus haut : arrivé ici, c'est bien un
+    # ordre. Le repli de `pair` sur `symbol` ne peut donc plus produire une
+    # paire non normalisée à partir d'une ligne d'action.
     pair = row.get("pair") or row.get("symbol") or "?"
-    direction = (row.get("direction") or "").lower()
 
     # ⛔ `or 0` est CONTRAINT par le schéma : `personal_trades.entry_price` est
     # `REAL NOT NULL`. Écrire None ferait échouer l'INSERT et perdrait le trade
