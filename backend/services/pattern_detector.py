@@ -544,9 +544,15 @@ def _detect_structure(candles: list[Candle], pair: str) -> list[PatternDetection
         tendance haussiere + cassure du SOMMET  ->  BOS,   continuation
         tendance haussiere + cassure du CREUX   ->  CHoCH, retournement
 
-    PREDICTION FORTE : leurs R moyens doivent etre de SIGNES OPPOSES. S'ils
-    sont identiques, le contexte de tendance n'apporte rien et les deux ne sont
-    qu'un `breakout` sous un autre nom. C'est ce qui rend le concept refutable.
+    ⛔ MA PREMIERE PREDICTION ETAIT MAL FORMEE : « leurs R moyens doivent etre
+    de signes opposes ». FAUX. Le laboratoire calcule `signe = 1 si buy sinon
+    -1` : le R est le resultat du TRADE, pas le mouvement du prix. BOS et CHoCH
+    sont deux signaux de trade — si les deux concepts marchent, leurs R sont
+    tous deux POSITIFS.
+
+    PREDICTION CORRIGEE : le concept affirme que le contexte de tendance ajoute
+    de l'information. Le test est donc BOS CONTRE `breakout` — la meme cassure,
+    avec et sans contexte. R moyens egaux => le contexte n'apporte rien.
 
     BOS et CHoCH ne sortent JAMAIS ensemble : ils decrivent des issues
     opposees, et les laisser coexister rendrait la comparaison de leurs R

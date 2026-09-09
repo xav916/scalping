@@ -40,14 +40,28 @@ def test_un_ecart_NUL_dit_que_c_est_le_meme_evenement(m):
 
 
 def test_un_ecart_NET_nomme_le_gagnant_ET_sa_reserve(m):
-    court, phrase = m.verdict(0.35, 200, 0.05, 180, 2.55)
-    assert "retracement" in court
+    """⚠️ On vérifie la PROPRIÉTÉ — le gagnant est nommé — et non un mot figé.
+    La sonde sert plusieurs confrontations : « retracement » n'a aucun sens
+    pour BOS contre breakout. Un verdict juste sous une étiquette fausse est
+    pire qu'un verdict absent."""
+    court, phrase = m.verdict(0.35, 200, 0.05, 180, 2.55,
+                              "cassure AVEC contexte", "cassure NUE")
+    assert "cassure AVEC contexte" in court
+    assert "cassure NUE" not in court
     assert "2.55" in phrase, "le plafond du hasard doit etre rappele"
 
 
 def test_le_sens_INVERSE_est_nomme_aussi(m):
-    court, _ = m.verdict(0.02, 200, 0.40, 180, 2.5)
-    assert "continuation" in court
+    court, _ = m.verdict(0.02, 200, 0.40, 180, 2.5,
+                         "cassure AVEC contexte", "cassure NUE")
+    assert "cassure NUE" in court
+
+
+def test_les_confrontations_comparent_des_familles_DISJOINTES(m):
+    """⛔ Si une famille apparaissait des deux côtés, l'écart serait un
+    artefact : la même cellule alimenterait les deux moyennes."""
+    for conf in m.CONFRONTATIONS:
+        assert not (set(conf["a"]) & set(conf["b"])), conf["titre"]
 
 
 def test_une_famille_VIDE_ne_passe_pas_pour_une_egalite(m):

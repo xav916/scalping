@@ -119,9 +119,15 @@ dispositif — c'est le dispositif qui fonctionne.
   cette fenêtre **en deux** : haussière si la moitié récente a **à la fois** un
   plus-haut ET un plus-bas supérieurs à l'ancienne (sommets et creux qui
   montent). Aucun seuil numérique nouveau.
-- **Prédiction falsifiable** : le BOS et le CHoCH doivent avoir des R moyens de
-  **signes opposés** — l'un continue, l'autre retourne. S'ils sont identiques,
-  le contexte de tendance n'apporte rien et les deux ne sont qu'un breakout.
+- ⛔ **Ma première prédiction était MAL FORMÉE** : j'avais écrit « leurs R
+  moyens doivent être de signes opposés ». **Faux.** Le laboratoire calcule
+  `signe = 1 si buy sinon -1` : le R est le résultat du **trade**, pas le
+  mouvement du prix. BOS et CHoCH sont deux signaux de trade — si les deux
+  concepts marchent, leurs R sont **tous deux positifs**. Rien ne les oppose.
+- **Prédiction falsifiable, corrigée** : le concept affirme que le **contexte de
+  tendance ajoute de l'information**. Le test est donc `BOS` **contre**
+  `breakout` — la même cassure, avec et sans contexte. Si leurs R moyens sont
+  égaux, le contexte n'apporte rien et le BOS n'est qu'un breakout renommé.
 - **Motifs** : `bos_up` · `bos_down` · `choch_up` · `choch_down`.
 - ⚠️ **Recouvrement ATTENDU et fort avec `breakout`** : c'est la même cassure,
   seule la lecture change. Mesuré, jamais supposé.
@@ -135,8 +141,12 @@ dispositif — c'est le dispositif qui fonctionne.
 - **Règle** : un `fvg_up` existe dans la fenêtre ; le prix est **repassé
   entièrement dessous** (clôture < bas du trou) ; puis il **revient toucher** la
   zone sans la reprendre (haut ≥ bas du trou, clôture < bas du trou).
-- **Prédiction falsifiable** : après ce retour refusé, le prix **baisse**. Signe
-  opposé à celui du `fvg_up` d'origine — c'est ce qui rend le concept testable.
+- **Prédiction falsifiable** : le retour refusé produit un trade gagnant —
+  R moyen **positif**, et supérieur au tirage au hasard.
+  ⚠️ ~~« signe opposé à celui du `fvg_up` »~~ : formulation FAUSSE, corrigée le
+  même soir. `fvg_up` est un achat, `fvg_inverse_down` une vente ; leurs R sont
+  tous deux positifs si les deux concepts marchent. C'est le laboratoire, cellule
+  par cellule contre le hasard, qui tranche — pas une comparaison entre eux.
 - **Motifs** : `fvg_inverse_up` · `fvg_inverse_down`.
 - **Seuil** : **aucun**, comme le FVG dont il dérive.
 - **Posé** : 2026-09-09.
