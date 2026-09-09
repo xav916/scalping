@@ -10,4 +10,8 @@
 # Passage unique a 20:10 UTC : apres la seance de jour, avant la fenetre
 # nocturne ou la porte de spread refuse deja l'or.
 set -uo pipefail
-docker exec scalping-radar python /app/scripts/mesurer_echelles_or.py
+# ⛔ `docker exec` n'herite PAS de l'environnement de l'hote : sans ce relais,
+# `DRY_RUN=1 ./mesurer-echelles-or.sh` postait un vrai message en croyant
+# repeter a blanc. Mesure le 09/09, en le faisant.
+# Une sonde qu'on ne peut pas repeter est une sonde qu'on teste en production.
+docker exec ${DRY_RUN:+-e DRY_RUN=1} scalping-radar   python /app/scripts/mesurer_echelles_or.py
