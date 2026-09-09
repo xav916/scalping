@@ -400,8 +400,71 @@ def _restant_avant_minuit(maintenant: datetime) -> str:
     return f"{h}h{m:02d}" if h else f"{m}min"
 
 
+
+# ─── Le plafond du COURTIER, qui n'est pas le notre (2026-09-09) ──────────
+#
+# ⛔ Le 09/09 a 17h18, Xavier repond « continue ». Le plafond du RADAR se leve.
+# Deux minutes plus tard le courtier refuse :
+#
+#     "Daily drawdown reached: loss=23.43 >= limit=21.47 (3.0% of 715.69)"
+#
+# Il y a DEUX plafonds journaliers independants, tous deux a 3 % mais sur des
+# bases differentes. Repondre « continue » ne leve que le notre — et le message
+# promettait « il retrade ». C'etait FAUX.
+#
+# ⛔ On ne cable PAS la reponse jusqu'au courtier : deux plafonds independants
+# sont une protection en profondeur, et le sien est calcule sur le solde
+# REELLEMENT chez lui. On rend le message honnete, on ne desserre pas le
+# dernier garde-fou avant l'argent.
+
+def _lire_health(destination_id: str) -> dict[str, Any] | None:
+    """Le `/health` du bridge de cette destination. `None` si illisible.
+
+    ⚠️ Isolee pour etre remplacable en test : ce chemin fait du RESEAU, et un
+    test qui appelle le reseau accuse le voisinage, pas le code.
+    """
+    import json
+    import os
+    import urllib.request
+    from backend.services import destinations_registry as reg
+    d = reg.get(destination_id)
+    var = getattr(d, "url_env", None) if d else None
+    base = os.environ.get(var or "", "").rstrip("/")
+    if not base:
+        return None
+    with urllib.request.urlopen(f"{base}/health", timeout=5) as r:
+        return json.load(r)
+
+
+def plafond_du_courtier(destinations) -> dict[str, dict[str, float]]:
+    """``{destination: {seuil, solde}}`` — le plafond que le COURTIER applique.
+
+    ⛔ Ne leve JAMAIS et n'inclut que ce qu'elle a pu lire. Cette lecture est
+    sur le chemin qui PREVIENT Xavier : la faire tomber sur un bridge
+    injoignable produirait un blocage muet, exactement ce que ce job existe
+    pour empecher.
+
+    ⚠️ Un `health` incomplet ne rend RIEN pour ce compte. Inventer un seuil
+    serait pire que de se taire : le message affirmerait quelque chose sur
+    l'argent reel sans l'avoir lu.
+    """
+    out: dict[str, dict[str, float]] = {}
+    for dest in destinations or []:
+        try:
+            h = _lire_health(dest) or {}
+            pct = float((h.get("garde_fous") or {}).get("max_daily_loss_pct") or 0)
+            solde = float(h.get("balance") or 0)
+            if pct > 0 and solde > 0:
+                out[dest] = {"seuil": -round(solde * pct / 100.0, 2),
+                             "solde": solde}
+        except Exception as e:  # noqa: BLE001
+            logger.debug("arbitrage: plafond courtier illisible (%s) : %s", dest, e)
+    return out
+
+
 def construire_question(demandes: list[dict[str, Any]],
-                        maintenant: datetime | None = None) -> str:
+                        maintenant: datetime | None = None,
+                        plafond_courtier: dict | None = None) -> str:
     """Texte simple, sans chevrons : le canal poste en HTML et Telegram refuse
     le message ENTIER sur une balise mal formée — échec silencieux.
 
@@ -436,6 +499,28 @@ def construire_question(demandes: list[dict[str, Any]],
             "  continue " + str(demandes[0]["destination_id"]),
             "« gele » sans nom les bloque TOUS.",
         ]
+    # ⛔ L'AVERTISSEMENT QUI MANQUAIT. Sans lui, « continue » promet un
+    # deblocage que le systeme ne peut pas livrer : le courtier a SON propre
+    # plafond, et le 09/09 il a refuse deux minutes apres la reponse.
+    #
+    # ⚠️ Rien n'est dit quand le courtier est illisible : ne pas savoir ce
+    # qu'il fera n'autorise pas a affirmer qu'il laissera passer.
+    for d in demandes:
+        p = (plafond_courtier or {}).get(d["destination_id"]) or {}
+        seuil_c, cumul = p.get("seuil"), d.get("pnl_au_moment")
+        if seuil_c is None or cumul is None or cumul > seuil_c:
+            continue
+        lignes_avert = [
+            "",
+            f"⚠️ ATTENTION — repondre « continue » NE SUFFIRA PAS pour "
+            f"{d['destination_id']}.",
+            f"Le courtier applique SON PROPRE plafond, a {seuil_c:.2f} EUR "
+            f"(sur un solde de {p.get('solde', 0):.2f}). Ta perte du jour "
+            f"({cumul:.2f}) le depasse deja : le radar se debloquera, mais "
+            "le courtier REFUSERA quand meme, jusqu'a minuit UTC.",
+        ]
+        lignes += lignes_avert
+
     reste = _restant_avant_minuit(maintenant or datetime.now(timezone.utc))
     lignes += [
         "",
@@ -523,7 +608,12 @@ async def executer() -> int:
         return 0
 
     from backend.services import telegram_service
-    texte = construire_question(a_poser)
+    # ⛔ Le plafond du COURTIER, lu AVANT de poser la question : sans lui, le
+    # message promet un deblocage que le systeme ne peut pas livrer. Best-effort
+    # — un bridge injoignable rend {} et le message se tait plutot que de
+    # rassurer a tort.
+    courtier = plafond_du_courtier({d["destination_id"] for d in a_poser})
+    texte = construire_question(a_poser, plafond_courtier=courtier)
     envoye = await telegram_service.send_sales_text(texte, parse_mode=None)
     if not envoye:
         logger.warning(
