@@ -432,6 +432,14 @@ _PATTERN_EXPLAIN_FR: dict[str, str] = {
     "pin_bar_down": "pin bar baissière — rejet visible du haut, signal de retournement court terme",
     "poc_return_up": "retour au prix d'équilibre en tendance haussière — le marché revient sur la zone où il a passé le plus de temps avant de repartir vers le haut",
     "poc_return_down": "retour au prix d'équilibre en tendance baissière — le marché revient sur la zone où il a passé le plus de temps avant de repartir vers le bas",
+    # Les deux definitions du « gap », mesurees face a face (2026-09-09).
+    # Vulgarise : Xavier lit ces libelles sur Telegram, pas le code.
+    "fvg_up": "trou haussier laissé derrière — le prix est monté si vite qu'il a sauté une zone de prix, sans y échanger",
+    "fvg_down": "trou baissier laissé derrière — le prix est descendu si vite qu'il a sauté une zone de prix, sans y échanger",
+    "gap_retrace_up": "poussée haussière qui souffle — le prix est redescendu dans la bougie qui l'a portée, un retour dans la zone est attendu avant qu'il reparte",
+    "gap_retrace_down": "poussée baissière qui souffle — le prix est remonté dans la bougie qui l'a portée, un retour dans la zone est attendu avant qu'il reparte",
+    "gap_breakaway_up": "poussée haussière qui ne souffle pas — le prix a clôturé au-dessus de la bougie qui l'a portée, la hausse continuerait sans revenir en arrière",
+    "gap_breakaway_down": "poussée baissière qui ne souffle pas — le prix a clôturé sous la bougie qui l'a portée, la baisse continuerait sans revenir en arrière",
     # Ajoutés le 2026-08-04 : sans libellé, le repli affichait la valeur brute
     # `mean_reversion_up`, dont les underscores cassaient le Markdown et
     # faisaient perdre TOUT le message.

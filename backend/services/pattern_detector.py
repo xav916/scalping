@@ -240,6 +240,8 @@ def detect_patterns(candles: list[Candle], pair: str = "XAU/USD") -> list[Patter
     patterns.extend(_detect_engulfing(candles, pair))
     patterns.extend(_detect_pin_bar(candles, pair))
     patterns.extend(_detect_poc_return(candles, pair))
+    patterns.extend(_detect_fvg(candles, pair))
+    patterns.extend(_detect_gap_par_troisieme_bougie(candles, pair))
 
     # Enrichir chaque pattern avec explication et fiabilité
     for p in patterns:
@@ -247,6 +249,131 @@ def detect_patterns(candles: list[Candle], pair: str = "XAU/USD") -> list[Patter
 
     # Trier par confiance décroissante
     patterns.sort(key=lambda p: p.confidence, reverse=True)
+    return patterns
+
+
+
+# ─── Les deux definitions du « gap », mises face a face (2026-09-09) ──────
+#
+# Demande de Xavier : le Fair Value Gap et le breakaway gap se distinguent-ils
+# vraiment ? Ils viennent de DEUX traditions differentes — ICT pour le premier,
+# analyse technique classique (Edwards & Magee) pour le second — et sa regle a
+# lui n'est ni l'une ni l'autre. On code donc les deux et on laisse le
+# laboratoire trancher : repondre par la definition serait repondre a cote.
+#
+# ⛔ MESURE FAITE AVANT D'ECRIRE, sur 1 000 bougies XAU/USD 5 min :
+#
+#     open != cloture precedente   999/999 = 100 %   ecart median 0,24 USD
+#     FVG haussier standard        10,1 %
+#     FVG baissier standard         9,6 %
+#
+# 🔑 « Vrai gap » n'est donc PAS une categorie exploitable ici : tout ouvre a
+# cote de la cloture precedente. Un breakaway gap au sens classique exigerait
+# un SEUIL choisi a la main — un degre de liberte de plus, donc de l'edge
+# fabrique. C'est pourquoi le second detecteur classe par la 3e bougie, comme
+# Xavier le decrit, et jamais par la taille d'un saut.
+#
+# ⚠️ Aucun de ces six motifs n'est arme : la whitelist de dispatch est
+# fail-closed, un motif absent rend `pattern_not_allowed`. Ils existent pour
+# etre MESURES contre un tirage au hasard, rien d'autre.
+
+# Corps minimal de la bougie d'impulsion, en ATR. ⚠️ Valeur ARBITRAIRE, posee
+# une fois et jamais reglee : l'ajuster jusqu'a ce que le motif « marche »
+# fabriquerait l'edge qu'on pretend mesurer.
+_IMPULSION_MIN_ATR = 0.5
+
+
+def _detect_fvg(candles: list[Candle], pair: str) -> list[PatternDetection]:
+    """Fair Value Gap au sens ICT : un trou non recouvert sur trois bougies.
+
+    Haussier : ``bas[3] > haut[1]``. La 2e bougie a traverse la zone si vite
+    qu'aucune transaction n'y a eu lieu — c'est ce trou qu'on appelle le
+    desequilibre. **Aucun seuil n'intervient**, ce qui est sa force : la
+    definition ne se regle pas.
+
+    ⚠️ Elle ne regarde PAS ou clot la 3e bougie — c'est precisement ce qui la
+    distingue de la regle de Xavier, codee juste en dessous.
+    """
+    patterns: list[PatternDetection] = []
+    if len(candles) < 3:
+        return patterns
+    now = datetime.now(timezone.utc)
+    a, b, c = candles[-3], candles[-2], candles[-1]
+    atr = _calculate_atr(candles, period=14)
+    if atr <= 0:
+        return patterns
+
+    if c.low > a.high:
+        trou = c.low - a.high
+        patterns.append(PatternDetection(
+            pattern=PatternType.FVG_UP,
+            confidence=round(min(0.80, 0.60 + trou / atr * 0.1), 2),
+            description=(f"FVG haussier: trou de {trou:.2f} entre le haut de la "
+                         f"1re ({a.high:.2f}) et le bas de la 3e ({c.low:.2f})"),
+            detected_at=now,
+        ))
+    elif c.high < a.low:
+        trou = a.low - c.high
+        patterns.append(PatternDetection(
+            pattern=PatternType.FVG_DOWN,
+            confidence=round(min(0.80, 0.60 + trou / atr * 0.1), 2),
+            description=(f"FVG baissier: trou de {trou:.2f} entre le bas de la "
+                         f"1re ({a.low:.2f}) et le haut de la 3e ({c.high:.2f})"),
+            detected_at=now,
+        ))
+    return patterns
+
+
+def _detect_gap_par_troisieme_bougie(
+        candles: list[Candle], pair: str) -> list[PatternDetection]:
+    """La regle de Xavier : c'est la TROISIEME bougie qui classe le gap.
+
+    Apres une bougie d'impulsion :
+
+    - la 3e cloture **dans** la 2e  -> ``gap_retrace_*``   : le prix devrait
+      revenir dans la zone avant de repartir ;
+    - la 3e cloture **au-dela**     -> ``gap_breakaway_*`` : la tendance serait
+      assez forte pour continuer sans retracer.
+
+    ⛔ Les deux verdicts sont EXCLUSIFS par construction. S'ils pouvaient
+    coexister, chaque fenetre alimenterait les deux cellules du laboratoire et
+    l'ecart mesure entre elles serait un artefact, pas un resultat.
+
+    ⚠️ L'impulsion est exigee : sans elle, « cloturer au-dessus » arriverait
+    une fois sur deux et le motif ne dirait rien.
+    """
+    patterns: list[PatternDetection] = []
+    if len(candles) < 3:
+        return patterns
+    now = datetime.now(timezone.utc)
+    b, c = candles[-2], candles[-1]
+    atr = _calculate_atr(candles, period=14)
+    if atr <= 0:
+        return patterns
+
+    corps = abs(b.close - b.open)
+    if corps < atr * _IMPULSION_MIN_ATR:
+        return patterns
+
+    def _ajouter(motif, quoi):
+        patterns.append(PatternDetection(
+            pattern=motif,
+            confidence=round(min(0.80, 0.60 + corps / atr * 0.1), 2),
+            description=(f"{quoi} (impulsion {corps:.2f}, 3e bougie clot a "
+                         f"{c.close:.2f} vs 2e [{b.low:.2f}-{b.high:.2f}])"),
+            detected_at=now,
+        ))
+
+    if b.close > b.open:                       # impulsion haussiere
+        if c.close > b.high:
+            _ajouter(PatternType.GAP_BREAKAWAY_UP, "Gap de continuation haussier")
+        elif b.low <= c.close <= b.high:
+            _ajouter(PatternType.GAP_RETRACE_UP, "Gap avec retracement attendu")
+    elif b.close < b.open:                     # impulsion baissiere
+        if c.close < b.low:
+            _ajouter(PatternType.GAP_BREAKAWAY_DOWN, "Gap de continuation baissier")
+        elif b.low <= c.close <= b.high:
+            _ajouter(PatternType.GAP_RETRACE_DOWN, "Gap avec retracement attendu")
     return patterns
 
 

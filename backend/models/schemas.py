@@ -74,6 +74,23 @@ class PatternType(str, Enum):
     # pas en volume : Twelve Data rend `volume = 0` sur toutes les paires.
     POC_RETURN_UP = "poc_return_up"       # Retour au POC, structure haussière
     POC_RETURN_DOWN = "poc_return_down"   # Retour au POC, structure baissière
+    # ─── Les deux definitions du « gap », mises face a face (2026-09-09) ───
+    # Demande de Xavier : le Fair Value Gap et le breakaway gap se
+    # distinguent-ils vraiment ? On code LES DEUX definitions et on laisse la
+    # mesure trancher — repondre par la definition serait repondre a cote.
+    #
+    # `fvg_*`  : definition ICT standard — bas[3] > haut[1], un trou non
+    #            recouvert. Aucun seuil a choisir.
+    # `gap_*`  : la regle de Xavier — c'est la 3e bougie qui classe. Clotures
+    #            DANS la 2e => retracement attendu ; AU-DELA => continuation.
+    #
+    # ⚠️ Aucun n'est arme : la whitelist de dispatch est fail-closed.
+    FVG_UP = "fvg_up"                     # Trou haussier non recouvert
+    FVG_DOWN = "fvg_down"                 # Trou baissier non recouvert
+    GAP_RETRACE_UP = "gap_retrace_up"     # 3e cloture DANS la 2e, hausse
+    GAP_RETRACE_DOWN = "gap_retrace_down"
+    GAP_BREAKAWAY_UP = "gap_breakaway_up"     # 3e cloture AU-DELA, hausse
+    GAP_BREAKAWAY_DOWN = "gap_breakaway_down"
 
 
 class TradeDirection(str, Enum):
