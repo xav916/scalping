@@ -81,8 +81,18 @@ DELAI = 45
 BRIDGE_ENV = os.environ.get("BRIDGE_ENV", "MT5_BRIDGE_LIVE_URL")
 CLE_ENV = os.environ.get("CLE_ENV", "MT5_BRIDGE_LIVE_API_KEY")
 
-SORTIE = (Path(__file__).resolve().parents[1] / "backend" / "services"
-          / "correlations_forex_1h.json")
+# ⛔ OU ecrire (2026-09-09). Le defaut historique visait l'arbre des sources —
+# correct pour une regeneration MANUELLE qu'on commite ensuite, mais mortel
+# pour un cron : dans le conteneur ce chemin est DANS L'IMAGE et disparait au
+# premier `docker build`. Le cron passe donc `CORRELATIONS_SORTIE` et vise le
+# volume persistant, que `correlation_guard` lit en priorite.
+#
+# ⚠️ Le defaut reste l'arbre des sources : la regeneration a la main, suivie
+# d'un commit, doit continuer de marcher telle quelle.
+SORTIE = Path(os.environ.get(
+    "CORRELATIONS_SORTIE",
+    str(Path(__file__).resolve().parents[1] / "backend" / "services"
+        / "correlations_forex_1h.json")))
 
 
 def _bougies(base: str, cle: str, paire: str) -> dict[str, float]:
@@ -164,7 +174,11 @@ def main() -> int:
         couples.append({"a": a, "b": b, "r": round(r, 3), "n": len(communs) - 1})
 
     couples.sort(key=lambda c: -abs(c["r"]))
-    SORTIE.write_text(json.dumps({
+    # ⛔ Ecriture ATOMIQUE. Un cron interrompu au milieu d'une ecriture
+    # laisserait un JSON tronque, que le garde lirait comme « aucune mesure ».
+    # On ecrit a cote, puis on remplace d'un seul geste.
+    _tmp = SORTIE.with_suffix(SORTIE.suffix + ".tmp")
+    _tmp.write_text(json.dumps({
         "source": f"{BRIDGE_ENV}/rates?timeframe=H1 (courtier MT5)",
         "methode": "rendements log horaires, Pearson sur l'intersection, "
                    "horodatages tronqués à l'heure",
@@ -173,8 +187,9 @@ def main() -> int:
         "instruments": sorted(series),
         "couples": couples,
     }, ensure_ascii=False, indent=1), encoding="utf-8")
+    _tmp.replace(SORTIE)
 
-    print(f"\n{len(couples)} couples écrits dans {SORTIE.name}"
+    print(f"\n{len(couples)} couples écrits dans {SORTIE}"
           f"   ({len(ignores)} ignorés faute d'observations)")
     print("\nles 12 plus fortes, en valeur absolue :")
     for c in couples[:12]:

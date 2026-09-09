@@ -44,6 +44,7 @@ from __future__ import annotations
 import logging
 import os
 import sqlite3
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -120,23 +121,47 @@ _FICHIER_MESURE = "correlations_kraken_1h.json"
 _FICHIER_MESURE_FOREX = "correlations_forex_1h.json"
 
 
+# ⛔ OU vivent les mesures (2026-09-09). Avant, un seul chemin :
+# `os.path.dirname(__file__)`, c'est-a-dire DANS L'IMAGE. Un fichier regenere
+# par un cron y aurait ete efface au premier `docker build`, sans que rien ne
+# le dise — et le cron aurait produit une mesure MORTE.
+#
+# Le volume persistant prime donc, l'instantane versionne reste le REPLI : il
+# couvre le premier demarrage, un volume vide, et tout environnement sans cron.
+# Retirer une protection existante pour en poser une neuve n'est pas un progres.
+_DOSSIER_PERSISTANT = os.environ.get("CORRELATIONS_DIR", "/app/data")
+_DOSSIER_SOURCE = os.path.dirname(__file__)
+
+
 def _charger_fichier(nom: str) -> dict[tuple[str, str], tuple[float, int]]:
     """Couples mesures, ou dict vide si le fichier manque ou est illisible.
 
-    Silencieux a dessein : l'absence de mesure est exactement l'etat d'avant,
-    et une table de correlations ne doit pas empecher le service de demarrer.
+    Cherche d'abord dans le volume PERSISTANT (ou ecrit le cron), puis dans
+    l'instantane versionne. Silencieux sur l'absence : « pas de mesure » est
+    exactement l'etat d'avant, et une table de correlations ne doit pas
+    empecher le service de demarrer.
     """
     import json
-    import os
-    chemin = os.path.join(os.path.dirname(__file__), nom)
-    try:
-        with open(chemin, encoding="utf-8") as f:
-            data = json.load(f)
-        return {(c["a"], c["b"]): (float(c["r"]), int(c["n"]))
-                for c in data.get("couples", [])}
-    except Exception as e:
-        logger.warning(f"correlation_guard: mesure {nom} illisible ({e})")
-        return {}
+    for dossier, origine in ((_DOSSIER_PERSISTANT, "persistant"),
+                             (_DOSSIER_SOURCE, "instantane")):
+        chemin = os.path.join(dossier, nom)
+        if not os.path.exists(chemin):
+            continue
+        try:
+            with open(chemin, encoding="utf-8") as f:
+                data = json.load(f)
+            table = {(c["a"], c["b"]): (float(c["r"]), int(c["n"]))
+                     for c in data.get("couples", [])}
+            if table:
+                logger.debug("correlation_guard: %s lu (%s, %d couples)",
+                             nom, origine, len(table))
+                return table
+        except Exception as e:  # noqa: BLE001
+            # ⚠️ On DIT, et on essaie la source suivante : un fichier abime
+            # ecrit par un cron interrompu ne doit pas coûter la protection.
+            logger.warning("correlation_guard: mesure %s illisible en %s (%s)",
+                           nom, origine, e)
+    return {}
 
 
 def _charger_mesure() -> dict[tuple[str, str], tuple[float, int]]:
@@ -152,6 +177,44 @@ def _charger_mesure() -> dict[tuple[str, str], tuple[float, int]]:
 
 
 CORRELATIONS_MESUREES: dict[tuple[str, str], tuple[float, int]] = _charger_mesure()
+
+# ⛔ Sans relecture, la table restait figee a l'IMPORT : un cron hebdomadaire
+# aurait mis jusqu'a une semaine — ou un redeploiement — a produire le moindre
+# effet. Meme raison que le cache de `reglage_or.fermetures` : « une decision
+# qui exigerait un redeploiement pour s'appliquer ne s'appliquerait pas ».
+#
+# 5 min : la mesure change une fois par semaine, l'aller-retour disque est
+# negligeable, et aucune decision ne doit attendre plus que ca.
+_TTL_MESURE_S = float(os.environ.get("CORRELATIONS_TTL_S", "300"))
+_derniere_lecture = [0.0]
+
+
+def _rafraichir_mesures(force: bool = False) -> None:
+    """Relit les mesures si le cache a expire. Met a jour EN PLACE.
+
+    ⚠️ En place, et non par reaffectation : `CORRELATIONS_MESUREES` est
+    reference ailleurs et dans les tests ; le remplacer casserait ces
+    references en silence.
+
+    ⛔ Fail-CLOSED sur la protection : une lecture qui rend une table VIDE
+    (fichier absent, JSON tronque par un cron interrompu) ne remplace pas la
+    table connue. Se desarmer sur une panne d'ecriture serait le pire des
+    comportements pour un garde-fou.
+    """
+    maintenant = time.monotonic()
+    if not force and maintenant - _derniere_lecture[0] < _TTL_MESURE_S:
+        return
+    _derniere_lecture[0] = maintenant
+    fraiche = _charger_mesure()
+    if not fraiche:
+        if CORRELATIONS_MESUREES:
+            logger.warning(
+                "correlation_guard: relecture VIDE — on garde les %d couples "
+                "connus. Verifier le cron de regeneration.",
+                len(CORRELATIONS_MESUREES))
+        return
+    CORRELATIONS_MESUREES.clear()
+    CORRELATIONS_MESUREES.update(fraiche)
 
 
 def correlation(a: str, b: str) -> float | None:
@@ -175,6 +238,7 @@ def correlation(a: str, b: str) -> float | None:
     """
     if a == b:
         return 1.0
+    _rafraichir_mesures()
     hit = (CORRELATIONS_MESUREES.get((a, b))
            or CORRELATIONS_MESUREES.get((b, a))
            or CORRELATIONS.get((a, b))
