@@ -292,7 +292,7 @@ def _appliquer(actions: list[dict]) -> None:
 JOURS_ETUDIES = int(os.getenv("LABO_OR_JOURS", "90"))
 
 
-def _bougies_et_spread(jours: int) -> tuple[list, float]:
+def _bougies_et_spread(jours: int, pair: str = PAIRE) -> tuple[list, float]:
     """Va chercher les bougies de 5 min et le spread vivant chez le courtier.
 
     ⚠️ Le pont MT5 sert l'historique gratuitement — contrairement à Twelve Data,
@@ -309,7 +309,7 @@ def _bougies_et_spread(jours: int) -> tuple[list, float]:
     d = DESTINATIONS["admin_live"]
     base = os.environ[d.url_env].rstrip("/")
     entetes = {getattr(d, "key_header", None) or "X-API-Key": os.environ[d.key_env]}
-    symbole = PAIRE.replace("/", "")
+    symbole = pair.replace("/", "")
 
     tick = json.load(urllib.request.urlopen(urllib.request.Request(
         base + "/tick/" + symbole, headers=entetes), timeout=30))
@@ -343,28 +343,123 @@ def _bougies_et_spread(jours: int) -> tuple[list, float]:
     return propre, spread
 
 
-def cycle_nocturne() -> dict:
-    """Mesurer, enregistrer, décider, dire. Best-effort de bout en bout.
 
-    ⛔ Tourne DANS le conteneur, pas en cron sur l'hôte : `/opt/scalping/scripts`
-    a déjà divergé du dépôt, et huit correctifs y sont restés morts une journée
-    entière. Ce qui est déployé est alors forcément ce qui s'exécute.
+def instruments_servis() -> list[str]:
+    """Les instruments que le pont MT5 cote VRAIMENT, l'or en tete.
+
+    ⛔ DECOUVERTS, jamais listes en dur. Mesure du 2026-09-09 : sur les 25
+    paires declarees dans `WATCHED_PAIRS`, le pont n'en sert que **13** — les
+    douze cryptos hors BTC et ETH, et le WTI, ne sont pas cotes chez IC Markets.
+    Une liste figee se perimerait au premier changement de courtier, et on
+    mesurerait alors le vide en croyant mesurer un instrument.
+
+    ⚠️ L'or passe EN TETE : c'est lui qui porte les decisions de fermeture. Une
+    nuit tronquee par un incident l'aura ainsi quand meme mesure.
+
+    Rend `[]` plutot que de lever : une nuit ou le pont est mort ne doit pas
+    tuer le scheduler.
     """
-    try:
-        bougies, spread = _bougies_et_spread(JOURS_ETUDIES)
-    except Exception as e:  # noqa: BLE001
-        logger.warning("labo_or: bougies indisponibles (%s) — nuit sautée", e)
-        return {"erreur": str(e)[:200]}
-    if len(bougies) < 500:
-        logger.warning("labo_or: %d bougies seulement — nuit sautée", len(bougies))
-        return {"erreur": f"{len(bougies)} bougies"}
+    import json
+    import urllib.request
 
-    mesure = labo.mesurer(bougies, spread, pair=PAIRE)
-    enregistrer(mesure)
-    actions = decider(mesure)
-    _notifier(mesure, actions)
-    return {"cellules": len(mesure.get("cellules") or []),
-            "actions": actions, "plafond": mesure.get("plafond")}
+    from backend.services.destinations_registry import DESTINATIONS
+
+    try:
+        d = DESTINATIONS["admin_live"]
+        base = os.environ[d.url_env].rstrip("/")
+        entetes = {getattr(d, "key_header", None) or "X-API-Key":
+                   os.environ[d.key_env]}
+    except Exception as e:  # noqa: BLE001
+        logger.warning("labo: pont illisible (%s) — aucun instrument", e)
+        return []
+
+    declarees = [x.strip() for x in
+                 os.environ.get("WATCHED_PAIRS", "").split(",") if x.strip()]
+    candidates = [PAIRE] + [x for x in declarees if x != PAIRE]
+    out: list[str] = []
+    for paire in candidates:
+        try:
+            r = json.load(urllib.request.urlopen(urllib.request.Request(
+                base + "/tick/" + paire.replace("/", ""), headers=entetes),
+                timeout=8))
+            if float(r.get("ask") or 0) > 0 and float(r.get("bid") or 0) > 0:
+                out.append(paire)
+        except Exception:  # noqa: BLE001
+            continue        # non cote chez ce courtier : ce n'est pas une panne
+    logger.info("labo: %d instrument(s) servis sur %d declares",
+                len(out), len(candidates))
+    return out
+
+
+def cycle_nocturne() -> dict:
+    """Mesurer TOUS les instruments, enregistrer, decider, dire. Best-effort.
+
+    ⛔ Tourne DANS le conteneur, pas en cron sur l'hote : `/opt/scalping/scripts`
+    a deja diverge du depot, et huit correctifs y sont restes morts une journee
+    entiere. Ce qui est deploye est alors forcement ce qui s'execute.
+
+    ⛔ LE PLAFOND EST COMMUN. Chaque `mesurer()` calcule le sien sur les seules
+    cellules de sa paire. Treize plafonds calcules chacun sur 120 tests
+    laisseraient passer ce qu'un plafond calcule sur 1 560 refuse — et plus on
+    ajouterait d'instruments, plus on tirerait de billets sans que rien ne le
+    voie. Il est donc recalcule sur le TOTAL, puis réécrit dans chaque cellule
+    AVANT l'enregistrement.
+
+    ⚠️ ELARGIR LA MESURE N'ELARGIT PAS LA DECISION. Seul l'or est arbitre —
+    fermetures, observations, message. Les autres instruments sont mesures pour
+    la concordance, et rien de plus. Fermer un motif sur EUR/USD parce qu'il
+    perd sur GBP/JPY serait un desserrage par inadvertance, dans l'autre sens
+    mais tout aussi non voulu.
+    """
+    paires = instruments_servis()
+    if not paires:
+        logger.warning("labo: aucun instrument servi — nuit sautee")
+        return {"instruments": [], "erreur": "aucun instrument servi"}
+
+    mesures: dict[str, dict] = {}
+    echecs: dict[str, str] = {}
+    for paire in paires:
+        try:
+            bougies, spread = _bougies_et_spread(JOURS_ETUDIES, paire)
+        except Exception as e:  # noqa: BLE001
+            # ⚠️ 90 jours x 13 paires : une lecture qui tombe ne doit pas couter
+            # la nuit entiere. On le DIT, on ne s'arrete pas.
+            logger.warning("labo[%s]: bougies indisponibles (%s)", paire, e)
+            echecs[paire] = str(e)[:120]
+            continue
+        if len(bougies) < 500:
+            logger.warning("labo[%s]: %d bougies seulement — ignore",
+                           paire, len(bougies))
+            echecs[paire] = f"{len(bougies)} bougies"
+            continue
+        mesures[paire] = labo.mesurer(bougies, spread, pair=paire)
+
+    if not mesures:
+        return {"instruments": [], "echecs": echecs,
+                "erreur": "aucune mesure exploitable"}
+
+    par_paire = {p: (m.get("cellules") or []) for p, m in mesures.items()}
+    plafond = labo.plafond_commun(par_paire)
+    for m in mesures.values():
+        m["plafond"] = plafond
+        for c in (m.get("cellules") or []):
+            c["plafond"] = plafond
+            c["verdict"] = labo._verdict(c, plafond)
+
+    for m in mesures.values():
+        enregistrer(m)
+
+    conc = labo.concordance(par_paire, plafond)
+
+    # ⚠️ L'or SEUL est arbitre. Voir la docstring.
+    actions: list = []
+    if PAIRE in mesures:
+        actions = decider(mesures[PAIRE])
+        _notifier(mesures[PAIRE], actions)
+
+    return {"instruments": sorted(mesures), "echecs": echecs,
+            "cellules": sum(len(c) for c in par_paire.values()),
+            "plafond": plafond, "concordance": conc, "actions": actions}
 
 
 def en_observation(mesure: dict, pair: str = PAIRE) -> list[dict]:
