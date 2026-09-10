@@ -163,14 +163,22 @@ def test_expirer_ne_change_RIEN_a_ce_qui_bloque(db):
     """⛔ L'invariant qui autorise ce correctif : toutes les requêtes filtrent
     déjà sur `jour`, donc une ligne de la veille était DÉJÀ invisible.
     Renommer son état ne peut pas rouvrir un compte."""
-    _demande("2026-09-07")
-    _demande("2026-09-09")
+    # ⛔ `demandes_en_attente()` lit l'horloge REELLE : ce test, ecrit le 09/09
+    # avec la date en dur, est passe au vert ce jour-la et a rougi le
+    # lendemain. Un test qui ne passe que le jour ou on l'ecrit ne teste rien
+    # — il date. Le jour se derive donc de l'horloge, comme le code teste.
+    from datetime import date, timedelta
+    aujourdhui = date.today().isoformat()
+    veille = (date.today() - timedelta(days=2)).isoformat()
+
+    _demande(veille)
+    _demande(aujourdhui)
 
     avant = pa.demandes_en_attente()
-    pa.expirer_demandes_perimees(aujourdhui="2026-09-09")
+    pa.expirer_demandes_perimees(aujourdhui=aujourdhui)
     apres = pa.demandes_en_attente()
 
-    assert [d["jour"] for d in avant] == [d["jour"] for d in apres] == ["2026-09-09"]
+    assert [d["jour"] for d in avant] == [d["jour"] for d in apres] == [aujourdhui]
 
 
 def test_expirer_ne_LEVE_jamais(db, monkeypatch):

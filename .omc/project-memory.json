@@ -1,0 +1,685 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1789073933009,
+  "projectRoot": "C:\\Users\\xav91\\Scalping\\scalping",
+  "techStack": {
+    "languages": [
+      {
+        "name": "Python",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "requirements.txt"
+        ]
+      }
+    ],
+    "frameworks": [],
+    "packageManager": "pip",
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": null,
+    "testCommand": "cd \"C:/Users/xav91/Scalping/scalping\" && python - <<'PY'\nimport io\np = \"backend/tests/test_plafond_arbitrage_peremption.py\"\ns = io.open(p, encoding=\"utf-8\").read()\ns = s.replace('''    _demande(\"2026-09-07\")\n    _demande(\"2026-09-09\")\n\n    avant = pa.demandes_en_attente()\n    pa.expirer_demandes_perimees(aujourdhui=\"2026-09-09\")\n    apres = pa.demandes_en_attente()\n\n    assert [d[\"jour\"] for d in avant] == [d[\"jour\"] for d in apres] == [\"2026-09-09\"]''',\n'''    # ⛔ `demandes_en_attente()` lit l'horloge REELLE : ce test, ecrit le 09/09\n    # avec la date en dur, est passe au vert ce jour-la et a rougi le\n    # lendemain. Un test qui ne passe que le jour ou on l'ecrit ne teste rien\n    # — il date. Le jour se derive donc de l'horloge, comme le code teste.\n    from datetime import date, timedelta\n    aujourdhui = date.today().isoformat()\n    veille = (date.today() - timedelta(days=2)).isoformat()\n\n    _demande(veille)\n    _demande(aujourdhui)\n\n    avant = pa.demandes_en_attente()\n    pa.expirer_demandes_perimees(aujourdhui=aujourdhui)\n    apres = pa.demandes_en_attente()\n\n    assert [d[\"jour\"] for d in avant] == [d[\"jour\"] for d in apres] == [aujourdhui]''')\nio.open(p, \"w\", encoding=\"utf-8\").write(s)\nprint(\"ok\")\nPY\ntimeout 200 python -m pytest backend/tests/test_plafond_arbitrage_peremption.py backend/tests/test_regulateur_filtre_placebos.py -q 2>&1 | tail -3",
+    "lintCommand": null,
+    "devCommand": null,
+    "scripts": {}
+  },
+  "conventions": {
+    "namingStyle": null,
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "docs",
+      "scripts",
+      "tests"
+    ],
+    "gitBranches": {
+      "defaultBranch": "claude/scalping-decision-tool-qmJON",
+      "branchingStrategy": null
+    }
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "backend": {
+      "path": "backend",
+      "purpose": null,
+      "fileCount": 4,
+      "lastAccessed": 1789073932962,
+      "keyFiles": [
+        "app.py",
+        "auth.py",
+        "rate_limit.py",
+        "__init__.py"
+      ]
+    },
+    "binance-bridge": {
+      "path": "binance-bridge",
+      "purpose": null,
+      "fileCount": 2,
+      "lastAccessed": 1789073932963,
+      "keyFiles": [
+        "bridge.py",
+        "requirements.txt"
+      ]
+    },
+    "Claude outputs": {
+      "path": "Claude outputs",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1789073932964,
+      "keyFiles": [
+        "contexte-marche-2026-09-04.md"
+      ]
+    },
+    "config": {
+      "path": "config",
+      "purpose": "Configuration files",
+      "fileCount": 2,
+      "lastAccessed": 1789073932965,
+      "keyFiles": [
+        "settings.py",
+        "__init__.py"
+      ]
+    },
+    "data": {
+      "path": "data",
+      "purpose": "Data files",
+      "fileCount": 2,
+      "lastAccessed": 1789073932965,
+      "keyFiles": [
+        "macro.db",
+        "scalping.db"
+      ]
+    },
+    "deploy": {
+      "path": "deploy",
+      "purpose": null,
+      "fileCount": 9,
+      "lastAccessed": 1789073932966,
+      "keyFiles": [
+        "backup-s3.sh",
+        "bucket-lifecycle.json",
+        "dlm-policy.json",
+        "nginx-app-scalping-online.conf",
+        "nginx.conf"
+      ]
+    },
+    "docs": {
+      "path": "docs",
+      "purpose": "Documentation",
+      "fileCount": 10,
+      "lastAccessed": 1789073932967,
+      "keyFiles": [
+        "ajouter-un-motif.md",
+        "architecture-current-state.md",
+        "concepts-trading.md",
+        "gate_s8_brief_2026-07-04.md",
+        "macro-rollout.md"
+      ]
+    },
+    "frontend": {
+      "path": "frontend",
+      "purpose": null,
+      "fileCount": 3,
+      "lastAccessed": 1789073932967,
+      "keyFiles": [
+        "manifest.json",
+        "robots.txt",
+        "sw.js"
+      ]
+    },
+    "frontend-react": {
+      "path": "frontend-react",
+      "purpose": null,
+      "fileCount": 16,
+      "lastAccessed": 1789073932968,
+      "keyFiles": [
+        "index.html",
+        "package-lock.json",
+        "package.json",
+        "postcss.config.js",
+        "tailwind.config.d.ts"
+      ]
+    },
+    "ibkr-bridge": {
+      "path": "ibkr-bridge",
+      "purpose": null,
+      "fileCount": 4,
+      "lastAccessed": 1789073932968,
+      "keyFiles": [
+        "bridge.py",
+        "requirements.txt",
+        "start-bridge.ps1"
+      ]
+    },
+    "kraken-bridge": {
+      "path": "kraken-bridge",
+      "purpose": null,
+      "fileCount": 2,
+      "lastAccessed": 1789073932969,
+      "keyFiles": [
+        "bridge.py",
+        "requirements.txt"
+      ]
+    },
+    "kraken-spot-bridge": {
+      "path": "kraken-spot-bridge",
+      "purpose": null,
+      "fileCount": 2,
+      "lastAccessed": 1789073932970,
+      "keyFiles": [
+        "bridge.py",
+        "requirements.txt"
+      ]
+    },
+    "monitoring": {
+      "path": "monitoring",
+      "purpose": null,
+      "fileCount": 2,
+      "lastAccessed": 1789073932971,
+      "keyFiles": [
+        "ea-health-check.sh",
+        "mt5-bridges-monitor.sh"
+      ]
+    },
+    "mt5-bridge": {
+      "path": "mt5-bridge",
+      "purpose": null,
+      "fileCount": 10,
+      "lastAccessed": 1789073932972,
+      "keyFiles": [
+        "bridge.log",
+        "bridge.py",
+        "bridge_audit.db",
+        "MT5_EA_INSTALL.md",
+        "README.md"
+      ]
+    },
+    "mt5-bridge-monitor": {
+      "path": "mt5-bridge-monitor",
+      "purpose": null,
+      "fileCount": 2,
+      "lastAccessed": 1789073932973,
+      "keyFiles": [
+        "bridge_monitor.py",
+        "monitor.env.template"
+      ]
+    },
+    "Nouveau dossier": {
+      "path": "Nouveau dossier",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1789073932973,
+      "keyFiles": []
+    },
+    "scripts": {
+      "path": "scripts",
+      "purpose": "Build/utility scripts",
+      "fileCount": 103,
+      "lastAccessed": 1789073932975,
+      "keyFiles": [
+        "armer-garde-fou-kraken.sh",
+        "backfill_close_reasons.py",
+        "backfill_close_reason_depuis_mt5.py",
+        "backfill_rejections.py",
+        "backfill_rejections_user_id.py"
+      ]
+    },
+    "tests": {
+      "path": "tests",
+      "purpose": "Test files",
+      "fileCount": 0,
+      "lastAccessed": 1789073932976,
+      "keyFiles": []
+    },
+    "venv": {
+      "path": "venv",
+      "purpose": null,
+      "fileCount": 2,
+      "lastAccessed": 1789073932976,
+      "keyFiles": [
+        "pyvenv.cfg"
+      ]
+    },
+    "_macro_veto_analysis": {
+      "path": "_macro_veto_analysis",
+      "purpose": null,
+      "fileCount": 9,
+      "lastAccessed": 1789073932977,
+      "keyFiles": [
+        "analyse_veto.py",
+        "backtest.db",
+        "backtest_candles.db",
+        "backtest_v2.py",
+        "backtest_with_fix.py"
+      ]
+    },
+    "_recovery": {
+      "path": "_recovery",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1789073932978,
+      "keyFiles": [
+        "trades-neuve-from-ec2.db"
+      ]
+    },
+    "__pycache__": {
+      "path": "__pycache__",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1789073932979,
+      "keyFiles": [
+        "_tmp_bridge_monitor.cpython-314.pyc"
+      ]
+    },
+    "backend\\models": {
+      "path": "backend\\models",
+      "purpose": "Data models",
+      "fileCount": 3,
+      "lastAccessed": 1789073932980,
+      "keyFiles": [
+        "macro_schemas.py",
+        "schemas.py",
+        "__init__.py"
+      ]
+    },
+    "backend\\services": {
+      "path": "backend\\services",
+      "purpose": "Business logic services",
+      "fileCount": 131,
+      "lastAccessed": 1789073932981,
+      "keyFiles": [
+        "analysis_engine.py",
+        "analytics_service.py",
+        "backtest_engine.py"
+      ]
+    },
+    "backend\\tests": {
+      "path": "backend\\tests",
+      "purpose": "Test files",
+      "fileCount": 285,
+      "lastAccessed": 1789073932983,
+      "keyFiles": [
+        "conftest.py",
+        "test_abandons_avant_dispatch.py",
+        "test_account_management.py"
+      ]
+    },
+    "frontend\\docs": {
+      "path": "frontend\\docs",
+      "purpose": "Documentation",
+      "fileCount": 6,
+      "lastAccessed": 1789073932987,
+      "keyFiles": [
+        "bridge-setup.html",
+        "cgu.html",
+        "cgv.html"
+      ]
+    },
+    "frontend-react\\dist": {
+      "path": "frontend-react\\dist",
+      "purpose": "Distribution/build output",
+      "fileCount": 3,
+      "lastAccessed": 1789073932988,
+      "keyFiles": [
+        "index.html",
+        "manifest.json",
+        "sw.js"
+      ]
+    },
+    "frontend-react\\node_modules": {
+      "path": "frontend-react\\node_modules",
+      "purpose": "Dependencies",
+      "fileCount": 1,
+      "lastAccessed": 1789073932989,
+      "keyFiles": []
+    },
+    "frontend-react\\public": {
+      "path": "frontend-react\\public",
+      "purpose": "Public files",
+      "fileCount": 2,
+      "lastAccessed": 1789073932990,
+      "keyFiles": [
+        "manifest.json",
+        "sw.js"
+      ]
+    },
+    "frontend-react\\src": {
+      "path": "frontend-react\\src",
+      "purpose": "Source code",
+      "fileCount": 3,
+      "lastAccessed": 1789073932991,
+      "keyFiles": [
+        "App.tsx",
+        "main.tsx",
+        "vite-env.d.ts"
+      ]
+    },
+    "venv\\Lib": {
+      "path": "venv\\Lib",
+      "purpose": "Library code",
+      "fileCount": 0,
+      "lastAccessed": 1789073932995,
+      "keyFiles": []
+    },
+    "venv\\Scripts": {
+      "path": "venv\\Scripts",
+      "purpose": "Build/utility scripts",
+      "fileCount": 22,
+      "lastAccessed": 1789073932996,
+      "keyFiles": [
+        "activate",
+        "activate.bat",
+        "activate.fish"
+      ]
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "backend\\services\\reglage_or.py",
+      "accessCount": 10,
+      "lastAccessed": 1788908882283,
+      "type": "file"
+    },
+    {
+      "path": "backend\\services\\telegram_service.py",
+      "accessCount": 8,
+      "lastAccessed": 1788864966288,
+      "type": "file"
+    },
+    {
+      "path": "backend\\services\\bloc_risque.py",
+      "accessCount": 6,
+      "lastAccessed": 1788865202508,
+      "type": "file"
+    },
+    {
+      "path": "scripts\\daily_recap.py",
+      "accessCount": 6,
+      "lastAccessed": 1788907193348,
+      "type": "file"
+    },
+    {
+      "path": "backend\\tests\\test_canaux_telegram.py",
+      "accessCount": 4,
+      "lastAccessed": 1788866582973,
+      "type": "file"
+    },
+    {
+      "path": "backend\\tests\\test_bloc_risque.py",
+      "accessCount": 4,
+      "lastAccessed": 1788883497841,
+      "type": "file"
+    },
+    {
+      "path": "backend\\services\\promotion_engine.py",
+      "accessCount": 4,
+      "lastAccessed": 1788908908117,
+      "type": "file"
+    },
+    {
+      "path": "backend\\services\\mt5_bridge.py",
+      "accessCount": 4,
+      "lastAccessed": 1788927343228,
+      "type": "file"
+    },
+    {
+      "path": "scripts\\sonde.sh",
+      "accessCount": 3,
+      "lastAccessed": 1788724357966,
+      "type": "file"
+    },
+    {
+      "path": "scripts\\essai_ouverture_bout_en_bout.py",
+      "accessCount": 3,
+      "lastAccessed": 1788865324667,
+      "type": "file"
+    },
+    {
+      "path": "backend\\services\\pair_admission_controller.py",
+      "accessCount": 3,
+      "lastAccessed": 1788907142283,
+      "type": "file"
+    },
+    {
+      "path": "backend\\tests\\test_reglage_or.py",
+      "accessCount": 3,
+      "lastAccessed": 1788907759558,
+      "type": "file"
+    },
+    {
+      "path": "backend\\tests\\test_abandons_avant_dispatch.py",
+      "accessCount": 3,
+      "lastAccessed": 1788909296928,
+      "type": "file"
+    },
+    {
+      "path": "backend\\services\\journal_sondes.py",
+      "accessCount": 2,
+      "lastAccessed": 1788721374703,
+      "type": "file"
+    },
+    {
+      "path": "backend\\tests\\test_portes_or_2026_09_08.py",
+      "accessCount": 2,
+      "lastAccessed": 1788880216452,
+      "type": "file"
+    },
+    {
+      "path": "backend\\tests\\test_suivi_objectif_or.py",
+      "accessCount": 2,
+      "lastAccessed": 1788895677504,
+      "type": "file"
+    },
+    {
+      "path": "backend\\tests\\test_demotion_en_R.py",
+      "accessCount": 2,
+      "lastAccessed": 1788898136750,
+      "type": "file"
+    },
+    {
+      "path": "backend\\services\\suivi_objectif_or.py",
+      "accessCount": 2,
+      "lastAccessed": 1788907132412,
+      "type": "file"
+    },
+    {
+      "path": "backend\\tests\\test_laboratoire_or.py",
+      "accessCount": 2,
+      "lastAccessed": 1788907601427,
+      "type": "file"
+    },
+    {
+      "path": "backend\\tests\\test_mt5_sync_ligne_action_pas_position.py",
+      "accessCount": 2,
+      "lastAccessed": 1788926528056,
+      "type": "file"
+    },
+    {
+      "path": "backend\\services\\mt5_sync.py",
+      "accessCount": 2,
+      "lastAccessed": 1788926555348,
+      "type": "file"
+    },
+    {
+      "path": "mt5-bridge\\bridge.py",
+      "accessCount": 2,
+      "lastAccessed": 1788927233287,
+      "type": "file"
+    },
+    {
+      "path": "backend\\tests\\test_alerte_position_sans_stop.py",
+      "accessCount": 2,
+      "lastAccessed": 1788927319329,
+      "type": "file"
+    },
+    {
+      "path": "scripts\\notify-daily-health.sh",
+      "accessCount": 1,
+      "lastAccessed": 1788722152910,
+      "type": "file"
+    },
+    {
+      "path": "backend\\app.py",
+      "accessCount": 1,
+      "lastAccessed": 1788877650398,
+      "type": "file"
+    },
+    {
+      "path": "backend\\services\\porte_risque_par_trade.py",
+      "accessCount": 1,
+      "lastAccessed": 1788880079947,
+      "type": "file"
+    },
+    {
+      "path": "backend\\tests\\test_empreintes_bridges.py",
+      "accessCount": 1,
+      "lastAccessed": 1788884426427,
+      "type": "file"
+    },
+    {
+      "path": "backend\\tests\\test_fenetres_sqlite.py",
+      "accessCount": 1,
+      "lastAccessed": 1788891036905,
+      "type": "file"
+    },
+    {
+      "path": "scripts\\verifier-scripts-opt.sh",
+      "accessCount": 1,
+      "lastAccessed": 1788896619529,
+      "type": "file"
+    },
+    {
+      "path": "backend\\services\\echelle_agregee.py",
+      "accessCount": 1,
+      "lastAccessed": 1788900296327,
+      "type": "file"
+    },
+    {
+      "path": "backend\\tests\\test_echelle_agregee.py",
+      "accessCount": 1,
+      "lastAccessed": 1788900383415,
+      "type": "file"
+    },
+    {
+      "path": "backend\\services\\research_bench.py",
+      "accessCount": 1,
+      "lastAccessed": 1788907131716,
+      "type": "file"
+    },
+    {
+      "path": "config\\settings.py",
+      "accessCount": 1,
+      "lastAccessed": 1788907147655,
+      "type": "file"
+    },
+    {
+      "path": "backend\\services\\laboratoire_or.py",
+      "accessCount": 1,
+      "lastAccessed": 1788907182281,
+      "type": "file"
+    },
+    {
+      "path": "backend\\services\\scheduler.py",
+      "accessCount": 1,
+      "lastAccessed": 1788907857310,
+      "type": "file"
+    },
+    {
+      "path": "backend\\services\\canaux_telegram.py",
+      "accessCount": 1,
+      "lastAccessed": 1788908868881,
+      "type": "file"
+    },
+    {
+      "path": "backend\\tests\\test_notification_canal.py",
+      "accessCount": 1,
+      "lastAccessed": 1788908962686,
+      "type": "file"
+    },
+    {
+      "path": "backend\\tests\\test_bridge_attendre_la_position.py",
+      "accessCount": 1,
+      "lastAccessed": 1788927198492,
+      "type": "file"
+    },
+    {
+      "path": "scripts\\mesurer_echelles_or.py",
+      "accessCount": 1,
+      "lastAccessed": 1788936674840,
+      "type": "file"
+    },
+    {
+      "path": "scripts\\mesurer-echelles-or.sh",
+      "accessCount": 1,
+      "lastAccessed": 1788936682688,
+      "type": "file"
+    },
+    {
+      "path": "backend\\tests\\test_mesure_echelles_or.py",
+      "accessCount": 1,
+      "lastAccessed": 1788936713372,
+      "type": "file"
+    },
+    {
+      "path": "backend\\tests\\test_correlation_guard_identifiant.py",
+      "accessCount": 1,
+      "lastAccessed": 1788938150115,
+      "type": "file"
+    },
+    {
+      "path": "backend\\tests\\test_correlations_persistantes.py",
+      "accessCount": 1,
+      "lastAccessed": 1788939066371,
+      "type": "file"
+    },
+    {
+      "path": "scripts\\regenerer-correlations.sh",
+      "accessCount": 1,
+      "lastAccessed": 1788939172416,
+      "type": "file"
+    },
+    {
+      "path": "backend\\tests\\test_plafond_arbitrage_peremption.py",
+      "accessCount": 1,
+      "lastAccessed": 1788973226821,
+      "type": "file"
+    },
+    {
+      "path": "backend\\tests\\test_detecteur_fvg.py",
+      "accessCount": 1,
+      "lastAccessed": 1788974789716,
+      "type": "file"
+    },
+    {
+      "path": "scripts\\mesurer_face_a_face_gaps.py",
+      "accessCount": 1,
+      "lastAccessed": 1788975648873,
+      "type": "file"
+    },
+    {
+      "path": "backend\\tests\\test_arbitrage_plafond_courtier.py",
+      "accessCount": 1,
+      "lastAccessed": 1788976654416,
+      "type": "file"
+    },
+    {
+      "path": "backend\\tests\\test_frequence_des_motifs.py",
+      "accessCount": 1,
+      "lastAccessed": 1788979579493,
+      "type": "file"
+    },
+    {
+      "path": "docs\\ajouter-un-motif.md",
+      "accessCount": 1,
+      "lastAccessed": 1788979985107,
+      "type": "file"
+    }
+  ],
+  "userDirectives": []
+}

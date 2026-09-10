@@ -199,6 +199,7 @@ def _somme_en_r(rows) -> tuple[float, int]:
     seconde arithmétique du risque serait l'endroit exact où les deux chiffres
     divergeraient sans que rien ne le dise.
     """
+    from backend.services.laboratoire_or import PLACEBO_PCT
     from backend.services.risk_eur import calculer
 
     somme, n = 0.0, 0
@@ -208,6 +209,36 @@ def _somme_en_r(rows) -> tuple[float, int]:
         except (KeyError, IndexError):
             continue
         if entree is None or stop is None or not lot:
+            continue
+        # ⛔ LE STOP PLACEBO (2026-09-09). Un stop sous 0,1 % du prix n'est pas
+        # un stop : il rend des R de plusieurs dizaines et fait basculer une
+        # fenetre entiere.
+        #
+        # Le 09/09 a 13:48, `XAU/USD` a ete mis en pause QUATORZE JOURS sur
+        # `admin_live` — alors que l'or GAGNAIT de l'argent sur la fenetre
+        # (+83,90 EUR, 30 trades, wr 46,7 %). Le verdict venait d'un SEUL trade :
+        #
+        #     05/08  entree 4085,92  stop 4086,25  ->  risque 0,29 EUR
+        #            pnl -4,32 EUR                 ->  R = -14,90
+        #
+        #     somme des R, telle quelle   -15,708  ->  PAUSE (seuil -10)
+        #     sans ce seul trade           -0,81   ->  plate
+        #
+        # 🔑 Le LABORATOIRE ecartait deja ces trades ; le regulateur, non. Deux
+        # juges du meme projet, deux regles sur la meme donnee. La memoire porte
+        # que 155 des 181 stops du reel sont des placebos.
+        #
+        # ⚠️ Ce n'est PAS un desserrage : c'est refuser de compter un chiffre
+        # qui n'a pas de sens. Un stop a 33 centimes ne mesure pas une
+        # esperance, il mesure une erreur de placement de stop.
+        #
+        # ⚠️ Le seuil est REPRIS du laboratoire, jamais redefini : deux
+        # constantes pour la meme notion divergeraient au premier reglage.
+        try:
+            largeur = abs(float(entree) - float(stop))
+            if float(entree) <= 0 or largeur / float(entree) < PLACEBO_PCT:
+                continue        # ecarte, et DENOMBRE via `n_non_mesurables`
+        except (TypeError, ValueError, ZeroDivisionError):
             continue
         mesure = calculer(r["pair_mesure"], entree, stop, 0.0, lot)
         if not mesure or mesure["risque_eur"] <= 0:
