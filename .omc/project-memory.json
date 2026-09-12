@@ -19,7 +19,7 @@
   },
   "build": {
     "buildCommand": null,
-    "testCommand": "cd \"C:/Users/xav91/Scalping/scalping\" && timeout 400 python -m pytest backend/tests/ -q -k \"labo or laboratoire or detecteur or reglage\" 2>&1 | tail -3",
+    "testCommand": "cd \"C:/Users/xav91/Scalping/scalping\" && (timeout 900 python -m pytest backend/tests -q -p no:randomly > /tmp/bat2.txt 2>&1; echo \"EXIT=$?\" >> /tmp/bat2.txt); tail -5 /tmp/bat2.txt",
     "lintCommand": null,
     "devCommand": null,
     "scripts": {}
@@ -393,6 +393,12 @@
       "type": "file"
     },
     {
+      "path": "backend\\services\\mt5_bridge.py",
+      "accessCount": 7,
+      "lastAccessed": 1789221076704,
+      "type": "file"
+    },
+    {
       "path": "backend\\services\\bloc_risque.py",
       "accessCount": 6,
       "lastAccessed": 1788865202508,
@@ -420,12 +426,6 @@
       "path": "backend\\services\\promotion_engine.py",
       "accessCount": 4,
       "lastAccessed": 1788908908117,
-      "type": "file"
-    },
-    {
-      "path": "backend\\services\\mt5_bridge.py",
-      "accessCount": 4,
-      "lastAccessed": 1788927343228,
       "type": "file"
     },
     {

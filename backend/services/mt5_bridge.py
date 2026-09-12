@@ -110,6 +110,56 @@ def is_configured() -> bool:
     return bool(MT5_BRIDGE_ENABLED and MT5_BRIDGE_URL and MT5_BRIDGE_API_KEY)
 
 
+def _prix_execution(reponse: dict, setup) -> float:
+    """Le prix auquel l'ordre a REELLEMENT ete rempli.
+
+    ⛔ MESURE DU 2026-09-12, ticket 1358460909 (XAG/USD, achat, compte reel).
+    Reponse du pont :
+
+        {"fill_price": 65.691, "fill_source": "position", "price": 0.0, ...}
+
+    Le prix pousse (signal) valait 65,969. Le code lisait
+    `data.get("price") or setup.entry_price` : `price` vaut `0.0`, donc FALSY,
+    donc on retombait sur le prix du SIGNAL. Telegram a annonce
+    « Fill : 65,969 » pour une execution a 65,691 — 0,42 % d'erreur, alors que
+    la bonne valeur etait dans le champ d'a cote.
+
+    ## 🔑 Pourquoi ce n'est pas cosmetique
+
+    L'ecart signal -> execution est la mesure qui dit si un stop est bien
+    place. Mesure le meme jour :
+
+        XAG/USD   mediane 0,091 %   p90 0,242 %   max 0,421 %   50 % > 0,1 %
+        XAU/USD   mediane 0,042 %                                9 % > 0,1 %
+
+    Annoncer le signal a la place de l'execution rend cet ecart INVISIBLE dans
+    le seul endroit que Xavier lit en direct.
+
+    ## ⚠️ `or` traite 0.0 comme « absent »
+
+    Ici `price: 0.0` veut dire « ce chemin ne renseigne pas ce champ », et
+    `fill_price` porte la verite. Meme maladie que `pnl=0.0`,
+    `entry_price=0.0` et `close_reason=MANUAL` : un zero de MT5 n'est pas une
+    valeur, c'est une absence. On lit donc `fill_price` d'abord, `price`
+    ensuite, le signal en DERNIER recours — et jamais une valeur nulle ou
+    negative.
+
+    ⚠️ Ne leve jamais : appelee dans un chemin best-effort, une exception ici
+    ferait perdre la notification d'ouverture entiere pour un champ malforme.
+    """
+    for cle in ("fill_price", "price"):
+        try:
+            v = float(reponse.get(cle))
+        except (TypeError, ValueError):
+            continue
+        if v > 0:
+            return v
+    try:
+        return float(getattr(setup, "entry_price", 0) or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _direction_value(setup) -> str:
     d = setup.direction
     return d.value if hasattr(d, "value") else str(d)
@@ -1034,7 +1084,7 @@ def _notify_first_live_push(setup, bridge_response: dict) -> None:
     pair = getattr(setup, "pair", "?")
     direction = _direction_value(setup)
     ticket = bridge_response.get("ticket")
-    fill_price = bridge_response.get("price") or getattr(setup, "entry_price", 0)
+    fill_price = _prix_execution(bridge_response, setup)
     volume = bridge_response.get("volume") or 0
     confidence = getattr(setup, "confidence_score", None)
 
@@ -1867,7 +1917,7 @@ async def _push_to_destination(setup, dest) -> None:
                         await _tg.send_trade_opened(
                             setup,
                             ticket=int(data.get("ticket")),
-                            fill_price=float(data.get("price") or setup.entry_price),
+                            fill_price=_prix_execution(data, setup),
                             volume=float(data.get("volume") or 0),
                             mode=str(data.get("mode") or "?"),
                             destination_id=dest.destination_id,
