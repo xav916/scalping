@@ -49,6 +49,7 @@ import math
 import os
 import random
 import statistics as st
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -463,27 +464,31 @@ CHAINES: tuple[dict, ...] = (
     # piege, c'est la cassure qui le transforme en direction.
     {"nom": "sweep_puis_structure_haussier",
      "motifs": ("liquidity_sweep_up", "bos_up"),
-     "declencheur": "bos_up", "predicats": (), "fenetre": FENETRE_SEQUENCE},
+     "declencheur": "bos_up", "predicats": (), "fenetre": FENETRE_SEQUENCE,
+     "invalidants": ("bos_down",)},
     {"nom": "sweep_puis_structure_baissier",
      "motifs": ("liquidity_sweep_down", "bos_down"),
-     "declencheur": "bos_down", "predicats": (), "fenetre": FENETRE_SEQUENCE},
+     "declencheur": "bos_down", "predicats": (), "fenetre": FENETRE_SEQUENCE,
+     "invalidants": ("bos_up",)},
     # Prise de liquidite sur une zone d'accumulation.
     {"nom": "sweep_sur_order_block_haussier",
      "motifs": ("liquidity_sweep_up", "order_block_up"),
      "declencheur": "order_block_up", "predicats": (),
-     "fenetre": FENETRE_SEQUENCE},
+     "fenetre": FENETRE_SEQUENCE, "invalidants": ("bos_down",)},
     {"nom": "sweep_sur_order_block_baissier",
      "motifs": ("liquidity_sweep_down", "order_block_down"),
      "declencheur": "order_block_down", "predicats": (),
-     "fenetre": FENETRE_SEQUENCE},
+     "fenetre": FENETRE_SEQUENCE, "invalidants": ("bos_up",)},
     # Changement de caractere PUIS desequilibre — le retournement laisse un
     # trou que le prix revient combler.
     {"nom": "choch_puis_fvg_haussier",
      "motifs": ("choch_up", "fvg_up"),
-     "declencheur": "fvg_up", "predicats": (), "fenetre": FENETRE_SEQUENCE},
+     "declencheur": "fvg_up", "predicats": (), "fenetre": FENETRE_SEQUENCE,
+     "invalidants": ("choch_down",)},
     {"nom": "choch_puis_fvg_baissier",
      "motifs": ("choch_down", "fvg_down"),
-     "declencheur": "fvg_down", "predicats": (), "fenetre": FENETRE_SEQUENCE},
+     "declencheur": "fvg_down", "predicats": (), "fenetre": FENETRE_SEQUENCE,
+     "invalidants": ("choch_up",)},
     # ⚠️ Fenetre ZERO ci-dessous : une confirmation par les volumes est
     # SIMULTANEE par definition. Le volume confirme la bougie du signal, pas
     # une bougie d'il y a deux heures.
@@ -504,6 +509,18 @@ CHAINES: tuple[dict, ...] = (
     {"nom": "cassure_confirmee_volume_baissier",
      "motifs": ("breakout_down",),
      "declencheur": "breakout_down", "predicats": ("volume_fort",),
+     "fenetre": 0},
+    # ⚠️ HYPOTHESE DE SESSION, declaree le 2026-09-12 : les vraies cassures se
+    # font a l'ouverture de Londres, pas a n'importe quelle heure. C'est une
+    # hypothese DISTINCTE, pas une variante de la precedente qu'on essaierait
+    # en plus — l'essayer « aussi » serait tester deux fois la meme idee.
+    {"nom": "cassure_killzone_londres_haussier",
+     "motifs": ("breakout_up",),
+     "declencheur": "breakout_up", "predicats": ("killzone_londres",),
+     "fenetre": 0},
+    {"nom": "cassure_killzone_londres_baissier",
+     "motifs": ("breakout_down",),
+     "declencheur": "breakout_down", "predicats": ("killzone_londres",),
      "fenetre": 0},
 )
 
@@ -532,10 +549,73 @@ def _volume_fort(bougies, i: int) -> bool:
     return float(bougies[j].get("tv") or 0.0) >= ref * VOLUME_FORT_MULT
 
 
+# ─── Les sessions ───────────────────────────────────────────────────
+#
+# ⛔ HEURES LOCALES DE CHAQUE PLACE, JAMAIS UTC FIXE. Londres et New York
+# changent d'heure, et a des dates differentes. Des bornes en UTC fixe
+# decaleraient les sessions d'une heure LA MOITIE DE L'ANNEE — et la mesure
+# dirait « ce motif marche le matin » en ayant regarde deux fenetres
+# differentes selon la saison.
+#
+# ⚠️ Ces bornes sont une CONVENTION DECLAREE, pas une mesure : ce sont les
+# horaires d'ouverture publics des places. Les deplacer serait un choix a
+# ecrire, jamais un reglage a optimiser.
+_SESSIONS = {
+    "session_londres":   ("Europe/London",    (8, 0),  (16, 30)),
+    "killzone_londres":  ("Europe/London",    (8, 0),  (11, 0)),
+    "session_newyork":   ("America/New_York", (9, 30), (16, 0)),
+    "killzone_newyork":  ("America/New_York", (9, 30), (12, 30)),
+    "session_asie":      ("Asia/Tokyo",       (9, 0),  (15, 0)),
+}
+
+
+def _instant(bougies, i: int):
+    """L'horodatage de la bougie `i`, en datetime conscient — ou `None`.
+
+    ⛔ `t` est une CHAINE dans les bougies brutes et un `datetime` apres
+    `_agreger_brut`. Ne gerer qu'une forme rendrait les sessions muettes sur
+    M15, M30 et H1 — en silence, exactement comme le volume l'a ete.
+    """
+    if not (0 <= i < len(bougies)):
+        return None
+    t = bougies[i].get("t")
+    if isinstance(t, datetime):
+        return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+    try:
+        d = datetime.fromisoformat(str(t).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None            # fail-closed : une date illisible ne valide rien
+    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+
+
+def _dans_session(nom: str):
+    """Fabrique le prédicat de la session `nom`. Lu sur la bougie du SIGNAL."""
+    zone, debut, fin = _SESSIONS[nom]
+
+    def _predicat(bougies, i: int) -> bool:
+        d = _instant(bougies, i)
+        if d is None:
+            return False
+        try:
+            from zoneinfo import ZoneInfo
+            local = d.astimezone(ZoneInfo(zone))
+        except Exception:      # noqa: BLE001 — base tz absente
+            # ⛔ On rend NON, jamais un repli en UTC fixe : un repli
+            # silencieux mesurerait une autre fenetre sous le meme nom.
+            logger.warning("labo_or: zone horaire %s indisponible — session "
+                           "%s repond NON", zone, nom)
+            return False
+        mn = local.hour * 60 + local.minute
+        return debut[0] * 60 + debut[1] <= mn < fin[0] * 60 + fin[1]
+
+    return _predicat
+
+
 # ⛔ Fail-closed : un predicat mal orthographie doit LEVER. S'il rendait True,
 # la chaine serait mesuree sans sa condition et le verdict serait faux sans
 # que rien ne le dise.
 _PREDICATS = {"volume_fort": _volume_fort}
+_PREDICATS.update({nom: _dans_session(nom) for nom in _SESSIONS})
 
 
 class _SetupChaine:
@@ -589,9 +669,36 @@ def chaines_detectees(releve: dict[int, list], bougies,
                 # ⛔ « PUIS » : le maillon precede le declencheur, ou tombe sur
                 # la meme bougie. Accepter l'ordre inverse mesurerait une autre
                 # chaine sous le meme nom.
-                if not all(any((i - d) in ou.get((m, sens), ())
-                               for d in range(0, fen + 1)) for m in autres):
+                # `ou_maillon` retient la position REELLE de chaque maillon :
+                # elle borne la zone ou un dementi compte.
+                ou_maillon = []
+                for m in autres:
+                    trouve = next((i - d for d in range(0, fen + 1)
+                                   if (i - d) in ou.get((m, sens), ())), None)
+                    if trouve is None:
+                        break
+                    ou_maillon.append(trouve)
+                if len(ou_maillon) != len(autres):
                     continue
+                # ⛔ L'INVALIDATION (2026-09-12). Une chaine acceptait un
+                # maillon jusqu'a 30 bougies avant son declencheur, et rien
+                # n'interdisait qu'entre les deux le marche ait fait
+                # EXACTEMENT LE CONTRAIRE : balayage haussier, puis cassure
+                # baissiere, puis cassure haussiere du declencheur. La chaine
+                # se declenchait quand meme, sur un maillon que les faits
+                # avaient deja dementi. La fenetre de 30 etait une passoire.
+                #
+                # ⚠️ Un dementi ANTERIEUR au maillon ne compte pas : il
+                # appartient a une histoire precedente, et l'inclure
+                # reviendrait a remonter indefiniment dans le passe.
+                invalidants = c.get("invalidants", ())
+                if invalidants and ou_maillon:
+                    depuis = min(ou_maillon)
+                    if any(k in ou.get((m, s2), ())
+                           for m in invalidants
+                           for s2 in ("buy", "sell")
+                           for k in range(depuis + 1, i)):
+                        continue
                 if not all(_PREDICATS[p](bougies, i) for p in c["predicats"]):
                     continue
                 # 🔑 Le setup vient du DECLENCHEUR, a SON indice : les niveaux

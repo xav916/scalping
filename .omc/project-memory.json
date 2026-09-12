@@ -19,7 +19,7 @@
   },
   "build": {
     "buildCommand": null,
-    "testCommand": "cd \"C:/Users/xav91/Scalping/scalping\" && (timeout 900 python -m pytest backend/tests -q -p no:randomly > /tmp/bat6.txt 2>&1; echo \"EXIT=$?\" >> /tmp/bat6.txt); tail -4 /tmp/bat6.txt",
+    "testCommand": "cd \"C:/Users/xav91/Scalping/scalping\" && (timeout 900 python -m pytest backend/tests -q -p no:randomly > /tmp/bat7.txt 2>&1; echo \"EXIT=$?\" >> /tmp/bat7.txt); tail -4 /tmp/bat7.txt",
     "lintCommand": null,
     "devCommand": null,
     "scripts": {}
@@ -381,6 +381,12 @@
   },
   "hotPaths": [
     {
+      "path": "backend\\services\\laboratoire_or.py",
+      "accessCount": 11,
+      "lastAccessed": 1789228014701,
+      "type": "file"
+    },
+    {
       "path": "backend\\services\\reglage_or.py",
       "accessCount": 10,
       "lastAccessed": 1788908882283,
@@ -390,12 +396,6 @@
       "path": "backend\\services\\telegram_service.py",
       "accessCount": 8,
       "lastAccessed": 1788864966288,
-      "type": "file"
-    },
-    {
-      "path": "backend\\services\\laboratoire_or.py",
-      "accessCount": 8,
-      "lastAccessed": 1789225930963,
       "type": "file"
     },
     {
