@@ -444,6 +444,8 @@ _PATTERN_EXPLAIN_FR: dict[str, str] = {
     # sur Telegram, pas le code.
     "liquidity_sweep_up": "chasse aux stops sous le plancher — le prix est allé chercher les ordres placés sous le plus bas récent, puis est remonté aussitôt : le creux a été rejeté",
     "liquidity_sweep_down": "chasse aux stops au-dessus du plafond — le prix est allé chercher les ordres placés au-dessus du plus haut récent, puis est redescendu aussitôt : le sommet a été rejeté",
+    "double_sweep_up": "le plancher a ete teste DEUX fois — le prix est alle chercher les ordres sous le plus bas recent a deux reprises, et il est remonte les deux fois : quelqu'un defend ce niveau",
+    "double_sweep_down": "le plafond a ete teste DEUX fois — le prix est alle chercher les ordres au-dessus du plus haut recent a deux reprises, et il est redescendu les deux fois : quelqu'un defend ce niveau",
     "order_block_up": "retour sur la zone de départ, qui a tenu — le prix est redescendu là où la hausse s'était élancée, et il en est reparti vers le haut",
     "order_block_down": "retour sur la zone de départ, qui a tenu — le prix est remonté là où la baisse s'était élancée, et il en est reparti vers le bas",
     "bos_up": "le plafond cède dans une tendance qui montait déjà — la hausse confirme sa direction",

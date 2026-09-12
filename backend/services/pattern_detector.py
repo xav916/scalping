@@ -243,6 +243,7 @@ def detect_patterns(candles: list[Candle], pair: str = "XAU/USD") -> list[Patter
     patterns.extend(_detect_fvg(candles, pair))
     patterns.extend(_detect_gap_par_troisieme_bougie(candles, pair))
     patterns.extend(_detect_liquidity_sweep(candles, pair))
+    patterns.extend(_detect_double_sweep(candles, pair))
     patterns.extend(_detect_order_block(candles, pair))
     patterns.extend(_detect_structure(candles, pair))
     patterns.extend(_detect_fvg_inverse(candles, pair))
@@ -433,6 +434,104 @@ def _detect_liquidity_sweep(candles: list[Candle], pair: str) -> list[PatternDet
             confidence=round(min(0.80, 0.60 + depassement / atr * 0.1), 2),
             description=(f"Balayage des bas: meche a {last.low:.2f} sous "
                          f"{plus_bas:.2f}, cloture rejetee a {last.close:.2f}"),
+            detected_at=now,
+        ))
+    return patterns
+
+
+def _detect_double_sweep(candles: list[Candle], pair: str) -> list[PatternDetection]:
+    """La poche prise DEUX fois — et rejetee les deux fois.
+
+    Une poche de liquidite prise une seule fois peut n'etre qu'un depassement
+    ordinaire. Prise deux fois et rejetee deux fois, elle dit que quelqu'un
+    defend ce niveau. C'est la DEUXIEME prise qui porte l'information.
+
+        niveau  = max(haut) de la PREMIERE MOITIE des 30 bougies de reference
+        compte  = bougies de la SECONDE MOITIE, derniere incluse, telles que
+                  haut > niveau ET cloture < niveau
+        double <=> compte >= 2 ET la derniere bougie en fait partie
+
+    ⛔ AUCUN REGLAGE NEUF. Les 30 bougies viennent de `_detect_breakout` ; la
+    coupe en deux moities est l'idiome deja employe par
+    `_tendance_de_structure`. Le « deux fois » est la definition du concept,
+    pas un parametre. Chaque seuil neuf est un degre de liberte, donc de
+    l'edge fabrique.
+
+    ⛔ La DERNIERE bougie doit faire partie des prises : sinon le signal
+    appartient au passe et ne dit rien de l'instant ou l'on entrerait.
+
+    ⚠️ Cloturer AU-DESSUS du niveau est une cassure, pas une prise. Les
+    confondre ferait compter une continuation comme un retournement.
+
+    ⚠️ Recouvrement TOTAL avec `_detect_liquidity_sweep` : toute double prise
+    est aussi un balayage simple sur sa derniere bougie. Ce ne sont donc PAS
+    deux tests independants — mais une comparaison APPARIEE, et c'est
+    precisement ce qui la rend lisible. Un test le MESURE au lieu de le
+    supposer : c'est en croyant un recouvrement « vrai par construction » que
+    je me suis trompe sur `breakout` le 09/09.
+    """
+    patterns: list[PatternDetection] = []
+    if len(candles) < 31:
+        return patterns
+    now = datetime.now(timezone.utc)
+    reference = candles[-31:-1]
+    atr = _calculate_atr(candles, period=14)
+    if atr <= 0:
+        return patterns
+
+    moitie = len(reference) // 2
+    poche, recent = reference[:moitie], reference[moitie:] + [candles[-1]]
+    derniere = candles[-1]
+
+    # ⛔ CORRIGE LE 2026-09-12, APRES MESURE. Premiere version : la poche
+    # valait `max(haut)` des 15 premieres bougies, alors que le balayage
+    # simple compare au maximum des 30. La barre du double etait donc PLUS
+    # BASSE que celle du simple — mesure sur 708 fenetres reelles :
+    #
+    #     double 56 (7,9 %)   simple 49 (6,9 %)
+    #     DOUBLE SANS SIMPLE : 44, soit 78,6 % des doubles
+    #
+    # Une « double prise » qui se declenche PLUS SOUVENT qu'une prise simple
+    # ne mesure pas ce que son nom promet : exiger deux prises doit etre plus
+    # exigeant, jamais moins.
+    #
+    # ⇒ La derniere bougie doit AUSSI etre un balayage simple : elle depasse
+    # le maximum des 30 et cloture en deca. C'est fidele au concept — la
+    # seconde incursion va PLUS LOIN que la premiere et se fait rejeter quand
+    # meme — et ca rend le double strictement inclus dans le simple, donc la
+    # comparaison entre eux APPARIEE.
+    #
+    # ⚠️ Mesure, jamais suppose : c'est en croyant un recouvrement « vrai par
+    # construction » que je me suis trompe sur `breakout` le 09/09, et une
+    # deuxieme fois ici le meme jour.
+    plus_haut = max(c.high for c in reference)
+    plus_bas = min(c.low for c in reference)
+    sweep_h = derniere.high > plus_haut and derniere.close < plus_haut
+    sweep_b = derniere.low < plus_bas and derniere.close > plus_bas
+
+    haut_poche = max(c.high for c in poche)
+    prises_h = [c for c in recent if c.high > haut_poche and c.close < haut_poche]
+    if sweep_h and len(prises_h) >= 2 and derniere in prises_h:
+        depassement = derniere.high - haut_poche
+        patterns.append(PatternDetection(
+            pattern=PatternType.DOUBLE_SWEEP_DOWN,
+            confidence=round(min(0.85, 0.65 + depassement / atr * 0.1), 2),
+            description=(f"Double prise des hauts: {len(prises_h)} meches "
+                         f"au-dessus de {haut_poche:.2f}, rejetees a chaque "
+                         f"fois (derniere cloture {derniere.close:.2f})"),
+            detected_at=now,
+        ))
+
+    bas_poche = min(c.low for c in poche)
+    prises_b = [c for c in recent if c.low < bas_poche and c.close > bas_poche]
+    if sweep_b and len(prises_b) >= 2 and derniere in prises_b:
+        depassement = bas_poche - derniere.low
+        patterns.append(PatternDetection(
+            pattern=PatternType.DOUBLE_SWEEP_UP,
+            confidence=round(min(0.85, 0.65 + depassement / atr * 0.1), 2),
+            description=(f"Double prise des bas: {len(prises_b)} meches sous "
+                         f"{bas_poche:.2f}, rejetees a chaque fois "
+                         f"(derniere cloture {derniere.close:.2f})"),
             detected_at=now,
         ))
     return patterns

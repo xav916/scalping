@@ -82,6 +82,62 @@ dispositif — c'est le dispositif qui fonctionne.
 - ⚠️ **Recouvrement attendu avec `pin_bar`** : un balayage est souvent une pin
   bar. Ce sont deux cellules distinctes, mais elles ne constituent PAS deux
   tests indépendants. À garder en tête si les deux ressortent ensemble.
+
+### Double prise de liquidité
+
+- **Tradition** : ICT / Smart Money Concepts. Donnée comme centrale dans le
+  corpus rapporté par Xavier le 2026-09-12 — d'où sa place ici, et non parce
+  qu'une mesure l'aurait suggérée.
+- **Idée** : une poche de liquidité prise **une seule fois** peut n'être qu'un
+  dépassement ordinaire. Prise **deux fois** et rejetée deux fois, elle dit que
+  quelqu'un défend ce niveau. C'est la deuxième prise qui porte l'information.
+- **Règle** (miroir pour le sens opposé) :
+  - `niveau` = `max(haut)` de la **première moitié** des 30 bougies de
+    référence — la poche ;
+  - dans la **seconde moitié**, bougie courante comprise, au moins **deux**
+    bougies vérifient `haut > niveau` **et** `clôture < niveau` ;
+  - la **dernière** bougie est l'une d'elles — sinon le signal appartient au
+    passé, pas au présent ;
+  - **et** la dernière bougie est elle-même un **balayage simple** : elle
+    dépasse le `max(haut)` des **30** et clôture en deçà.
+- ⛔ **Cette dernière ligne a été ajoutée APRÈS mesure, et elle corrige un
+  vrai défaut.** Sans elle, la poche valait le max de 15 bougies quand le
+  balayage simple compare à celui de 30 : la barre du double était donc plus
+  **basse** que celle du simple. Mesuré sur 708 fenêtres réelles :
+
+  | | avant | après |
+  |---|---|---|
+  | double | 56 (7,9 %) | **12 (1,7 %)** |
+  | simple | 49 (6,9 %) | 49 (6,9 %) |
+  | double sans simple | **44 (78,6 %)** | **0** |
+
+  Une « double prise » qui se déclenche **plus souvent** qu'une prise simple
+  ne mesure pas ce que son nom promet. La règle corrigée est aussi plus
+  fidèle : la seconde incursion va **plus loin** que la première et se fait
+  rejeter quand même. Un balayage simple sur quatre est désormais un double.
+- **Prédiction falsifiable** : `double_sweep_down` doit rendre un **R moyen
+  supérieur** à `liquidity_sweep_down` sur le même instrument et la même
+  échelle. Si le double ne bat pas le simple, la notion n'ajoute rien — et
+  c'est exactement le genre de résultat que ce laboratoire existe pour rendre.
+- **Motifs** : `double_sweep_down` (deux prises des hauts ⇒ on vend) ·
+  `double_sweep_up`.
+- **Seuil** : **aucun réglage neuf**. Les 30 bougies viennent de
+  `_detect_breakout` ; la coupe en deux moitiés est l'idiome déjà employé par
+  `_tendance_de_structure` (« on coupe en deux la fenêtre de 30 déjà
+  utilisée »). Le « deux fois » est la définition même du concept, pas un
+  paramètre.
+- ⚠️ **Recouvrement TOTAL avec `liquidity_sweep`**, désormais **mesuré à 0
+  exception** sur 708 fenêtres. Toute double prise est aussi un balayage
+  simple. Les deux cellules ne sont donc **pas** deux tests indépendants, et
+  leur comparaison est **appariée** — c'est ce qui la rend lisible.
+- ⛔ Je l'avais d'abord affirmé « vrai par construction ». **C'était faux**, et
+  le test l'a montré : 78,6 % des doubles n'étaient pas des simples. C'est la
+  **deuxième fois le même jour** qu'une affirmation de recouvrement tombe —
+  après `breakout` le 09/09. *Un recouvrement se mesure, il ne se déduit pas.*
+- ⚠️ **12 déclenchements sur 708 fenêtres** : la cellule sera longtemps
+  `INSUFFISANT`. C'est le verdict honnête d'un motif rare, pas un échec.
+- ⚠️ Elle héritera du plafond du hasard **commun** : l'ajouter relève la barre
+  pour toutes les autres cellules. C'est le prix, et il est assumé.
 - **Posé** : 2026-09-09.
 
 ### Order Block

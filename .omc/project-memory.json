@@ -19,7 +19,7 @@
   },
   "build": {
     "buildCommand": null,
-    "testCommand": "cd \"C:/Users/xav91/Scalping/scalping\" && (timeout 900 python -m pytest backend/tests -q -p no:randomly > /tmp/bat7.txt 2>&1; echo \"EXIT=$?\" >> /tmp/bat7.txt); tail -4 /tmp/bat7.txt",
+    "testCommand": "cd \"C:/Users/xav91/Scalping/scalping\" && (timeout 900 python -m pytest backend/tests -q -p no:randomly > /tmp/bat8.txt 2>&1; echo \"EXIT=$?\" >> /tmp/bat8.txt); tail -5 /tmp/bat8.txt",
     "lintCommand": null,
     "devCommand": null,
     "scripts": {}

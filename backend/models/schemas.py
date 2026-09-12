@@ -97,6 +97,16 @@ class PatternType(str, Enum):
     # ⚠️ Exclusif de `breakout` par construction — voir le detecteur.
     LIQUIDITY_SWEEP_UP = "liquidity_sweep_up"      # bas balayes -> on achete
     LIQUIDITY_SWEEP_DOWN = "liquidity_sweep_down"  # hauts balayes -> on vend
+    # ─── La DOUBLE prise de liquidite (2026-09-12) ───
+    # Une poche prise UNE fois peut n'etre qu'un depassement ordinaire. Prise
+    # DEUX fois et rejetee deux fois, elle dit que quelqu'un defend ce niveau.
+    # ⚠️ Recouvrement TOTAL avec `liquidity_sweep` : toute double prise est
+    # aussi un balayage simple sur sa derniere bougie. Pas deux tests
+    # independants — mais une comparaison APPARIEE, et c'est ce qui la rend
+    # lisible. Prediction : le double doit BATTRE le simple, sinon il n'ajoute
+    # rien.
+    DOUBLE_SWEEP_UP = "double_sweep_up"        # bas pris 2x -> on achete
+    DOUBLE_SWEEP_DOWN = "double_sweep_down"    # hauts pris 2x -> on vend
     # ─── Order Block (2026-09-09) ─────────────────────────────────────
     # La derniere bougie de sens OPPOSE avant une impulsion : la zone d'ou le
     # mouvement est parti. Signal quand elle est RETESTEE et qu'elle TIENT.
