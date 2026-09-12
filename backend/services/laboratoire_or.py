@@ -286,6 +286,187 @@ def detections(bougies, pair: str = PAIRE) -> dict[int, list]:
     return out
 
 
+# ─── Confluence : mesurer une CHAINE et non un maillon ──────────────
+#
+# ⛔ LE MANQUE, comble le 2026-09-12. Une cellule valait
+# `paire × echelle × UN motif × sens`. Or les methodes qu'on veut eprouver ne
+# sont pas des motifs isoles, ce sont des chaines :
+#
+#     contexte -> niveau majeur -> liquidite -> prise de liquidite
+#              -> retest -> confirmation volume -> BUY/SELL
+#
+# Mesurer les maillons separement ne dit rien de la chaine montee.
+#
+# 🔑 LE CHOIX DE CONCEPTION qui rend tout le reste gratuit : une chaine produit
+# un setup SYNTHETIQUE nomme `chaine:<nom>`, injecte dans le meme releve. Elle
+# herite alors, sans une ligne de plus, du stockage, du controle aleatoire de
+# son echelle, et surtout du PLAFOND DU HASARD COMMUN. Ajouter des chaines
+# releve donc la barre pour tout le monde — c'est voulu : plus de tests,
+# exigence plus haute.
+#
+# ⛔ UNE CHAINE NE PEUT JAMAIS ETRE ARMEE. `chaine:...` n'est pas un
+# `PatternType`, donc la liste blanche fail-closed du pont la refuse
+# (`pattern_not_allowed`). Le laboratoire mesure ; il n'ouvre aucune porte.
+
+# ⛔ DECLAREES, JAMAIS CHERCHEES. Six conditions librement combinables font des
+# dizaines de milliers de chaines. Les essayer toutes garantirait d'en
+# « trouver » une qui gagne, et ce serait exactement le geste que l'audit du
+# 25/08 condamne : PBO = 0,579 sur l'argent reel — selectionner sur la
+# performance mesuree ne generalise pas, pire que pile ou face.
+#
+# ⚠️ CE QUE CES CHAINES SONT. Notre FORMALISATION d'un vocabulaire (liquidite,
+# niveau, structure, confirmation par les volumes). Elles ne sont la methode de
+# personne : personne n'a publie ces seuils. Garder la distinction « ce qui est
+# dit » / « ce qui est deduit » lisible, sinon on croira avoir reproduit une
+# methode qu'on a en realite inventee.
+CHAINES: tuple[dict, ...] = (
+    # Prise de liquidite PUIS cassure de structure — le balayage seul est un
+    # piege, c'est la cassure qui le transforme en direction.
+    {"nom": "sweep_puis_structure_haussier",
+     "motifs": ("liquidity_sweep_up", "bos_up"),
+     "declencheur": "bos_up", "predicats": ()},
+    {"nom": "sweep_puis_structure_baissier",
+     "motifs": ("liquidity_sweep_down", "bos_down"),
+     "declencheur": "bos_down", "predicats": ()},
+    # Prise de liquidite sur une zone d'accumulation.
+    {"nom": "sweep_sur_order_block_haussier",
+     "motifs": ("liquidity_sweep_up", "order_block_up"),
+     "declencheur": "order_block_up", "predicats": ()},
+    {"nom": "sweep_sur_order_block_baissier",
+     "motifs": ("liquidity_sweep_down", "order_block_down"),
+     "declencheur": "order_block_down", "predicats": ()},
+    # Changement de caractere PUIS desequilibre — le retournement laisse un
+    # trou que le prix revient combler.
+    {"nom": "choch_puis_fvg_haussier",
+     "motifs": ("choch_up", "fvg_up"),
+     "declencheur": "fvg_up", "predicats": ()},
+    {"nom": "choch_puis_fvg_baissier",
+     "motifs": ("choch_down", "fvg_down"),
+     "declencheur": "fvg_down", "predicats": ()},
+    # Niveau majeur CONFIRME par les volumes. Mesurable seulement depuis le
+    # 12/09 : avant, le volume valait zero partout.
+    {"nom": "niveau_confirme_volume_haussier",
+     "motifs": ("range_bounce_up",),
+     "declencheur": "range_bounce_up", "predicats": ("volume_fort",)},
+    {"nom": "niveau_confirme_volume_baissier",
+     "motifs": ("range_bounce_down",),
+     "declencheur": "range_bounce_down", "predicats": ("volume_fort",)},
+    # Cassure CONFIRMEE par les volumes — la fausse cassure est le defaut
+    # nomme du motif ; le volume est la confirmation qu'on lui oppose.
+    {"nom": "cassure_confirmee_volume_haussier",
+     "motifs": ("breakout_up",),
+     "declencheur": "breakout_up", "predicats": ("volume_fort",)},
+    {"nom": "cassure_confirmee_volume_baissier",
+     "motifs": ("breakout_down",),
+     "declencheur": "breakout_down", "predicats": ("volume_fort",)},
+)
+
+# Un pic de volume : la bougie que le detecteur vient de voir porte au moins
+# 1,5 fois le volume median des 20 precedentes. AUCUN REGLAGE NEUF ailleurs —
+# ce seuil est le seul de la confluence, et il est ecrit ici, pas disperse.
+VOLUME_FORT_MULT = float(os.getenv("LABO_VOLUME_FORT_MULT", "1.5"))
+VOLUME_FENETRE = 20
+
+
+def _volume_fort(bougies, i: int) -> bool:
+    """⚠️ Rend False quand le volume est ABSENT ou nul.
+
+    Un pont pas encore redeploye ne rend pas `tv`. Repondre True par defaut
+    ferait declencher la chaine partout en pretendant avoir vu un volume —
+    la chaine mesurerait alors autre chose que ce que son nom annonce.
+    """
+    j = i - 1                      # la derniere bougie vue par le detecteur
+    if j < VOLUME_FENETRE:
+        return False
+    fenetre = [float(b.get("tv") or 0.0)
+               for b in bougies[j - VOLUME_FENETRE:j]]
+    ref = st.median(fenetre) if fenetre else 0.0
+    if ref <= 0:
+        return False               # pas de donnee : on ne valide pas
+    return float(bougies[j].get("tv") or 0.0) >= ref * VOLUME_FORT_MULT
+
+
+# ⛔ Fail-closed : un predicat mal orthographie doit LEVER. S'il rendait True,
+# la chaine serait mesuree sans sa condition et le verdict serait faux sans
+# que rien ne le dise.
+_PREDICATS = {"volume_fort": _volume_fort}
+
+
+class _SetupChaine:
+    """Le setup du DECLENCHEUR, renomme au nom de la chaine.
+
+    🔑 SL et TP viennent du chemin deja eprouve. En inventer de nouveaux
+    ajouterait des degres de liberte — donc de l'edge fabrique.
+
+    `_nom_motif` deroule `setup.pattern` puis `.pattern` puis `.value` : une
+    chaine de caracteres traverse les trois et ressort telle quelle.
+    """
+
+    __slots__ = ("pattern", "_base")
+
+    def __init__(self, nom: str, base):
+        self.pattern = f"chaine:{nom}"
+        self._base = base
+
+    def __getattr__(self, nom):
+        return getattr(self._base, nom)
+
+
+def chaines_detectees(releve: dict[int, list], bougies,
+                      chaines: tuple[dict, ...] | None = None
+                      ) -> tuple[dict[int, list], dict[str, int]]:
+    """`({indice: [setups de chaine]}, {nom: nombre de declenchements})`.
+
+    ⛔ Le DECOMPTE fait partie du contrat. Sans trade, aucune cellule n'est
+    creee : la chaine disparait du releve et devient indiscernable d'une
+    chaine qui ne marche pas. C'est la forme de silence deja payee quatre fois
+    ici — on rend donc les zeros.
+    """
+    chaines = chaines if chaines is not None else CHAINES
+    sortie: dict[int, list] = {}
+    compte: dict[str, int] = {c["nom"]: 0 for c in chaines}
+
+    for i, liste in releve.items():
+        par_nom: dict[str, list] = {}
+        for s in liste:
+            par_nom.setdefault(_nom_motif(s), []).append(s)
+        for c in chaines:
+            requis = c["motifs"]
+            if not all(m in par_nom for m in requis):
+                continue
+            # ⚠️ Meme sens pour tous les maillons. Un balayage haussier plus
+            # une cassure baissiere n'est pas une confluence, c'est une
+            # contradiction — et la mesurer melangerait deux paris opposes.
+            sens = {_sens(s) for m in requis for s in par_nom[m]}
+            if len(sens) != 1:
+                continue
+            if not all(_PREDICATS[p](bougies, i) for p in c["predicats"]):
+                continue
+            base = par_nom[c["declencheur"]][0]
+            sortie.setdefault(i, []).append(_SetupChaine(c["nom"], base))
+            compte[c["nom"]] += 1
+    return sortie, compte
+
+
+def fusionner_chaines(releve: dict[int, list], bougies,
+                      chaines: tuple[dict, ...] | None = None
+                      ) -> dict[int, list]:
+    """Le releve enrichi des chaines — les motifs simples restent intacts."""
+    trouvees, compte = chaines_detectees(releve, bougies, chaines)
+    muettes = [n for n, k in compte.items() if k == 0]
+    if muettes:
+        # ⚠️ Une chaine qui ne se declenche jamais n'est pas « sans resultat » :
+        # c'est une mesure qui n'a pas eu lieu, et il faut pouvoir le lire.
+        logger.info("labo_or: chaines jamais declenchees : %s",
+                    ", ".join(sorted(muettes)))
+    if not trouvees:
+        return releve
+    fusion = {i: list(liste) for i, liste in releve.items()}
+    for i, liste in trouvees.items():
+        fusion.setdefault(i, []).extend(liste)
+    return fusion
+
+
 def rejouer_cellule(bougies, releve: dict[int, list], motif: str, sens: str,
                     spread: float) -> list[dict]:
     """Rejeu SÉQUENTIEL d'une cellule : jamais deux trades ouverts à la fois."""
@@ -403,7 +584,15 @@ def mesurer(bougies_m5: list, spread: float, pair: str = PAIRE,
             logger.info("labo_or: echelle x%d ecartee — %d bougies seulement",
                         facteur, len(agregees))
             continue
-        releve = detections(agregees, pair)
+        # ⛔ Les chaines entrent ICI, dans le meme releve que les motifs
+        # simples. Elles deviennent alors des cellules comme les autres — donc
+        # soumises au MEME controle aleatoire et au MEME plafond du hasard.
+        #
+        # 🔑 Consequence voulue : ajouter des chaines RELEVE la barre pour tout
+        # le monde. `plafond_hasard(len(cellules))` compte tout. Mesurer plus
+        # de choses doit couter plus cher a prouver, sinon on achete des
+        # decouvertes avec des tests supplementaires.
+        releve = fusionner_chaines(detections(agregees, pair), agregees)
         paires_motif_sens = sorted({(_nom_motif(s), _sens(s))
                                     for liste in releve.values() for s in liste})
         risques, objectifs = [], []
@@ -471,9 +660,26 @@ def _agreger_brut(bougies_m5: list, facteur: int, agreger) -> list:
         g = groupes[cle]
         if len(g) < facteur:            # ⛔ bougie en cours : on ne la sert pas
             continue
+        # ⛔ LE VOLUME ETAIT JETE ICI (trouve le 2026-09-12 en cablant la
+        # confluence). Cette fonction ne rendait que `t o c h l`. Sur M15, M30
+        # et H1, `tv` disparaissait donc, `_volume_fort` repondait NON partout,
+        # et les chaines a confirmation par volume ne pouvaient se declencher
+        # QU'EN 5 MIN — sans qu'aucune erreur ne soit levee.
+        #
+        # 🔑 Le volume se SOMME, il ne se moyenne pas : trois bougies de 5 min
+        # a 10 ticks font une bougie de 15 min a 30 ticks. Une moyenne aurait
+        # rendu toutes les echelles comparables entre elles et fausses chacune.
+        #
+        # ⚠️ Somme des presents, `None` si AUCUN n'a la donnee : « pas de
+        # volume mesure » doit rester discernable de « aucune activite », la
+        # meme regle qu'a la frontiere du pont.
+        vols = [y.get("tv") for y in g if y.get("tv") is not None]
+        rvols = [y.get("rv") for y in g if y.get("rv") is not None]
         out.append({"t": cle, "o": float(g[0]["o"]), "c": float(g[-1]["c"]),
                     "h": max(float(y["h"]) for y in g),
-                    "l": min(float(y["l"]) for y in g)})
+                    "l": min(float(y["l"]) for y in g),
+                    "tv": sum(float(v) for v in vols) if vols else None,
+                    "rv": sum(float(v) for v in rvols) if rvols else None})
     return out
 
 

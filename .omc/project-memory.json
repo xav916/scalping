@@ -19,7 +19,7 @@
   },
   "build": {
     "buildCommand": null,
-    "testCommand": "cd \"C:/Users/xav91/Scalping/scalping\" && (timeout 900 python -m pytest backend/tests -q -p no:randomly > /tmp/bat2.txt 2>&1; echo \"EXIT=$?\" >> /tmp/bat2.txt); tail -5 /tmp/bat2.txt",
+    "testCommand": "cd \"C:/Users/xav91/Scalping/scalping\" && (timeout 900 python -m pytest backend/tests -q -p no:randomly > /tmp/bat3.txt 2>&1; echo \"EXIT=$?\" >> /tmp/bat3.txt); tail -6 /tmp/bat3.txt",
     "lintCommand": null,
     "devCommand": null,
     "scripts": {}
@@ -411,6 +411,12 @@
       "type": "file"
     },
     {
+      "path": "backend\\services\\laboratoire_or.py",
+      "accessCount": 5,
+      "lastAccessed": 1789223535616,
+      "type": "file"
+    },
+    {
       "path": "backend\\tests\\test_canaux_telegram.py",
       "accessCount": 4,
       "lastAccessed": 1788866582973,
@@ -516,12 +522,6 @@
       "path": "backend\\tests\\test_alerte_position_sans_stop.py",
       "accessCount": 2,
       "lastAccessed": 1788927319329,
-      "type": "file"
-    },
-    {
-      "path": "backend\\services\\laboratoire_or.py",
-      "accessCount": 2,
-      "lastAccessed": 1789220843403,
       "type": "file"
     },
     {
