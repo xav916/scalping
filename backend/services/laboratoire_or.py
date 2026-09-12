@@ -319,46 +319,85 @@ def detections(bougies, pair: str = PAIRE) -> dict[int, list]:
 # personne : personne n'a publie ces seuils. Garder la distinction « ce qui est
 # dit » / « ce qui est deduit » lisible, sinon on croira avoir reproduit une
 # methode qu'on a en realite inventee.
+# ⛔ LA FENETRE DE SEQUENCE — « PUIS », pas « ET » (corrige le 2026-09-12).
+#
+# Premiere version : co-occurrence au MEME indice. Mesure sur 4 111 bougies
+# d'or reelles, elle ne s'est jamais declenchee :
+#
+#     liquidity_sweep_up   194 occurrences
+#     bos_up               131 occurrences
+#     au MEME indice                       0
+#     a 1, 2, 3, 5, 10 bougies d'ecart     0
+#     a 20 bougies d'ecart                10
+#
+# Deux erreurs empilees. J'avais code « ET » quand le vocabulaire dit
+# « PUIS ». Et les deux detecteurs sont STRUCTURELLEMENT exclusifs : ils
+# lisent la meme fenetre de 30 bougies et disent l'inverse l'un de l'autre —
+# un balayage REJETTE un extreme, une cassure CLOTURE au-dela du meme extreme.
+# La meme fenetre ne peut pas etre les deux.
+#
+# 🔑 Le decompte des chaines muettes a revele ce defaut. Sans lui, la chaine
+# aurait disparu du releve et on aurait lu « elle ne marche pas » au lieu de
+# « elle n'a jamais ete mesuree ».
+#
+# ⛔ POURQUOI 30, ET PAS LA VALEUR QUI MARCHE. 30 est le `lookback` de
+# `_detect_breakout` (`candles[-30:]`), deja partage par le balayage, le BOS
+# et le CHoCH. C'est une geometrie EXISTANTE, pas un reglage. Choisir 20 parce
+# que c'est la premiere valeur qui donne des resultats serait du reglage sur
+# la donnee — de l'edge fabrique, et le PBO de 0,579 dit ou ca mene.
+#
+# ⚠️ Consequence assumee : si une chaine ne produit qu'une dizaine de trades a
+# 30 bougies, le verdict honnete est INSUFFISANT. Une chaine peut etre vraie
+# et non mesurable — ce n'est pas la meme chose que fausse.
+FENETRE_SEQUENCE = 30
+
 CHAINES: tuple[dict, ...] = (
     # Prise de liquidite PUIS cassure de structure — le balayage seul est un
     # piege, c'est la cassure qui le transforme en direction.
     {"nom": "sweep_puis_structure_haussier",
      "motifs": ("liquidity_sweep_up", "bos_up"),
-     "declencheur": "bos_up", "predicats": ()},
+     "declencheur": "bos_up", "predicats": (), "fenetre": FENETRE_SEQUENCE},
     {"nom": "sweep_puis_structure_baissier",
      "motifs": ("liquidity_sweep_down", "bos_down"),
-     "declencheur": "bos_down", "predicats": ()},
+     "declencheur": "bos_down", "predicats": (), "fenetre": FENETRE_SEQUENCE},
     # Prise de liquidite sur une zone d'accumulation.
     {"nom": "sweep_sur_order_block_haussier",
      "motifs": ("liquidity_sweep_up", "order_block_up"),
-     "declencheur": "order_block_up", "predicats": ()},
+     "declencheur": "order_block_up", "predicats": (),
+     "fenetre": FENETRE_SEQUENCE},
     {"nom": "sweep_sur_order_block_baissier",
      "motifs": ("liquidity_sweep_down", "order_block_down"),
-     "declencheur": "order_block_down", "predicats": ()},
+     "declencheur": "order_block_down", "predicats": (),
+     "fenetre": FENETRE_SEQUENCE},
     # Changement de caractere PUIS desequilibre — le retournement laisse un
     # trou que le prix revient combler.
     {"nom": "choch_puis_fvg_haussier",
      "motifs": ("choch_up", "fvg_up"),
-     "declencheur": "fvg_up", "predicats": ()},
+     "declencheur": "fvg_up", "predicats": (), "fenetre": FENETRE_SEQUENCE},
     {"nom": "choch_puis_fvg_baissier",
      "motifs": ("choch_down", "fvg_down"),
-     "declencheur": "fvg_down", "predicats": ()},
-    # Niveau majeur CONFIRME par les volumes. Mesurable seulement depuis le
-    # 12/09 : avant, le volume valait zero partout.
+     "declencheur": "fvg_down", "predicats": (), "fenetre": FENETRE_SEQUENCE},
+    # ⚠️ Fenetre ZERO ci-dessous : une confirmation par les volumes est
+    # SIMULTANEE par definition. Le volume confirme la bougie du signal, pas
+    # une bougie d'il y a deux heures.
     {"nom": "niveau_confirme_volume_haussier",
      "motifs": ("range_bounce_up",),
-     "declencheur": "range_bounce_up", "predicats": ("volume_fort",)},
+     "declencheur": "range_bounce_up", "predicats": ("volume_fort",),
+     "fenetre": 0},
     {"nom": "niveau_confirme_volume_baissier",
      "motifs": ("range_bounce_down",),
-     "declencheur": "range_bounce_down", "predicats": ("volume_fort",)},
+     "declencheur": "range_bounce_down", "predicats": ("volume_fort",),
+     "fenetre": 0},
     # Cassure CONFIRMEE par les volumes — la fausse cassure est le defaut
     # nomme du motif ; le volume est la confirmation qu'on lui oppose.
     {"nom": "cassure_confirmee_volume_haussier",
      "motifs": ("breakout_up",),
-     "declencheur": "breakout_up", "predicats": ("volume_fort",)},
+     "declencheur": "breakout_up", "predicats": ("volume_fort",),
+     "fenetre": 0},
     {"nom": "cassure_confirmee_volume_baissier",
      "motifs": ("breakout_down",),
-     "declencheur": "breakout_down", "predicats": ("volume_fort",)},
+     "declencheur": "breakout_down", "predicats": ("volume_fort",),
+     "fenetre": 0},
 )
 
 # Un pic de volume : la bougie que le detecteur vient de voir porte au moins
@@ -426,25 +465,37 @@ def chaines_detectees(releve: dict[int, list], bougies,
     sortie: dict[int, list] = {}
     compte: dict[str, int] = {c["nom"]: 0 for c in chaines}
 
+    # ⚠️ Indexe par (motif, SENS), pas par motif seul. Un balayage haussier
+    # plus une cassure baissiere n'est pas une confluence, c'est une
+    # contradiction — la mesurer melangerait deux paris opposes.
+    ou: dict[tuple[str, str], set[int]] = {}
     for i, liste in releve.items():
-        par_nom: dict[str, list] = {}
         for s in liste:
-            par_nom.setdefault(_nom_motif(s), []).append(s)
-        for c in chaines:
-            requis = c["motifs"]
-            if not all(m in par_nom for m in requis):
-                continue
-            # ⚠️ Meme sens pour tous les maillons. Un balayage haussier plus
-            # une cassure baissiere n'est pas une confluence, c'est une
-            # contradiction — et la mesurer melangerait deux paris opposes.
-            sens = {_sens(s) for m in requis for s in par_nom[m]}
-            if len(sens) != 1:
-                continue
-            if not all(_PREDICATS[p](bougies, i) for p in c["predicats"]):
-                continue
-            base = par_nom[c["declencheur"]][0]
-            sortie.setdefault(i, []).append(_SetupChaine(c["nom"], base))
-            compte[c["nom"]] += 1
+            ou.setdefault((_nom_motif(s), _sens(s)), set()).add(i)
+
+    for c in chaines:
+        decl = c["declencheur"]
+        fen = int(c.get("fenetre", 0) or 0)
+        autres = [m for m in c["motifs"] if m != decl]
+        for sens in ("buy", "sell"):
+            for i in sorted(ou.get((decl, sens), ())):
+                # ⛔ « PUIS » : le maillon precede le declencheur, ou tombe sur
+                # la meme bougie. Accepter l'ordre inverse mesurerait une autre
+                # chaine sous le meme nom.
+                if not all(any((i - d) in ou.get((m, sens), ())
+                               for d in range(0, fen + 1)) for m in autres):
+                    continue
+                if not all(_PREDICATS[p](bougies, i) for p in c["predicats"]):
+                    continue
+                # 🔑 Le setup vient du DECLENCHEUR, a SON indice : les niveaux
+                # d'un maillon vieux de 30 bougies seraient perimes.
+                base = next((s for s in releve.get(i, ())
+                             if _nom_motif(s) == decl and _sens(s) == sens),
+                            None)
+                if base is None:
+                    continue
+                sortie.setdefault(i, []).append(_SetupChaine(c["nom"], base))
+                compte[c["nom"]] += 1
     return sortie, compte
 
 

@@ -19,7 +19,7 @@
   },
   "build": {
     "buildCommand": null,
-    "testCommand": "cd \"C:/Users/xav91/Scalping/scalping\" && (timeout 900 python -m pytest backend/tests -q -p no:randomly > /tmp/bat3.txt 2>&1; echo \"EXIT=$?\" >> /tmp/bat3.txt); tail -6 /tmp/bat3.txt",
+    "testCommand": "cd \"C:/Users/xav91/Scalping/scalping\" && (timeout 900 python -m pytest backend/tests -q -p no:randomly > /tmp/bat5.txt 2>&1; echo \"EXIT=$?\" >> /tmp/bat5.txt); tail -4 /tmp/bat5.txt",
     "lintCommand": null,
     "devCommand": null,
     "scripts": {}
@@ -399,6 +399,12 @@
       "type": "file"
     },
     {
+      "path": "backend\\services\\laboratoire_or.py",
+      "accessCount": 7,
+      "lastAccessed": 1789225004732,
+      "type": "file"
+    },
+    {
       "path": "backend\\services\\bloc_risque.py",
       "accessCount": 6,
       "lastAccessed": 1788865202508,
@@ -408,12 +414,6 @@
       "path": "scripts\\daily_recap.py",
       "accessCount": 6,
       "lastAccessed": 1788907193348,
-      "type": "file"
-    },
-    {
-      "path": "backend\\services\\laboratoire_or.py",
-      "accessCount": 5,
-      "lastAccessed": 1789223535616,
       "type": "file"
     },
     {

@@ -124,9 +124,33 @@ def test_le_hasard_produit_QUAND_MEME_des_cellules(hasard_pur):
 
 def test_un_edge_INJECTE_deplace_les_R_vers_le_haut(avec_edge, hasard_pur):
     """⛔ LE contrôle qui valide l'appareil. Si un mouvement réellement présent
-    ne déplace pas les mesures, les 224 `INSUFFISANT` ne veulent rien dire."""
+    ne déplace pas les mesures, les 224 `INSUFFISANT` ne veulent rien dire.
+
+    ⛔ **PORTÉE RESTREINTE AUX MOTIFS SIMPLES (2026-09-12).** Les chaînes de
+    confluence sont entrées dans le relevé ce jour-là, et ce test a rougi :
+
+        toutes cellules confondues   -0,041 avec edge   +0,014 sans
+        motifs simples SEULS         +0,047 avec edge   +0,014 sans
+        chaines seules               -0,926 avec edge   +0,004 sans
+
+    Le laboratoire allait bien : **une seule** cellule de chaîne,
+    `sweep_sur_order_block_baissier` à −0,93 R, tirait la moyenne de onze vers
+    le bas. Et ce −0,93 est JUSTE — l'edge injecté est haussier, une chaîne
+    baissière doit perdre. Le test moyennait donc des objets de natures
+    opposées et concluait que l'appareil ne mesurait plus rien.
+
+    🔑 L'injection vise des motifs, pas des combinaisons. Le contrôle positif
+    doit donc porter sur ce que l'injection touche, sinon il mesure la
+    dilution et non l'appareil.
+
+    ⚠️ Le contrôle NÉGATIF, lui, garde les chaînes — et il passe. C'est là que
+    le risque de fabrication se trouve : une chaîne qui inventerait un gagnant
+    sur du pur hasard. L'exclusion ici ne doit surtout pas s'y propager.
+    """
     def _r_moyen(res):
-        peuplees = [c for c in res["cellules"] if (c.get("n") or 0) >= 20]
+        peuplees = [c for c in res["cellules"]
+                    if (c.get("n") or 0) >= 20
+                    and not str(c.get("motif", "")).startswith("chaine:")]
         return sum(c["r_moyen"] for c in peuplees) / len(peuplees), len(peuplees)
 
     r_edge, n_edge = _r_moyen(avec_edge)

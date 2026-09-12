@@ -211,6 +211,85 @@ def test_une_chaine_ne_peut_JAMAIS_etre_armee():
         assert f"chaine:{c['nom']}" not in connus
 
 
+# ─── La fenetre temporelle : « PUIS », pas « ET » ───────────────────
+
+
+def test_un_maillon_ANTERIEUR_compte_dans_la_fenetre():
+    """⛔ MESURE DU 2026-09-12 sur 4 111 bougies d'or reelles :
+
+        liquidity_sweep_up   194 occurrences
+        bos_up               131 occurrences
+        au MEME indice       0
+        a 1, 2, 3, 5, 10 bougies d'ecart : 0
+        a 20 bougies d'ecart : 10
+
+    J'avais code « ET » quand le vocabulaire dit « PUIS ». Et les deux
+    detecteurs sont structurellement exclusifs : ils lisent la meme fenetre de
+    30 bougies et disent l'inverse l'un de l'autre — un balayage REJETTE un
+    extreme, une cassure CLOTURE au-dela du meme extreme.
+    """
+    ch = {"nom": "essai", "motifs": ("liquidity_sweep_up", "bos_up"),
+          "declencheur": "bos_up", "predicats": (), "fenetre": 30}
+    releve = {40: [_Setup("liquidity_sweep_up", "buy")],
+              60: [_Setup("bos_up", "buy")]}
+    out, compte = labo.chaines_detectees(releve, _bougies(80), chaines=(ch,))
+    assert 60 in out, "un maillon a 20 bougies d'ecart n'est pas vu"
+    assert compte["essai"] == 1
+
+
+def test_hors_de_la_fenetre_la_chaine_ne_se_declenche_PAS():
+    ch = {"nom": "essai", "motifs": ("liquidity_sweep_up", "bos_up"),
+          "declencheur": "bos_up", "predicats": (), "fenetre": 5}
+    releve = {40: [_Setup("liquidity_sweep_up", "buy")],
+              60: [_Setup("bos_up", "buy")]}
+    out, _ = labo.chaines_detectees(releve, _bougies(80), chaines=(ch,))
+    assert out == {}
+
+
+def test_le_maillon_POSTERIEUR_ne_compte_pas():
+    """« puis » a un sens : la condition precede le declencheur. Accepter
+    l'ordre inverse mesurerait une autre chaine sous le meme nom."""
+    ch = {"nom": "essai", "motifs": ("liquidity_sweep_up", "bos_up"),
+          "declencheur": "bos_up", "predicats": (), "fenetre": 30}
+    releve = {60: [_Setup("bos_up", "buy")],
+              70: [_Setup("liquidity_sweep_up", "buy")]}
+    out, _ = labo.chaines_detectees(releve, _bougies(90), chaines=(ch,))
+    assert out == {}
+
+
+def test_le_declencheur_reste_a_SON_indice():
+    """Le setup — donc le SL et le TP — vient du declencheur, pas du maillon
+    anterieur, dont les niveaux seraient perimes de 30 bougies."""
+    ch = {"nom": "essai", "motifs": ("liquidity_sweep_up", "bos_up"),
+          "declencheur": "bos_up", "predicats": (), "fenetre": 30}
+    releve = {40: [_Setup("liquidity_sweep_up", "buy", entree=1.0, stop=0.5)],
+              60: [_Setup("bos_up", "buy", entree=4000.0, stop=3960.0)]}
+    out, _ = labo.chaines_detectees(releve, _bougies(80), chaines=(ch,))
+    assert out[60][0].entry_price == pytest.approx(4000.0)
+
+
+def test_la_FENETRE_est_declaree_sur_chaque_chaine():
+    """⛔ Le garde-fou contre le reglage sur la donnee. N ne doit PAS etre
+    choisi pour que la chaine se declenche — ce serait de l'edge fabrique, et
+    le PBO de 0,579 dit ou ca mene. Les chaines sequentielles heritent de la
+    geometrie des detecteurs (le lookback de 30 de `_detect_breakout`,
+    partage par le balayage, le BOS et le CHoCH) ; les confirmations
+    simultanees valent 0."""
+    for c in labo.CHAINES:
+        assert "fenetre" in c, f"{c['nom']} ne declare pas sa fenetre"
+        assert c["fenetre"] in (0, labo.FENETRE_SEQUENCE), (
+            f"{c['nom']} : fenetre {c['fenetre']} — valeur libre, donc reglee")
+
+
+def test_une_fenetre_ABSENTE_vaut_zero_et_ne_leve_pas():
+    """Compatibilite : une chaine sans fenetre reste une co-occurrence."""
+    ch = {"nom": "essai", "motifs": ("bos_up",), "declencheur": "bos_up",
+          "predicats": ()}
+    out, _ = labo.chaines_detectees({60: [_Setup("bos_up", "buy")]},
+                                    _bougies(80), chaines=(ch,))
+    assert 60 in out
+
+
 def test_l_AGREGATION_ne_jette_pas_le_volume():
     """⛔ Le defaut silencieux trouve en cablant la confluence.
 
