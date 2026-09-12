@@ -1,13 +1,6 @@
-# 2026-09-12 — Track A × veto contrefactuel (auto)
-
-**Sample :** 971 réconciliés (INSUFFISANT — observer mais ne pas trancher)
-**Verdict :** insufficient
-
----
-
 # Track A × Veto géopolitique — analyse contrefactuelle
 
-**Généré :** 2026-09-12T06:01:25+00:00
+**Généré :** 2026-09-12T07:08:53+00:00
 **Source :** `shadow_setups` filtre `outcome IS NOT NULL AND geopolitical_features_json IS NOT NULL`
 **Échantillon :** 971 setups réconciliés
 **Groupe décisif (would VETO) :** 29 setups
