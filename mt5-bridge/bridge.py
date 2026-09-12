@@ -1976,6 +1976,63 @@ def _ouverture_utc(p) -> int | None:
     return int(brut - decalage)
 
 
+def _bougie_json(b, decalage: float) -> dict:
+    """Une ligne de `copy_rates_range` en JSON — prix, spread ET volumes.
+
+    ⛔ AJOUT DU 2026-09-12 : les volumes. `copy_rates_range` rend un tableau
+    structure dont les champs sont `time, open, high, low, close, tick_volume,
+    spread, real_volume`. Cette route en recopiait CINQ et laissait les deux
+    volumes derriere. Mesure du meme jour, en production :
+
+        XAU/USD   30 bougies | volume > 0 sur 0 | somme = 0
+        XAG/USD   30 bougies | volume > 0 sur 0 | somme = 0
+
+    Twelve Data, notre autre source, rend zero partout. Le laboratoire
+    construisait donc ses bougies avec `volume=0.0` EN DUR, et « strategie
+    Volume Profile » comme « confirmation par les volumes » etaient declarees
+    non implementables. Elles l'etaient : le pont voyait le volume et ne le
+    transportait pas.
+
+    ## ⚠️ `tv` et `rv` sont deux choses differentes, jamais fusionnees
+
+    `tick_volume` compte les CHANGEMENTS DE PRIX, pas les contrats echanges.
+    C'est ce que la quasi-totalite des indicateurs « volume » du retail
+    utilisent en forex et en CFD, faute d'autre chose. Le volume reellement
+    negocie n'existe que sur les FUTURES (COMEX GC/SI) et arrive dans `rv`,
+    nul chez la plupart des courtiers CFD.
+
+    Les additionner ou les confondre ferait passer un compte de ticks pour un
+    volume negocie — le genre de glissement de sens que ce depot paie ensuite
+    pendant des semaines.
+
+    ## ⛔ Un champ absent rend None, jamais 0
+
+    « pas de donnee » doit rester discernable de « aucune activite ». Rendre 0
+    ferait lire un marche mort la ou on n'a simplement rien mesure — c'est la
+    forme de silence deja payee quatre fois ici.
+    """
+    champs = b.dtype.names
+
+    def _si(nom):
+        return int(b[nom]) if nom in champs else None
+
+    return {
+        # Reconverti en UTC reel : l'appelant recoit des instants comparables
+        # a ses propres horodatages.
+        "t": datetime.fromtimestamp(
+            float(b["time"]) - decalage, tz=timezone.utc).isoformat(),
+        "o": float(b["open"]), "h": float(b["high"]),
+        "l": float(b["low"]), "c": float(b["close"]),
+        # Spread en POINTS, tel que MT5 le stocke par bougie. Ajoute le
+        # 2026-08-11 : la commission est nulle sur ces comptes et le swap
+        # negligeable (mesure sur 191 trades), donc le spread est le cout
+        # d'execution — et rien ne l'exposait.
+        "s": _si("spread"),
+        "tv": _si("tick_volume"),   # changements de prix — PAS des contrats
+        "rv": _si("real_volume"),   # contrats echanges — futures seulement
+    }
+
+
 @app.route("/rates", methods=["GET"])
 @require_api_key
 def rates():
@@ -2023,21 +2080,7 @@ def rates():
     if brut is None:
         return jsonify({"error": f"copy_rates_range a echoue: {mt5.last_error()}"}), 502
 
-    bougies = []
-    for b in brut[:MAX_BOUGIES]:
-        bougies.append({
-            # Reconverti en UTC reel : l'appelant recoit des instants comparables
-            # a ses propres horodatages.
-            "t": datetime.fromtimestamp(
-                float(b["time"]) - decalage, tz=timezone.utc).isoformat(),
-            "o": float(b["open"]), "h": float(b["high"]),
-            "l": float(b["low"]), "c": float(b["close"]),
-            # Spread en POINTS, tel que MT5 le stocke par bougie. Ajoute le
-            # 2026-08-11 : la commission est nulle sur ces comptes et le swap
-            # negligeable (mesure sur 191 trades), donc le spread est le cout
-            # d'execution — et rien ne l'exposait.
-            "s": int(b["spread"]) if "spread" in b.dtype.names else None,
-        })
+    bougies = [_bougie_json(b, decalage) for b in brut[:MAX_BOUGIES]]
 
     return jsonify({
         "pair": pair,

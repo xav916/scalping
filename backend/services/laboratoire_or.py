@@ -248,8 +248,29 @@ def detections(bougies, pair: str = PAIRE) -> dict[int, list]:
         d = x["t"]
         if not isinstance(d, datetime):
             d = datetime.fromisoformat(str(d).replace("Z", "+00:00"))
+        # ⛔ 2026-09-12 : le volume etait ECRASE PAR UN ZERO LITTERAL ici.
+        #
+        # C'etait juste tant que la seule source etait Twelve Data, qui rend
+        # zero partout (verifie le meme jour : 0 bougie a volume > 0 sur
+        # XAU/USD, XAG/USD, EUR/USD). Mais le laboratoire ne lit PAS Twelve
+        # Data — `_bougies_et_spread` interroge `/rates` du pont MT5, qui
+        # transporte desormais `tv`. Sans cette ligne, le volume traversait le
+        # reseau pour mourir a la frontiere.
+        #
+        # 🔑 `tv`, pas `rv` : `tick_volume` compte les CHANGEMENTS DE PRIX,
+        # `real_volume` compte les contrats et vaut zero chez les courtiers
+        # CFD. Prendre `rv` rendrait un profil vide en croyant mesurer le
+        # marche. Et `tv` doit rester nomme pour ce qu'il est : un compte de
+        # ticks, pas un volume negocie — le vrai volume n'existe que sur les
+        # futures (COMEX GC/SI).
+        #
+        # ⚠️ Un pont pas encore redeploye ne rend pas `tv` : on retombe sur
+        # zero plutot que de perdre la nuit. Verifie avant d'ecrire : AUCUN
+        # detecteur ne lit `volume`, donc ce cablage ne deplace aucun des 30
+        # verdicts existants.
         return Candle(timestamp=d, open=float(x["o"]), high=float(x["h"]),
-                      low=float(x["l"]), close=float(x["c"]), volume=0.0)
+                      low=float(x["l"]), close=float(x["c"]),
+                      volume=float(x.get("tv") or 0.0))
 
     out: dict[int, list] = {}
     for i in range(FENETRE, len(bougies)):
