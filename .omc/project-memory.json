@@ -19,7 +19,7 @@
   },
   "build": {
     "buildCommand": null,
-    "testCommand": "cd \"C:/Users/xav91/Scalping/scalping\" && (timeout 900 python -m pytest backend/tests -q -p no:randomly > /tmp/bat5.txt 2>&1; echo \"EXIT=$?\" >> /tmp/bat5.txt); tail -4 /tmp/bat5.txt",
+    "testCommand": "cd \"C:/Users/xav91/Scalping/scalping\" && (timeout 900 python -m pytest backend/tests -q -p no:randomly > /tmp/bat6.txt 2>&1; echo \"EXIT=$?\" >> /tmp/bat6.txt); tail -4 /tmp/bat6.txt",
     "lintCommand": null,
     "devCommand": null,
     "scripts": {}
@@ -393,15 +393,15 @@
       "type": "file"
     },
     {
-      "path": "backend\\services\\mt5_bridge.py",
-      "accessCount": 7,
-      "lastAccessed": 1789221076704,
+      "path": "backend\\services\\laboratoire_or.py",
+      "accessCount": 8,
+      "lastAccessed": 1789225930963,
       "type": "file"
     },
     {
-      "path": "backend\\services\\laboratoire_or.py",
+      "path": "backend\\services\\mt5_bridge.py",
       "accessCount": 7,
-      "lastAccessed": 1789225004732,
+      "lastAccessed": 1789221076704,
       "type": "file"
     },
     {

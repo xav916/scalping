@@ -209,27 +209,134 @@ def _sens(setup) -> str:
     return str(getattr(d, "value", d)).lower()
 
 
+# ─── Politiques de sortie ───────────────────────────────────────────
+#
+# ⛔ CE QUI MANQUAIT (comble le 2026-09-12). `_issue` ne connaissait qu'une
+# sortie : stop a -1 R, cible fixe, expiration. Donc rien de ce que « sortir
+# et refermer » veut dire — paliers, mise a zero du risque, stop suiveur.
+#
+# 🔑 COMPARAISON APPARIEE, PAS UN CROISEMENT DE CELLULES. Croiser 4 politiques
+# avec les cellules ferait passer 2 356 cellules a ~9 400, et le plafond du
+# hasard de 3,66 a 4,28 : on paierait en exigence une question qu'on peut
+# poser autrement. La vraie question n'est pas « quelle cellule gagne avec
+# quelle sortie », c'est « la gestion de sortie ajoute-t-elle quelque chose a
+# la sortie simple ? ». Memes trades, memes stops, seule la sortie change.
+#
+# ⛔ LE PRIOR A RESPECTER. Mesure du 2026-08-11 : la gestion de sortie a
+# DETRUIT de la performance sur l'or, -0,329 R. Ce banc existe pour reproduire
+# ou refuter ce chiffre, pas pour justifier une gestion decidee d'avance.
+#
+# ⚠️ Une politique qui ne se distingue pas de la sortie simple n'est pas
+# « neutre, donc on la prend » : c'est un degre de liberte de plus pour rien.
+POLITIQUES_SORTIE: tuple[str, ...] = (
+    "cible_unique",         # la reference — tout le passe a ete mesure avec
+    "equilibre_a_1R",       # stop a l'entree des que +1 R est touche
+    "moitie_a_mi_chemin",   # la moitie sort a mi-objectif, le reste court
+)
+
+
 def _issue(bougies, depart: int, entree: float, risque: float, objectif_r: float,
-           sens: int, cout: float) -> tuple[float, int]:
+           sens: int, cout: float, politique: str = "cible_unique"
+           ) -> tuple[float, int]:
     """Ce que le trade aurait donné, en R, et l'indice de sa sortie.
 
-    ⛔ Le stop est testé AVANT l'objectif : dans une bougie qui contient les
-    deux, on ne sait pas lequel est venu en premier, et supposer l'objectif
-    fabriquerait une performance."""
+    ⛔ Le stop est testé AVANT l'objectif, dans TOUTE politique : dans une
+    bougie qui contient les deux, on ne sait pas lequel est venu en premier, et
+    supposer l'objectif fabriquerait une performance.
+
+    ⛔ Une politique inconnue LÈVE. Retomber en silence sur la sortie simple
+    ferait lire « cette gestion ne change rien » alors qu'elle n'a jamais
+    tourné — la forme de silence déjà payée quatre fois ici.
+
+    ⚠️ Le coût se paie à CHAQUE fermeture, au prorata de la part fermée. Une
+    sortie gratuite ferait gagner toutes les politiques qui coupent souvent.
+    """
+    if politique not in POLITIQUES_SORTIE:
+        raise KeyError(f"politique de sortie inconnue : {politique!r} — "
+                       f"connues : {POLITIQUES_SORTIE}")
     j = depart
     fin = min(len(bougies), depart + MAX_BOUGIES_TENUE)
+    stop_r = -1.0              # le stop courant, en R
+    part = 1.0                 # la part encore ouverte
+    acquis = 0.0               # ce qui est deja encaisse, coût déduit
+    mi = objectif_r / 2.0
+
     while j < fin:
         b = bougies[j]
         haut, bas = float(b["h"]), float(b["l"])
         pire = min(sens * (haut - entree), sens * (bas - entree)) / risque
         mieux = max(sens * (haut - entree), sens * (bas - entree)) / risque
-        if pire <= -1.0:
-            return -1.0 - cout, j
+        if pire <= stop_r:
+            return acquis + part * (stop_r - cout), j
         if mieux >= objectif_r:
-            return objectif_r - cout, j
+            return acquis + part * (objectif_r - cout), j
+        # ⚠️ Les deux gestes ci-dessous s'arment APRÈS les sorties : s'armer
+        # avant laisserait une bougie déclencher sa propre protection, ce qui
+        # est du futur lu à l'envers.
+        if politique == "equilibre_a_1R" and mieux >= 1.0 and stop_r < 0.0:
+            stop_r = 0.0
+        if politique == "moitie_a_mi_chemin" and mieux >= mi and part > 0.5:
+            acquis += 0.5 * (mi - cout)
+            part = 0.5
         j += 1
+
     dernier = bougies[min(j, len(bougies) - 1)]
-    return sens * (float(dernier["c"]) - entree) / risque - cout, j
+    reste = sens * (float(dernier["c"]) - entree) / risque
+    return acquis + part * (reste - cout), j
+
+
+def comparer_sorties(bougies, releve: dict[int, list], motif: str, sens: str,
+                     spread: float,
+                     politiques: tuple[str, ...] | None = None) -> dict:
+    """Chaque politique, sur EXACTEMENT les mêmes entrées.
+
+    ⛔ L'INVARIANT. Le rejeu est séquentiel (`i = sortie + 1`) : une sortie
+    différente décale les entrées suivantes. Si chaque politique rejouait
+    seule, elles ne verraient pas les mêmes trades, et l'écart mesurerait une
+    différence de POPULATION au lieu d'une différence de GESTION.
+
+    ⇒ La suite des entrées est fixée par la politique de RÉFÉRENCE, puis
+    chaque politique est rejouée sur ces indices-là.
+    """
+    politiques = politiques or POLITIQUES_SORTIE
+    entrees: list[tuple[int, float, float, float]] = []
+    i, n = FENETRE, len(bougies)
+    while i < n:
+        candidats = [s for s in releve.get(i, ())
+                     if _nom_motif(s) == motif and _sens(s) == sens]
+        if not candidats:
+            i += 1
+            continue
+        s = candidats[0]
+        entree = float(s.entry_price)
+        risque = abs(entree - float(s.stop_loss))
+        if risque <= 0 or entree <= 0 or risque / entree < PLACEBO_PCT:
+            i += 1
+            continue
+        objectif_r = abs(float(s.take_profit_1) - entree) / risque
+        if objectif_r <= 0:
+            i += 1
+            continue
+        signe = 1 if sens == "buy" else -1
+        _, sortie = _issue(bougies, i, entree, risque, objectif_r, signe,
+                           spread / risque, politique=POLITIQUES_SORTIE[0])
+        entrees.append((i, entree, risque, objectif_r))
+        i = sortie + 1
+
+    if not entrees:
+        return {}
+    signe = 1 if sens == "buy" else -1
+    out: dict[str, dict] = {}
+    for p in politiques:
+        R = [_issue(bougies, i, e, r, o, signe, spread / r, politique=p)[0]
+             for i, e, r, o in entrees]
+        moyenne, t = _stat(R)
+        out[p] = {"n": len(R), "r_moyen": moyenne, "t": t, "r_total": sum(R)}
+    # ⚠️ L'écart à la référence est le seul chiffre qui réponde à la question.
+    ref = out.get(POLITIQUES_SORTIE[0], {}).get("r_moyen", 0.0)
+    for p, d in out.items():
+        d["delta_reference"] = d["r_moyen"] - ref
+    return out
 
 
 def detections(bougies, pair: str = PAIRE) -> dict[int, list]:
