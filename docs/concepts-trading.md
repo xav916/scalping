@@ -316,6 +316,46 @@ nuits pour trancher, et un écart modeste ne voudra rien dire.
 ⚠️ Les fréquences (0,59 % à 3,01 %) sont du même ordre que les motifs
 existants : ni bruit permanent, ni détecteur muet.
 
+---
+
+### Zone d'accumulation — déclarée le 2026-09-14, non codée
+
+⛔ **Ce concept est NOTRE formalisation, et il faut le dire fort.** L'étape 2
+des cinq de Vivien est « trouver une zone d'accumulation ». C'est tout ce
+qu'on en sait : **aucun seuil n'a été publié**. Les quatre nombres ci-dessous
+sont les nôtres. Les présenter comme sa définition fabriquerait « un robot
+inspiré de Vivien » — exactement ce qu'il a été demandé d'éviter.
+
+- **Idée** : une accumulation, c'est le prix qui **se resserre** après avoir
+  bougé, et qui **se concentre** sur peu de niveaux. Les deux conditions sont
+  nécessaires : un marché qui se resserre en balayant toute sa fourchette n'est
+  pas une accumulation, c'est une dérive lente.
+- **Règle** (les quatre seuils sont déclarés, pas dérivés) :
+  - `RECENTES = 10` dernières bougies — la zone candidate ;
+  - `AVANT = 20` bougies juste avant — la référence de mouvement ;
+  - **compression** : `amplitude(RECENTES) <= 0,60 × amplitude(AVANT)` ;
+  - **concentration** : la **zone de valeur** des `RECENTES` couvre
+    `<= 0,50 ×` leur amplitude.
+- 🔑 La concentration est calculée sur le **profil de ticks**, pas sur le TPO :
+  c'est ce que l'étape 3 demande (« tracer le Volume Profile sur cette zone »).
+  ⚠️ Sans volume, le prédicat répond **NON** — même règle que `volume_fort`.
+  Il ne retombe pas sur le temps.
+- ⛔ **Ce n'est pas un motif, c'est un CONTEXTE.** Une zone d'accumulation ne
+  dit ni d'acheter ni de vendre : elle n'a pas de sens. En faire un
+  `PatternType` créerait deux motifs directionnels qui n'existent pas. C'est
+  donc un **prédicat** de chaîne, comme `volume_fort` et les sessions.
+- **Chaîne déclarée** : `prise_en_accumulation` = `liquidity_sweep` **dans**
+  une zone d'accumulation. C'est notre lecture des étapes 2 + 4.
+- **Prédiction falsifiable** : `chaine:prise_en_accumulation_baissier` doit
+  rendre un **R moyen supérieur** à `liquidity_sweep_down` seul, même
+  instrument, même échelle. Si prendre la liquidité **dans** une accumulation
+  ne vaut pas mieux que la prendre n'importe où, le contexte n'ajoute rien.
+- 🔑 L'inclusion est **stricte** — la chaîne ne se déclenche que sur des
+  bougies où le balayage se déclenche déjà. La comparaison est donc
+  **appariée**, comme pour la double prise, et non chevauchante comme pour les
+  trois maillons. C'est la forme la plus lisible.
+- **Coût** : 2 chaînes, ~160 cellules, le plafond du hasard monte encore.
+
 ⚠️ **Ce que ces trois coûtent à tout le monde.** Six motifs de plus, soit
 environ **480 cellules** sur les 20 instruments — le plafond du hasard monte
 pour **toutes** les cellules existantes. C'est le prix assumé de la chaîne
