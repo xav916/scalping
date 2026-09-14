@@ -133,3 +133,67 @@ def test_le_LABORATOIRE_ne_passe_JAMAIS_par_l_extrapolation():
     releve = labo.detections(ds, "XAU/USD")
     assert releve, "releve vide : le test ne mesurerait rien"
     assert max(releve) <= len(ds) - 1
+
+
+# ─── La serie longue : d'ou vient-elle ? ────────────────────────────
+
+def _code_seul(objet) -> str:
+    """Le CODE d'un module ou d'une fonction, sans commentaires ni docstrings.
+
+    ⛔ **Pose apres m'etre fait avoir TROIS fois dans la meme journee.** Un
+    test qui cherche un mot dans `inspect.getsource` lit aussi la phrase qui
+    explique pourquoi ce mot ne doit pas exister :
+
+        « TOUS les comptes »  -> interdit jusque dans le commentaire qui le citait
+        « MARGE »             -> idem
+        « fetch_candles »     -> idem
+
+    Trois fois le meme faux positif. On juge le CODE.
+    """
+    import ast
+    import inspect
+
+    arbre = ast.parse(inspect.getsource(objet))
+    for n in ast.walk(arbre):
+        if isinstance(n, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef,
+                          ast.ClassDef)) and n.body:
+            premier = n.body[0]
+            if (isinstance(premier, ast.Expr)
+                    and isinstance(premier.value, ast.Constant)
+                    and isinstance(premier.value.value, str)):
+                n.body = n.body[1:] or [ast.Pass()]
+    return ast.unparse(arbre)      # `unparse` ne rend jamais les commentaires
+
+
+def test_la_serie_longue_ne_passe_PAS_par_le_cache_partage():
+    """⛔ Le cache de `price_service` est indexe sur `(paire, intervalle)`,
+    SANS la taille. Demander 480 bougies d'or par ce chemin en servirait 480 a
+    tous les autres consommateurs pendant le TTL — dont `detect_patterns`, dont
+    `_detect_poc_return` calcule son profil sur toute la liste recue. Des
+    signaux qui tradent de l'argent reel auraient bouge sans qu'aucun test ne
+    le dise.
+    """
+    code = _code_seul(cp)
+    assert "fetch_candles" not in code, (
+        "la serie longue passe par price_service : le cache partage la "
+        "servirait aux autres consommateurs")
+    assert "/rates" in code, "la serie longue doit venir du pont"
+
+
+def test_la_serie_longue_vient_de_la_MEME_source_que_le_laboratoire():
+    """🔑 Le pont sert l'historique gratuitement — et c'est la source que le
+    laboratoire mesure. Production et laboratoire voient donc les memes prix,
+    ce qui est le point meme de « eprouver les methodes du labo »."""
+    from backend.services import reglage_or as rg
+    assert "DESTINATION_MESUREE" in _code_seul(cp), (
+        "la source doit etre celle que le labo mesure, pas une autre")
+    assert rg.DESTINATION_MESUREE
+
+
+def test_un_pont_MUET_ne_casse_pas_le_cycle(monkeypatch):
+    """Fail-soft : une chaine indisponible ne doit pas couter la detection des
+    motifs simples, qui tradent, eux."""
+    def _boum(*a, **k):
+        raise RuntimeError("pont injoignable")
+    monkeypatch.setattr(cp, "_bougies_du_pont", _boum)
+    assert cp.chaines_de_la_paire("XAU/USD") == []

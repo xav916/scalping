@@ -202,6 +202,27 @@ async def run_analysis_cycle() -> None:
             if candles:
                 patterns = detect_patterns(candles, pair)
                 all_patterns.extend(patterns)
+                # ⛔ LES CHAINES (2026-09-14). Detectees a part, sur une serie
+                # LONGUE lue chez le pont — jamais sur `candles`, qui doit
+                # garder exactement CANDLE_COUNT bougies : `_detect_poc_return`
+                # calcule son profil sur toute la liste recue, et lui en passer
+                # plus deplacerait des signaux qui tradent de l'argent reel.
+                #
+                # ⚠️ L'OR SEULEMENT pour l'instant. Et elles ne sont ARMEES
+                # NULLE PART : la liste blanche du pont est fail-closed sur
+                # `PatternType`, et une chaine n'en est pas un. Ce cycle les
+                # OBSERVE, il ne les trade pas.
+                try:
+                    from backend.services.chaines_production import (
+                        chaines_de_la_paire)
+                    vues = chaines_de_la_paire(pair)
+                    if vues:
+                        logger.info(
+                            "chaines[%s] : %s", pair,
+                            [f"{c.pattern}/{c.sens}" for c in vues])
+                except Exception as e:  # noqa: BLE001
+                    # Fail-soft : les motifs simples tradent, pas les chaines.
+                    logger.warning("chaines[%s] indisponibles : %s", pair, e)
                 # ⚠️ Echelles AGREGEES (2026-09-08). Le chemin 5 min ne voit
                 # jamais plus de 2 h 30 et n'agrege rien. Mesure prealable sur
                 # 60 jours, spread facture : le R moyen CROIT avec l'echelle

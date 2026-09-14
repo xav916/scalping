@@ -83,3 +83,92 @@ def detecter_chaines(candles: list[Candle], pair: str) -> list[ChaineDetectee]:
     if out:
         logger.info("chaines[%s] : %s", pair, [c.pattern for c in out])
     return out
+
+
+# ─── La serie longue ────────────────────────────────────────────────
+#
+# ⛔ PAS `price_service.fetch_candles`. Son cache est indexe sur
+# `(paire, intervalle)`, SANS la taille : demander 480 bougies d'or par ce
+# chemin en servirait 480 a tous les autres consommateurs pendant le TTL —
+# dont `detect_patterns`, dont `_detect_poc_return` calcule son profil sur
+# TOUTE la liste recue. Des signaux qui tradent de l'argent reel auraient
+# bouge sans qu'aucun test ne le dise.
+#
+# 🔑 La serie vient du PONT, pour deux raisons qui vont dans le meme sens :
+#   - il sert l'historique gratuitement, la ou le quota Twelve Data a deja
+#     sature (954 refus en 429) ;
+#   - c'est la source que le LABORATOIRE mesure. Production et laboratoire
+#     voient donc les memes prix, ce qui est le point meme de « eprouver les
+#     methodes du labo ».
+#
+# ⚠️ CONSEQUENCE ASSUMEE : dans un meme cycle, les motifs simples sont
+# detectes sur Twelve Data et les chaines sur le pont. Les deux sources
+# divergent legerement. C'est un choix, pas un oubli — et il aligne la chaine
+# sur ce qui l'a mesuree plutot que sur ce qui l'entoure.
+
+# 400 pour le biais de l'echelle superieure, + la fenetre de detection et la
+# fenetre de sequence. En dessous, les chaines de biais se tairaient — en
+# silence, ce que ce module existe pour empecher.
+CHAINES_BOUGIES = 480
+
+# ⛔ L'OR SEULEMENT (choix de Xavier, 2026-09-14). Etendre aux 20 instruments
+# multiplierait par vingt le cout par cycle pour des chaines qu'on ne cherche
+# pas encore a eprouver ailleurs.
+CHAINES_PAIRES: frozenset[str] = frozenset({"XAU/USD"})
+
+
+def _bougies_du_pont(pair: str, combien: int) -> list[Candle]:
+    """Les `combien` dernieres bougies 5 min, lues chez le courtier MESURE."""
+    import json
+    import os
+    import urllib.parse
+    import urllib.request
+    from datetime import datetime, timedelta, timezone
+
+    from backend.services.destinations_registry import DESTINATIONS
+    from backend.services.reglage_or import DESTINATION_MESUREE
+
+    d = DESTINATIONS[DESTINATION_MESUREE]
+    base = os.environ[d.url_env].rstrip("/")
+    entetes = {getattr(d, "key_header", None) or "X-API-Key": os.environ[d.key_env]}
+    fin = datetime.now(timezone.utc)
+    debut = fin - timedelta(minutes=5 * (combien + 20))   # marge pour les trous
+    q = urllib.parse.urlencode({
+        "pair": pair.replace("/", ""), "timeframe": "M5",
+        "from": debut.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "to": fin.strftime("%Y-%m-%dT%H:%M:%SZ")})
+    with urllib.request.urlopen(urllib.request.Request(
+            base + "/rates?" + q, headers=entetes), timeout=30) as r:
+        brut = json.load(r).get("bougies") or []
+    vus, propre = set(), []
+    for x in brut:
+        if x["t"] not in vus:
+            vus.add(x["t"])
+            propre.append(x)
+    propre.sort(key=lambda x: x["t"])
+    from datetime import datetime as _dt
+    return [Candle(
+        timestamp=_dt.fromisoformat(str(x["t"]).replace("Z", "+00:00")),
+        open=float(x["o"]), high=float(x["h"]), low=float(x["l"]),
+        close=float(x["c"]), volume=float(x.get("tv") or 0.0))
+        for x in propre[-combien:]]
+
+
+def chaines_de_la_paire(pair: str) -> list[ChaineDetectee]:
+    """Les chaines de cette paire, maintenant. `[]` si elle n'est pas suivie.
+
+    ⚠️ **Fail-soft.** Une chaine indisponible ne doit pas couter la detection
+    des motifs simples — eux tradent deja.
+    """
+    if pair not in CHAINES_PAIRES:
+        return []
+    try:
+        candles = _bougies_du_pont(pair, CHAINES_BOUGIES)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("chaines[%s] : serie longue indisponible (%s)", pair, e)
+        return []
+    if len(candles) < CHAINES_BOUGIES // 2:
+        logger.warning("chaines[%s] : %d bougies seulement — ignore",
+                       pair, len(candles))
+        return []
+    return detecter_chaines(candles, pair)
