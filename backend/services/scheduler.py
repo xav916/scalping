@@ -216,6 +216,38 @@ async def run_analysis_cycle() -> None:
                     from backend.services.chaines_production import (
                         chaines_de_la_paire)
                     vues = chaines_de_la_paire(pair)
+                    for c in vues:
+                        # ⛔ LE DERNIER MAILLON (2026-09-15). Sans ce pas, le
+                        # scan ne faisait que LOGGER : ecrire une chaine dans
+                        # `CHAINES_AUTORISEES` n'aurait rien arme, et le
+                        # silence qui aurait suivi aurait ressemble a « la
+                        # chaine ne se declenche pas ».
+                        #
+                        # 🔑 Le setup est celui du DECLENCHEUR — entree, stop
+                        # et cible viennent du chemin deja eprouve. Seul le nom
+                        # de la chaine est ajoute : c'est lui qui ouvrira la
+                        # porte, et seulement pour ce setup-la.
+                        #
+                        # ⚠️ Horizon `5min` : le laboratoire mesure x1, x3, x6,
+                        # x12 — 5 min a 1 h. Il n'existe AUCUNE echelle 4 h,
+                        # donc aucune chaine 4 h n'est mesuree par quoi que ce
+                        # soit. Poser un horizon non mesure armerait une regle
+                        # que rien n'eprouve.
+                        #
+                        # ⚠️ Les prix viennent du PONT (la source que le labo
+                        # mesure), pas de Twelve Data comme le reste du cycle.
+                        # Le pont recalcule SL et TP depuis le fill, donc un
+                        # ecart d'entree est absorbe.
+                        base = getattr(c.setup, "_base", None)
+                        if base is None:
+                            continue
+                        try:
+                            all_trade_setups.append(base.model_copy(
+                                update={"chaine": c.pattern,
+                                        "horizon": "5min"}))
+                        except Exception as err:  # noqa: BLE001
+                            logger.warning("chaines[%s] : setup illisible (%s)",
+                                           pair, err)
                     if vues:
                         logger.info(
                             "chaines[%s] : %s", pair,

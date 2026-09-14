@@ -700,6 +700,29 @@ def _patterns_autorises(setup, dest):
     if extras:
         base |= set(extras)
 
+    # ⛔ OUVERTURE PAR CHAINE (2026-09-15), appliquee AVANT la couche
+    # soustractive du laboratoire — et c'est l'ordre qui compte : ce que le
+    # labo a ferme ne doit PAS pouvoir etre rouvert en armant une chaine,
+    # sinon armer contournerait un verdict.
+    #
+    # 🔑 Une chaine armee n'ouvre QUE le motif de son propre declencheur, et
+    # seulement pour ce setup-la : un setup sans `chaine`, meme motif, meme
+    # destination, reste refuse. Elle n'elargit la porte pour personne d'autre.
+    _chaine = getattr(setup, "chaine", None)
+    if _chaine:
+        try:
+            from backend.services.chaines_autorisees import autorisee
+            _dest_c = getattr(dest, "destination_id", None) if dest else None
+            if autorisee(_chaine, _dest_c, getattr(setup, "horizon", None)):
+                _motif = getattr(getattr(setup, "pattern", None), "value", None)
+                if _motif:
+                    base = base | {str(_motif)}
+                    logger.info("chaine %s armee sur %s : %s ouvert",
+                                _chaine, _dest_c, _motif)
+        except Exception as e:  # noqa: BLE001
+            # ⛔ fail-CLOSED : un registre illisible n'ouvre rien.
+            logger.warning("registre des chaines illisible : %s", e)
+
     # ⛔ Couche SOUSTRACTIVE du laboratoire de l'or, appliquee EN DERNIER
     # (2026-09-08). Ce que le labo ferme ne peut etre re-ouvert par aucune
     # couche au-dessus : c'est le seul ordre qui rende la decision sure.
