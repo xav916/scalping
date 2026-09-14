@@ -402,7 +402,8 @@ def comparer_sorties_global(bougies, releve: dict[int, list], spread: float,
     return out
 
 
-def detections(bougies, pair: str = PAIRE) -> dict[int, list]:
+def detections(bougies, pair: str = PAIRE,
+               depuis: int | None = None) -> dict[int, list]:
     """Tous les setups détectables, indice par indice. Calculé UNE fois.
 
     🔑 Sans cette mise en commun, mesurer 10 motifs × 4 échelles demanderait 40
@@ -442,8 +443,13 @@ def detections(bougies, pair: str = PAIRE) -> dict[int, list]:
                       low=float(x["l"]), close=float(x["c"]),
                       volume=float(x.get("tv") or 0.0))
 
+    # ⚠️ `depuis` existe pour la PRODUCTION : relever toute la serie
+    # demanderait un passage de detection par bougie, soit des centaines par
+    # cycle de cinq minutes. Le laboratoire, lui, releve tout — il en a le
+    # temps, et il en a besoin.
     out: dict[int, list] = {}
-    for i in range(FENETRE, len(bougies)):
+    debut = FENETRE if depuis is None else max(FENETRE, int(depuis))
+    for i in range(debut, len(bougies) + (0 if depuis is None else 1)):
         fen = [_obj(x) for x in bougies[i - FENETRE:i]]
         trouves = []
         for motif in detect_patterns(fen, pair):
@@ -701,6 +707,21 @@ def _instant(bougies, i: int):
     `_agreger_brut`. Ne gerer qu'une forme rendrait les sessions muettes sur
     M15, M30 et H1 — en silence, exactement comme le volume l'a ete.
     """
+    # ⛔ L'INDICE D'ENTREE PEUT NE PAS ENCORE EXISTER (2026-09-14). Le
+    # laboratoire lit `bougies[i]` : la bougie sur laquelle on ENTRE, une de
+    # plus que ce que le detecteur a vu. Elle existe toujours dans un rejeu.
+    # En PRODUCTION elle n'est pas encore formee — et `None` rendait alors
+    # toutes les chaines de session muettes, en silence. Mesure du jour : le
+    # labo voyait `cassure_killzone_londres_haussier`, la production rien.
+    #
+    # 🔑 On EXTRAPOLE l'horodatage de la bougie a venir depuis le pas de la
+    # serie. Le laboratoire, lui, ne passe jamais par ce chemin : sa boucle
+    # s'arrete a `len - 1`. Aucune mesure existante ne bouge.
+    if i == len(bougies) >= 2:
+        avant, dernier = _instant(bougies, i - 2), _instant(bougies, i - 1)
+        if avant is None or dernier is None:
+            return None
+        return dernier + (dernier - avant)
     if not (0 <= i < len(bougies)):
         return None
     t = bougies[i].get("t")
