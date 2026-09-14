@@ -120,16 +120,16 @@ def test_une_chaine_DETECTEE_devient_un_SETUP_qui_porte_son_nom():
     import inspect
     from backend.services import scheduler
     src = inspect.getsource(scheduler)
-    # ⚠️ On ancre sur la BOUCLE, pas sur l'import : `chaines_de_la_paire`
-    # apparait d'abord dans un `from ... import`, et une fenetre de 1 400
-    # caracteres a partir de la ratait le code. Le test echouait alors pour une
-    # raison etrangere a ce qu'il mesure.
-    i = src.index("for c in vues:")
-    bloc = src[i:i + 2000]
-    assert "all_trade_setups.append" in bloc, (
+    # ⚠️ ANCRAGE SUR DES MARQUEURS, PAS SUR UNE FENETRE DE CARACTERES. Mes
+    # deux premieres versions decoupaient N caracteres apres un point de
+    # depart : elles ont casse deux fois de suite parce que le bloc grossit a
+    # chaque commentaire ajoute. Un test qui echoue quand on documente le code
+    # ne mesure pas ce qu'il pretend.
+    assert 'update={"chaine": c.pattern' in src, (
+        "aucun setup ne porte le nom de la chaine")
+    assert "all_trade_setups.append(_sc)" in src, (
         "les chaines detectees ne deviennent pas des setups : rien ne peut "
         "partir, quoi qu'on ecrive dans l'.env")
-    assert '"chaine": c.pattern' in bloc
 
 
 def test_le_setup_de_chaine_porte_l_horizon_MESURE():
@@ -143,6 +143,27 @@ def test_le_setup_de_chaine_porte_l_horizon_MESURE():
     import inspect
     from backend.services import scheduler
     src = inspect.getsource(scheduler)
-    i = src.index("for c in vues:")
-    assert '"5min"' in src[i:i + 2000], (
+    assert '"horizon": "5min"' in src, (
         "l'horizon du setup de chaine doit etre celui reellement mesure")
+
+
+def test_le_setup_de_chaine_est_SCORE_comme_les_autres():
+    """⛔ Mesure du 2026-09-15 : sans enrichissement, un setup de chaine arrive
+    avec `confidence_score = 0` et 0 sur 40 passe le seuil du pont (66). On
+    aurait arme du THEATRE — rien ne serait jamais parti, et le silence aurait
+    ressemble a « la chaine ne se declenche pas ».
+
+    🔑 Une chaine ouvre la porte du MOTIF. Elle n'achete aucun passe-droit sur
+    le score, le verdict ou les autres refus.
+    """
+    import inspect
+    from backend.services import scheduler
+    src = inspect.getsource(scheduler)
+    # ⚠️ On COMPACTE les espaces au lieu d'ecrire un saut de ligne dans le
+    # motif recherche : le code est indente, et un test qui casse a la
+    # premiere reindentation ne mesure pas ce qu'il pretend.
+    compact = " ".join(src.split())
+    assert "enrich_trade_setup( _sc," in compact, (
+        "le setup de chaine n'est pas score : il sera filtre en silence")
+    assert "compute_verdict( _sc," in compact, (
+        "le setup de chaine n'a pas de verdict")

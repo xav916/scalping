@@ -242,9 +242,43 @@ async def run_analysis_cycle() -> None:
                         if base is None:
                             continue
                         try:
-                            all_trade_setups.append(base.model_copy(
+                            _sc = base.model_copy(
                                 update={"chaine": c.pattern,
-                                        "horizon": "5min"}))
+                                        "horizon": "5min"})
+                            # ⛔ LE SETUP DE CHAINE PASSE PAR LES MEMES PORTES
+                            # (2026-09-15). Sans cet enrichissement il arrive
+                            # avec `confidence_score = 0` : mesure du jour, 0
+                            # sur 40 passeraient le seuil du pont (66). J'aurais
+                            # arme du THEATRE — rien ne serait jamais parti, et
+                            # le silence aurait ressemble a « la chaine ne se
+                            # declenche pas ».
+                            #
+                            # 🔑 Meme score, meme verdict, memes refus que
+                            # n'importe quel setup. Une chaine n'achete AUCUN
+                            # passe-droit : elle ouvre seulement la porte du
+                            # motif, le reste doit etre merite.
+                            enrich_trade_setup(
+                                _sc,
+                                volatility=vol_map.get(pair),
+                                trend=trend_map.get(pair),
+                                events=economic_events,
+                            )
+                            _vc = coaching.compute_verdict(
+                                _sc, volatility=vol_map.get(pair),
+                                trend=trend_map.get(pair),
+                                events=economic_events,
+                                h1_trend=compute_h1_trend(
+                                    h1_candles.get(pair, [])))
+                            _sc.verdict_action = _vc["action"]
+                            _sc.verdict_summary = _vc["summary"]
+                            _sc.verdict_reasons = _vc["reasons"]
+                            _sc.verdict_warnings = _vc["warnings"]
+                            _sc.verdict_blockers = _vc["blockers"]
+                            logger.info(
+                                "chaines[%s] %s : confiance %.1f, verdict %s",
+                                pair, c.pattern, _sc.confidence_score,
+                                _sc.verdict_action)
+                            all_trade_setups.append(_sc)
                         except Exception as err:  # noqa: BLE001
                             logger.warning("chaines[%s] : setup illisible (%s)",
                                            pair, err)
