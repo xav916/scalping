@@ -367,6 +367,37 @@ inspiré de Vivien » — exactement ce qu'il a été demandé d'éviter.
   trois maillons. C'est la forme la plus lisible.
 - **Coût** : 2 chaînes, ~160 cellules, le plafond du hasard monte encore.
 
+---
+
+### Biais de l'échelle supérieure — déclaré le 2026-09-14, non codé
+
+- **Idée** : le premier maillon de la chaîne est **le contexte**. Un balayage
+  haussier pris à contre-courant de la structure large n'est pas le même trade
+  que le même balayage dans le sens du contexte.
+- ⛔ **Le piège que ce concept évite** : agréger les bougies en H4 fixe ne
+  voudrait rien dire aux échelles supérieures — un « biais H4 » mesuré sur des
+  bougies d'une heure serait un biais de 8 jours sous le même nom. Le biais est
+  donc **relatif à l'échelle mesurée**.
+- **Règle** : `tendance_de_structure` — celle qui existe déjà, qui coupe une
+  fenêtre en deux et exige *à la fois* un plus-haut **et** un plus-bas
+  supérieurs — appliquée à une fenêtre **8 × plus longue** que celle des
+  détecteurs (`8 × 30 = 240` bougies). À l'échelle 5 min, cela regarde 20 h de
+  marché : l'ordre de grandeur du H4.
+- 🔑 **Un seul réglage neuf** : le facteur 8. Tout le reste est réutilisé —
+  `_tendance_de_structure` n'a aucun seuil propre, et la fenêtre de 30 est
+  celle de `breakout` et du balayage.
+- **Chaînes déclarées** : `sweep_avec_biais_haussier` /
+  `sweep_avec_biais_baissier` = `liquidity_sweep` **dans le sens** de la
+  structure large.
+- **Prédiction falsifiable** : la chaîne doit rendre un **R moyen supérieur**
+  à `liquidity_sweep` seul, même instrument, même échelle. Si prendre la
+  liquidité dans le sens du contexte ne vaut pas mieux que la prendre à
+  contre-courant, le contexte n'ajoute rien — et le premier maillon de la
+  chaîne serait décoratif.
+- 🔑 Inclusion **stricte**, donc comparaison **appariée** : la chaîne ne se
+  déclenche que là où le balayage se déclenche déjà.
+- **Coût** : 2 chaînes, ~160 cellules de plus.
+
 ⚠️ **Ce que ces trois coûtent à tout le monde.** Six motifs de plus, soit
 environ **480 cellules** sur les 20 instruments — le plafond du hasard monte
 pour **toutes** les cellules existantes. C'est le prix assumé de la chaîne
