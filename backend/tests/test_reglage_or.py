@@ -222,7 +222,15 @@ def test_la_cascade_de_motifs_SOUSTRAIT_les_fermetures_EN_DERNIER():
 
 def test_un_motif_FERME_disparait_vraiment_des_motifs_autorises(monkeypatch):
     """🔑 Le test qui compte : la décision de la nuit doit changer ce que la
-    production autorise, sans redéploiement."""
+    production autorise, sans redéploiement.
+
+    ⚠️ **La destination a change le 2026-09-14** : elle valait `admin_legacy`,
+    et ce test passait alors que la fermeture etait decidee sur les bougies
+    d'`admin_live`. C'etait precisement le defaut de portee — mesurer chez un
+    courtier pour fermer chez un autre. La fermeture ne porte plus que chez
+    celui qui a ete mesure ; `test_portee_fermetures_labo` tient l'autre
+    moitie de la regle, celle qui verifie que Kraken garde son motif.
+    """
     from backend.services import mt5_bridge as mb
 
     class _E:
@@ -234,7 +242,7 @@ def test_un_motif_FERME_disparait_vraiment_des_motifs_autorises(monkeypatch):
         pattern = _E("poc_return_up")
 
     class _D:
-        destination_id = "admin_legacy"
+        destination_id = rg.DESTINATION_MESUREE
         allowed_patterns = None
         extra_patterns = ["poc_return_up", "poc_return_down"]
 

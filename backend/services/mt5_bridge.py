@@ -707,12 +707,23 @@ def _patterns_autorises(setup, dest):
     # 🔑 Le mecanisme ne sait que RESSERRER. Il ferme un motif qui perd de
     # l'argent avec un |t| au-dessus du plafond du hasard, trois nuits de
     # suite ; il ne peut rouvrir que ce qu'il a lui-meme ferme.
+    #
+    # ⛔ ET IL NE FERME QUE CHEZ LE COURTIER QU'IL A MESURE (2026-09-14). Le
+    # labo lit les bougies et le spread d'une seule destination ; appliquer
+    # son verdict ailleurs, c'est mesurer chez l'un pour fermer chez l'autre.
+    # Le spread de DOT/USD vaut 23 bougies de 5 min chez IC Markets et bien
+    # moins chez Kraken : le meme motif n'y a pas le meme sort.
+    #
+    # ⚠️ `dest=None` (chemin mono-tenant historique = le pont MT5) garde la
+    # protection : `fermetures` retombe alors sur la destination mesuree.
     try:
         from backend.services.reglage_or import fermetures as _fermetures_labo
         _pair = getattr(setup, "pair", None)
         _horizon = getattr(setup, "horizon", None)
+        _dest_id = getattr(dest, "destination_id", None) if dest else None
         if _pair and _horizon:
-            _fermes = {m for h, m in _fermetures_labo(str(_pair))
+            _fermes = {m for h, m in _fermetures_labo(str(_pair),
+                                                      destination=_dest_id)
                        if h == str(_horizon)}
             if _fermes:
                 base = base - _fermes

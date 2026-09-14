@@ -46,6 +46,19 @@ logger = logging.getLogger(__name__)
 
 PAIRE = "XAU/USD"
 
+# ⛔ LA DESTINATION QUE LE LABORATOIRE MESURE (2026-09-14). Le labo lit les
+# bougies ET le spread d'UN seul courtier. Ses verdicts ne decrivent donc que
+# celui-la, et ses fermetures ne doivent porter que la.
+#
+# Mesure du jour, chez IC Markets : le spread de DOT/USD vaut 23 bougies de
+# 5 min, celui de LTC/USD 16. Un motif y perd toujours — et la fermeture qui
+# s'ensuivait fermait le meme motif sur KRAKEN, ou la paire se traite bien
+# plus serre. Un verdict vrai chez l'un, faux chez l'autre.
+#
+# 🔑 Le meme nom sert a CHERCHER les bougies et a ETIQUETER la fermeture : les
+# deux ne peuvent plus diverger. Un test le verifie par inspection de source.
+DESTINATION_MESUREE = os.getenv("LABO_OR_DESTINATION", "admin_live")
+
 # Combien de nuits de suite un verdict doit tenir avant d'agir.
 NUITS_CONSECUTIVES = int(os.getenv("REGLAGE_OR_NUITS", "3"))
 
@@ -83,13 +96,39 @@ def _schema(c: sqlite3.Connection) -> None:
     c.execute("""CREATE INDEX IF NOT EXISTS idx_labo_or_cellules
         ON labo_or_cellules(pair, horizon, motif, mesure_le)""")
     c.execute("""CREATE TABLE IF NOT EXISTS labo_or_fermetures (
-        pair TEXT NOT NULL, horizon TEXT NOT NULL, motif TEXT NOT NULL,
-        sens TEXT, ferme_le TEXT NOT NULL, preuve TEXT,
-        PRIMARY KEY (pair, horizon, motif))""")
+        destination TEXT NOT NULL, pair TEXT NOT NULL, horizon TEXT NOT NULL,
+        motif TEXT NOT NULL, sens TEXT, ferme_le TEXT NOT NULL, preuve TEXT,
+        PRIMARY KEY (destination, pair, horizon, motif))""")
+    _migrer_portee(c)
     c.execute("""CREATE TABLE IF NOT EXISTS labo_or_journal (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         decide_le TEXT NOT NULL, action TEXT NOT NULL, pair TEXT NOT NULL,
         horizon TEXT NOT NULL, motif TEXT NOT NULL, motif_decision TEXT)""")
+
+
+
+def _migrer_portee(c: sqlite3.Connection) -> None:
+    """Ajoute la portee aux fermetures ecrites avant le 2026-09-14.
+
+    ⚠️ Ne PERD rien : une fermeture existante reste une fermeture, attribuee
+    au courtier que le laboratoire mesurait deja. La cle primaire change
+    (SQLite ne sait pas l'alterer), donc la table est reconstruite.
+    """
+    colonnes = [r[1] for r in c.execute("PRAGMA table_info(labo_or_fermetures)")]
+    if not colonnes or "destination" in colonnes:
+        return
+    c.execute("""CREATE TABLE labo_or_fermetures_v2 (
+        destination TEXT NOT NULL, pair TEXT NOT NULL, horizon TEXT NOT NULL,
+        motif TEXT NOT NULL, sens TEXT, ferme_le TEXT NOT NULL, preuve TEXT,
+        PRIMARY KEY (destination, pair, horizon, motif))""")
+    c.execute("""INSERT INTO labo_or_fermetures_v2
+                 (destination, pair, horizon, motif, sens, ferme_le, preuve)
+                 SELECT ?, pair, horizon, motif, sens, ferme_le, preuve
+                 FROM labo_or_fermetures""", (DESTINATION_MESUREE,))
+    c.execute("DROP TABLE labo_or_fermetures")
+    c.execute("ALTER TABLE labo_or_fermetures_v2 RENAME TO labo_or_fermetures")
+    logger.warning("reglage_or: fermetures migrees — portee %s",
+                   DESTINATION_MESUREE)
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -164,23 +203,31 @@ _CACHE_S = float(os.getenv("REGLAGE_OR_CACHE_S", "60"))
 _cache: dict[str, tuple[float, set]] = {}
 
 
-def fermetures(pair: str = PAIRE, frais: bool = False) -> set[tuple[str, str]]:
-    """Les (horizon, motif) que le laboratoire a fermés. Lu à CHAUD.
+def fermetures(pair: str = PAIRE, frais: bool = False,
+               destination: str | None = None) -> set[tuple[str, str]]:
+    """Les (horizon, motif) que le laboratoire a fermés CHEZ CE COURTIER.
 
     ⛔ En base, pas dans le `.env` : une décision nocturne qui exigerait un
     redéploiement pour s'appliquer ne s'appliquerait pas.
+
+    ⚠️ `destination=None` retombe sur celle que le laboratoire MESURE, jamais
+    sur « toutes » : c'est le chemin mono-tenant historique, c'est-à-dire le
+    pont MT5 lui-même. Ne rien appliquer y serait un desserrage silencieux, et
+    on ne desserre pas une porte par défaut.
     """
     import time as _time
-    entree = _cache.get(pair)
+    portee = destination or DESTINATION_MESUREE
+    cle = (portee, pair)
+    entree = _cache.get(cle)
     if entree and not frais and _time.monotonic() - entree[0] < _CACHE_S:
         return entree[1]
     try:
         with sqlite3.connect(_db()) as c:
             _schema(c)
             trouve = {(h, m) for h, m in c.execute(
-                "SELECT horizon, motif FROM labo_or_fermetures WHERE pair = ?",
-                (pair,))}
-        _cache[pair] = (_time.monotonic(), trouve)
+                "SELECT horizon, motif FROM labo_or_fermetures "
+                "WHERE pair = ? AND destination = ?", (pair, portee))}
+        _cache[cle] = (_time.monotonic(), trouve)
         return trouve
     except Exception as e:  # noqa: BLE001
         # ⛔ fail-OUVERT assumé : une base illisible ne doit pas fermer des
@@ -265,14 +312,16 @@ def _appliquer(actions: list[dict]) -> None:
             if a["action"] == FERMER:
                 c.execute(
                     """INSERT OR REPLACE INTO labo_or_fermetures
-                       (pair, horizon, motif, sens, ferme_le, preuve)
-                       VALUES (?,?,?,?,?,?)""",
-                    (a["pair"], a["horizon"], a["motif"], a.get("sens"), quand,
+                       (destination, pair, horizon, motif, sens, ferme_le, preuve)
+                       VALUES (?,?,?,?,?,?,?)""",
+                    (DESTINATION_MESUREE, a["pair"], a["horizon"], a["motif"],
+                     a.get("sens"), quand,
                      json.dumps(a.get("cellule") or {}, ensure_ascii=False)))
             elif a["action"] == ROUVRIR:
                 c.execute("DELETE FROM labo_or_fermetures WHERE pair = ? "
-                          "AND horizon = ? AND motif = ?",
-                          (a["pair"], a["horizon"], a["motif"]))
+                          "AND horizon = ? AND motif = ? AND destination = ?",
+                          (a["pair"], a["horizon"], a["motif"],
+                           DESTINATION_MESUREE))
             if a["action"] in (FERMER, ROUVRIR, REFUSE_PLANCHER):
                 c.execute(
                     """INSERT INTO labo_or_journal
@@ -306,7 +355,7 @@ def _bougies_et_spread(jours: int, pair: str = PAIRE) -> tuple[list, float]:
 
     from backend.services.destinations_registry import DESTINATIONS
 
-    d = DESTINATIONS["admin_live"]
+    d = DESTINATIONS[DESTINATION_MESUREE]
     base = os.environ[d.url_env].rstrip("/")
     entetes = {getattr(d, "key_header", None) or "X-API-Key": os.environ[d.key_env]}
     symbole = pair.replace("/", "")
@@ -365,7 +414,7 @@ def instruments_servis() -> list[str]:
     from backend.services.destinations_registry import DESTINATIONS
 
     try:
-        d = DESTINATIONS["admin_live"]
+        d = DESTINATIONS[DESTINATION_MESUREE]
         base = os.environ[d.url_env].rstrip("/")
         entetes = {getattr(d, "key_header", None) or "X-API-Key":
                    os.environ[d.key_env]}
