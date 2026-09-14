@@ -62,11 +62,20 @@ def test_aucune_source_ne_se_PRETEND_verifiee_de_premiere_main():
 
 
 def test_une_notion_verrouillee_NOMME_ce_qui_lui_manque():
+    """⚠️ Depuis le 2026-09-14, `cinq_etapes` a quatre etapes connues : ce qui
+    lui manque est donc les six lignes ET la cinquieme etape. Le test compare
+    par inclusion, pas par egalite — sinon toute avancee le casserait."""
     n = nv.par_nom("cinq_etapes")
-    assert set(nv.manques(n)) == set(nv.CHAMPS), (
-        "une notion dont on ne connait que le titre doit annoncer les SIX "
+    manque = set(nv.manques(n))
+    assert set(nv.CHAMPS) <= manque, (
+        "une notion dont aucune regle n'est formalisee doit annoncer les SIX "
         "lignes manquantes, pas zero")
+    assert "etape_5" in manque
     assert n["source"], "une notion sans source n'est pas tracable"
+
+    # une notion dont RIEN n'est connu n'annonce que les six lignes
+    vierge = nv.par_nom("les_raccourcis")
+    assert set(nv.manques(vierge)) == set(nv.CHAMPS)
 
 
 def test_aucune_notion_n_est_complete_AUJOURD_HUI():
@@ -208,3 +217,65 @@ def test_le_message_de_la_nuit_NE_MENT_PAS_sur_la_portee(monkeypatch):
     assert "pour lui SEUL" in corps
     assert "TOUS les comptes" not in corps
     assert "🔒" in corps, "les notions en attente doivent rester visibles"
+
+
+# ─── Les etapes d'une notion partiellement connue (2026-09-14) ──────
+
+def test_cinq_etapes_porte_ses_QUATRE_etapes_connues():
+    n = nv.par_nom("cinq_etapes")
+    assert len(n["etapes"]) == 5, "la notion en annonce cinq, pas quatre"
+    connues = [e for e in n["etapes"] if e["statut"] != nv.MANQUANT]
+    assert len(connues) == 4
+    assert "TradingView" in n["etapes"][0]["texte"]
+    assert "accumulation" in n["etapes"][1]["texte"].lower()
+    assert "volume profile" in n["etapes"][2]["texte"].lower()
+    assert "liquidit" in n["etapes"][3]["texte"].lower()
+
+
+def test_les_deux_mots_RECONSTRUITS_sont_marques_comme_tels():
+    """⛔ « ouf TradingView » et « grade de liquidite » sont ce que
+    l'indexation automatique restitue. « ouvre » et « grab » sont des
+    RECONSTRUCTIONS — vraisemblables, pas entendues. Les noter comme du verbatim
+    ferait passer notre lecture pour sa parole."""
+    n = nv.par_nom("cinq_etapes")
+    reconstruits = [e for e in n["etapes"] if e["statut"] == nv.RECONSTRUIT]
+    assert len(reconstruits) == 2
+    for e in reconstruits:
+        assert e.get("brut"), "le texte AVANT reconstruction doit etre garde"
+
+
+def test_la_CINQUIEME_etape_est_declaree_MANQUANTE():
+    n = nv.par_nom("cinq_etapes")
+    cinq = n["etapes"][4]
+    assert cinq["statut"] == nv.MANQUANT
+    assert "MANQUANT" in cinq["texte"] or "recuperer" in cinq["texte"].lower()
+
+
+def test_une_etape_MANQUANTE_interdit_la_notion_pour_TOUJOURS():
+    """🔑 La garantie que Xavier a demandee : `allow_trade = False` tant que la
+    cinquieme condition n'est pas formalisee. Ici ce n'est pas une variable
+    qu'on pourrait oublier de tester — c'est structurel : une etape manquante
+    rend la notion incomplete, et une notion incomplete ne produit aucune
+    chaine, donc aucun trade."""
+    n = nv.par_nom("cinq_etapes")
+    assert "etape_5" in nv.manques(n)
+    assert n not in nv.completes()
+    assert all(c["nom"] != "notion:cinq_etapes" for c in nv.chaines())
+
+
+def test_une_notion_dont_TOUS_les_champs_sont_remplis_reste_bloquee_si_une_etape_manque():
+    """⛔ Le piege a eviter : completer les six lignes en devinant l'etape 5
+    rouvrirait la porte. Les etapes sont une condition SEPAREE."""
+    faux = {"nom": "x", "source": "s", "titre": "t",
+            "declencheur": "liquidity_sweep_down", "maillons": (),
+            "predicats": (), "invalidation": ("bos_up",), "sens": "sell",
+            "echelle": "5min", "stop": "s", "cible": "c",
+            "etapes": ({"n": 1, "texte": "?", "statut": nv.MANQUANT},)}
+    assert nv.manques(faux), "une etape manquante doit suffire a bloquer"
+    assert nv.chaines((faux,)) == ()
+
+
+def test_le_rapport_dit_COMBIEN_d_etapes_sont_connues():
+    lignes = nv.lignes_manquantes()
+    ligne = next(x for x in lignes if "cinq_etapes" in x)
+    assert "4/5" in ligne, f"le rapport doit dire l'avancement : {ligne}"

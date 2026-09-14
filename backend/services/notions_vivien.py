@@ -64,6 +64,15 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# ─── Le statut d'une etape : d'ou vient-elle, exactement ────────────
+#
+# ⛔ Trois statuts, jamais deux. Fondre RAPPORTE et RECONSTRUIT ferait passer
+# notre lecture pour sa parole — et c'est precisement ce qui fabrique « un
+# robot inspire de Vivien » qu'on croit fidele.
+RAPPORTE = "RAPPORTE"        # restitue tel quel par l'indexation automatique
+RECONSTRUIT = "RECONSTRUIT"  # un mot corrige par le contexte, pas entendu
+MANQUANT = "MANQUANT"        # l'indexation coupe avant — trou, pas hypothese
+
 # Les six lignes qui rendent une notion mesurable. Ni plus — chaque champ
 # supplementaire serait un degre de liberte de plus — ni moins.
 CHAMPS: tuple[str, ...] = (
@@ -86,7 +95,37 @@ NOTIONS: tuple[dict, ...] = (
     # « ce qui est dit », « ce qui est rapporte » et « ce que nous deduisons ».
     {"nom": "cinq_etapes",
      "titre": "5 etapes pour prendre des trades gagnants",
-     "source": "Titre de video, rapporte dans le message de Xavier du 2026-09-12 13:20 UTC — lui-meme un document de recherche transmis. Contenu jamais consulte de premiere main."},
+     "source": "Titre de video, rapporte dans le message de Xavier du 2026-09-12 13:20 UTC — lui-meme un document de recherche transmis. Contenu jamais consulte de premiere main.",
+     # ⛔ QUATRE etapes sur cinq, rapportees par Xavier le 2026-09-14 depuis
+     # une indexation AUTOMATIQUE de la video. La cinquieme est coupee avant
+     # restitution. Xavier l'a ecrit lui-meme : « je ne veux surtout pas la
+     # fabriquer a partir de ce qu'on connait deja de Vivien ».
+     #
+     # ⚠️ Les deux RECONSTRUIT sont des corrections de contexte, pas des mots
+     # entendus. Le texte brut est garde a cote : si la reconstruction est
+     # fausse, elle reste rattrapable.
+     "etapes": (
+         {"n": 1, "statut": RECONSTRUIT, "texte": "Ouvrir TradingView",
+          "brut": "ouf TradingView",
+          "note": "« ouf » corrige en « ouvre » par le contexte"},
+         {"n": 2, "statut": RAPPORTE,
+          "texte": "Trouver une zone d'accumulation",
+          "brique": "AUCUNE — nous n'avons pas de detecteur d'accumulation"},
+         {"n": 3, "statut": RAPPORTE,
+          "texte": "Tracer le Volume Profile sur cette zone",
+          "brique": "market_profile — mais TPO, pas volume (le volume existe "
+                    "depuis le 12/09 et n'est pas encore utilise ici)"},
+         {"n": 4, "statut": RECONSTRUIT,
+          "texte": "Attendre une prise de liquidite (liquidity grab)",
+          "brut": "grade de liquidite",
+          "note": "« grade » corrige en « grab » par le contexte",
+          "brique": "liquidity_sweep — deja code"},
+         {"n": 5, "statut": MANQUANT,
+          "texte": "[MANQUANT — declencheur exact a recuperer]",
+          "note": "L'indexation coupe avant. Ni retest, ni BOS, ni delta : "
+                  "aucune preuve. Une video de 16 s ou un enregistrement "
+                  "d'ecran permettrait de la lire."},
+     )},
     {"nom": "strategie_trois_etapes",
      "titre": "Ma strategie en 3 etapes",
      "source": "Titre de video, rapporte dans le message de Xavier du 2026-09-12 13:20 UTC — lui-meme un document de recherche transmis. Contenu jamais consulte de premiere main."},
@@ -115,8 +154,27 @@ def par_nom(nom: str) -> dict:
 
 
 def manques(notion: dict) -> tuple[str, ...]:
-    """Les champs des six lignes qui manquent encore a cette notion."""
-    return tuple(c for c in CHAMPS if not notion.get(c))
+    """Ce qui manque : les six lignes, ET les etapes non restituees.
+
+    ⛔ Les etapes sont une condition **separee** des six lignes. Sans cela,
+    completer les six champs en devinant l'etape manquante rouvrirait la porte
+    — c'est exactement la porte que Xavier a demande de tenir fermee :
+    « notre automate ne prendrait aucun trade tant qu'on n'a pas formalise la
+    cinquieme condition ».
+    """
+    out = [c for c in CHAMPS if not notion.get(c)]
+    out += [f"etape_{e['n']}" for e in notion.get("etapes", ())
+            if e.get("statut") == MANQUANT]
+    return tuple(out)
+
+
+def avancement(notion: dict) -> str:
+    """« 4/5 » — combien d'etapes sont restituees. Vide si aucune connue."""
+    etapes = notion.get("etapes", ())
+    if not etapes:
+        return ""
+    connues = sum(1 for e in etapes if e.get("statut") != MANQUANT)
+    return f"{connues}/{len(etapes)}"
 
 
 def completes(notions: tuple[dict, ...] | None = None) -> tuple[dict, ...]:
@@ -133,7 +191,9 @@ def lignes_manquantes(notions: tuple[dict, ...] | None = None) -> list[str]:
     """Ce qu'il manque, notion par notion — lisible dans un message."""
     out = []
     for n in incompletes(notions):
-        out.append(f"{n['nom']} « {n.get('titre', '?')} » — manque : "
+        etat = avancement(n)
+        out.append(f"{n['nom']} « {n.get('titre', '?')} »"
+                   f"{f' — etapes {etat}' if etat else ''} — manque : "
                    f"{', '.join(manques(n))} "
                    f"[{n.get('source', 'SANS SOURCE')}]")
     return out
