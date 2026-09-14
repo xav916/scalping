@@ -100,6 +100,13 @@ def _schema(c: sqlite3.Connection) -> None:
         motif TEXT NOT NULL, sens TEXT, ferme_le TEXT NOT NULL, preuve TEXT,
         PRIMARY KEY (destination, pair, horizon, motif))""")
     _migrer_portee(c)
+    # ⛔ Les politiques de sortie se rangent A PART des cellules. Les croiser
+    # ferait passer 2 356 cellules a ~9 400 et le plafond du hasard de 3,66 a
+    # 4,28 : on paierait en exigence une question qu'on peut poser appariee.
+    c.execute("""CREATE TABLE IF NOT EXISTS labo_or_sorties (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        mesure_le TEXT NOT NULL, pair TEXT NOT NULL, politique TEXT NOT NULL,
+        n INTEGER NOT NULL, r_moyen REAL, t REAL, delta_reference REAL)""")
     c.execute("""CREATE TABLE IF NOT EXISTS labo_or_journal (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         decide_le TEXT NOT NULL, action TEXT NOT NULL, pair TEXT NOT NULL,
@@ -153,6 +160,27 @@ def enregistrer(mesure: dict) -> int:
               x["r_moyen"], x["t"], x.get("delta_hasard"), x.get("plafond"),
               x["verdict"]) for x in cellules])
     return len(cellules)
+
+
+def enregistrer_sorties(pair: str, resultat: dict) -> int:
+    """Range la comparaison des politiques de sortie de la nuit.
+
+    ⛔ Le banc existait depuis le 12/09 et n'etait appele QUE par ses tests —
+    trouve le 14/09. Un banc qui ne tourne pas ne mesure rien, et son silence
+    ressemble a s'y meprendre a un resultat neutre.
+    """
+    if not resultat:
+        return 0
+    quand = _maintenant()
+    with sqlite3.connect(_db()) as c:
+        _schema(c)
+        c.executemany(
+            """INSERT INTO labo_or_sorties
+               (mesure_le, pair, politique, n, r_moyen, t, delta_reference)
+               VALUES (?,?,?,?,?,?,?)""",
+            [(quand, pair, p, d["n"], d["r_moyen"], d["t"],
+              d.get("delta_reference")) for p, d in resultat.items()])
+    return len(resultat)
 
 
 def _dernieres_nuits(pair: str, combien: int) -> dict[tuple[str, str], list[str]]:
@@ -482,6 +510,19 @@ def cycle_nocturne() -> dict:
             echecs[paire] = f"{len(bougies)} bougies"
             continue
         mesures[paire] = labo.mesurer(bougies, spread, pair=paire)
+        # ⛔ LE BANC DES SORTIES, branche le 2026-09-14. Il existait depuis le
+        # 12/09 sans qu'aucun appel ne l'atteigne : il n'avait jamais mesure
+        # une seule nuit. Prior a reproduire ou refuter : la gestion de sortie
+        # a DETRUIT 0,329 R sur l'or le 2026-08-11.
+        #
+        # ⚠️ Il ne cree aucune cellule et ne touche a aucun verdict : il se
+        # range dans sa propre table. Une exception ici ne doit pas couter la
+        # nuit — la mesure principale est deja faite.
+        try:
+            enregistrer_sorties(paire, labo.comparer_sorties_global(
+                bougies, labo.detections(bougies, paire), spread))
+        except Exception as e:  # noqa: BLE001
+            logger.warning("labo[%s]: banc des sorties en echec (%s)", paire, e)
 
     if not mesures:
         return {"instruments": [], "echecs": echecs,

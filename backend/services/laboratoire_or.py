@@ -299,6 +299,33 @@ def comparer_sorties(bougies, releve: dict[int, list], motif: str, sens: str,
     ⇒ La suite des entrées est fixée par la politique de RÉFÉRENCE, puis
     chaque politique est rejouée sur ces indices-là.
     """
+    res = _R_par_politique(bougies, releve, motif, sens, spread, politiques)
+    if not res:
+        return {}
+    out: dict[str, dict] = {}
+    for p, R in res.items():
+        moyenne, t = _stat(R)
+        out[p] = {"n": len(R), "r_moyen": moyenne, "t": t, "r_total": sum(R)}
+    # ⚠️ L'écart à la référence est le seul chiffre qui réponde à la question.
+    ref = out.get(POLITIQUES_SORTIE[0], {}).get("r_moyen", 0.0)
+    for p, d in out.items():
+        d["delta_reference"] = d["r_moyen"] - ref
+    return out
+
+
+def _R_par_politique(bougies, releve: dict[int, list], motif: str, sens: str,
+                     spread: float,
+                     politiques: tuple[str, ...] | None = None
+                     ) -> dict[str, list[float]]:
+    """Les R bruts de chaque politique, sur EXACTEMENT les memes entrees.
+
+    ⛔ Extrait de `comparer_sorties` le 2026-09-14, parce que la mise en commun
+    entre motifs a besoin des R **un par un**. Ma premiere version les
+    reconstituait a partir des moyennes (`[moyenne] * n`) : la moyenne
+    restait juste, mais la variance intra-bloc devenait NULLE et le `t` etait
+    fabrique. Un `t` gonfle est pire qu'un `t` absent — il a l'air d'un
+    resultat.
+    """
     politiques = politiques or POLITIQUES_SORTIE
     entrees: list[tuple[int, float, float, float]] = []
     i, n = FENETRE, len(bougies)
@@ -327,16 +354,51 @@ def comparer_sorties(bougies, releve: dict[int, list], motif: str, sens: str,
     if not entrees:
         return {}
     signe = 1 if sens == "buy" else -1
+    return {p: [_issue(bougies, i, e, r, o, signe, spread / r, politique=p)[0]
+                for i, e, r, o in entrees] for p in politiques}
+
+
+def comparer_sorties_global(bougies, releve: dict[int, list], spread: float,
+                            politiques: tuple[str, ...] | None = None) -> dict:
+    """La MEME question, posee sur tous les motifs a la fois.
+
+    ⛔ **Pourquoi elle existe** (2026-09-14). `comparer_sorties` repond par
+    (motif, sens) : trente reponses par instrument, dont aucune ne dit si la
+    gestion de sortie aide **globalement**. Or c'est la seule question que le
+    prior pose — « la gestion de sortie a detruit 0,329 R sur l'or ».
+
+    🔑 On MET EN COMMUN les R, on ne moyenne pas des moyennes : une cellule de
+    trois trades peserait alors autant qu'une de trois cents.
+
+    ⚠️ L'appariement est preserve : chaque motif garde ses propres entrees,
+    fixees par la politique de reference, et toutes les politiques rejouent
+    exactement celles-la. Les `n` doivent donc etre IDENTIQUES d'une politique
+    a l'autre — un test le verifie, parce qu'un `n` qui differe signifierait
+    qu'on compare deux populations.
+
+    ⛔ Ne cree AUCUNE cellule : croiser les politiques avec les cellules
+    ferait passer 2 356 cellules a ~9 400 et le plafond du hasard de 3,66 a
+    4,28. On paierait en exigence une question qu'on peut poser a part.
+    """
+    politiques = politiques or POLITIQUES_SORTIE
+    paires_motif_sens = sorted({(_nom_motif(s), _sens(s))
+                                for liste in releve.values() for s in liste})
+    commun: dict[str, list[float]] = {p: [] for p in politiques}
+    for motif, sens in paires_motif_sens:
+        res = _R_par_politique(bougies, releve, motif, sens, spread, politiques)
+        if not res:
+            continue
+        for p in politiques:
+            commun[p] += res.get(p, [])
+    if not any(commun.values()):
+        return {}
     out: dict[str, dict] = {}
     for p in politiques:
-        R = [_issue(bougies, i, e, r, o, signe, spread / r, politique=p)[0]
-             for i, e, r, o in entrees]
-        moyenne, t = _stat(R)
-        out[p] = {"n": len(R), "r_moyen": moyenne, "t": t, "r_total": sum(R)}
-    # ⚠️ L'écart à la référence est le seul chiffre qui réponde à la question.
+        moyenne, t = _stat(commun[p]) if commun[p] else (0.0, 0.0)
+        out[p] = {"n": len(commun[p]), "r_moyen": moyenne, "t": t}
     ref = out.get(POLITIQUES_SORTIE[0], {}).get("r_moyen", 0.0)
-    for p, d in out.items():
-        d["delta_reference"] = d["r_moyen"] - ref
+    for d in out.values():
+        d["delta_reference"] = round(d["r_moyen"] - ref, 6)
     return out
 
 
