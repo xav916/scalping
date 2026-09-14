@@ -398,6 +398,42 @@ inspiré de Vivien » — exactement ce qu'il a été demandé d'éviter.
   déclenche que là où le balayage se déclenche déjà.
 - **Coût** : 2 chaînes, ~160 cellules de plus.
 
+---
+
+### Premium / discount — déclaré le 2026-09-14, non codé
+
+⚠️ **Provenance, et elle est différente des autres.** Ce concept ne figure
+**pas** dans les 38 familles rapportées par Xavier le 2026-09-12. Il vient de
+ma propre liste, et Xavier l'a explicitement demandé le 2026-09-14 après que je
+l'aie signalé comme un ajout de mon fait. Il est donc marqué **ICT / tradition
+Smart Money**, et non « corpus Vivien ».
+
+- **Idée** : dans une fourchette, acheter n'a pas le même sens en haut qu'en
+  bas. Au-dessus de l'équilibre le prix est **cher** (*premium*) — on y vend ;
+  en dessous il est **bon marché** (*discount*) — on y achète.
+- **Règle** — et elle n'introduit **aucun réglage neuf** :
+  - `haut` / `bas` = extrêmes de la fenêtre de référence, celle que les
+    détecteurs utilisent déjà ;
+  - `équilibre` = le **milieu**, `(haut + bas) / 2` — 50 % est la définition du
+    concept, pas un paramètre ;
+  - `position` = `(clôture − bas) / (haut − bas)` ;
+  - **discount** si `position <= 0,5`, **premium** sinon.
+- ⛔ **Ce n'est pas un motif, c'est un contexte** — comme la zone
+  d'accumulation et le biais. « Être en premium » ne dit pas d'entrer, ça dit
+  *dans quel sens on a le droit d'entrer*. C'est donc un **prédicat**.
+- **Chaînes déclarées** : `sweep_en_discount_haussier` (balayage des bas
+  **sous** l'équilibre) et `sweep_en_premium_baissier` (balayage des hauts
+  **au-dessus**). C'est la logique ICT dans sa forme la plus stricte.
+- **Prédiction falsifiable** : chaque chaîne doit rendre un **R moyen
+  supérieur** à `liquidity_sweep` seul, même instrument, même échelle. Si
+  prendre la liquidité du bon côté de l'équilibre ne vaut pas mieux que la
+  prendre n'importe où, la notion n'ajoute rien.
+- 🔑 Inclusion **stricte** → comparaison **appariée**.
+- ⚠️ **Recouvrement attendu avec le balayage lui-même** : un balayage des bas
+  a de bonnes chances d'être déjà sous l'équilibre. **À mesurer, pas à
+  déduire** — c'est l'erreur commise trois fois ce mois-ci.
+- **Coût** : 2 chaînes, ~160 cellules.
+
 ⚠️ **Ce que ces trois coûtent à tout le monde.** Six motifs de plus, soit
 environ **480 cellules** sur les 20 instruments — le plafond du hasard monte
 pour **toutes** les cellules existantes. C'est le prix assumé de la chaîne
