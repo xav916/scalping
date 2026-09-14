@@ -334,12 +334,23 @@ inspiré de Vivien » — exactement ce qu'il a été demandé d'éviter.
   - `RECENTES = 10` dernières bougies — la zone candidate ;
   - `AVANT = 20` bougies juste avant — la référence de mouvement ;
   - **compression** : `amplitude(RECENTES) <= 0,60 × amplitude(AVANT)` ;
-  - **concentration** : la **zone de valeur** des `RECENTES` couvre
-    `<= 0,50 ×` leur amplitude.
-- 🔑 La concentration est calculée sur le **profil de ticks**, pas sur le TPO :
-  c'est ce que l'étape 3 demande (« tracer le Volume Profile sur cette zone »).
-  ⚠️ Sans volume, le prédicat répond **NON** — même règle que `volume_fort`.
-  Il ne retombe pas sur le temps.
+  - **retour** : `|clôture_fin − clôture_début| <= 0,35 ×` amplitude(RECENTES).
+- ⛔ **La règle déclarée était INATTEIGNABLE — corrigée le jour même, avant
+  toute mesure, et voici pourquoi.** J'avais écrit « concentration = largeur
+  de la zone de valeur / amplitude, `<= 0,50` ». Mon propre test l'a réfutée :
+  dix bougies identiques — la forme la **plus** accumulée qui soit — donnent un
+  profil **plat**, dont la zone de valeur vaut `0,70 ×` l'amplitude **par
+  construction** (`PART_ZONE_VALEUR`). Le seuil était hors d'atteinte pour la
+  figure même qu'il devait reconnaître.
+- 🔑 Le **retour** dit ce que la concentration voulait dire : *le prix
+  revient-il d'où il est parti ?* Zéro pour une accumulation, proche de 1 pour
+  une dérive. La compression seule ne sait pas les séparer — une tendance
+  linéaire a une compression de 0,50, sous le seuil.
+- 🔑 **Et le profil de volume n'appartenait pas là.** L'étape 2 **trouve** la
+  zone, l'étape 3 la **profile**. Les confondre était mon glissement, pas le
+  sien. Le profil est désormais **joint** au résultat — `poc`, `zone_valeur` —
+  et jamais une condition d'existence : sans volume ils valent `None`, la zone
+  tient, et rien ne retombe sur le temps sous un autre nom.
 - ⛔ **Ce n'est pas un motif, c'est un CONTEXTE.** Une zone d'accumulation ne
   dit ni d'acheter ni de vendre : elle n'a pas de sens. En faire un
   `PatternType` créerait deux motifs directionnels qui n'existent pas. C'est

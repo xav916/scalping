@@ -94,9 +94,22 @@ def test_les_chaines_sont_DECLAREES_et_peu_nombreuses():
     """⛔ Le garde-fou contre la recherche exhaustive. Six conditions
     combinables font des dizaines de milliers de chaînes ; les essayer toutes
     fabriquerait une gagnante à coup sûr (PBO 0,579)."""
-    assert 1 <= len(labo.CHAINES) <= 12, (
-        f"{len(labo.CHAINES)} chaines — au-dela, ce n'est plus une liste "
-        "declaree, c'est une recherche")
+    # ⛔ EGALITE, pas un plafond. Un « <= 12 » laisse ajouter une chaine sans
+    # que rien ne le dise tant qu'on reste sous la barre ; l'egalite oblige a
+    # venir ici et a ecrire POURQUOI. Chaque augmentation est datee :
+    #
+    #   12  2026-09-12  les douze premieres, declarees le jour meme
+    #   14  2026-09-14  + prise_en_accumulation haussier/baissier — notre
+    #                   lecture des etapes 2 + 4 des cinq de Vivien, declaree
+    #                   dans docs/concepts-trading.md (720fcd3) AVANT le code
+    #
+    # ⚠️ Le cout n'est pas nul : ~160 cellules de plus, donc le plafond du
+    # hasard monte pour TOUTES les cellules existantes.
+    CHAINES_ATTENDUES = 14
+    assert len(labo.CHAINES) == CHAINES_ATTENDUES, (
+        f"{len(labo.CHAINES)} chaines au lieu de {CHAINES_ATTENDUES} — une "
+        "chaine ne s'ajoute pas en silence : declarer la raison ici et dans "
+        "docs/concepts-trading.md, avant le code")
     noms = [c["nom"] for c in labo.CHAINES]
     assert len(noms) == len(set(noms)), "deux chaines portent le meme nom"
 

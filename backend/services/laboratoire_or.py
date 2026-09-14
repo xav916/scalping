@@ -522,6 +522,24 @@ CHAINES: tuple[dict, ...] = (
      "motifs": ("breakout_down",),
      "declencheur": "breakout_down", "predicats": ("killzone_londres",),
      "fenetre": 0},
+    # ⛔ NOTRE lecture des etapes 2 + 4 des cinq de Vivien (declaree le
+    # 2026-09-14 dans docs/concepts-trading.md, commit 720fcd3, avant le code).
+    # L'etape 3 — « tracer le Volume Profile sur cette zone » — est un geste de
+    # LECTURE : elle produit des niveaux, pas une condition d'entree. Elle
+    # n'entre donc pas dans la chaine.
+    #
+    # 🔑 UN SEUL motif, et c'est voulu : la chaine est un SOUS-ENSEMBLE STRICT
+    # du balayage. La comparaison avec `liquidity_sweep` seul est donc
+    # APPARIEE — la forme la plus lisible, celle de la double prise, et non la
+    # forme chevauchante des trois maillons.
+    {"nom": "prise_en_accumulation_haussier",
+     "motifs": ("liquidity_sweep_up",),
+     "declencheur": "liquidity_sweep_up", "predicats": ("dans_accumulation",),
+     "fenetre": 0},
+    {"nom": "prise_en_accumulation_baissier",
+     "motifs": ("liquidity_sweep_down",),
+     "declencheur": "liquidity_sweep_down",
+     "predicats": ("dans_accumulation",), "fenetre": 0},
 )
 
 # Un pic de volume : la bougie que le detecteur vient de voir porte au moins
@@ -611,7 +629,44 @@ def _dans_session(nom: str):
 # ⛔ Fail-closed : un predicat mal orthographie doit LEVER. S'il rendait True,
 # la chaine serait mesuree sans sa condition et le verdict serait faux sans
 # que rien ne le dise.
-_PREDICATS = {"volume_fort": _volume_fort}
+def _dans_accumulation(bougies, i: int) -> bool:
+    """Le balayage se produit-il DANS une zone d'accumulation ?
+
+    C'est notre lecture des etapes 2 et 4 des cinq de Vivien : trouver une
+    zone d'accumulation, puis y attendre une prise de liquidite.
+
+    ⛔ Les seuils sont les NOTRES (`market_profile.ACCU_*`), declares dans
+    `docs/concepts-trading.md` avant d'etre codes. Aucun seuil n'a ete publie
+    par Vivien : presenter les notres comme sa definition fabriquerait « un
+    robot inspire de Vivien » qu'on croirait fidele.
+
+    ⚠️ Lit `bougies[:i]` — ce que le detecteur a vu, pas une bougie de plus.
+    Meme discipline que `_volume_fort` : un predicat qui regarde au-dela du
+    signal mesure l'avenir.
+    """
+    from datetime import datetime
+
+    from backend.models.schemas import Candle
+    from backend.services import market_profile as mp
+
+    vues = bougies[:i]
+    besoin = mp.ACCU_RECENTES + mp.ACCU_AVANT
+    if len(vues) < besoin:
+        return False
+    fen = vues[-besoin:]
+    try:
+        objets = [Candle(
+            timestamp=(x["t"] if isinstance(x["t"], datetime)
+                       else datetime.fromisoformat(str(x["t"]).replace("Z", "+00:00"))),
+            open=float(x["o"]), high=float(x["h"]), low=float(x["l"]),
+            close=float(x["c"]), volume=float(x.get("tv") or 0.0)) for x in fen]
+    except Exception:  # noqa: BLE001 — bougie malformee : on ne valide pas
+        return False
+    return mp.zone_accumulation(objets, source=mp.VOLUME) is not None
+
+
+_PREDICATS = {"volume_fort": _volume_fort,
+              "dans_accumulation": _dans_accumulation}
 _PREDICATS.update({nom: _dans_session(nom) for nom in _SESSIONS})
 
 

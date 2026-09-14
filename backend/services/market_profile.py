@@ -76,6 +76,34 @@ TPO = "tpo"
 VOLUME = "volume"
 SOURCES = (TPO, VOLUME)
 
+# ─── Zone d'accumulation — NOTRE formalisation ──────────────────────
+#
+# ⛔ L'etape 2 des cinq de Vivien est « trouver une zone d'accumulation ».
+# C'est TOUT ce qu'on en sait : aucun seuil n'a ete publie. Les quatre nombres
+# ci-dessous sont les NOTRES, declares dans docs/concepts-trading.md avant
+# d'etre codes (720fcd3). Les presenter comme sa definition fabriquerait « un
+# robot inspire de Vivien » qu'on croirait fidele.
+ACCU_RECENTES = 10          # les bougies de la zone candidate
+ACCU_AVANT = 20             # la reference de mouvement, juste avant
+ACCU_COMPRESSION = 0.60     # amplitude(recentes) <= 0,60 x amplitude(avant)
+ACCU_RETOUR = 0.35          # deplacement net <= 0,35 x amplitude(recentes)
+
+# ⛔ CE SEUIL A REMPLACE UNE REGLE INATTEIGNABLE, corrigee le 2026-09-14 avant
+# toute mesure. J'avais declare « concentration = largeur(zone de valeur) /
+# amplitude, <= 0,50 ». Mon propre test l'a refutee : dix bougies identiques
+# — la forme la PLUS accumulee qui soit — donnent un profil PLAT, dont la zone
+# de valeur vaut 0,70 x l'amplitude par construction (PART_ZONE_VALEUR). Le
+# seuil de 0,50 etait donc hors d'atteinte pour la figure meme qu'il devait
+# reconnaitre.
+#
+# 🔑 Le RETOUR mesure ce que la concentration voulait dire : le prix
+# revient-il d'ou il est parti ? Zero pour une accumulation, proche de 1 pour
+# une derive. C'est la seule facon de separer « serre et immobile » de
+# « serre et qui avance », et la compression ne sait pas le faire.
+#
+# ⚠️ Et le profil de volume n'appartenait pas ici : l'etape 2 TROUVE la zone,
+# l'etape 3 la PROFILE. Les confondre etait mon glissement, pas le sien.
+
 
 def profil(candles: list[Candle],
            n_niveaux: int = NIVEAUX_PAR_DEFAUT,
@@ -173,6 +201,62 @@ def zone_valeur(candles: list[Candle], part: float = PART_ZONE_VALEUR,
             bas -= 1
             cumul += gauche
     return (profil_[bas][0], profil_[haut][0])
+
+
+
+def zone_accumulation(candles: list[Candle], source: str = TPO) -> dict | None:
+    """Le prix s'est-il RESSERRE, et EST-IL REVENU d'ou il etait parti ?
+
+    Rend ``{bas, haut, compression, retour, poc, zone_valeur, source}`` ou
+    ``None``.
+
+    ⛔ **Deux conditions, et il en faut deux.**
+
+        compression = amplitude(RECENTES) / amplitude(AVANT)   <= 0,60
+        retour      = |cloture_fin - cloture_debut| / amplitude <= 0,35
+
+    La compression seule laisse passer une **tendance lineaire** : ses dix
+    dernieres bougies couvrent la moitie de l'amplitude des vingt precedentes,
+    soit 0,50 — sous le seuil. Le retour la rejette : elle avance, elle ne
+    revient pas.
+
+    🔑 **L'etape 2 TROUVE la zone, l'etape 3 la PROFILE.** Le profil est donc
+    joint au resultat, jamais une condition d'existence de la zone : ``poc`` et
+    ``zone_valeur`` valent ``None`` quand ``source=VOLUME`` et que le volume
+    est absent — sans repli sur le temps, et sans faire disparaitre la zone.
+
+    ⛔ Ce n'est PAS un motif : une accumulation ne dit ni d'acheter ni de
+    vendre. C'est un CONTEXTE, donc un predicat de chaine.
+    """
+    if len(candles) < ACCU_RECENTES + ACCU_AVANT:
+        return None
+    recentes = candles[-ACCU_RECENTES:]
+    avant = candles[-(ACCU_RECENTES + ACCU_AVANT):-ACCU_RECENTES]
+
+    bas = min(c.low for c in recentes)
+    haut = max(c.high for c in recentes)
+    ampl = haut - bas
+    ampl_avant = max(c.high for c in avant) - min(c.low for c in avant)
+    if ampl <= 0 or ampl_avant <= 0:
+        return None                 # marche fige : indecidable, pas accumule
+
+    compression = ampl / ampl_avant
+    if compression > ACCU_COMPRESSION:
+        return None
+
+    retour = abs(recentes[-1].close - recentes[0].close) / ampl
+    if retour > ACCU_RETOUR:
+        return None
+
+    # ⚠️ `zone_valeur` exige MIN_BOUGIES = 10 et ACCU_RECENTES vaut 10 : la
+    # marge est nulle. Baisser ACCU_RECENTES sans regarder ici rendrait le
+    # profil muet en silence.
+    return {"bas": bas, "haut": haut,
+            "compression": round(compression, 4),
+            "retour": round(retour, 4),
+            "poc": poc(recentes, source=source),
+            "zone_valeur": zone_valeur(recentes, source=source),
+            "source": source}
 
 
 def _fractales(candles: list[Candle],
