@@ -576,9 +576,39 @@ def _notifier(mesure: dict, actions: list[dict]) -> None:
         corps = "\n".join(labo.lignes(mesure) + [""]
                           + _lignes_observation(guettees) + lignes(actions))
         if any(a["action"] in (FERMER, ROUVRIR) for a in interessant):
-            corps += ("\n\n⚠️ Cette décision vaut pour TOUS les comptes qui "
-                      "servent cet horizon, argent réel compris. Elle ne ferme "
-                      "aucune position ouverte.")
+            # ⛔ Le texte disait « vaut pour TOUS les comptes ». C'était vrai
+            # avant la portée par destination (14/09) ; ça ne l'est plus. Un
+            # message faux sur une décision de trading est pire qu'un message
+            # absent : il fait croire à une protection qui n'existe pas.
+            # ⚠️ « argent réel » est LU dans le registre, jamais écrit en
+            # dur : le jour où le laboratoire mesurera une démo, la phrase
+            # cessera d'elle-même de parler d'argent réel.
+            try:
+                from backend.services.destinations_registry import DESTINATIONS
+                _reel = bool(getattr(DESTINATIONS.get(DESTINATION_MESUREE),
+                                     "reel", False))
+            except Exception:  # noqa: BLE001
+                _reel = False
+            corps += (f"\n\n⚠️ Cette décision vaut pour "
+                      f"**{DESTINATION_MESUREE}**"
+                      f"{', argent réel compris' if _reel else ''} — le "
+                      f"courtier que le laboratoire a mesuré — et pour lui "
+                      f"SEUL. Les autres comptes ne sont pas touchés. Elle ne "
+                      f"ferme aucune position ouverte.")
+        # Une ligne, pas cinq : les notions en attente restent visibles sans
+        # devenir le bruit qui noie le reste.
+        try:
+            from backend.services.notions_vivien import (incompletes,
+                                                         lignes_manquantes)
+            attente = incompletes()
+            if attente:
+                corps += (f"\n\n🔒 {len(attente)} notion(s) en attente de "
+                          f"leurs règles : "
+                          f"{', '.join(n['nom'] for n in attente)}.")
+                logger.info("labo_or: notions en attente — %s",
+                            " | ".join(lignes_manquantes()))
+        except Exception as e:  # noqa: BLE001
+            logger.debug("notions_vivien indisponible : %s", e)
         # ⚠️ Le nom CANONIQUE, dérivé de la destination — pas l'alias `sales`,
         # qui est accepté à l'entrée de l'endpoint mais absent de la table des
         # libellés. Ma première version levait `KeyError: 'sales'`, et le

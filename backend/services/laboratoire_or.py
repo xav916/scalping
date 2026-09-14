@@ -648,7 +648,14 @@ def chaines_detectees(releve: dict[int, list], bougies,
     chaine qui ne marche pas. C'est la forme de silence deja payee quatre fois
     ici — on rend donc les zeros.
     """
-    chaines = chaines if chaines is not None else CHAINES
+    # ⛔ Les notions DECLAREES entrent ici, au meme titre que les chaines
+    # ecrites a la main : une notion completee par Xavier doit se mesurer sans
+    # une ligne de code. Tant qu'il manque une des six lignes, elle ne produit
+    # rien — cf. `notions_vivien`, qui LEVE sur un nom inconnu plutot que de
+    # mesurer une chaine amputee de sa condition.
+    if chaines is None:
+        from backend.services.notions_vivien import chaines as _declarees
+        chaines = CHAINES + _declarees()
     sortie: dict[int, list] = {}
     compte: dict[str, int] = {c["nom"]: 0 for c in chaines}
 

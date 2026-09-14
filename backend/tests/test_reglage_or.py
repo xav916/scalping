@@ -323,9 +323,15 @@ def test_RIEN_a_signaler_n_envoie_AUCUN_message(monkeypatch):
 
 
 def test_une_FERMETURE_dit_qu_elle_vaut_pour_l_argent_REEL(monkeypatch):
-    """🔑 La couche soustractive s'applique a TOUTES les destinations. Le
-    message doit le dire : c'est une decision de trading, pas une note de
-    laboratoire."""
+    """🔑 C'est une decision de trading, pas une note de laboratoire — le
+    message doit dire sur quel argent elle porte.
+
+    ⚠️ **Change le 2026-09-14.** Il exigeait « vaut pour TOUTES les
+    destinations », ce qui etait vrai avant la portee par destination et faux
+    depuis. La fermeture ne porte plus que sur le courtier MESURE — qui se
+    trouve etre un compte reel, d'ou la mention d'argent reel, desormais LUE
+    dans le registre au lieu d'etre ecrite en dur.
+    """
     recu = {}
 
     class _R:
@@ -343,7 +349,10 @@ def test_une_FERMETURE_dit_qu_elle_vaut_pour_l_argent_REEL(monkeypatch):
     rg._notifier(_mesure([_cellule("poc_return_up", labo.REFUTE)]),
                  [{"action": rg.FERMER, "horizon": "5min",
                    "motif": "poc_return_up", "pair": rg.PAIRE, "detail": "x"}])
-    assert "argent réel compris" in recu.get("body", "")
+    corps = recu.get("body", "")
+    assert "argent réel compris" in corps
+    assert rg.DESTINATION_MESUREE in corps, "le courtier concerne n'est pas nomme"
+    assert "TOUS les comptes" not in corps
     assert "ne ferme aucune position ouverte" in recu.get("body", "").replace(
         "\n", " ")
 
