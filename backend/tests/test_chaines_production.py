@@ -197,3 +197,26 @@ def test_un_pont_MUET_ne_casse_pas_le_cycle(monkeypatch):
         raise RuntimeError("pont injoignable")
     monkeypatch.setattr(cp, "_bougies_du_pont", _boum)
     assert cp.chaines_de_la_paire("XAU/USD") == []
+
+
+def test_la_fenetre_de_lecture_tient_compte_des_MARCHES_FERMES():
+    """⛔ Trouve en production le 2026-09-14 : 276 bougies recues au lieu de
+    480. La fenetre etait calculee en temps d'HORLOGE (`5 min x 480`), et le
+    marche etait ferme le week-end. Or le biais de l'echelle superieure exige
+    400 bougies : ses deux chaines se seraient tues EN SILENCE.
+    """
+    code = _code_seul(cp)
+    assert "days=" in code, (
+        "la fenetre est calculee en minutes : une fermeture de marche la vide")
+
+
+def test_une_serie_TROP_COURTE_pour_le_biais_le_DIT(caplog):
+    """⛔ Detecter par l'absence. Une serie de 300 bougies laisse passer 16
+    chaines sur 18 et rend les deux chaines de biais muettes. Sans ce cri, le
+    silence ressemblerait a « aucun signal »."""
+    import logging
+    ds = _dicts(300)
+    with caplog.at_level(logging.WARNING):
+        cp.detecter_chaines(_candles(ds), "XAU/USD")
+    assert any("biais" in r.message.lower() for r in caplog.records), (
+        "une serie trop courte pour le biais doit le DIRE")

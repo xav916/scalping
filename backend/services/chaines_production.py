@@ -64,6 +64,15 @@ def detecter_chaines(candles: list[Candle], pair: str) -> list[ChaineDetectee]:
         # Fail-closed : mieux vaut aucune chaine qu'une chaine amputee de ses
         # maillons — elle porterait le meme nom en mesurant autre chose.
         return []
+    # ⛔ DETECTER PAR L'ABSENCE. Une serie de 300 bougies laisse passer seize
+    # chaines sur dix-huit et rend les deux chaines de BIAIS muettes : sans ce
+    # cri, leur silence ressemblerait a « aucun signal ». C'est exactement la
+    # forme de defaut que ce depot paie en boucle.
+    if len(candles) <= labo.BIAIS_FENETRE:
+        logger.warning(
+            "chaines[%s] : %d bougies — les chaines de BIAIS (il en faut %d) "
+            "resteront muettes ce cycle", pair, len(candles),
+            labo.BIAIS_FENETRE + 1)
     try:
         bougies = _au_format_labo(candles)
         dernier = len(bougies)
@@ -132,7 +141,13 @@ def _bougies_du_pont(pair: str, combien: int) -> list[Candle]:
     base = os.environ[d.url_env].rstrip("/")
     entetes = {getattr(d, "key_header", None) or "X-API-Key": os.environ[d.key_env]}
     fin = datetime.now(timezone.utc)
-    debut = fin - timedelta(minutes=5 * (combien + 20))   # marge pour les trous
+    # ⛔ EN JOURS, PAS EN MINUTES (corrige le 2026-09-14, mesure en
+    # production). `5 min x 480` donne 40 h d'horloge — mais le marche ferme le
+    # week-end et une heure par jour. Premiere mesure reelle : 276 bougies
+    # recues au lieu de 480, donc les deux chaines de biais muettes EN
+    # SILENCE. Sept jours couvrent largement 480 bougies de marche ouvert, et
+    # le pont sert l'historique gratuitement.
+    debut = fin - timedelta(days=7)
     q = urllib.parse.urlencode({
         "pair": pair.replace("/", ""), "timeframe": "M5",
         "from": debut.strftime("%Y-%m-%dT%H:%M:%SZ"),

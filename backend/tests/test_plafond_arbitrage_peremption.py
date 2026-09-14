@@ -163,13 +163,24 @@ def test_expirer_ne_change_RIEN_a_ce_qui_bloque(db):
     """⛔ L'invariant qui autorise ce correctif : toutes les requêtes filtrent
     déjà sur `jour`, donc une ligne de la veille était DÉJÀ invisible.
     Renommer son état ne peut pas rouvrir un compte."""
-    # ⛔ `demandes_en_attente()` lit l'horloge REELLE : ce test, ecrit le 09/09
-    # avec la date en dur, est passe au vert ce jour-la et a rougi le
-    # lendemain. Un test qui ne passe que le jour ou on l'ecrit ne teste rien
-    # — il date. Le jour se derive donc de l'horloge, comme le code teste.
+    # ⛔ DEUX defauts successifs dans ce seul test, et le second a mis six
+    # jours a se montrer.
+    #
+    # 1. Ecrit le 09/09 avec la date EN DUR : vert ce jour-la, rouge le
+    #    lendemain. Un test qui ne passe que le jour ou on l'ecrit ne teste
+    #    rien.
+    # 2. Corrige avec `date.today()` — l'horloge LOCALE. Or le module filtre
+    #    sur `datetime.now(timezone.utc).date()`. Entre 22 h et minuit UTC
+    #    (soit 00 h - 02 h a Paris) les deux dates DIFFERENT : la ligne est
+    #    ecrite au 15, cherchee au 14, et le test rougit. Constate le
+    #    2026-09-15 a 00 h 0x, la batterie ayant franchi minuit.
+    #
+    # 🔑 On derive le jour de `_aujourdhui()` — LA fonction que le code teste
+    # utilise. Deux horloges pour une meme date finissent toujours par
+    # diverger ; il n'y en a plus qu'une.
     from datetime import date, timedelta
-    aujourdhui = date.today().isoformat()
-    veille = (date.today() - timedelta(days=2)).isoformat()
+    aujourdhui = pa._aujourdhui()
+    veille = (date.fromisoformat(aujourdhui) - timedelta(days=2)).isoformat()
 
     _demande(veille)
     _demande(aujourdhui)
