@@ -6,7 +6,17 @@ set -euo pipefail
 
 KEY="C:/Users/xav91/Scalping/scalping/scalping-key.pem"
 # Default Tailscale IP. Si bloqué (IP home change, peer offline, etc.),
-# fallback public AWS : `SCALPING_HOST=ec2-user@51.21.132.216 bash deploy-v2.sh`.
+# fallback public AWS :
+#
+#     SCALPING_HOST=ec2-user@13.63.77.180 bash deploy-v2.sh
+#
+# ⛔ L'IP de repli ecrite ici valait `51.21.132.216` et elle etait PERIMEE :
+# le 2026-09-15, Tailscale a refuse la connexion (« Permission denied » sur le
+# port 22 alors que le peer apparaissait en ligne) et le repli documente a
+# expire en timeout. La bonne adresse etait dans la memoire du projet, pas
+# dans ce script. Une adresse de secours fausse coute exactement au moment ou
+# on en a besoin.
+#
 # Voir mémoire `feedback_ssh_tailscale_blocked_fallback.md`.
 HOST="${SCALPING_HOST:-ec2-user@100.103.107.75}"
 
