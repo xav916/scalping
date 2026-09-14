@@ -1,17 +1,35 @@
 """Le dictionnaire des notions DECLAREES — et ce qu'il manque pour les mesurer.
 
-⛔ **Le verrou que ce module implemente** (2026-09-14). Cinq notions du corpus
-sont verifiees comme existantes, mais leur contenu est inconnu :
+⛔ **Le verrou que ce module implemente** (2026-09-14). SIX titres de videos
+sont connus, et le contenu d'aucun ne l'est :
 
     « 5 etapes pour prendre des trades gagnants »
-    « ma strategie en 3 etapes »
+    « Ma strategie en 3 etapes »
     « Tu achetes ou tu vends ? »
+    « Ne trade plus sans connaitre ces elements »
     « Comment tu veux performer sans connaitre ces raccourcis ? »
     « Que faire dans ce contexte ? »
 
-Aucune heure de code ne les ouvre. Inventer les cinq etapes fabriquerait « un
-robot inspire de Vivien » en croyant reproduire sa methode — exactement ce que
-Xavier a refuse par ecrit le 12/09.
+⚠️ **PROVENANCE EXACTE, et elle compte.** Ces titres viennent d'UN message de
+Xavier, le 2026-09-12 a 13:20 UTC — et ce message etait lui-meme un document
+de recherche qu'il transmettait : « *La reponse que je vais te donner, ces
+dessous est un scrap de toutes les notions qu'evoque Vivian Legendary Trading
+dans ces videos Facebook* ». Le document dit textuellement que le contenu
+audio « doit encore etre decode ».
+
+⛔ **Xavier n'a donc JAMAIS enonce ces regles**, et il ne s'est jamais engage a
+le faire. Ecrire « en attente de SES regles » lui ferait porter une dette qu'il
+n'a pas contractee — corrige le 2026-09-14 apres qu'il ait demande la citation.
+
+⛔ **Et rien ici n'est verifie de premiere main.** Les durees (16 s, 37 s) et
+la mention d'un « index public » proviennent du meme document transmis. Aucune
+video n'a ete ouverte, aucun index consulte. Ma premiere version ecrivait
+« index public Vivien_Legendary, releve le 2026-09-12 » comme si nous l'avions
+lu : c'est le glissement exact que ce module est cense empecher.
+
+Aucune heure de code n'ouvre ces titres. Inventer les cinq etapes fabriquerait
+« un robot inspire de Vivien » en croyant reproduire sa methode — exactement ce
+que le document refuse par ecrit.
 
 🔑 **Ce qui EST implementable, c'est le verrou lui-meme.** Une notion se
 declare ici en six lignes, et rien de plus :
@@ -59,22 +77,33 @@ CHAMPS: tuple[str, ...] = (
 
 
 NOTIONS: tuple[dict, ...] = (
-    # ─── VERROUILLEES : titre verifie, contenu inconnu ────────────────
+    # ─── VERROUILLEES : titre rapporte, contenu inconnu ───────────────
     # ⛔ Les six champs valent None. Ce n'est pas un oubli, c'est l'etat du
-    # savoir : la duree indexee de « 5 etapes » est de 16 secondes et aucune
-    # transcription n'existe. Les remplir de memoire serait une invention.
+    # savoir. Les remplir de memoire serait une invention.
+    #
+    # ⚠️ `source` dit d'ou vient le TITRE, pas la regle — et il dit aussi que
+    # rien n'a ete verifie de premiere main. C'est ce qui garde separable
+    # « ce qui est dit », « ce qui est rapporte » et « ce que nous deduisons ».
     {"nom": "cinq_etapes",
-     "source": "Video « 5 etapes pour prendre des trades gagnants » (16 s, "
-               "index public Vivien_Legendary, releve le 2026-09-12)"},
+     "titre": "5 etapes pour prendre des trades gagnants",
+     "source": "Titre de video, rapporte dans le message de Xavier du 2026-09-12 13:20 UTC — lui-meme un document de recherche transmis. Contenu jamais consulte de premiere main."},
     {"nom": "strategie_trois_etapes",
-     "source": "Video « ma strategie en 3 etapes » (annonce sur le canal)"},
+     "titre": "Ma strategie en 3 etapes",
+     "source": "Titre de video, rapporte dans le message de Xavier du 2026-09-12 13:20 UTC — lui-meme un document de recherche transmis. Contenu jamais consulte de premiere main."},
     {"nom": "acheter_ou_vendre",
-     "source": "Video « Tu achetes ou tu vends ? » (37 s, index public)"},
+     "titre": "Tu achetes ou tu vends ?",
+     "source": "Titre de video, rapporte dans le message de Xavier du 2026-09-12 13:20 UTC — lui-meme un document de recherche transmis. Contenu jamais consulte de premiere main."},
+    # ⛔ Celle-ci manquait a ma premiere version : six titres, j'en avais
+    # declare cinq. Une notion oubliee est une notion qu'on n'attendra jamais.
+    {"nom": "ne_trade_plus_sans_ces_elements",
+     "titre": "Ne trade plus sans connaitre ces elements",
+     "source": "Titre de video, rapporte dans le message de Xavier du 2026-09-12 13:20 UTC — lui-meme un document de recherche transmis. Contenu jamais consulte de premiere main."},
     {"nom": "les_raccourcis",
-     "source": "Video « Comment tu veux performer sans connaitre ces "
-               "raccourcis ? »"},
+     "titre": "Comment tu veux performer sans connaitre ces raccourcis ?",
+     "source": "Titre de video, rapporte dans le message de Xavier du 2026-09-12 13:20 UTC — lui-meme un document de recherche transmis. Contenu jamais consulte de premiere main."},
     {"nom": "que_faire_dans_ce_contexte",
-     "source": "Video « Que faire dans ce contexte ? »"},
+     "titre": "Que faire dans ce contexte ?",
+     "source": "Titre de video, rapporte dans le message de Xavier du 2026-09-12 13:20 UTC — lui-meme un document de recherche transmis. Contenu jamais consulte de premiere main."},
 )
 
 
@@ -104,7 +133,8 @@ def lignes_manquantes(notions: tuple[dict, ...] | None = None) -> list[str]:
     """Ce qu'il manque, notion par notion — lisible dans un message."""
     out = []
     for n in incompletes(notions):
-        out.append(f"{n['nom']} — manque : {', '.join(manques(n))} "
+        out.append(f"{n['nom']} « {n.get('titre', '?')} » — manque : "
+                   f"{', '.join(manques(n))} "
                    f"[{n.get('source', 'SANS SOURCE')}]")
     return out
 

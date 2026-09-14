@@ -33,10 +33,32 @@ from backend.services import laboratoire_or as labo
 from backend.services import notions_vivien as nv
 
 
-def test_les_cinq_notions_verrouillees_sont_DECLAREES():
+def test_les_SIX_notions_verrouillees_sont_DECLAREES():
+    """⛔ SIX, pas cinq. Ma premiere version en declarait cinq et perdait
+    « Ne trade plus sans connaitre ces elements » — trouve le 2026-09-14 quand
+    Xavier a demande la citation qui prouvait ma liste. Une notion oubliee est
+    une notion qu'on n'attendra jamais."""
     noms = {n["nom"] for n in nv.NOTIONS}
     assert {"cinq_etapes", "strategie_trois_etapes", "acheter_ou_vendre",
-            "les_raccourcis", "que_faire_dans_ce_contexte"} <= noms
+            "ne_trade_plus_sans_ces_elements", "les_raccourcis",
+            "que_faire_dans_ce_contexte"} <= noms
+    assert len(nv.NOTIONS) == 6
+
+
+def test_aucune_source_ne_se_PRETEND_verifiee_de_premiere_main():
+    """⛔ Ma premiere version ecrivait « index public Vivien_Legendary, releve
+    le 2026-09-12 » — comme si nous l'avions consulte. Nous ne l'avons jamais
+    ouvert : les titres et les durees viennent d'un document transmis par
+    Xavier, qui dit lui-meme que le contenu « doit encore etre decode ».
+
+    🔑 C'est le glissement exact que ce module existe pour empecher. Une source
+    doit dire d'ou vient le titre ET qu'il n'a pas ete verifie."""
+    for n in nv.NOTIONS:
+        src = n["source"]
+        assert "2026-09-12" in src, f"{n['nom']} : la provenance n'est pas datee"
+        assert "jamais consulte" in src, (
+            f"{n['nom']} : la source ne dit pas qu'elle est de seconde main")
+        assert n.get("titre"), f"{n['nom']} : le titre rapporte manque"
 
 
 def test_une_notion_verrouillee_NOMME_ce_qui_lui_manque():
@@ -128,7 +150,9 @@ def test_une_notion_SANS_SOURCE_LEVE():
 def test_le_rapport_dit_ce_qui_manque_notion_par_notion():
     lignes = nv.lignes_manquantes()
     assert len(lignes) == len(nv.incompletes())
-    assert any("5 etapes" in x or "cinq_etapes" in x for x in lignes)
+    assert any("cinq_etapes" in x for x in lignes)
+    assert any("5 etapes pour prendre des trades gagnants" in x
+               for x in lignes), "le rapport doit citer le TITRE"
     for x in lignes:
         assert "declencheur" in x, "le rapport doit nommer les champs manquants"
 
