@@ -211,12 +211,91 @@ dispositif — c'est le dispositif qui fonctionne.
 
 ## 🕐 Candidats
 
-**La file est vide.** Les cinq concepts déclarés le 2026-09-09 sont tous passés
-en 🔬 *en mesure*. Le prochain se déclare ici, avec sa prédiction falsifiable,
-**avant** d'être codé.
-
 ⚠️ Avant d'en coder un : vérifier qu'il n'est pas déjà **⛔ réfuté** ci-dessous,
-et écrire sa prédiction falsifiable dans le tableau ci-dessus.
+et écrire sa prédiction falsifiable **ici, avant la première ligne de code**.
+
+---
+
+### Les trois maillons manquants — déclarés le 2026-09-14, non codés
+
+⛔ **Pourquoi ces trois-là, et pas d'autres.** L'architecture rapportée par
+Xavier le 2026-09-12 est une chaîne :
+
+```
+Contexte → Opening Range → niveau majeur → liquidité → prise de liquidité
+   → double prise → réaction/réintégration → retest → confirmation volume
+   → BUY/SELL → SL → TP → gestion
+```
+
+Sur ces treize maillons, trois manquent — et ils sont **au milieu**, donc
+aucun n'est contournable. Les douze chaînes du laboratoire s'arrêtent à deux
+maillons parce que les suivants n'existent pas. **La chaîne complète n'a
+jamais été mesurée : elle n'est pas montable.**
+
+🔑 Ces trois-là sont notre **formalisation** d'un vocabulaire. Personne n'a
+publié ces seuils. Ce qui est *dit* et ce qui est *déduit* doit rester
+séparable — sinon on croira avoir reproduit une méthode qu'on a inventée.
+
+#### 1. Opening Range
+
+- **Idée** : le marché ouvre, il construit une fourchette pendant les
+  premières bougies de la session, et ce qui compte n'est pas la cassure
+  n'importe quand — c'est la cassure **de cette fourchette-là**.
+- **Règle** (miroir pour le sens opposé) :
+  - `ouverture` = première bougie dont l'heure **locale de la place** atteint
+    l'ouverture de la session ;
+  - `fourchette` = `max(haut)` / `min(bas)` des `OR_BOUGIES` premières bougies
+    depuis l'ouverture ;
+  - signal quand une bougie **clôture** au-dessus de `max(haut)`, et seulement
+    dans la **même session** — un franchissement le lendemain ne parle pas de
+    ce range-là.
+- ⚠️ **Recouvrement attendu avec `breakout`, et il sera MESURÉ, pas déduit.**
+  C'est l'erreur commise deux fois le 09/09 et le 12/09 : un recouvrement
+  « total par construction » s'est révélé faux les deux fois.
+- **Prédiction falsifiable** : `opening_range_up` doit rendre un **R moyen
+  supérieur** à `breakout_up`, même instrument, même échelle. Si la cassure du
+  range d'open ne bat pas la cassure ordinaire, **l'heure n'ajoute rien** et la
+  notion est réfutée.
+
+#### 2. Retest
+
+- **Idée** : entrer **sur** la cassure, c'est payer le mouvement. La notion
+  dit d'attendre que le prix revienne sur le niveau cassé et qu'il **tienne**.
+- **Règle** (miroir pour le sens opposé) :
+  - `niveau` = `max(haut)` des 30 bougies de référence ;
+  - une bougie antérieure a **clôturé au-dessus** de `niveau` — la cassure ;
+  - le prix est **revenu toucher** `niveau` (`bas <= niveau`) dans les
+    `RETEST_FENETRE` bougies suivantes ;
+  - la **dernière** bougie clôture **au-dessus** de `niveau` — il tient.
+- ⚠️ **Recouvrement attendu avec `order_block`**, dont la définition contient
+  déjà « retestée et TENUE ». À mesurer, cellule contre cellule.
+- **Prédiction falsifiable** : `retest_up` doit rendre un **R moyen supérieur**
+  à `breakout_up`. C'est exactement ce que la notion affirme — attendre paie.
+  Si le retest ne bat pas la cassure, attendre ne paie pas.
+
+#### 3. Réintégration
+
+- **Idée** : différente du balayage. Un balayage est une **mèche** rejetée
+  dans la même bougie. Une réintégration, c'est le prix qui **passe du temps**
+  hors de la fourchette — donc qui a l'air accepté dehors — puis qui rentre.
+  L'échec est plus coûteux pour ceux qui ont suivi, donc le retour plus violent.
+- **Règle** (miroir pour le sens opposé) :
+  - `niveau` = `max(haut)` des 30 bougies de référence, **hors** les
+    `REINTEGRATION_DEHORS` dernières ;
+  - au moins `REINTEGRATION_DEHORS` bougies consécutives ont **clôturé
+    au-dessus** de `niveau` — l'acceptation hors du range ;
+  - la **dernière** bougie clôture **en deçà** — la réintégration.
+- ⚠️ **Recouvrement attendu avec `liquidity_sweep`** : à mesurer. Le critère
+  qui les sépare est la **clôture** — le balayage rejette dans la mèche, la
+  réintégration accepte puis échoue.
+- **Prédiction falsifiable** : `reintegration_down` doit rendre un **R moyen
+  supérieur** à `liquidity_sweep_down`. Si accepter puis échouer ne vaut pas
+  mieux que rejeter tout de suite, la distinction ne porte rien.
+
+⚠️ **Ce que ces trois coûtent à tout le monde.** Six motifs de plus, soit
+environ **480 cellules** sur les 20 instruments — le plafond du hasard monte
+pour **toutes** les cellules existantes. C'est le prix assumé de la chaîne
+complète, et c'est pourquoi ils sont **déclarés ici avant d'être codés**.
 
 ---
 
