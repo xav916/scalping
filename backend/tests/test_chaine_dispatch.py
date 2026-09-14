@@ -167,3 +167,41 @@ def test_le_setup_de_chaine_est_SCORE_comme_les_autres():
         "le setup de chaine n'est pas score : il sera filtre en silence")
     assert "compute_verdict( _sc," in compact, (
         "le setup de chaine n'a pas de verdict")
+
+
+def test_un_setup_de_chaine_NON_ARMEE_est_refuse_meme_si_son_motif_est_autorise(monkeypatch):
+    """⛔ LE DANGER TROUVE EN PRODUCTION LE 2026-09-15, une heure apres avoir
+    arme.
+
+    Huit chaines sur dix-huit ont un declencheur DEJA present dans la liste
+    blanche de l'or 5 min (`engulfing_bullish`, `breakout_up`,
+    `range_bounce_up`...). Leur setup n'avait donc pas besoin du registre : il
+    passait comme un motif ordinaire. Et le chemin normal produit DEJA ce
+    motif, depuis Twelve Data, avec un prix legerement different — donc la
+    deduplication par prix d'entree ne les rapproche pas.
+
+    Resultat : **deux ordres pour un seul signal**, sur de l'argent reel.
+
+    🔑 Un setup de chaine EST un setup de chaine. Si sa chaine n'est pas armee,
+    il ne trade pas — peu importe que son motif declencheur soit autorise par
+    ailleurs.
+    """
+    monkeypatch.setenv("CHAINES_AUTORISEES",
+                       '{"admin_live": {"5min": ["%s"]}}' % VRAIE)
+    ca._cache = None
+    # ⚠️ La liste blanche vient de l'`.env` : elle est VIDE en test. On la pose
+    # donc explicitement, comme en production sur l'or 5 min.
+    monkeypatch.setattr(mb, "MT5_BRIDGE_ALLOWED_PATTERNS",
+                        frozenset({"engulfing_bullish"}))
+    ordinaire = mb._patterns_autorises(_S("engulfing_bullish", None, "5min"),
+                                       _D("admin_live"))
+    assert "engulfing_bullish" in ordinaire, (
+        "prerequis du test : le motif doit etre autorise par ailleurs")
+
+    # ... mais un setup issu d'une chaine NON armee ne doit RIEN pouvoir pousser
+    de_chaine = mb._patterns_autorises(
+        _S("engulfing_bullish", "chaine:avalement_en_discount_haussier", "5min"),
+        _D("admin_live"))
+    assert de_chaine == set(), (
+        "un setup de chaine non armee passe par la porte des motifs simples : "
+        "deux ordres partiraient pour un seul signal")

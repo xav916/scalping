@@ -710,18 +710,35 @@ def _patterns_autorises(setup, dest):
     # destination, reste refuse. Elle n'elargit la porte pour personne d'autre.
     _chaine = getattr(setup, "chaine", None)
     if _chaine:
+        # ⛔ UN SETUP DE CHAINE EST UN SETUP DE CHAINE (corrige le 2026-09-15,
+        # une heure apres l'armement, sur mesure en production).
+        #
+        # Huit chaines sur dix-huit ont un declencheur DEJA present dans la
+        # liste blanche de l'or 5 min — `engulfing_bullish`, `breakout_up`,
+        # `range_bounce_up`... Leur setup n'avait donc pas besoin du registre :
+        # il passait comme un motif ordinaire. Or le chemin normal produit
+        # DEJA ce motif, depuis Twelve Data, a un prix legerement different —
+        # la deduplication par prix d'entree ne les rapproche pas.
+        #
+        # ⇒ DEUX ORDRES POUR UN SEUL SIGNAL, sur de l'argent reel.
+        #
+        # 🔑 Si sa chaine n'est pas armee, il ne trade pas. Peu importe que son
+        # motif declencheur soit autorise par ailleurs : c'est la chaine qui
+        # decide, et elle seule.
         try:
             from backend.services.chaines_autorisees import autorisee
             _dest_c = getattr(dest, "destination_id", None) if dest else None
-            if autorisee(_chaine, _dest_c, getattr(setup, "horizon", None)):
-                _motif = getattr(getattr(setup, "pattern", None), "value", None)
-                if _motif:
-                    base = base | {str(_motif)}
-                    logger.info("chaine %s armee sur %s : %s ouvert",
-                                _chaine, _dest_c, _motif)
+            _armee = autorisee(_chaine, _dest_c, getattr(setup, "horizon", None))
         except Exception as e:  # noqa: BLE001
-            # ⛔ fail-CLOSED : un registre illisible n'ouvre rien.
             logger.warning("registre des chaines illisible : %s", e)
+            _armee = False          # ⛔ fail-CLOSED
+        if not _armee:
+            return set()            # rien ne peut partir pour ce setup
+        _motif = getattr(getattr(setup, "pattern", None), "value", None)
+        if _motif:
+            base = base | {str(_motif)}
+            logger.info("chaine %s armee sur %s : %s ouvert",
+                        _chaine, _dest_c, _motif)
 
     # ⛔ Couche SOUSTRACTIVE du laboratoire de l'or, appliquee EN DERNIER
     # (2026-09-08). Ce que le labo ferme ne peut etre re-ouvert par aucune
