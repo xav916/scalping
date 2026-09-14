@@ -21,6 +21,27 @@ qu'elle traverse. C'est la définition ORIGINELLE du profil de marché — le
 volume profile en est la variante tardive — et elle se calcule depuis l'OHLC
 seul. Ce n'est donc pas un pis-aller, c'est la version qui a du sens ici.
 
+✅ **CE QUI A CHANGÉ LE 2026-09-12.** Le pont MT5 transporte désormais
+`tick_volume`, et le laboratoire le câble jusqu'aux bougies. Mesuré le 14/09
+sur l'or : **36 bougies sur 36** avec un volume non nul, 813 ticks sur la
+dernière. Le profil de **volume** est donc devenu calculable — `profil(...,
+source=VOLUME)`.
+
+⛔ **Mais il REFUSE de se calculer sans volume**, au lieu de retomber sur le
+TPO. Un repli silencieux ferait mesurer le temps en croyant mesurer le volume,
+et le nom du résultat mentirait. C'est la même règle que `_volume_fort`, qui
+répond NON quand le volume est absent.
+
+⛔ **Et le TPO reste le DÉFAUT.** Tous les verdicts de `poc_return` depuis le
+2026-09-04 ont été rendus en TPO : basculer en silence les rendrait
+incomparables sans que rien ne le dise. Le changement de source est une
+décision à prendre et à mesurer, pas un effet de bord.
+
+⚠️ `tick_volume` compte les CHANGEMENTS DE PRIX, pas les contrats échangés.
+« Profil de volume » est donc ici un profil de **ticks** — le vrai volume
+négocié n'existe que sur les futures (COMEX GC/SI). Le nom doit rester honnête
+partout où il apparaît.
+
 ⚠️ Ce module ne DÉCIDE rien : il décrit. La règle d'entrée, de stop et de
 sortie vit dans `pattern_detector._detect_poc_return`, où elle est nommée et
 justifiée — parce que la méthode d'origine ne la donnait pas.
@@ -48,68 +69,110 @@ LARGEUR_FRACTALE = 2
 # Sous ce nombre de bougies, un profil ne décrit rien.
 MIN_BOUGIES = 10
 
+# Les deux façons de pondérer un niveau de prix. Jamais fondues : l'une
+# compte le TEMPS, l'autre les TICKS, et elles ne répondent pas à la même
+# question.
+TPO = "tpo"
+VOLUME = "volume"
+SOURCES = (TPO, VOLUME)
 
-def profil_tpo(candles: list[Candle],
-               n_niveaux: int = NIVEAUX_PAR_DEFAUT) -> list[tuple[float, int]]:
-    """Temps passé à chaque niveau de prix : ``[(prix, nb_bougies), ...]``.
+
+def profil(candles: list[Candle],
+           n_niveaux: int = NIVEAUX_PAR_DEFAUT,
+           source: str = TPO) -> list[tuple[float, float]]:
+    """Poids de chaque niveau de prix : ``[(prix, poids), ...]``.
 
     Chaque bougie incrémente TOUS les niveaux que son ``[low, high]``
-    traverse — c'est la construction TPO classique.
+    traverse — construction TPO classique. `source` dit seulement **de combien**
+    elle les incrémente : de 1 en TPO (une unité de temps), de son volume en
+    VOLUME.
+
+    ⛔ En VOLUME, rend ``[]`` si le volume total est nul. **Pas de repli sur le
+    TPO** : mesurer le temps sous le nom du volume est le genre de glissement
+    que ce dépôt paie ensuite pendant des semaines.
+
+    ⛔ Une source inconnue LÈVE. Retomber en silence sur le TPO ferait passer
+    une faute de frappe pour un choix.
     """
+    if source not in SOURCES:
+        raise ValueError(f"source inconnue : {source!r} — connues : {SOURCES}")
     if len(candles) < MIN_BOUGIES:
         return []
+
+    if source == VOLUME:
+        total = sum(float(c.volume or 0.0) for c in candles)
+        if total <= 0:
+            logger.info("market_profile: aucun volume sur %d bougies — profil "
+                        "de volume refusé (pas de repli sur le TPO)",
+                        len(candles))
+            return []
+
     bas = min(c.low for c in candles)
     haut = max(c.high for c in candles)
+    poids_de = ((lambda c: float(c.volume or 0.0)) if source == VOLUME
+                else (lambda c: 1.0))
     if haut <= bas:
-        # Marché parfaitement plat : un seul niveau, tout le temps dessus.
-        return [(bas, len(candles))]
+        # Marché parfaitement plat : un seul niveau, tout le poids dessus.
+        return [(bas, sum(poids_de(c) for c in candles))]
 
     pas = (haut - bas) / n_niveaux
-    comptes = [0] * n_niveaux
+    comptes = [0.0] * n_niveaux
     for c in candles:
         i_bas = int((c.low - bas) / pas)
         i_haut = int((c.high - bas) / pas)
+        p = poids_de(c)
         for i in range(max(0, i_bas), min(n_niveaux - 1, i_haut) + 1):
-            comptes[i] += 1
+            comptes[i] += p
     return [(bas + (i + 0.5) * pas, n) for i, n in enumerate(comptes)]
 
 
+def profil_tpo(candles: list[Candle],
+               n_niveaux: int = NIVEAUX_PAR_DEFAUT) -> list[tuple[float, float]]:
+    """Le profil en TEMPS. Conservé : c'est le nom qu'emploie tout l'existant."""
+    return profil(candles, n_niveaux, source=TPO)
+
+
 def poc(candles: list[Candle],
-        n_niveaux: int = NIVEAUX_PAR_DEFAUT) -> float | None:
-    """Le prix où le marché a passé le plus de temps. ``None`` si indécidable."""
-    profil = profil_tpo(candles, n_niveaux)
-    if not profil:
+        n_niveaux: int = NIVEAUX_PAR_DEFAUT,
+        source: str = TPO) -> float | None:
+    """Le prix le plus fréquenté — en TEMPS (défaut) ou en TICKS.
+
+    ``None`` si indécidable, y compris quand le volume est demandé et absent.
+    """
+    p = profil(candles, n_niveaux, source)
+    if not p:
         return None
-    return max(profil, key=lambda x: x[1])[0]
+    return max(p, key=lambda x: x[1])[0]
 
 
 def zone_valeur(candles: list[Candle], part: float = PART_ZONE_VALEUR,
-                n_niveaux: int = NIVEAUX_PAR_DEFAUT) -> tuple[float, float] | None:
+                n_niveaux: int = NIVEAUX_PAR_DEFAUT,
+                source: str = TPO) -> tuple[float, float] | None:
     """Fourchette de prix contenant ``part`` du temps, centrée sur le POC.
 
     Élargie depuis le POC vers le voisin le plus fréquenté, jusqu'à couvrir la
     part demandée — la construction usuelle de la *value area*.
     """
-    profil = profil_tpo(candles, n_niveaux)
-    if not profil:
+    profil_ = profil(candles, n_niveaux, source)
+    if not profil_:
         return None
-    total = sum(n for _, n in profil)
+    total = sum(n for _, n in profil_)
     if total <= 0:
         return None
 
-    i_poc = max(range(len(profil)), key=lambda i: profil[i][1])
+    i_poc = max(range(len(profil_)), key=lambda i: profil_[i][1])
     bas = haut = i_poc
-    cumul = profil[i_poc][1]
-    while cumul < part * total and (bas > 0 or haut < len(profil) - 1):
-        gauche = profil[bas - 1][1] if bas > 0 else -1
-        droite = profil[haut + 1][1] if haut < len(profil) - 1 else -1
+    cumul = profil_[i_poc][1]
+    while cumul < part * total and (bas > 0 or haut < len(profil_) - 1):
+        gauche = profil_[bas - 1][1] if bas > 0 else -1
+        droite = profil_[haut + 1][1] if haut < len(profil_) - 1 else -1
         if droite >= gauche:
             haut += 1
             cumul += droite
         else:
             bas -= 1
             cumul += gauche
-    return (profil[bas][0], profil[haut][0])
+    return (profil_[bas][0], profil_[haut][0])
 
 
 def _fractales(candles: list[Candle],

@@ -113,8 +113,9 @@ NOTIONS: tuple[dict, ...] = (
           "brique": "AUCUNE — nous n'avons pas de detecteur d'accumulation"},
          {"n": 3, "statut": RAPPORTE,
           "texte": "Tracer le Volume Profile sur cette zone",
-          "brique": "market_profile — mais TPO, pas volume (le volume existe "
-                    "depuis le 12/09 et n'est pas encore utilise ici)"},
+          "brique": "market_profile.profil(..., source=VOLUME) — code le "
+                    "2026-09-14. ⚠️ profil de TICKS (tick_volume), pas de "
+                    "contrats : le vrai volume n'existe que sur les futures"},
          {"n": 4, "statut": RECONSTRUIT,
           "texte": "Attendre une prise de liquidite (liquidity grab)",
           "brut": "grade de liquidite",
