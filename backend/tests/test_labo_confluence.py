@@ -79,6 +79,24 @@ class _Setup:
         self.take_profit_1 = tp
 
 
+# ⛔ EGALITE, pas un plafond. Un « <= 12 » laisse ajouter une chaine sans
+# que rien ne le dise tant qu'on reste sous la barre ; l'egalite oblige a
+# venir ici et a ecrire POURQUOI. Chaque augmentation est datee :
+#
+#   12  2026-09-12  les douze premieres, declarees le jour meme
+#   14  2026-09-14  + prise_en_accumulation haussier/baissier — notre
+#                   lecture des etapes 2 + 4 des cinq de Vivien, declaree
+#                   dans docs/concepts-trading.md (720fcd3) AVANT le code
+#   16  2026-09-14  + sweep_avec_biais haussier/baissier — le PREMIER
+#                   maillon de la chaine, le contexte, declare dans
+#                   docs/concepts-trading.md (b9aa1cc) AVANT le code
+#
+# ⚠️ Le cout n'est pas nul : ~160 cellules de plus, donc le plafond du
+# hasard monte pour TOUTES les cellules existantes.
+CHAINES_ATTENDUES = 16
+
+
+
 def _bougies(n, volumes=None):
     t0 = datetime(2026, 9, 11, 8, 0, tzinfo=timezone.utc)
     return [{"t": (t0 + timedelta(minutes=5 * i)).isoformat(),
@@ -94,18 +112,6 @@ def test_les_chaines_sont_DECLAREES_et_peu_nombreuses():
     """⛔ Le garde-fou contre la recherche exhaustive. Six conditions
     combinables font des dizaines de milliers de chaînes ; les essayer toutes
     fabriquerait une gagnante à coup sûr (PBO 0,579)."""
-    # ⛔ EGALITE, pas un plafond. Un « <= 12 » laisse ajouter une chaine sans
-    # que rien ne le dise tant qu'on reste sous la barre ; l'egalite oblige a
-    # venir ici et a ecrire POURQUOI. Chaque augmentation est datee :
-    #
-    #   12  2026-09-12  les douze premieres, declarees le jour meme
-    #   14  2026-09-14  + prise_en_accumulation haussier/baissier — notre
-    #                   lecture des etapes 2 + 4 des cinq de Vivien, declaree
-    #                   dans docs/concepts-trading.md (720fcd3) AVANT le code
-    #
-    # ⚠️ Le cout n'est pas nul : ~160 cellules de plus, donc le plafond du
-    # hasard monte pour TOUTES les cellules existantes.
-    CHAINES_ATTENDUES = 14
     assert len(labo.CHAINES) == CHAINES_ATTENDUES, (
         f"{len(labo.CHAINES)} chaines au lieu de {CHAINES_ATTENDUES} — une "
         "chaine ne s'ajoute pas en silence : declarer la raison ici et dans "

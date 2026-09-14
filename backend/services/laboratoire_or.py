@@ -602,6 +602,20 @@ CHAINES: tuple[dict, ...] = (
      "motifs": ("liquidity_sweep_down",),
      "declencheur": "liquidity_sweep_down",
      "predicats": ("dans_accumulation",), "fenetre": 0},
+    # ⛔ LE PREMIER MAILLON DE LA CHAINE : le contexte (declare le 2026-09-14
+    # dans docs/concepts-trading.md, b9aa1cc, avant le code). Un balayage pris
+    # a contre-courant de la structure large n'est pas le meme trade.
+    #
+    # 🔑 Un seul motif : sous-ensemble STRICT du balayage, donc comparaison
+    # APPARIEE avec `liquidity_sweep` seul.
+    {"nom": "sweep_avec_biais_haussier",
+     "motifs": ("liquidity_sweep_up",),
+     "declencheur": "liquidity_sweep_up",
+     "predicats": ("biais_haussier",), "fenetre": 0},
+    {"nom": "sweep_avec_biais_baissier",
+     "motifs": ("liquidity_sweep_down",),
+     "declencheur": "liquidity_sweep_down",
+     "predicats": ("biais_baissier",), "fenetre": 0},
 )
 
 # Un pic de volume : la bougie que le detecteur vient de voir porte au moins
@@ -727,8 +741,57 @@ def _dans_accumulation(bougies, i: int) -> bool:
     return mp.zone_accumulation(objets, source=mp.VOLUME) is not None
 
 
+# ─── Le biais de l'echelle superieure ───────────────────────────────
+#
+# ⛔ AGREGER EN H4 FIXE SERAIT FAUX. Le laboratoire mesure chaque motif a
+# quatre echelles ; un « biais H4 » calcule sur des bougies d'une heure serait
+# un biais de HUIT JOURS sous le meme nom. Deux fenetres, un seul nom — le
+# defaut que `sessions_marche` existe pour empecher ailleurs.
+#
+# 🔑 Le biais est donc RELATIF a l'echelle mesuree : la meme
+# `_tendance_de_structure` — qui coupe une fenetre en deux et exige A LA FOIS
+# un plus-haut ET un plus-bas superieurs — sur une fenetre 8 x plus longue.
+# A l'echelle 5 min cela regarde 20 h de marche : l'ordre de grandeur du H4.
+#
+# ⚠️ UN SEUL reglage neuf : le facteur. Chaque seuil supplementaire est un
+# degre de liberte, donc de l'edge fabrique.
+BIAIS_FACTEUR = 8
+BIAIS_FENETRE = BIAIS_FACTEUR * FENETRE
+
+
+def _biais(attendu: str):
+    """Fabrique le predicat « la structure large est `attendu` »."""
+
+    def _predicat(bougies, i: int) -> bool:
+        from datetime import datetime
+
+        from backend.models.schemas import Candle
+        from backend.services.pattern_detector import _tendance_de_structure
+
+        # ⚠️ `bougies[:i]` — ce que le detecteur a vu, pas une bougie de plus.
+        vues = bougies[:i]
+        if len(vues) < BIAIS_FENETRE:
+            return False            # fail-closed : pas d'histoire, pas de biais
+        fen = vues[-BIAIS_FENETRE:]
+        try:
+            objets = [Candle(
+                timestamp=(x["t"] if isinstance(x["t"], datetime)
+                           else datetime.fromisoformat(
+                               str(x["t"]).replace("Z", "+00:00"))),
+                open=float(x["o"]), high=float(x["h"]), low=float(x["l"]),
+                close=float(x["c"]), volume=float(x.get("tv") or 0.0))
+                for x in fen]
+        except Exception:  # noqa: BLE001 — bougie malformee : on ne valide pas
+            return False
+        return _tendance_de_structure(objets) == attendu
+
+    return _predicat
+
+
 _PREDICATS = {"volume_fort": _volume_fort,
-              "dans_accumulation": _dans_accumulation}
+              "dans_accumulation": _dans_accumulation,
+              "biais_haussier": _biais("haussiere"),
+              "biais_baissier": _biais("baissiere")}
 _PREDICATS.update({nom: _dans_session(nom) for nom in _SESSIONS})
 
 

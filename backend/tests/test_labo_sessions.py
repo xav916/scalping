@@ -180,7 +180,12 @@ def test_sans_invalidants_le_comportement_ne_change_PAS():
 def test_les_chaines_DECLAREES_restent_peu_nombreuses():
     """⚠️ Chaque chaine ajoutee releve le plafond du hasard pour tout le
     monde. Le garde-fou contre la recherche exhaustive doit tenir."""
-    assert len(labo.CHAINES) <= 14
+    # ⛔ UNE SEULE source de verite. Ce fichier tenait son PROPRE plafond
+    # (« <= 14 ») en plus de celui de `test_labo_confluence` : deux gardes-fous
+    # sur la meme grandeur finissent par diverger, et le plus laxiste decide en
+    # silence. Trouve le 2026-09-14 en passant de 14 a 16 chaines.
+    from backend.tests.test_labo_confluence import CHAINES_ATTENDUES
+    assert len(labo.CHAINES) == CHAINES_ATTENDUES
     for c in labo.CHAINES:
         for m in c.get("invalidants", ()):
             assert m not in c["motifs"], (
