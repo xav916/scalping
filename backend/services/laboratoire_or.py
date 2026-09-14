@@ -560,13 +560,10 @@ def _volume_fort(bougies, i: int) -> bool:
 # ⚠️ Ces bornes sont une CONVENTION DECLAREE, pas une mesure : ce sont les
 # horaires d'ouverture publics des places. Les deplacer serait un choix a
 # ecrire, jamais un reglage a optimiser.
-_SESSIONS = {
-    "session_londres":   ("Europe/London",    (8, 0),  (16, 30)),
-    "killzone_londres":  ("Europe/London",    (8, 0),  (11, 0)),
-    "session_newyork":   ("America/New_York", (9, 30), (16, 0)),
-    "killzone_newyork":  ("America/New_York", (9, 30), (12, 30)),
-    "session_asie":      ("Asia/Tokyo",       (9, 0),  (15, 0)),
-}
+# ⛔ DECLAREES UNE SEULE FOIS, dans `sessions_marche` : l'opening range
+# en a besoin cote detecteur. Deux tables finiraient par diverger, et deux
+# mesures porteraient le meme nom en decrivant deux fenetres.
+from backend.services.sessions_marche import SESSIONS as _SESSIONS
 
 
 def _instant(bougies, i: int):

@@ -107,6 +107,22 @@ class PatternType(str, Enum):
     # rien.
     DOUBLE_SWEEP_UP = "double_sweep_up"        # bas pris 2x -> on achete
     DOUBLE_SWEEP_DOWN = "double_sweep_down"    # hauts pris 2x -> on vend
+    # ─── Les trois maillons manquants (2026-09-14) ────────────────────
+    # Declares dans docs/concepts-trading.md AVANT d'etre codes (0977890).
+    # La chaine rapportee le 12/09 compte treize maillons ; ces trois
+    # manquaient et ils sont AU MILIEU, donc aucun n'etait contournable.
+    #
+    # ⚠️ Recouvrements ATTENDUS, a mesurer et non a deduire : opening_range
+    # avec breakout, retest avec order_block, reintegration avec
+    # liquidity_sweep. Deduire un recouvrement s'est revele faux deux fois.
+    OPENING_RANGE_UP = "opening_range_up"      # casse le haut du range d'open
+    OPENING_RANGE_DOWN = "opening_range_down"  # casse le bas du range d'open
+    RETEST_UP = "retest_up"                    # niveau casse, retouche, TENU
+    RETEST_DOWN = "retest_down"
+    # Accepte HORS du range (clotures, pas une meche) puis rentre : l'echec
+    # coute plus cher a ceux qui ont suivi, donc le retour est plus violent.
+    REINTEGRATION_UP = "reintegration_up"      # accepte SOUS le bas, rentre
+    REINTEGRATION_DOWN = "reintegration_down"  # accepte SUR le haut, rentre
     # ─── Order Block (2026-09-09) ─────────────────────────────────────
     # La derniere bougie de sens OPPOSE avant une impulsion : la zone d'ou le
     # mouvement est parti. Signal quand elle est RETESTEE et qu'elle TIENT.

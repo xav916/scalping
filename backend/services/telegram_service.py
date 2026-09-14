@@ -444,6 +444,12 @@ _PATTERN_EXPLAIN_FR: dict[str, str] = {
     # sur Telegram, pas le code.
     "liquidity_sweep_up": "chasse aux stops sous le plancher — le prix est allé chercher les ordres placés sous le plus bas récent, puis est remonté aussitôt : le creux a été rejeté",
     "liquidity_sweep_down": "chasse aux stops au-dessus du plafond — le prix est allé chercher les ordres placés au-dessus du plus haut récent, puis est redescendu aussitôt : le sommet a été rejeté",
+    "opening_range_up": "le prix a casse par le HAUT la fourchette des trente premieres minutes de la seance — ce que le marche a construit a l ouverture vient de ceder vers le haut",
+    "opening_range_down": "le prix a casse par le BAS la fourchette des trente premieres minutes de la seance — ce que le marche a construit a l ouverture vient de ceder vers le bas",
+    "retest_up": "un niveau casse a ete retouche et il a TENU — le prix est revenu verifier le plafond devenu plancher, et il est reparti vers le haut",
+    "retest_down": "un niveau casse a ete retouche et il a TENU — le prix est revenu verifier le plancher devenu plafond, et il est reparti vers le bas",
+    "reintegration_up": "le prix avait CLOTURE sous le plancher plusieurs fois, comme s il etait accepte en dessous, puis il est rentre dans la fourchette : ceux qui ont vendu la cassure sont pieges",
+    "reintegration_down": "le prix avait CLOTURE au-dessus du plafond plusieurs fois, comme s il etait accepte au-dessus, puis il est rentre dans la fourchette : ceux qui ont achete la cassure sont pieges",
     "double_sweep_up": "le plancher a ete teste DEUX fois — le prix est alle chercher les ordres sous le plus bas recent a deux reprises, et il est remonte les deux fois : quelqu'un defend ce niveau",
     "double_sweep_down": "le plafond a ete teste DEUX fois — le prix est alle chercher les ordres au-dessus du plus haut recent a deux reprises, et il est redescendu les deux fois : quelqu'un defend ce niveau",
     "order_block_up": "retour sur la zone de départ, qui a tenu — le prix est redescendu là où la hausse s'était élancée, et il en est reparti vers le haut",

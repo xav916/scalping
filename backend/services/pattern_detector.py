@@ -247,6 +247,9 @@ def detect_patterns(candles: list[Candle], pair: str = "XAU/USD") -> list[Patter
     patterns.extend(_detect_order_block(candles, pair))
     patterns.extend(_detect_structure(candles, pair))
     patterns.extend(_detect_fvg_inverse(candles, pair))
+    patterns.extend(_detect_opening_range(candles, pair))
+    patterns.extend(_detect_retest(candles, pair))
+    patterns.extend(_detect_reintegration(candles, pair))
 
     # Enrichir chaque pattern avec explication et fiabilité
     for p in patterns:
@@ -771,6 +774,130 @@ def _decimals_for_pair(pair: str) -> int:
     if base == "WTI":
         return 2
     return 5                           # forex major 5-dp par défaut
+
+
+
+# ─── Les trois maillons manquants (2026-09-14) ──────────────────────
+#
+# Declares dans docs/concepts-trading.md AVANT d'etre codes (0977890), avec
+# leur prediction falsifiable. Ils completent la chaine rapportee le 12/09 :
+# contexte -> opening range -> niveau -> liquidite -> prise -> double prise
+# -> reintegration -> retest -> confirmation volume -> BUY/SELL.
+
+# Le range d'open est une DUREE, pas un nombre de bougies : 30 min restent
+# 30 min a toutes les echelles. Compter des bougies ferait un range de six
+# heures sur l'echelle horaire, ce qui ne serait plus un range d'open.
+OR_MINUTES = 30
+RETEST_FENETRE = 10          # bougies pour revenir toucher le niveau casse
+REINTEGRATION_DEHORS = 2     # clotures consecutives hors du range
+
+
+def _detect_opening_range(candles: list[Candle], pair: str) -> list[PatternDetection]:
+    """Cassure de la fourchette des 30 premieres minutes de la session.
+
+    ⚠️ Ne declenche PAS tant que le range se forme : une cassure a l'interieur
+    des 30 premieres minutes ne casse rien, elle fabrique le range.
+    """
+    from backend.services.sessions_marche import derniere_ouverture
+
+    now = datetime.now(timezone.utc)
+    last, prev = candles[-1], candles[-2]
+    ouverture = derniere_ouverture(last.timestamp)
+    if ouverture is None:
+        return []                       # hors session : pas de range d'open
+
+    fin_or = ouverture + timedelta(minutes=OR_MINUTES)
+    if last.timestamp < fin_or:
+        return []                       # le range n'est pas encore ferme
+    dans = [c for c in candles if ouverture <= c.timestamp < fin_or]
+    if not dans:
+        return []                       # l'ouverture n'est pas dans la fenetre
+
+    haut = max(c.high for c in dans)
+    bas = min(c.low for c in dans)
+    sortie = []
+    if last.close > haut and prev.close <= haut:
+        sortie.append(PatternDetection(
+            pattern=PatternType.OPENING_RANGE_UP, confidence=0.6,
+            description=(f"Cassure du range d'open a {haut:.2f} "
+                         f"(cloture {last.close:.2f})"),
+            detected_at=now))
+    if last.close < bas and prev.close >= bas:
+        sortie.append(PatternDetection(
+            pattern=PatternType.OPENING_RANGE_DOWN, confidence=0.6,
+            description=(f"Cassure basse du range d'open a {bas:.2f} "
+                         f"(cloture {last.close:.2f})"),
+            detected_at=now))
+    return sortie
+
+
+def _detect_retest(candles: list[Candle], pair: str) -> list[PatternDetection]:
+    """Le niveau casse a ete retouche, et il a TENU.
+
+    🔑 La notion dit qu'entrer sur la cassure, c'est payer le mouvement. Le
+    declencheur est donc la bougie qui revient toucher ET cloture du bon cote
+    — pas la cassure, qui appartient deja au passe.
+    """
+    now = datetime.now(timezone.utc)
+    reference = candles[-30:-RETEST_FENETRE]
+    recentes = candles[-RETEST_FENETRE:-1]
+    if len(reference) < 5 or not recentes:
+        return []
+    last = candles[-1]
+
+    haut = max(c.high for c in reference)
+    bas = min(c.low for c in reference)
+    sortie = []
+    if (any(c.close > haut for c in recentes)
+            and last.low <= haut < last.close):
+        sortie.append(PatternDetection(
+            pattern=PatternType.RETEST_UP, confidence=0.6,
+            description=(f"Retest tenu de {haut:.2f} : bas a {last.low:.2f}, "
+                         f"cloture a {last.close:.2f}"),
+            detected_at=now))
+    if (any(c.close < bas for c in recentes)
+            and last.high >= bas > last.close):
+        sortie.append(PatternDetection(
+            pattern=PatternType.RETEST_DOWN, confidence=0.6,
+            description=(f"Retest tenu de {bas:.2f} : haut a {last.high:.2f}, "
+                         f"cloture a {last.close:.2f}"),
+            detected_at=now))
+    return sortie
+
+
+def _detect_reintegration(candles: list[Candle], pair: str) -> list[PatternDetection]:
+    """Accepte HORS du range, puis rentre.
+
+    ⛔ Le critere qui la separe du balayage est la **cloture**. Un balayage
+    rejette dans la meche de la meme bougie ; ici le prix a cloture dehors
+    plusieurs fois — il avait l'air accepte — puis il rentre. Le recouvrement
+    avec `liquidity_sweep` est ATTENDU, et il sera mesure : l'avoir deduit
+    s'est revele faux deux fois (09/09 et 12/09).
+    """
+    now = datetime.now(timezone.utc)
+    coupe = REINTEGRATION_DEHORS + 1
+    reference = candles[-30:-coupe]
+    dehors = candles[-coupe:-1]
+    if len(reference) < 5 or len(dehors) < REINTEGRATION_DEHORS:
+        return []
+    last = candles[-1]
+
+    haut = max(c.high for c in reference)
+    bas = min(c.low for c in reference)
+    sortie = []
+    if all(c.close > haut for c in dehors) and last.close < haut:
+        sortie.append(PatternDetection(
+            pattern=PatternType.REINTEGRATION_DOWN, confidence=0.6,
+            description=(f"Reintegration sous {haut:.2f} apres "
+                         f"{len(dehors)} clotures au-dessus"),
+            detected_at=now))
+    if all(c.close < bas for c in dehors) and last.close > bas:
+        sortie.append(PatternDetection(
+            pattern=PatternType.REINTEGRATION_UP, confidence=0.6,
+            description=(f"Reintegration au-dessus de {bas:.2f} apres "
+                         f"{len(dehors)} clotures en dessous"),
+            detected_at=now))
+    return sortie
 
 
 # ─── Le sens d'un motif ─────────────────────────────────────────────

@@ -292,6 +292,30 @@ séparable — sinon on croira avoir reproduit une méthode qu'on a inventée.
   supérieur** à `liquidity_sweep_down`. Si accepter puis échouer ne vaut pas
   mieux que rejeter tout de suite, la distinction ne porte rien.
 
+#### Recouvrements et fréquences — **mesurés** le 2026-09-14, après codage
+
+4 950 fenêtres de 50 bougies, vraies bougies XAU/USD 5 min (fixture figée) :
+
+| motif | % des fenêtres | recouvrement mesuré |
+|---|---|---|
+| `opening_range_up` | 1,19 % | **39,0 %** dans `breakout_up` |
+| `opening_range_down` | 1,66 % | **31,7 %** dans `breakout_down` |
+| `retest_up` | 2,63 % | 17,7 % dans `breakout_up` · 15,4 % dans `order_block_up` |
+| `retest_down` | 3,01 % | 13,4 % dans `order_block_down` |
+| `reintegration_down` | 0,79 % | **30,8 %** dans `liquidity_sweep_down` |
+| `reintegration_up` | 0,59 % | 24,1 % dans `liquidity_sweep_up` |
+
+🔑 **Les recouvrements sont PARTIELS — et ça change la lecture des trois
+prédictions.** Pour la double prise, l'inclusion était *stricte* : chaque
+double était aussi un simple, donc la comparaison était **appariée**, donc
+lisible. Ici non : les deux tiers d'un `opening_range_up` ne sont pas des
+`breakout_up`. La comparaison oppose donc deux populations **distinctes qui se
+chevauchent**, ce qui est plus faible qu'un appariement — il faudra plus de
+nuits pour trancher, et un écart modeste ne voudra rien dire.
+
+⚠️ Les fréquences (0,59 % à 3,01 %) sont du même ordre que les motifs
+existants : ni bruit permanent, ni détecteur muet.
+
 ⚠️ **Ce que ces trois coûtent à tout le monde.** Six motifs de plus, soit
 environ **480 cellules** sur les 20 instruments — le plafond du hasard monte
 pour **toutes** les cellules existantes. C'est le prix assumé de la chaîne
