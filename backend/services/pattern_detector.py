@@ -773,6 +773,45 @@ def _decimals_for_pair(pair: str) -> int:
     return 5                           # forex major 5-dp par défaut
 
 
+# ─── Le sens d'un motif ─────────────────────────────────────────────
+
+_SUFFIXES_ACHAT = ("_UP", "_BULLISH")
+_SUFFIXES_VENTE = ("_DOWN", "_BEARISH")
+
+
+def _est_un_achat(motif) -> bool:
+    """Rend True si ce motif s'achete, False s'il se vend. LEVE sinon.
+
+    ⛔ **Ce que cette fonction remplace** (2026-09-14). Le sens etait decide
+    par une liste ECRITE A LA MAIN de sept motifs, et tout ce qui n'y figurait
+    pas tombait dans un `else` silencieux — donc en VENTE. Neuf motifs
+    haussiers ajoutes depuis y sont tombes : `fvg_up`, `gap_retrace_up`,
+    `gap_breakaway_up`, `liquidity_sweep_up`, `double_sweep_up`,
+    `order_block_up`, `bos_up`, `choch_up`, `fvg_inverse_up`.
+
+    Cout mesure le jour meme : **602 cellules du laboratoire sur 3 286
+    (18,3 %)**, 109 536 trades rejoues a l'envers. Aucun ordre reel n'est parti
+    dans le mauvais sens — ces motifs ne sont armes nulle part — mais le
+    laboratoire decide des fermetures, et il jugeait le trade MIROIR.
+
+    🔑 **Une regle, pas une liste plus longue.** Rallonger la liste aurait
+    reproduit le defaut au motif suivant. Le sens est deja dans le nom, et les
+    32 motifs le portent tous.
+
+    ⚠️ **Fail-closed.** Un nom qu'on ne sait pas classer LEVE. Retomber sur
+    « vente » est precisement ce qui a coute 18 % du laboratoire : le defaut
+    n'a produit aucune erreur pendant qu'il faussait tout.
+    """
+    nom = getattr(motif, "name", None) or str(motif).upper()
+    if nom.endswith(_SUFFIXES_ACHAT):
+        return True
+    if nom.endswith(_SUFFIXES_VENTE):
+        return False
+    raise ValueError(
+        f"sens indeterminable pour le motif {motif!r} : un nom doit finir par "
+        f"{_SUFFIXES_ACHAT + _SUFFIXES_VENTE}")
+
+
 def calculate_trade_setup(
     pair: str,
     pattern: PatternDetection,
@@ -801,17 +840,10 @@ def calculate_trade_setup(
         return None
     decimals = _decimals_for_pair(pair)
 
-    # Direction
-    is_buy = pattern.pattern in (
-        PatternType.BREAKOUT_UP,
-        PatternType.MOMENTUM_UP,
-        PatternType.RANGE_BOUNCE_UP,
-        PatternType.MEAN_REVERSION_UP,
-        PatternType.ENGULFING_BULLISH,
-        PatternType.PIN_BAR_UP,
-        PatternType.POC_RETURN_UP,
-    )
-    direction = TradeDirection.BUY if is_buy else TradeDirection.SELL
+    # Direction — lue dans le NOM, jamais dans une liste tenue a la main.
+    # Cf. `_est_un_achat` : neuf motifs haussiers vendaient (2026-09-14).
+    direction = (TradeDirection.BUY if _est_un_achat(pattern.pattern)
+                 else TradeDirection.SELL)
     entry = round(last.close, decimals)
 
     # ⛔ Niveaux propres au retour au POC (2026-09-04). Le reste du fichier
@@ -867,7 +899,7 @@ def calculate_trade_setup(
             risk, reward_1, reward_2, direction, decimals, is_simulated, now)
 
     atr_k = _atr_buffer_mult(atr, entry)
-    if is_buy:
+    if direction == TradeDirection.BUY:
         # Achat : SL sous le dernier plus bas, TP au-dessus
         recent_low = min(c.low for c in candles[-5:])
         stop_loss = round(recent_low - atr * atr_k, decimals)
