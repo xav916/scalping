@@ -259,6 +259,43 @@ def zone_accumulation(candles: list[Candle], source: str = TPO) -> dict | None:
             "source": source}
 
 
+
+def zone_premium_discount(candles: list[Candle]) -> dict | None:
+    """Ou se situe le prix dans sa fourchette : cher, ou bon marche ?
+
+    Rend ``{bas, haut, equilibre, position, premium, discount}`` ou ``None``.
+
+    ⚠️ **Provenance** : ce concept vient de la tradition ICT / Smart Money, PAS
+    des 38 familles rapportees par Xavier le 2026-09-12. Il a ete ajoute a sa
+    demande explicite du 2026-09-14, apres que je l'aie signale comme un ajout
+    de mon fait. Garder cette distinction lisible est ce qui separe « ce qui
+    est rapporte » de « ce que nous ajoutons ».
+
+    ⛔ **AUCUN reglage neuf.** La fourchette est celle des bougies recues — la
+    meme que celle que les detecteurs regardent — et l'equilibre est le
+    MILIEU : 50 % est la definition du concept, pas un parametre qu'on pourrait
+    optimiser. Un `PREMIUM_MARGE` serait un degre de liberte de plus, donc de
+    l'edge fabrique.
+
+    ⚠️ **L'equilibre EXACT compte comme discount.** Une frontiere se tranche
+    une fois pour toutes, sinon deux appels au meme prix rendent deux reponses.
+
+    ⛔ Ce n'est PAS un motif : « etre en premium » ne dit pas d'entrer, ca dit
+    dans quel SENS on a le droit d'entrer. C'est un contexte, donc un predicat.
+    """
+    if len(candles) < MIN_BOUGIES:
+        return None
+    bas = min(c.low for c in candles)
+    haut = max(c.high for c in candles)
+    if haut <= bas:
+        return None                 # sans amplitude, ni haut ni bas
+    position = (candles[-1].close - bas) / (haut - bas)
+    discount = position <= 0.5
+    return {"bas": bas, "haut": haut, "equilibre": (haut + bas) / 2.0,
+            "position": position, "discount": discount,
+            "premium": not discount}
+
+
 def _fractales(candles: list[Candle],
                largeur: int = LARGEUR_FRACTALE) -> tuple[list[float], list[float]]:
     """Sommets et creux locaux : ``(sommets, creux)``, dans l'ordre du temps."""

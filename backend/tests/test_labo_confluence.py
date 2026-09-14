@@ -90,10 +90,13 @@ class _Setup:
 #   16  2026-09-14  + sweep_avec_biais haussier/baissier — le PREMIER
 #                   maillon de la chaine, le contexte, declare dans
 #                   docs/concepts-trading.md (b9aa1cc) AVANT le code
+#   18  2026-09-14  + sweep_en_discount / sweep_en_premium — concept ICT,
+#                   PAS le corpus du 12/09, ajoute a la demande explicite
+#                   de Xavier apres signalement (55959f8) AVANT le code
 #
 # ⚠️ Le cout n'est pas nul : ~160 cellules de plus, donc le plafond du
 # hasard monte pour TOUTES les cellules existantes.
-CHAINES_ATTENDUES = 16
+CHAINES_ATTENDUES = 18
 
 
 

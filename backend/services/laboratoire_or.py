@@ -616,6 +616,20 @@ CHAINES: tuple[dict, ...] = (
      "motifs": ("liquidity_sweep_down",),
      "declencheur": "liquidity_sweep_down",
      "predicats": ("biais_baissier",), "fenetre": 0},
+    # ⚠️ ICT / Smart Money — PAS le corpus rapporte le 12/09. Ajoute a la
+    # demande explicite de Xavier le 14/09, apres signalement. Declare dans
+    # docs/concepts-trading.md (55959f8) avant le code.
+    #
+    # ⚠️ Recouvrement attendu avec le balayage lui-meme : un balayage des bas a
+    # de bonnes chances d'etre deja sous l'equilibre. A MESURER, pas a deduire.
+    {"nom": "sweep_en_discount_haussier",
+     "motifs": ("liquidity_sweep_up",),
+     "declencheur": "liquidity_sweep_up",
+     "predicats": ("en_discount",), "fenetre": 0},
+    {"nom": "sweep_en_premium_baissier",
+     "motifs": ("liquidity_sweep_down",),
+     "declencheur": "liquidity_sweep_down",
+     "predicats": ("en_premium",), "fenetre": 0},
 )
 
 # Un pic de volume : la bougie que le detecteur vient de voir porte au moins
@@ -788,10 +802,47 @@ def _biais(attendu: str):
     return _predicat
 
 
+def _cote_de_l_equilibre(veut_discount: bool):
+    """Fabrique le predicat « le prix est du bon cote de l'equilibre ».
+
+    ⚠️ Concept ICT, PAS du corpus rapporte le 12/09 — ajoute a la demande
+    explicite de Xavier le 14/09. Cf. `market_profile.zone_premium_discount`.
+    """
+
+    def _predicat(bougies, i: int) -> bool:
+        from datetime import datetime
+
+        from backend.models.schemas import Candle
+        from backend.services import market_profile as mp
+
+        vues = bougies[:i]          # ce que le detecteur a vu, pas une de plus
+        if len(vues) < FENETRE:
+            return False            # fail-closed : pas de fourchette, pas d'avis
+        fen = vues[-FENETRE:]
+        try:
+            objets = [Candle(
+                timestamp=(x["t"] if isinstance(x["t"], datetime)
+                           else datetime.fromisoformat(
+                               str(x["t"]).replace("Z", "+00:00"))),
+                open=float(x["o"]), high=float(x["h"]), low=float(x["l"]),
+                close=float(x["c"]), volume=float(x.get("tv") or 0.0))
+                for x in fen]
+        except Exception:  # noqa: BLE001 — bougie malformee : on ne valide pas
+            return False
+        z = mp.zone_premium_discount(objets)
+        if z is None:
+            return False
+        return bool(z["discount"]) if veut_discount else bool(z["premium"])
+
+    return _predicat
+
+
 _PREDICATS = {"volume_fort": _volume_fort,
               "dans_accumulation": _dans_accumulation,
               "biais_haussier": _biais("haussiere"),
-              "biais_baissier": _biais("baissiere")}
+              "biais_baissier": _biais("baissiere"),
+              "en_discount": _cote_de_l_equilibre(True),
+              "en_premium": _cote_de_l_equilibre(False)}
 _PREDICATS.update({nom: _dans_session(nom) for nom in _SESSIONS})
 
 
