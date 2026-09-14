@@ -99,12 +99,32 @@ def test_le_predicat_ne_regarde_PAS_au_dela_du_signal():
 
 def test_les_deux_chaines_sont_des_SOUS_ENSEMBLES_stricts():
     noms = {c["nom"]: c for c in labo.CHAINES}
-    c = noms["sweep_en_discount_haussier"]
-    assert c["motifs"] == ("liquidity_sweep_up",)
+    c = noms["avalement_en_discount_haussier"]
+    assert c["motifs"] == ("engulfing_bullish",)
     assert c["predicats"] == ("en_discount",)
-    c = noms["sweep_en_premium_baissier"]
-    assert c["motifs"] == ("liquidity_sweep_down",)
+    c = noms["avalement_en_premium_baissier"]
+    assert c["motifs"] == ("engulfing_bearish",)
     assert c["predicats"] == ("en_premium",)
+
+
+def test_le_contexte_n_est_PAS_accroche_a_un_motif_qui_le_determine_deja():
+    """⛔ Le montage corrige apres mesure. Un balayage des bas est en discount
+    91,8 % du temps — par construction, puisqu'il fait un nouveau plus-bas. Y
+    accrocher le filtre coutait 160 cellules pour ecarter 8 % des cas.
+
+    🔑 Un filtre de contexte doit etre accroche a un motif dont la POSITION
+    n'est pas deja dite par sa definition. La liste ci-dessous est celle des
+    motifs dont la position EST determinee : ils sont interdits comme
+    declencheurs des chaines premium/discount.
+    """
+    determines = {"liquidity_sweep_up", "liquidity_sweep_down", "bos_up",
+                  "bos_down", "breakout_up", "breakout_down", "retest_up",
+                  "retest_down"}
+    for c in labo.CHAINES:
+        if set(c["predicats"]) & {"en_discount", "en_premium"}:
+            assert c["declencheur"] not in determines, (
+                f"{c['nom']} : {c['declencheur']} est deja determine par sa "
+                f"position — le filtre n'ecarterait presque rien")
 
 
 def test_AUCUN_seuil_neuf_n_a_ete_introduit():

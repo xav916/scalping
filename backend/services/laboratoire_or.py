@@ -622,13 +622,33 @@ CHAINES: tuple[dict, ...] = (
     #
     # ⚠️ Recouvrement attendu avec le balayage lui-meme : un balayage des bas a
     # de bonnes chances d'etre deja sous l'equilibre. A MESURER, pas a deduire.
-    {"nom": "sweep_en_discount_haussier",
-     "motifs": ("liquidity_sweep_up",),
-     "declencheur": "liquidity_sweep_up",
+    # ⛔ MONTAGE CORRIGE APRES MESURE (2026-09-14). Ma premiere version
+    # accrochait le contexte au BALAYAGE. Mesure sur 15 jours, XAU/USD :
+    #
+    #     liquidity_sweep_up    en discount  91,8 %      bos_up      0,0 %
+    #     liquidity_sweep_down  en discount   7,8 %      breakout_up 2,0 %
+    #
+    # Un balayage des bas EST deja en discount — par construction, puisqu'il
+    # fait un nouveau plus-bas. Le filtre n'ecartait que 8 % des cas : 160
+    # cellules pour presque aucune information, et le plafond du hasard monte
+    # pour TOUT LE MONDE.
+    #
+    # 🔑 Accroche a un motif dont la position n'est PAS determinee par sa
+    # definition, le meme filtre discrimine vraiment :
+    #
+    #     engulfing_bullish     en discount  45,5 %
+    #     engulfing_bearish     en discount  61,0 %  (donc 39 % en premium)
+    #
+    # C'est aussi la lecture ICT fidele : « n'achete un signal haussier qu'en
+    # discount » — un avalement haussier peut survenir n'importe ou dans la
+    # fourchette, un balayage des bas non.
+    {"nom": "avalement_en_discount_haussier",
+     "motifs": ("engulfing_bullish",),
+     "declencheur": "engulfing_bullish",
      "predicats": ("en_discount",), "fenetre": 0},
-    {"nom": "sweep_en_premium_baissier",
-     "motifs": ("liquidity_sweep_down",),
-     "declencheur": "liquidity_sweep_down",
+    {"nom": "avalement_en_premium_baissier",
+     "motifs": ("engulfing_bearish",),
+     "declencheur": "engulfing_bearish",
      "predicats": ("en_premium",), "fenetre": 0},
 )
 

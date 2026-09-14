@@ -421,9 +421,29 @@ Smart Money**, et non « corpus Vivien ».
 - ⛔ **Ce n'est pas un motif, c'est un contexte** — comme la zone
   d'accumulation et le biais. « Être en premium » ne dit pas d'entrer, ça dit
   *dans quel sens on a le droit d'entrer*. C'est donc un **prédicat**.
-- **Chaînes déclarées** : `sweep_en_discount_haussier` (balayage des bas
-  **sous** l'équilibre) et `sweep_en_premium_baissier` (balayage des hauts
-  **au-dessus**). C'est la logique ICT dans sa forme la plus stricte.
+- **Chaînes déclarées** : `avalement_en_discount_haussier` et
+  `avalement_en_premium_baissier`.
+- ⛔ **MONTAGE CORRIGÉ APRÈS MESURE — et la mesure était prévue.** Ma première
+  version accrochait le contexte au **balayage**. Mesuré sur 15 jours, XAU/USD :
+
+  | déclencheur | en discount |
+  |---|---|
+  | `liquidity_sweep_up` | **91,8 %** |
+  | `bos_up` | 0,0 % |
+  | `breakout_up` | 2,0 % |
+  | `engulfing_bullish` | **45,5 %** |
+  | `engulfing_bearish` | 61,0 % |
+
+  Un balayage des bas **est déjà** en discount — par construction, puisqu'il
+  fait un nouveau plus-bas. Le filtre n'écartait que 8 % des cas : **160
+  cellules pour presque aucune information**, et le plafond du hasard monte
+  pour tout le monde.
+
+  🔑 Accroché à un motif dont la position n'est **pas** dictée par sa propre
+  définition, le même filtre discrimine vraiment. C'est aussi la lecture ICT
+  fidèle : *« n'achète un signal haussier qu'en discount »* — un avalement
+  haussier peut survenir n'importe où dans la fourchette, un balayage des bas
+  non.
 - **Prédiction falsifiable** : chaque chaîne doit rendre un **R moyen
   supérieur** à `liquidity_sweep` seul, même instrument, même échelle. Si
   prendre la liquidité du bon côté de l'équilibre ne vaut pas mieux que la
