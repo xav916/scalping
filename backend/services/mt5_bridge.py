@@ -744,11 +744,29 @@ def _patterns_autorises(setup, dest):
                 _chaine, _dest_c, getattr(setup, "pair", None),
                 getattr(setup, "horizon", None))
             return set()            # rien ne peut partir pour ce setup
-        _motif = getattr(getattr(setup, "pattern", None), "value", None)
+        # ⛔ LES DEUX COTES DE LA PORTE LISAIENT LE MOTIF AUTREMENT
+        # (2026-09-15, trouve par la sonde). Ici on lisait `setup.pattern.value`
+        # — or `setup.pattern` est un `PatternDetection`, qui n'a PAS de champ
+        # `value` : le vrai motif est `setup.pattern.pattern.value`. `_motif`
+        # valait donc TOUJOURS None en production, la chaine armee n'ouvrait
+        # RIEN, et le `if` muet ne laissait aucune trace. Trois lignes plus
+        # bas, la liste blanche, elle, lit `_pattern_value()` qui descend les
+        # deux niveaux et trouve `order_block_up` — d'ou `pattern_not_allowed`
+        # sur une chaine pourtant armee, huit heures durant.
+        #
+        # 🔑 Une seule lecture du motif, celle que la porte utilise deja.
+        # Deux facons de lire la meme chose, c'est deux regles du meme nom.
+        _motif = _pattern_value(setup)
         if _motif:
             base = base | {str(_motif)}
             logger.info("chaine %s armee sur %s : %s ouvert",
                         _chaine, _dest_c, _motif)
+        else:
+            # Le motif indeterminable ne doit plus RIEN ouvrir en silence.
+            logger.warning(
+                "chaine %s armee sur %s mais motif indeterminable (%s) : "
+                "rien d'ouvert", _chaine, _dest_c,
+                type(getattr(setup, "pattern", None)).__name__)
 
     # ⛔ Couche SOUSTRACTIVE du laboratoire de l'or, appliquee EN DERNIER
     # (2026-09-08). Ce que le labo ferme ne peut etre re-ouvert par aucune

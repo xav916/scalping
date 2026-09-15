@@ -269,3 +269,68 @@ async def test_le_pont_DIT_les_setups_de_chaine_qu_il_recoit(
             if "setup(s) de chaine recus" in r.getMessage()]
     assert dits, "le pont recoit la chaine mais n'en dit rien"
     assert VRAIE in dits[0] and "order_block_up" in dits[0]
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# ⛔ LA FORME REELLE DU MOTIF (2026-09-15, apres huit heures de silence).
+#
+# Les tests ci-dessus utilisent `_E`, un objet qui porte `.value` a la
+# racine. La PRODUCTION n'a jamais cette forme : `setup.pattern` est un
+# `PatternDetection`, et le motif vit un niveau plus bas, dans
+# `setup.pattern.pattern.value`. La porte lisait `setup.pattern.value` —
+# toujours None — donc la chaine armee n'ouvrait rien, en silence, pendant
+# que la liste blanche lisait correctement `order_block_up` et refusait.
+#
+# 🔑 Ce test aurait coute huit heures de moins : il emploie l'objet que le
+# radar fabrique vraiment, pas une doublure commode.
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_avec_la_VRAIE_forme_de_motif_la_chaine_armee_ouvre_bien(monkeypatch):
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+
+    from backend.models.schemas import PatternDetection, PatternType
+
+    monkeypatch.setenv(
+        "CHAINES_AUTORISEES",
+        '{"admin_live":{"5min":["%s"]}}' % VRAIE)
+    ca._cache = None
+
+    detection = PatternDetection(
+        pattern=PatternType.ORDER_BLOCK_UP,
+        confidence=0.8,
+        description="order block haussier",
+        detected_at=datetime.now(timezone.utc),
+    )
+    # La forme production : le motif est a DEUX niveaux de profondeur.
+    assert not hasattr(detection, "value")
+
+    setup = SimpleNamespace(pair="XAU/USD", horizon="5min",
+                            pattern=detection, chaine=VRAIE)
+    autorises = mb._patterns_autorises(setup, _D("admin_live"))
+    assert "order_block_up" in autorises, (
+        "la chaine armee n'ouvre pas son propre motif sur la forme reelle")
+
+
+def test_la_porte_lit_le_motif_COMME_la_liste_blanche(monkeypatch):
+    """Les deux cotes de la porte doivent lire la meme chose. C'est leur
+    divergence qui a produit `pattern_not_allowed` sur une chaine armee."""
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+
+    from backend.models.schemas import PatternDetection, PatternType
+
+    monkeypatch.setenv(
+        "CHAINES_AUTORISEES",
+        '{"admin_live":{"5min":["%s"]}}' % VRAIE)
+    ca._cache = None
+
+    setup = SimpleNamespace(
+        pair="XAU/USD", horizon="5min", chaine=VRAIE,
+        pattern=PatternDetection(
+            pattern=PatternType.ORDER_BLOCK_UP, confidence=0.8,
+            description="x", detected_at=datetime.now(timezone.utc)))
+
+    ouvert = mb._patterns_autorises(setup, _D("admin_live"))
+    lu_par_la_whitelist = mb._pattern_value(setup)
+    assert lu_par_la_whitelist in ouvert
