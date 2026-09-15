@@ -205,3 +205,67 @@ def test_un_setup_de_chaine_NON_ARMEE_est_refuse_meme_si_son_motif_est_autorise(
     assert de_chaine == set(), (
         "un setup de chaine non armee passe par la porte des motifs simples : "
         "deux ordres partiraient pour un seul signal")
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# ⛔ LES DEUX SONDES (2026-09-15, au matin). Huit heures d'armement sur l'or
+# reel : 25 chaines detectees et scorees, ZERO ordre, et ZERO ligne de
+# journal. Le refus observe est `pattern_not_allowed` — le meme mot que pour
+# un motif ordinaire hors liste blanche. Rien, dans la trace, ne disait si la
+# chaine etait arrivee au pont, ni si elle y etait arrivee avec son nom.
+#
+# 🔑 Une sonde ne se teste pas sur son silence. Ces deux tests verifient
+# qu'elle PARLE — sinon on ajouterait un cinquieme no-op pour diagnostiquer
+# les quatre premiers.
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_la_chaine_NON_armee_le_DIT_au_lieu_de_fermer_en_silence(
+        monkeypatch, caplog):
+    """Le `return set()` muet etait indiscernable d'un motif hors whitelist."""
+    monkeypatch.delenv("CHAINES_AUTORISEES", raising=False)
+    ca._cache = None
+    with caplog.at_level("WARNING"):
+        mb._patterns_autorises(_S("order_block_up", VRAIE, "5min"),
+                               _D("admin_live"))
+    dits = [r.getMessage() for r in caplog.records
+            if "NON armee" in r.getMessage()]
+    assert dits, "la porte ferme toujours le setup sans rien dire"
+    assert VRAIE in dits[0] and "admin_live" in dits[0]
+
+
+def test_la_chaine_ARMEE_ne_declenche_PAS_la_sonde(monkeypatch, caplog):
+    """Controle negatif : la sonde ne doit pas crier sur le cas nominal."""
+    monkeypatch.setenv(
+        "CHAINES_AUTORISEES",
+        '{"admin_live":{"5min":["%s"]}}' % VRAIE)
+    ca._cache = None
+    with caplog.at_level("WARNING"):
+        autorises = mb._patterns_autorises(
+            _S("order_block_up", VRAIE, "5min"), _D("admin_live"))
+    assert "order_block_up" in autorises
+    assert not [r for r in caplog.records
+                if "NON armee" in r.getMessage()]
+
+
+@pytest.mark.asyncio
+async def test_le_pont_DIT_les_setups_de_chaine_qu_il_recoit(
+        monkeypatch, caplog):
+    """🔑 Discrimine les deux causes possibles du silence : « la chaine n'est
+    jamais arrivee » et « elle est arrivee sans son nom »."""
+    vus = []
+    monkeypatch.setattr(mb, "is_configured", lambda: True)
+
+    async def _capture(s):
+        vus.append(s)
+
+    monkeypatch.setattr(mb, "send_setup", _capture)
+    setup = _S("order_block_up", VRAIE, "5min")
+    setup.confidence_score = 61.5
+    with caplog.at_level("INFO"):
+        await mb.send_setups([setup])
+
+    assert vus, "le setup de chaine n'a meme pas atteint send_setup"
+    dits = [r.getMessage() for r in caplog.records
+            if "setup(s) de chaine recus" in r.getMessage()]
+    assert dits, "le pont recoit la chaine mais n'en dit rien"
+    assert VRAIE in dits[0] and "order_block_up" in dits[0]

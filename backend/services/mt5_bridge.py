@@ -733,6 +733,16 @@ def _patterns_autorises(setup, dest):
             logger.warning("registre des chaines illisible : %s", e)
             _armee = False          # ⛔ fail-CLOSED
         if not _armee:
+            # ⛔ SONDE (2026-09-15). Ce `return set()` est la seule porte du
+            # pont qui ferme un setup SANS rien dire : le refus qui suit est
+            # `pattern_not_allowed`, indiscernable d'un motif ordinaire hors
+            # liste blanche. Huit heures d'armement ont produit zero ordre et
+            # zero ligne de journal — le silence ressemblait, pour la
+            # quatrieme fois, a « la chaine ne se declenche pas ».
+            logger.warning(
+                "chaine %s NON armee sur %s (%s/%s) : setup ferme",
+                _chaine, _dest_c, getattr(setup, "pair", None),
+                getattr(setup, "horizon", None))
             return set()            # rien ne peut partir pour ce setup
         _motif = getattr(getattr(setup, "pattern", None), "value", None)
         if _motif:
@@ -2099,6 +2109,16 @@ async def send_setups(setups: list) -> None:
     ]
     if not setups:
         return
+    # ⛔ SONDE (2026-09-15). Le point ou l'on sait si un setup de chaine
+    # ATTEINT le pont, et s'il y arrive avec son identite. Sans elle, « pas
+    # d'ordre » ne distingue pas « la chaine n'est jamais arrivee » de « elle
+    # est arrivee sans son nom, donc refusee comme un motif ordinaire ».
+    _chaines = [s for s in setups if getattr(s, "chaine", None)]
+    if _chaines:
+        logger.info(
+            "pont: %d setup(s) de chaine recus : %s", len(_chaines),
+            [f"{getattr(s, 'chaine', None)}|{_pattern_value(s)}"
+             f"|{s.pair}|{getattr(s, 'horizon', None)}" for s in _chaines])
     await asyncio.gather(*(send_setup(s) for s in setups), return_exceptions=True)
 
 
