@@ -161,15 +161,31 @@ def test_un_edge_INJECTE_deplace_les_R_vers_le_haut(avec_edge, hasard_pur):
         "sans. Le laboratoire ne mesure pas ce qu'il pretend mesurer.")
 
 
-def test_le_controle_ALEATOIRE_interne_reste_neutre(avec_edge):
-    """⚠️ Le tirage au hasard du laboratoire ne doit PAS profiter de l'edge
-    injecté : c'est lui la référence. S'il montait autant que les motifs,
-    l'écart mesuré serait nul par construction et rien ne ressortirait jamais.
+def test_le_controle_ALEATOIRE_n_ABSORBE_PAS_l_edge(avec_edge):
+    """⚠️ Le tirage au hasard ne doit pas monter AUTANT que les motifs : c'est
+    lui la référence. S'il absorbait l'edge, l'écart serait nul par
+    construction et rien ne ressortirait jamais du laboratoire.
+
+    ⛔ Réécrit le 2026-09-15. L'assertion d'avant exigeait un contrôle proche
+    de zéro (`|r_moyen| < 1`). Elle n'était vraie que parce que le tirage
+    prenait le sens à PILE OU FACE et moyennait les deux sens — c'est-à-dire
+    à cause du défaut même qu'on vient de fermer. Un contrôle acheteur sur une
+    série qui monte DOIT monter ; ce qu'il ne doit pas faire, c'est monter
+    autant que le motif. C'est cela qu'on vérifie maintenant.
     """
-    ref = list(avec_edge["controles"].values())
+    ref = avec_edge["controles"]
     assert ref, "aucun controle aleatoire produit"
-    assert all(abs(c.get("r_moyen", 0)) < 1.0 for c in ref), (
-        f"le tirage au hasard derive : {[round(c.get('r_moyen', 0), 3) for c in ref]}")
+    for cle, controle in ref.items():
+        meilleures = [c["r_moyen"] for c in avec_edge["cellules"]
+                      if c["sens"] == controle["sens"]
+                      and c["echelle"] == controle["echelle"]
+                      and c["n"] >= 30]
+        if not meilleures:
+            continue
+        assert controle["r_moyen"] < max(meilleures), (
+            f"le controle {cle} ({controle['r_moyen']:+.3f}) absorbe l'edge : "
+            f"il atteint la meilleure cellule de son sens ({max(meilleures):+.3f}) "
+            "— plus aucun ecart ne pourrait jamais ressortir")
 
 
 # ─── Ce que le laboratoire promet ────────────────────────────────────
@@ -187,3 +203,98 @@ def test_mesurer_est_bien_une_fonction_PURE(hasard_pur):
     a = mesurer(_serie(n=800), spread=0.02, echelles=(3,))
     b = mesurer(_serie(n=800), spread=0.02, echelles=(3,))
     assert [c["r_moyen"] for c in a["cellules"]] == [c["r_moyen"] for c in b["cellules"]]
+
+
+# ─── Contrôle DIRECTIONNEL : la dérive n'est pas un avantage ─────────
+#
+# ⛔ LE TROU, trouvé le 2026-09-15. `controle_aleatoire` tire le sens à PILE OU
+# FACE, et `mesurer` ne calculait qu'UN contrôle par échelle, partagé par les
+# cellules acheteuses ET vendeuses. Sur un marché qui dérive, le contrôle
+# moyenne les deux sens à zéro pendant qu'une cellule à sens unique encaisse
+# la dérive entière. Son `delta_hasard` est alors gonflé de toute la tendance.
+#
+# Mesuré ce jour-là sur l'or : +16,6 % en 365 jours, soit ≈ +0,045 R par trade
+# pour un achat — la MOITIÉ du `r_moyen` de la meilleure cellule acheteuse.
+#
+# 🔑 Le contrôle d'une cellule doit prendre le sens de cette cellule. Sinon on
+# ne mesure pas un motif, on mesure la tendance du marché.
+
+def _serie_avec_derive(n=4000, depart=4000.0, graine=7, pas=1.0, derive=0.08):
+    """Marche aléatoire PLUS une dérive constante vers le haut.
+
+    ⚠️ Aucun motif n'a d'avantage ici : la dérive profite à TOUT achat et
+    pénalise TOUTE vente, quel que soit le déclencheur. C'est exactement la
+    situation où un contrôle à pile ou face ment — et la seule série qui
+    puisse le prouver.
+    """
+    r = random.Random(graine)
+    prix = depart
+    out = []
+    for i in range(n):
+        o = prix
+        prix = o + derive + r.gauss(0, pas)
+        h = max(o, prix) + abs(r.gauss(0, pas / 3))
+        b = min(o, prix) - abs(r.gauss(0, pas / 3))
+        out.append({"t": _T0 + timedelta(minutes=5 * i),
+                    "o": o, "h": h, "l": b, "c": prix})
+    return out
+
+
+@pytest.fixture(scope="module")
+def avec_derive():
+    return mesurer(_serie_avec_derive(), spread=0.02, pair="XAU/USD",
+                   echelles=(3,))
+
+
+def test_le_controle_suit_le_SENS_de_la_cellule(avec_derive):
+    """Sur une série qui monte, le tirage ACHETEUR doit gagner et le tirage
+    VENDEUR perdre. Un contrôle unique, partagé par les deux sens, rendrait
+    exactement la même valeur des deux côtés — et c'est le défaut."""
+    achats = [c["r_hasard"] for c in avec_derive["cellules"]
+              if c["sens"] == "buy" and c["n"] >= 30]
+    ventes = [c["r_hasard"] for c in avec_derive["cellules"]
+              if c["sens"] == "sell" and c["n"] >= 30]
+    assert achats and ventes, "il faut des cellules des DEUX sens pour trancher"
+    assert max(ventes) < min(achats), (
+        f"le controle ne distingue pas les sens : achats {sorted(set(round(x, 4) for x in achats))}, "
+        f"ventes {sorted(set(round(x, 4) for x in ventes))} — "
+        "une valeur identique des deux cotes = un seul tirage a pile ou face")
+
+
+def test_une_DERIVE_seule_ne_produit_aucun_RETENU(avec_derive):
+    """⛔ La promesse. Une tendance de marché n'est pas un motif : aucune
+    cellule ne doit être RETENUE sur une série sans la moindre structure,
+    même quand tous les achats y gagnent."""
+    retenues = [c for c in avec_derive["cellules"] if c["verdict"] == "RETENU"]
+    assert not retenues, (
+        f"{len(retenues)} cellule(s) RETENUE(s) sur une simple derive : "
+        f"{[(c['motif'], c['sens'], round(c['r_moyen'], 3), round(c['delta_hasard'], 3)) for c in retenues]}")
+
+
+def test_le_controle_MIS_EN_COMMUN_est_stable(avec_derive):
+    """⛔ Une référence qui saute n'est pas une référence.
+
+    Mesuré le 2026-09-15 sur l'or : un tirage unique de 300 trades bouge de
+    ±0,10 R selon la graine — plus du double de la dérive qu'on corrige, et le
+    signe achat/vente s'inversait dans 2 cas sur 6. Depuis que le verdict
+    s'appuie sur l'écart au contrôle, cette dispersion entrerait droit dans les
+    verdicts.
+
+    On vérifie donc que la mise en commun tient : trois points de départ
+    différents doivent rendre des contrôles qui se ressemblent.
+    """
+    from backend.services.laboratoire_or import controle_aleatoire, controle_poole
+    import statistics as st
+
+    serie = _serie(n=3000)
+    args = (serie, 0.02, 200, 8.0, 1.8)
+
+    seuls = [st.fmean([x["R"] for x in controle_aleatoire(*args, g, sens="buy")])
+             for g in (101, 202, 303)]
+    pooles = [st.fmean(controle_poole(*args, g, sens="buy")) for g in (101, 202, 303)]
+
+    etendue_seul = max(seuls) - min(seuls)
+    etendue_poole = max(pooles) - min(pooles)
+    assert etendue_poole < etendue_seul, (
+        f"la mise en commun n'apaise rien : seul {etendue_seul:.4f}, "
+        f"mis en commun {etendue_poole:.4f}")

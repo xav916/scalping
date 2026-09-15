@@ -1041,8 +1041,40 @@ def rejouer_cellule(bougies, releve: dict[int, list], motif: str, sens: str,
     return trades
 
 
+# ⛔ UN SEUL TIRAGE NE SUFFIT PAS. Mesuré le 2026-09-15 sur l'or, 365 jours :
+# la moyenne d'un tirage de 300 trades saute de **±0,10 R** d'une graine à
+# l'autre — soit plus du DOUBLE de l'effet qu'on cherche à corriger (la dérive
+# directionnelle, ≈ 0,045 R). Le signe d'un contrôle acheteur contre un
+# contrôle vendeur s'inversait d'une graine à l'autre dans 2 cas sur 6.
+#
+# 🔑 Tant que le contrôle ne servait qu'à donner le SIGNE du delta, sa
+# dispersion passait inaperçue. Depuis que le verdict s'appuie sur l'écart au
+# contrôle, elle entrerait DIRECTEMENT dans les verdicts. On met donc en commun
+# plusieurs tirages : la référence doit être stable, sinon elle n'est pas une
+# référence.
+CONTROLE_GRAINES = int(os.getenv("LABO_OR_CONTROLE_GRAINES", "20"))
+
+
+def controle_poole(bougies, spread: float, combien: int, risque_median: float,
+                   objectif_r: float, graine: int, sens: str | None = None,
+                   graines: int | None = None) -> list[float]:
+    """Les R de `graines` tirages successifs, mis en commun.
+
+    ⚠️ On met en commun les R **un par un**, jamais les moyennes : moyenner des
+    moyennes rendrait une dispersion artificiellement petite et un t de Welch
+    gonflé. Même piège que `_R_par_politique` a payé le 2026-09-14.
+    """
+    out: list[float] = []
+    for k in range(graines or CONTROLE_GRAINES):
+        out += [x["R"] for x in controle_aleatoire(
+            bougies, spread, combien, risque_median, objectif_r,
+            graine + k, sens=sens)]
+    return out
+
+
 def controle_aleatoire(bougies, spread: float, combien: int, risque_median: float,
-                       objectif_r: float, graine: int) -> list[dict]:
+                       objectif_r: float, graine: int,
+                       sens: str | None = None) -> list[dict]:
     """Les mêmes trades, mais déclenchés AU HASARD.
 
     🔑 La seule comparaison qui vaille. « Aucun système ne bat le hasard » a été
@@ -1050,10 +1082,27 @@ def controle_aleatoire(bougies, spread: float, combien: int, risque_median: floa
     autant que le hasard n'apporte rien, même si son R moyen est positif.
 
     ⚠️ Même population : même nombre de trades, même distance de stop médiane,
-    même objectif, même contrainte séquentielle.
+    même objectif, même contrainte séquentielle — et depuis le 2026-09-15,
+    **le même SENS**.
+
+    ⛔ LE DÉFAUT QUE `sens` FERME. Sans lui, le tirage prenait le sens à pile ou
+    face. Sur un marché qui dérive, il moyenne donc les deux sens à zéro
+    pendant qu'une cellule à sens unique encaisse la dérive entière : son
+    `delta_hasard` est gonflé de toute la tendance. Mesuré sur l'or, 365 jours
+    à +16,6 % : ≈ +0,045 R par trade pour un achat, soit la MOITIÉ du `r_moyen`
+    de la meilleure cellule acheteuse. On croyait mesurer un motif, on mesurait
+    le marché.
+
+    `sens=None` garde le tirage à pile ou face — la référence d'une population
+    sans direction propre. Un sens inconnu **LÈVE** : retomber en silence sur
+    pile ou face rendrait un chiffre faux qui a l'air d'un résultat.
     """
+    if sens is not None and sens not in ("buy", "sell"):
+        raise ValueError(f"sens de contrôle inconnu : {sens!r} — "
+                         "attendu 'buy', 'sell' ou None")
     if combien <= 0 or risque_median <= 0:
         return []
+    fixe = None if sens is None else (1 if sens == "buy" else -1)
     tirage = random.Random(graine)          # ⛔ reproductible
     trades: list[dict] = []
     i = FENETRE
@@ -1064,7 +1113,11 @@ def controle_aleatoire(bougies, spread: float, combien: int, risque_median: floa
     while i < n and len(trades) < combien:
         b = bougies[i]
         entree = float(b["c"])
-        signe = 1 if tirage.random() < 0.5 else -1
+        # ⚠️ Le tirage est consommé même quand le sens est imposé : sans ça,
+        # les flux aléatoires des contrôles acheteur et vendeur divergeraient
+        # dès la première entrée et ne seraient plus comparables entre eux.
+        pile = 1 if tirage.random() < 0.5 else -1
+        signe = pile if fixe is None else fixe
         R, sortie = _issue(bougies, i, entree, risque_median, objectif_r, signe,
                            spread / risque_median)
         trades.append({"R": R})
@@ -1117,7 +1170,7 @@ def mesurer(bougies_m5: list, spread: float, pair: str = PAIRE,
 
     echelles = echelles or ECHELLES
     cellules: list[dict] = []
-    controles: dict[int, dict] = {}
+    controles: dict[str, dict] = {}
 
     for facteur in echelles:
         agregees = _agreger_brut(bougies_m5, facteur, agreger)
@@ -1136,36 +1189,72 @@ def mesurer(bougies_m5: list, spread: float, pair: str = PAIRE,
         releve = fusionner_chaines(detections(agregees, pair), agregees)
         paires_motif_sens = sorted({(_nom_motif(s), _sens(s))
                                     for liste in releve.values() for s in liste})
-        risques, objectifs = [], []
+        # ⛔ Par SENS depuis le 2026-09-15 : un contrôle commun aux achats et
+        # aux ventes mesure la tendance du marché, pas le motif. Voir
+        # `controle_aleatoire`.
+        par_sens: dict[str, dict[str, list]] = {}
         for motif, sens in paires_motif_sens:
             trades = rejouer_cellule(agregees, releve, motif, sens, spread)
             if not trades:
                 continue
-            risques += [t["risque"] for t in trades]
-            objectifs += [t["objectif_r"] for t in trades]
+            d = par_sens.setdefault(sens, {"risques": [], "objectifs": [], "n": []})
+            d["risques"] += [t["risque"] for t in trades]
+            d["objectifs"] += [t["objectif_r"] for t in trades]
+            d["n"].append(len(trades))
             R = [t["R"] for t in trades]
             moyenne, t = _stat(R)
             cellules.append({
                 "echelle": facteur, "horizon": _horizon(facteur),
                 "motif": motif, "sens": sens, "n": len(R),
                 "r_moyen": moyenne, "t": t, "r_total": sum(R),
+                "ecart_type": st.stdev(R) if len(R) > 2 else 0.0,
                 "spread_r": st.median(x["cout"] for x in trades),
             })
-        if risques:
+        for sens, d in par_sens.items():
             # ⚠️ Le contrôle a la MÊME population : autant de trades que la
-            # cellule médiane, même distance de stop, même objectif.
-            n_median = int(st.median(
-                [c["n"] for c in cellules if c["echelle"] == facteur] or [0]))
-            alea = controle_aleatoire(
+            # cellule médiane DE CE SENS, même distance de stop, même objectif,
+            # et le même sens. La graine ne dépend pas du sens : les deux
+            # contrôles partent donc des mêmes entrées, ce qui les rend
+            # comparables entre eux.
+            n_median = int(st.median(d["n"] or [0]))
+            R_alea = controle_poole(
                 agregees, spread, max(n_median, MIN_TRADES),
-                st.median(risques), st.median(objectifs), graine=facteur * 101)
-            m_alea, _ = _stat([x["R"] for x in alea])
-            controles[facteur] = {"n": len(alea), "r_moyen": m_alea}
+                st.median(d["risques"]), st.median(d["objectifs"]),
+                graine=facteur * 101, sens=sens)
+            if not R_alea:
+                continue
+            m_alea, _ = _stat(R_alea)
+            controles[f"{facteur}:{sens}"] = {
+                "echelle": facteur, "sens": sens,
+                "n": len(R_alea), "graines": CONTROLE_GRAINES,
+                "r_moyen": m_alea,
+                # Gardé pour le t de Welch : comparer une cellule au hasard
+                # demande la dispersion du hasard, pas seulement sa moyenne.
+                "ecart_type": st.stdev(R_alea) if len(R_alea) > 2 else 0.0}
 
     for c in cellules:
-        ref = controles.get(c["echelle"], {})
-        c["r_hasard"] = ref.get("r_moyen", 0.0)
+        # ⛔ Chaque cellule lit le contrôle de SON sens. Un `.get` muet sur une
+        # clé absente rendrait 0,0 et gonflerait le delta — on veut le savoir.
+        ref = controles.get(f"{c['echelle']}:{c['sens']}")
+        if ref is None:
+            logger.warning("labo_or: aucun controle pour %s/%s — cellule ecartee",
+                           c["echelle"], c["sens"])
+            c["r_hasard"] = None
+            c["delta_hasard"] = None
+            continue
+        c["r_hasard"] = ref["r_moyen"]
         c["delta_hasard"] = c["r_moyen"] - c["r_hasard"]
+        # ⛔ LE SECOND DÉFAUT, fermé le 2026-09-15. Le verdict comparait le `t`
+        # BRUT de la cellule (son R contre zéro) au plafond du hasard, et ne
+        # demandait au contrôle que le SIGNE du delta. Sur une série qui
+        # dérive, une cellule acheteuse a donc un `t` énorme — celui de la
+        # tendance — et un delta à peine positif : elle passait RETENU.
+        #
+        # 🔑 La question n'est pas « ce motif gagne-t-il ? » mais « gagne-t-il
+        # PLUS QUE LE HASARD DE SON SENS ? ». On teste donc l'écart, par un t
+        # de Welch qui tient compte de la dispersion des DEUX côtés.
+        c["t_vs_hasard"] = _welch(c["r_moyen"], c["ecart_type"], c["n"],
+                                  ref["r_moyen"], ref["ecart_type"], ref["n"])
 
     plafond = plafond_hasard(len(cellules))
     for c in cellules:
@@ -1228,6 +1317,31 @@ def _horizon(facteur: int) -> str:
     return "5min" if facteur == 1 else f"{5 * facteur}min"
 
 
+def _welch(m1: float, s1: float, n1: int, m2: float, s2: float, n2: int) -> float:
+    """t de Welch entre deux échantillons de variances et tailles différentes.
+
+    ⛔ Rend `0.0` quand une dispersion passe sous `ECART_MINIMAL_R`, **comme
+    `_stat`**. Une division par presque rien fabrique un t énorme qui a l'air
+    d'un résultat — c'est le `t = −685` sur 8 trades tous stoppés.
+
+    ⚠️ Le garde-fou manquait ici à ma première version, et le contrôle de
+    dérive l'a attrapé : sur une série qui monte franchement, TOUS les achats
+    touchent l'objectif, les deux dispersions tombent à presque rien, et un
+    écart de 0,09 R sortait à un `t` au-dessus du plafond. Quatre cellules
+    étaient RETENUES sur une simple tendance. Deux mesures de dispersion dans
+    le même fichier doivent appliquer la même règle, sinon l'une dément
+    l'autre.
+    """
+    if n1 < 3 or n2 < 3:
+        return 0.0
+    if s1 < ECART_MINIMAL_R or s2 < ECART_MINIMAL_R:
+        return 0.0
+    err = math.sqrt(s1 * s1 / n1 + s2 * s2 / n2)
+    if err <= 0:
+        return 0.0
+    return (m1 - m2) / err
+
+
 def _verdict(cellule: dict, plafond: float) -> str:
     """Trois issues, et l'insuffisance n'est PAS un refus.
 
@@ -1236,11 +1350,24 @@ def _verdict(cellule: dict, plafond: float) -> str:
     """
     if cellule["n"] < MIN_TRADES:
         return INSUFFISANT
-    if abs(cellule["t"]) < plafond:
+    # ⛔ Sans contrôle de son sens, une cellule n'est comparable à rien : elle
+    # ne peut donc être ni retenue ni réfutée. Ce n'est pas un refus, c'est une
+    # mesure qui manque — même distinction que `MIN_TRADES` ci-dessus.
+    ecart = cellule.get("t_vs_hasard")
+    if ecart is None or cellule.get("delta_hasard") is None:
+        return INSUFFISANT
+    # ⚠️ C'est l'écart AU HASARD DE SON SENS qui est confronté au plafond, pas
+    # le `t` brut de la cellule. Le `t` brut répond à « ce motif gagne-t-il ? »,
+    # et sur un marché qui dérive la réponse est oui pour TOUT achat. Seule la
+    # question « gagne-t-il plus que le hasard de son sens ? » a un sens ici.
+    if abs(ecart) < plafond:
         # Sous le plafond du hasard : indistinguable du bruit, dans les DEUX
         # sens. On ne retient pas, mais on ne réfute pas non plus.
         return INSUFFISANT
-    if cellule["t"] > 0 and cellule["delta_hasard"] > 0:
+    # Deux conditions, et les deux sont nécessaires : battre le hasard NE SUFFIT
+    # PAS si la cellule perd quand même de l'argent (`r_moyen <= 0`). Perdre
+    # moins que le hasard n'est pas une méthode de trading.
+    if ecart > 0 and cellule["r_moyen"] > 0:
         return RETENU
     return REFUTE
 

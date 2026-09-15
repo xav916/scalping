@@ -197,8 +197,20 @@ def test_la_bougie_EN_COURS_est_ecartee():
 
 # ── Les verdicts ─────────────────────────────────────────────────────
 
-def _cellule(n=100, t=5.0, r=0.5, delta=0.4):
-    return {"n": n, "t": t, "r_moyen": r, "delta_hasard": delta}
+def _cellule(n=100, t=5.0, r=0.5, delta=0.4, t_hasard=None):
+    """⚠️ `t_hasard` ajouté le 2026-09-15 : depuis que `_verdict` confronte au
+    plafond l'écart AU HASARD DE SON SENS (et non plus le `t` brut de la
+    cellule), c'est ce champ qui porte la significativité.
+
+    Par défaut il reprend la MAGNITUDE de `t` et le SIGNE de `delta` — un
+    gabarit où les deux se contrediraient (t positif, delta négatif) ne décrit
+    aucune cellule réelle et ferait passer le test pour une raison fausse.
+    Les cinq contrats écrits avant ce jour sont préservés à l'identique.
+    """
+    if t_hasard is None:
+        t_hasard = abs(t) if delta >= 0 else -abs(t)
+    return {"n": n, "t": t, "r_moyen": r, "delta_hasard": delta,
+            "t_vs_hasard": t_hasard}
 
 
 def test_trop_peu_de_trades_n_est_PAS_un_refus():
@@ -221,6 +233,36 @@ def test_gagner_ne_suffit_PAS_il_faut_battre_le_HASARD():
     cellule qui gagne autant que des entrées au hasard n'apporte rien."""
     assert labo._verdict(_cellule(t=3.5, r=0.4, delta=-0.05), 2.5) == labo.REFUTE
     assert labo._verdict(_cellule(t=3.5, r=0.4, delta=+0.30), 2.5) == labo.RETENU
+
+
+def test_un_ecart_au_hasard_NON_SIGNIFICATIF_ne_refute_plus():
+    """⛔ Changement de sens assumé le 2026-09-15.
+
+    Avant, un `t` brut au-dessus du plafond suffisait : n'importe quel delta
+    négatif, même de 0,01 R, refusait le motif. Sur un marché qui dérive, ce
+    `t` brut est celui de la TENDANCE — le laboratoire refusait donc des motifs
+    sur la foi d'un écart qu'il n'avait jamais montré significatif.
+
+    🔑 Un écart qu'on ne sait pas distinguer du bruit n'est ni une preuve ni
+    une réfutation. ⚠️ Conséquence à assumer : le laboratoire FERME MOINS. Ce
+    qu'il ne perd pas, c'est le droit de RETENIR — la sécurité est là.
+    """
+    petit = _cellule(t=9.9, r=0.4, delta=-0.01, t_hasard=-0.4)
+    assert labo._verdict(petit, 2.5) == labo.INSUFFISANT
+    assert labo._verdict(petit, 2.5) != labo.RETENU
+
+    # Et l'écart significatif, lui, refuse toujours.
+    franc = _cellule(t=9.9, r=0.4, delta=-0.30, t_hasard=-3.5)
+    assert labo._verdict(franc, 2.5) == labo.REFUTE
+
+
+def test_une_cellule_SANS_controle_de_son_sens_ne_conclut_rien():
+    """⛔ `t_vs_hasard` absent = aucun contrôle du sens de cette cellule. Un
+    `.get()` muet rendrait 0,0 et la ferait passer pour « à égalité avec le
+    hasard » : une mesure MANQUANTE deviendrait une mesure NEUTRE."""
+    orpheline = {"n": 100, "t": 9.9, "r_moyen": 0.4, "delta_hasard": None,
+                 "t_vs_hasard": None}
+    assert labo._verdict(orpheline, 2.5) == labo.INSUFFISANT
 
 
 # ── Le rendu ─────────────────────────────────────────────────────────
