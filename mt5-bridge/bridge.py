@@ -505,6 +505,11 @@ def _db_init() -> None:
         # réellement porté par la position est perdu à la seconde où elle
         # ferme. 44 % des niveaux stockés en base se sont révélés faux.
         # Cf. `_derniers_niveaux`.
+        # Le code brut de `deal.reason` (2026-09-15) : l'etiquette confond
+        # CLIENT/MOBILE/WEB, et l'historique MT5 finit par tourner — apres quoi
+        # `/deals` ne peut plus rien rendre. Ici, la cause survit a l'historique.
+        if "close_reason_code" not in cols:
+            conn.execute("ALTER TABLE orders ADD COLUMN close_reason_code INTEGER")
         if "sl_at_close" not in cols:
             conn.execute("ALTER TABLE orders ADD COLUMN sl_at_close REAL")
         if "tp_at_close" not in cols:
@@ -1747,6 +1752,7 @@ def _log_closed_position(ticket: int, niveaux: dict | None = None) -> None:
         symbol = None
         volume = None
         cause = None
+        code_brut = None
         for d in deals:
             total_pnl += (d.profit or 0) + (d.swap or 0) + (d.commission or 0)
             if d.entry == mt5.DEAL_ENTRY_OUT or d.entry == mt5.DEAL_ENTRY_OUT_BY:
@@ -1755,6 +1761,7 @@ def _log_closed_position(ticket: int, niveaux: dict | None = None) -> None:
                 symbol = d.symbol
                 volume = d.volume
                 cause = _deal_reason_label(d)
+                code_brut = _deal_reason_brut(d)
         logger.info(
             f"[CLOSE] ticket #{ticket} {symbol} exit @ {exit_price} "
             f"PnL={total_pnl:+.2f} cause={cause}"
@@ -1775,6 +1782,10 @@ def _log_closed_position(ticket: int, niveaux: dict | None = None) -> None:
         # est définitive. Cf. [[feedback_detection_par_absence]].
         if cause and cause != "INCONNU":
             champs["close_reason"] = cause
+        # Le code brut est ecrit meme quand l'etiquette est illisible : c'est
+        # justement le cas ou il sert.
+        if code_brut is not None:
+            champs["close_reason_code"] = code_brut
         # Niveaux vivants au dernier passage du monitor. À défaut, le niveau
         # déclencheur reconstruit depuis l'ordre de clôture. Un zéro MT5
         # signifie « pas de stop », pas « stop à 0 » : il n'est pas écrit.
@@ -2475,7 +2486,7 @@ def _deal_reason_label(deal) -> str:
         "DEAL_REASON_VMARGIN": "VMARGIN",
         "DEAL_REASON_SPLIT": "SPLIT",
     }
-    brut = getattr(deal, "reason", None)
+    brut = _deal_reason_brut(deal)
     if brut is None:
         return "INCONNU"
     for nom, etiquette in codes.items():
@@ -2483,6 +2494,24 @@ def _deal_reason_label(deal) -> str:
         if valeur is not None and brut == valeur:
             return etiquette
     return f"MT5_{brut}"
+
+
+def _deal_reason_brut(deal) -> int | None:
+    """Le code `deal.reason` de MT5, tel quel.
+
+    ⛔ POURQUOI IL FAUT LE GARDER (2026-09-15). `_deal_reason_label` ecrase
+    **trois** causes distinctes en un seul mot : `CLIENT` (0), `MOBILE` (1) et
+    `WEB` (2) deviennent tous « MANUAL ». Or elles ne disent pas la meme chose :
+    `MOBILE` et `WEB` ne peuvent venir que d'un humain devant un ecran, tandis
+    que `CLIENT` couvre AUSSI l'API Python — donc un programme.
+
+    Le 15/09, trois positions or du compte reel se sont fermees hors SL et hors
+    TP. MT5 disait « MANUAL » ; impossible de trancher entre une main humaine et
+    un programme tiers, parce que l'etiquette avait deja jete l'information. Le
+    code brut la garde, et il ne coute rien.
+    """
+    brut = getattr(deal, "reason", None)
+    return int(brut) if brut is not None else None
 
 
 @app.route("/deals", methods=["GET"])
@@ -2562,6 +2591,9 @@ def deals():
         # étiqueter « fermé à la main » 215 sorties du stop suiveur (08-10),
         # parce que le stop avait bougé et que la base gardait celui d'origine.
         "reason": _deal_reason_label(out_deal),
+        # Le code BRUT, parce que l'etiquette confond CLIENT (0, qui
+        # couvre l'API Python), MOBILE (1) et WEB (2) sous « MANUAL ».
+        "reason_code": _deal_reason_brut(out_deal),
         # ⚠️ Ce que ces champs NE disent PAS. MT5 ne garde pas l'historique des
         # modifications de stop : sur une position déjà fermée, seul le niveau
         # qui l'a DÉCLENCHÉE est récupérable (il est dans l'ordre de clôture).

@@ -177,3 +177,42 @@ def test_sans_memoire_du_monitor_on_n_invente_aucun_niveau():
     assert "sl_at_close" not in ecrites[0]
     assert "niveau_declencheur" not in ecrites[0]
     assert ecrites[0]["close_reason"] == "SL", "la cause, elle, reste écrite"
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# ⛔ L'ÉTIQUETTE PERDAIT L'INFORMATION À LA SOURCE (2026-09-15).
+#
+# `CLIENT` (0), `MOBILE` (1) et `WEB` (2) deviennent tous « MANUAL ». Or
+# `MOBILE` et `WEB` ne peuvent venir que d'un humain devant un écran, tandis
+# que `CLIENT` couvre AUSSI l'API Python — donc un programme.
+#
+# Le 15/09, trois positions or du compte réel se sont fermées hors SL et hors
+# TP. MT5 disait « MANUAL » : impossible de trancher entre une main et un
+# programme tiers, parce que l'étiquette avait déjà jeté la distinction.
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_le_code_BRUT_survit_a_l_etiquette():
+    """Trois causes distinctes, une seule étiquette : le code les sépare."""
+    for brut in (_FauxMT5.DEAL_REASON_CLIENT, _FauxMT5.DEAL_REASON_SL):
+        log, ecrites = _charger([_Deal(entry=_FauxMT5.DEAL_ENTRY_OUT, reason=brut)])
+        log(1)
+        assert ecrites[0]["close_reason_code"] == brut, (
+            "le code brut de MT5 n'arrive pas dans l'audit")
+
+
+def test_le_code_BRUT_est_ecrit_meme_sans_etiquette_lisible():
+    """C'est précisément le cas où il sert : l'étiquette renonce, pas le code."""
+    class _Inconnu(_Deal):
+        pass
+
+    d = _Inconnu(entry=_FauxMT5.DEAL_ENTRY_OUT, reason=99)
+    log, ecrites = _charger([d])
+    log(1)
+    assert ecrites[0].get("close_reason") == "MT5_99"
+    assert ecrites[0]["close_reason_code"] == 99
+
+
+def test_un_deal_sans_cause_n_invente_aucun_code():
+    log, ecrites = _charger([_Deal(entry=_FauxMT5.DEAL_ENTRY_OUT, reason=None)])
+    log(1)
+    assert "close_reason_code" not in ecrites[0]
