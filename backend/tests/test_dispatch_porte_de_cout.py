@@ -513,3 +513,95 @@ def test_un_reglage_ILLISIBLE_n_exempte_RIEN(monkeypatch):
                                    funding_interval_hours=1.0),
                          edge=0.110, auto_exec=True)
     assert _cost_rejection(setup, dest) == "fees_exceed_edge"
+
+
+# ── L'ouverture par CHAINE ARMEE (2026-09-16) ────────────────────────
+#
+# ⛔ CE QUE CETTE OUVERTURE EST, ET CE QU'ELLE N'EST PAS. Elle est ASSUMEE,
+# pas justifiee par une mesure. Mesure faite AVANT d'ouvrir, pour que personne
+# n'ait a la refaire : `sweep_sur_order_block` sur 365 jours d'or 5 min rend
+# +0,0011 R (baissier, t=0,03) et -0,0716 R (haussier, t=-1,58) — aucune ne
+# franchit le plafond du hasard.
+#
+# Elargir le stop « proprement » pour franchir la porte a aussi ete teste :
+# toutes les variantes qui passent sont NEGATIVES. Le cout de la porte
+# s'exprime en R et R est defini par le stop — l'elargir divise le cout ET le
+# gain par le meme facteur. C'est une faille auto-referentielle, pas un reglage.
+#
+# 🔑 L'ouverture est donc bornee par le REGISTRE, pas par un seuil : une seule
+# ligne d'`.env` (`CHAINES_AUTORISEES`) la referme, destination et horizon
+# compris, et elle ne vaut que pour le setup porteur de la chaine.
+
+def _setup_chaine(chaine="chaine:sweep_sur_order_block_baissier",
+                  horizon="5min", ecart_pct=0.00234):
+    s = _setup_factice(entry=4280.0, ecart_pct=ecart_pct)
+    s.pair = "XAU/USD"
+    s.chaine = chaine
+    s.horizon = horizon
+    s.signal_pattern = "order_block_down"
+    return s
+
+
+def _dest_mt5_reelle():
+    """⚠️ `BridgeConfig` est GELE : les champs se passent a la construction,
+    pas par affectation. Et on prend les VRAIES valeurs MT5 — un modele de
+    cout factice ne prouverait rien sur la porte de production."""
+    from backend.services.bridge_destinations import (
+        BridgeConfig, _mt5_cost_model, _mt5_expected_edge)
+
+    return BridgeConfig(
+        destination_id="admin_live",
+        user_id=None,
+        bridge_url="",
+        bridge_api_key="k",
+        min_confidence=42.0,
+        allowed_asset_classes=frozenset({"metal"}),
+        auto_exec_enabled=True,
+        allowed_patterns=frozenset(),
+        cost_model=_mt5_cost_model(),
+        expected_edge_r=_mt5_expected_edge(),
+    )
+
+
+def test_SANS_chaine_armee_le_stop_serre_reste_refuse(monkeypatch):
+    """⛔ Le controle negatif. Sans lui, le test suivant passerait meme si
+    l'ouverture ne marchait pas — la porte pourrait deja laisser tout passer."""
+    from backend.services import mt5_bridge
+    monkeypatch.setattr("backend.services.chaines_autorisees.autorisee",
+                        lambda *a, **k: False)
+    assert mt5_bridge._cost_rejection(_setup_chaine(), _dest_mt5_reelle()) \
+        == "fees_exceed_edge"
+
+
+def test_une_chaine_ARMEE_leve_la_porte_de_cout(monkeypatch):
+    from backend.services import mt5_bridge
+    monkeypatch.setattr("backend.services.chaines_autorisees.autorisee",
+                        lambda *a, **k: True)
+    assert mt5_bridge._cost_rejection(_setup_chaine(), _dest_mt5_reelle()) is None
+
+
+def test_un_setup_SANS_chaine_ne_profite_de_rien(monkeypatch):
+    """🔑 L'ouverture ne vaut que pour le setup porteur de la chaine. Un
+    `order_block_down` ordinaire, meme motif, meme destination, reste refuse —
+    sinon armer une chaine elargirait la porte pour tout le monde."""
+    from backend.services import mt5_bridge
+    monkeypatch.setattr("backend.services.chaines_autorisees.autorisee",
+                        lambda *a, **k: True)
+    ordinaire = _setup_chaine()
+    ordinaire.chaine = None
+    assert mt5_bridge._cost_rejection(ordinaire, _dest_mt5_reelle()) \
+        == "fees_exceed_edge"
+
+
+def test_un_registre_ILLISIBLE_ne_leve_RIEN(monkeypatch):
+    """⛔ Fail-CLOSED, comme `_patterns_autorises`. Un registre en erreur qui
+    ouvrirait la porte transformerait une panne de lecture en autorisation de
+    trader — la forme de defaut la plus chere de ce projet."""
+    from backend.services import mt5_bridge
+
+    def _explose(*a, **k):
+        raise RuntimeError("registre corrompu")
+
+    monkeypatch.setattr("backend.services.chaines_autorisees.autorisee", _explose)
+    assert mt5_bridge._cost_rejection(_setup_chaine(), _dest_mt5_reelle()) \
+        == "fees_exceed_edge"

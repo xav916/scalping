@@ -427,6 +427,56 @@ def _cost_rejection(setup, dest) -> str | None:
     except Exception:  # noqa: BLE001 — un reglage illisible n'exempte rien
         pass
 
+    # Ouverture par CHAINE ARMEE — 2026-09-16, decidee par Xavier.
+    #
+    # ⛔ CE QU'ELLE EST : une ouverture ASSUMEE, pas justifiee par une mesure.
+    # Mesure faite AVANT d'ouvrir, pour que personne n'ait a la refaire —
+    # `sweep_sur_order_block`, 365 jours d'or 5 min, spread de seance :
+    #
+    #     baissier  +0,0011 R (t=+0,03, n=958)
+    #     haussier  -0,0716 R (t=-1,58, n=857)
+    #
+    # Aucune ne franchit le plafond du hasard. La porte refusait ces setups
+    # parce qu'un order block est un niveau structurel PROCHE du prix : leur
+    # stop vaut 0,234 % la ou la porte en exige 0,333 %, et le cout en R est
+    # inversement proportionnel a la distance au stop.
+    #
+    # ⚠️ Elargir le stop pour franchir la porte « proprement » a ete teste et
+    # ne marche pas : toutes les variantes qui passent sont NEGATIVES. Le cout
+    # se mesure en R, et R est defini par le stop — l'elargir divise le cout
+    # ET le gain par le meme facteur. C'est une faille auto-referentielle.
+    #
+    # 🔑 CE QUI LA BORNE : le registre, pas un seuil. Elle ne vaut que pour un
+    # setup PORTEUR d'une chaine, dont la chaine est armee pour CETTE
+    # destination et CET horizon. Une seule ligne d'`.env`
+    # (`CHAINES_AUTORISEES`) la referme entierement. Les autres portes —
+    # correlation, plafond journalier, cooldown, confiance, heure de spread —
+    # restent toutes appliquees.
+    _chaine_c = getattr(setup, "chaine", None)
+    if _chaine_c:
+        try:
+            from backend.services.chaines_autorisees import autorisee
+            _dest_id = getattr(dest, "destination_id", None)
+            _levee = autorisee(_chaine_c, _dest_id, getattr(setup, "horizon", None))
+        except Exception as e:  # noqa: BLE001
+            # ⛔ Fail-CLOSED, comme `_patterns_autorises`. Un registre en
+            # erreur qui ouvrirait la porte transformerait une panne de
+            # lecture en autorisation de trader.
+            logger.warning(
+                "porte de cout : registre des chaines illisible (%s) — "
+                "porte MAINTENUE pour %s", e, _chaine_c)
+            _levee = False
+        if _levee:
+            # Trace en clair a chaque passage : une protection levee qui ne se
+            # voit pas dans les logs est une protection qu'on oublie d'avoir
+            # levee. Meme regle que le drawdown arbitre et le flottant exclu.
+            logger.info(
+                "[PORTE DE COUT LEVEE] chaine armee %s sur %s (%s/%s) — "
+                "ouverture assumee, non justifiee par une mesure",
+                _chaine_c, _dest_id, getattr(setup, "pair", None),
+                getattr(setup, "horizon", None))
+            return None
+
     from backend.services.cost_model import cost_in_r, exceeds_edge
 
     risk_money = None
