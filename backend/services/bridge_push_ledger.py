@@ -77,6 +77,14 @@ class PushLedger:
     #: ``None`` : la colonne sert à filtrer, et un ``NULL`` échappe à tout
     #: filtre, y compris à celui qui chercherait nos propres trades.
     source: str = "interne"
+    #: Nom de la chaine de confluence qui a produit le setup, ou `None` pour un
+    #: motif ordinaire (2026-09-16).
+    #:
+    #: ⛔ Avant cette date, la chaine ne survivait au dispatch NULLE PART : ni
+    #: ici, ni dans `signal_rejections`, ni dans `personal_trades`. Sa seule
+    #: trace etait une ligne de journal systemd, gardee sept jours — et les
+    #: dix-huit chaines venaient d`etre armees sur de l`argent reel.
+    chaine: str | None = None
 
     @classmethod
     def for_setup(cls, dest, setup, direction: str) -> PushLedger:
@@ -90,6 +98,7 @@ class PushLedger:
             horizon=getattr(setup, "horizon", None),
             pattern=getattr(setup, "pattern", None),
             source=mt5_pushes_service.source_du_setup(setup),
+            chaine=getattr(setup, "chaine", None),
         )
 
     @property
@@ -105,7 +114,7 @@ class PushLedger:
         """
         return mt5_pushes_service.try_register_push(
             *self._args, horizon=self.horizon, pattern=self.pattern,
-            source=self.source)
+            source=self.source, chaine=self.chaine)
 
     def confirm(self, response: dict[str, Any] | None = None) -> None:
         """Le broker a accepté l'ordre."""

@@ -60,9 +60,24 @@ def _ensure_schema() -> None:
         # Migration 2026-08-26 : l'horizon et le motif n'existaient nulle part
         # dans la chaîne persistée. Ils ne sont connus qu'ICI, au moment du
         # dispatch, et le ticket est le seul identifiant partagé avec le trade.
+        # Migration 2026-09-16 : `chaine`. Au lendemain de l'armement des 18
+        # chaînes du laboratoire sur de l'argent réel, le nom de la chaîne
+        # n'existait NULLE PART dans la chaîne persistée — ni ici, ni dans
+        # `signal_rejections`, ni dans `personal_trades`. Sa seule trace était
+        # une ligne de journal systemd, gardée sept jours.
+        #
+        # ⚠️ `personal_trades.motif_interne` n'est PAS la chaîne : c'est le
+        # motif de CLÔTURE (`PRE_WEEKEND_TIERS`, `SORTIE_EQUILIBRE`). S'en
+        # servir donne un détecteur muet pour toujours, qui ressemble à « la
+        # chaîne ne s'est pas déclenchée ».
+        #
+        # 🔑 Même défaut que l'horizon un cran plus haut, et même conséquence :
+        # dix-huit hypothèses armées sans pouvoir dire laquelle produit quoi.
+        # On ne peut pas juger ce qu'on n'enregistre pas.
         cols = {r[1] for r in c.execute("PRAGMA table_info(mt5_pushes)")}
         for nom, typ in (("horizon", "TEXT"), ("pattern", "TEXT"),
-                         ("mt5_ticket", "INTEGER"), ("source", "TEXT")):
+                         ("mt5_ticket", "INTEGER"), ("source", "TEXT"),
+                         ("chaine", "TEXT")):
             if nom not in cols:
                 c.execute(f"ALTER TABLE mt5_pushes ADD COLUMN {nom} {typ}")
         c.execute(
@@ -173,8 +188,13 @@ def try_register_push(
     horizon: str | None = None,
     pattern: str | None = None,
     source: str | None = None,
+    chaine: str | None = None,
 ) -> bool:
     """Tente d'enregistrer un push (status PENDING / ok=0).
+
+    ``chaine`` porte le nom de la chaîne de confluence qui a produit ce setup,
+    ou ``None`` pour un motif ordinaire. Ajouté le 2026-09-16 : sans lui,
+    l'expérience des dix-huit chaînes armées n'était pas attribuable.
 
     ``horizon`` et ``pattern`` viennent du setup, seul endroit de la chaîne où
     ils sont encore connus. Sans eux, aucune hypothèse par horizon n'est
@@ -199,8 +219,9 @@ def try_register_push(
                 """
                 INSERT OR IGNORE INTO mt5_pushes (
                     destination_id, date, pair, direction, entry_price_5dp,
-                    pushed_at, ok, bridge_response, horizon, pattern, source
-                ) VALUES (?, ?, ?, ?, ?, ?, 0, NULL, ?, ?, ?)
+                    pushed_at, ok, bridge_response, horizon, pattern, source,
+                    chaine
+                ) VALUES (?, ?, ?, ?, ?, ?, 0, NULL, ?, ?, ?, ?)
                 """,
                 (
                     destination_id,
@@ -212,6 +233,7 @@ def try_register_push(
                     _texte(horizon),
                     nom_du_motif(pattern),
                     source,
+                    _texte(chaine),
                 ),
             )
             return cur.rowcount > 0

@@ -154,3 +154,93 @@ def test_un_setup_sans_horizon_ne_fait_pas_echouer_la_poussee(_isolated_db):
     l = PushLedger.for_setup(_Dest(), _Nu(), "buy")
     assert l.horizon is None and l.pattern is None
     assert l.reserve() is True
+
+
+# ── Le maillon 2 : la CHAINE doit survivre au dispatch ────────────────────
+#
+# ⛔ Constaté le 2026-09-16, au lendemain de l'armement des 18 chaînes du
+# laboratoire sur de l'argent réel : **le nom de la chaîne n'existe nulle
+# part dans la chaîne persistée.** Ni `mt5_pushes`, ni `signal_rejections`,
+# ni `personal_trades`. La seule trace était une ligne de journal systemd,
+# gardée 7 jours.
+#
+# ⚠️ `motif_interne` n'est PAS la chaîne — c'est le motif de CLÔTURE
+# (`PRE_WEEKEND_TIERS`, `SORTIE_EQUILIBRE`). Une veille bâtie dessus reste
+# muette pour toujours, en ressemblant à « la chaîne n'a pas encore tiré ».
+#
+# 🔑 Conséquence, exactement celle de l'horizon un cran plus haut : on a armé
+# dix-huit hypothèses sans pouvoir dire laquelle produit quoi. **On ne peut
+# pas juger ce qu'on n'enregistre pas.**
+
+def test_la_poussee_retient_la_CHAINE(_isolated_db):
+    from backend.services import mt5_pushes_service as ps
+
+    ps.try_register_push("admin_live", "2026-09-16", "XAU/USD", "sell", "4280.00",
+                         horizon="5min", pattern="order_block_down",
+                         chaine="chaine:sweep_sur_order_block_baissier")
+    p = ps.get_push("admin_live", "2026-09-16", "XAU/USD", "sell", "4280.00")
+    assert p is not None
+    assert p["chaine"] == "chaine:sweep_sur_order_block_baissier"
+
+
+def test_un_setup_ORDINAIRE_laisse_la_chaine_VIDE(_isolated_db):
+    """⛔ Le contrôle négatif. Sans lui, une colonne remplie par défaut ferait
+    passer tous les ordres pour des ordres de chaîne — et l'attribution qu'on
+    ajoute ici vaudrait moins que rien : elle mentirait."""
+    from backend.services import mt5_pushes_service as ps
+
+    ps.try_register_push("admin_live", "2026-09-16", "EUR/USD", "buy", "1.10000",
+                         horizon="4h", pattern="momentum_up")
+    p = ps.get_push("admin_live", "2026-09-16", "EUR/USD", "buy", "1.10000")
+    assert p is not None and not p["chaine"]
+
+
+def test_le_ledger_porte_la_chaine_DU_SETUP(_isolated_db):
+    """C'est le point de passage commun de toutes les routes."""
+    from backend.services.bridge_push_ledger import PushLedger
+
+    class _Chaine:
+        pair = "XAU/USD"
+        entry_price = 4280.0
+        horizon = "5min"
+        pattern = "order_block_down"
+        chaine = "chaine:prise_en_accumulation_baissier"
+
+    l = PushLedger.for_setup(_Dest(), _Chaine(), "sell")
+    assert l.chaine == "chaine:prise_en_accumulation_baissier"
+    assert l.reserve() is True
+
+    from backend.services import mt5_pushes_service as ps
+    p = ps.get_push(l.destination_id, l.push_date, "XAU/USD", "sell", l.entry_5dp)
+    assert p["chaine"] == "chaine:prise_en_accumulation_baissier"
+
+
+def test_une_base_SANS_la_colonne_est_migree(_isolated_db):
+    """⛔ Les bases existantes n'ont pas `chaine`. Une migration qui ne
+    s'applique qu'aux tables neuves laisserait la production sans la colonne —
+    et l'attribution serait muette là où elle sert."""
+    import sqlite3
+
+    from backend.services import mt5_pushes_service as ps
+
+    # La table TELLE QU'ELLE ÉTAIT avant la migration du 2026-08-26 : avec
+    # `bridge_response`, sans `horizon`/`pattern`/`mt5_ticket`/`source`, et
+    # bien sûr sans `chaine`.
+    #
+    # ⚠️ Ma première version omettait aussi `bridge_response` — une table plus
+    # ancienne qu'aucune n'a jamais existé. Le test échouait sur une colonne
+    # que la migration n'ajoute pas, et n'éprouvait donc pas ce qu'il prétend.
+    with sqlite3.connect(ps._db_path()) as c:
+        c.execute("DROP TABLE IF EXISTS mt5_pushes")
+        c.execute("""CREATE TABLE mt5_pushes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, destination_id TEXT NOT NULL,
+            date TEXT NOT NULL, pair TEXT NOT NULL, direction TEXT NOT NULL,
+            entry_price_5dp TEXT NOT NULL, pushed_at TEXT NOT NULL,
+            ok INTEGER NOT NULL, bridge_response TEXT,
+            UNIQUE(destination_id, date, pair, direction, entry_price_5dp))""")
+    ps._SCHEMAS_PRETS.discard(ps._db_path())
+
+    ps.try_register_push("admin_live", "2026-09-16", "XAG/USD", "buy", "30.000",
+                         chaine="chaine:choch_puis_fvg_haussier")
+    p = ps.get_push("admin_live", "2026-09-16", "XAG/USD", "buy", "30.000")
+    assert p is not None and p["chaine"] == "chaine:choch_puis_fvg_haussier"
