@@ -840,6 +840,49 @@ résultat en panne de données. Le détail, par échelle :
 
 ---
 
+## Les deux seules cellules `RETENU` jamais observées — archivées le 2026-09-20
+
+⛔ **Elles disparaissent à la nuit du 21/09, et il faut garder leur trace avant.**
+Sur **40 084 cellules**, 13 nuits, 56 motifs, 20 paires, la copie de lecture
+compte **4 lignes `RETENU` — soit 2 cellules mesurées deux nuits de suite**, aux
+valeurs identiques (mêmes trades, re-mesurés) :
+
+| nuit | paire | échelle | motif | `n` | R moyen | Δ hasard | plafond |
+|---|---|---|---|---|---|---|---|
+| 19 et 20/09 | **ADA/USD** | 60 min | `breakout_up` | 23 | +0,064 | +1,392 | 3,79 |
+| 19 et 20/09 | **ADA/USD** | 60 min | `chaine:cassure_confirmee_volume_haussier` | 20 | +0,141 | +1,469 | 3,81 |
+
+- ⛔ **Les deux sont CRYPTO — donc les deux sont des artefacts du même défaut de
+  coût, mais dans l'autre sens.** Le laboratoire facturait à ADA/USD le spread
+  du CFD altcoin de MT5. Arithmétique, depuis les colonnes stockées : le contrôle
+  aléatoire de ces cellules tourne à **−1,33 R** (0,064 − 1,392), quand la
+  cellule elle-même fait +0,064. L'écart n'est pas une performance, c'est un
+  contrôle **noyé par un coût faux**.
+- 🔑 Le contraste, nuit du 20/09, 4 432 cellules : contrôle aléatoire moyen
+  **−1,64 R** sur les paires crypto contre **−0,83 R** ailleurs. Le coût gonflé
+  double la perte des deux côtés ; l'écart cellule−contrôle y devient dominé par
+  le coût, dans les **deux** directions. C'est ce qui produit 100 % de `REFUTE`
+  crypto d'un côté, et ces deux `RETENU` de l'autre.
+- ⛔ **Elles ne seront pas réfutées : elles vont simplement quitter l'univers
+  mesuré.** ADA/USD s'exécute chez Kraken, et `instruments_servis()` filtre
+  depuis le 2026-09-20 les paires que la destination mesurée ne sert pas. Le
+  dispositif passera donc à **zéro cellule `RETENU`** — et ce zéro sera plus
+  honnête que ces quatre lignes.
+- 🔑 **Et le compte des `RETENU` était déjà celui du hasard.** 27 256 cellules
+  concluantes, plafond ≈ 3,8 bilatéral : `2 × Φ(−3,8) ≈ 1,4·10⁻⁴`, soit **≈ 0,3
+  faux positif par nuit** — pour 4 observés sur 13 nuits, c'est-à-dire ≈ 0,31 par
+  nuit. Le nombre de cellules retenues est **indistinguable de ce que le plafond
+  laisse passer par construction**. ⚠️ Les nuits se recouvrent (fenêtres de 90
+  jours décalées d'un jour) : elles ne sont pas 13 tests indépendants, et le
+  calcul se lit par nuit, pas cumulé.
+- ⚠️ Répartition d'ensemble des 40 084 cellules : **12 824** manquent de trades
+  (32 %), **21 008** sont mesurées et **sous le plafond** (52 %), **6 248**
+  `REFUTE` (16 %), **4** `RETENU` (0,01 %). Le goulot n'est donc PAS le volume de
+  données — la moitié des cellules a assez de trades et reste indistinguable du
+  hasard.
+
+---
+
 ## Le contrôle qui tranche
 
 Un concept n'est **jamais** jugé sur son R moyen seul. Le laboratoire le rejoue
