@@ -674,6 +674,26 @@ CHAINES: tuple[dict, ...] = (
      "motifs": ("liquidity_sweep_down",),
      "declencheur": "liquidity_sweep_down",
      "predicats": ("sur_niveau_majeur_haut",), "fenetre": 0},
+    # ⛔ LE MAILLON « M15 = setup, M5 = trigger » (declare le 2026-09-20 dans
+    # docs/concepts-trading.md, avant le code). La structure d'une echelle
+    # AGREGEE devient un contexte pour un declencheur d'une autre echelle :
+    # jusqu'ici chaque cellule vivait entierement dans un seul horizon.
+    #
+    # 🔑 Recouvrement avec le BIAIS mesure AVANT de declarer, fixture figee,
+    # 230 observations par sens : 29,3 % / 41,5 % en haussier, 46,4 % / 47,1 %
+    # en baissier. Ni inclusion, ni redondance — les deux echelles disent autre
+    # chose plus d'une fois sur deux. C'est ce chiffre qui justifie ces deux
+    # chaines ; sans lui, elles auraient double le biais en silence.
+    #
+    # ⚠️ Un seul motif : sous-ensemble STRICT du balayage, comparaison APPARIEE.
+    {"nom": "sweep_avec_structure_m15_haussier",
+     "motifs": ("liquidity_sweep_up",),
+     "declencheur": "liquidity_sweep_up",
+     "predicats": ("structure_m15_haussiere",), "fenetre": 0},
+    {"nom": "sweep_avec_structure_m15_baissier",
+     "motifs": ("liquidity_sweep_down",),
+     "declencheur": "liquidity_sweep_down",
+     "predicats": ("structure_m15_baissiere",), "fenetre": 0},
 )
 
 # Un pic de volume : la bougie que le detecteur vient de voir porte au moins
@@ -980,6 +1000,69 @@ def _sur_niveau_majeur(cote: str):
     return _predicat
 
 
+# ─── LA STRUCTURE DE L'ECHELLE AGREGEE — M15 (2026-09-20) ───────────
+#
+# Declare dans `docs/concepts-trading.md` AVANT d'etre code. Le critere
+# rapporte : casser le high M15 fait repasser la structure M15 haussiere.
+#
+# 🔑 CE QUI EST NEUF n'est pas la cassure de structure — `bos_up` / `bos_down`
+# existent depuis le 09/09. C'est que la structure d'une ECHELLE AGREGEE
+# devienne un PREDICAT disponible pour un declencheur d'une autre echelle.
+# Aujourd'hui chaque cellule vit entierement dans un seul horizon : un balayage
+# 5 min ne sait rien de l'etat du M15.
+#
+# ⛔ AUCUN REGLAGE NEUF. `echelle_agregee.agreger` existe depuis le 2026-09-08
+# et a ete mesure AVANT d'etre construit ; `_tendance_de_structure` n'a aucun
+# seuil propre ; la fenetre est `FENETRE`, celle des detecteurs, appliquee a
+# l'echelle agregee. Le `+ 2` ci-dessous est une marge d'alignement sur
+# l'horloge — `agreger` ecarte le groupe incomplet — pas un reglage de
+# strategie.
+#
+# ⚠️ CE QUE NOUS REDUISONS, et c'est ecrit dans le carnet : le critere rapporte
+# decrit une BASCULE (« casser le high FAIT REPASSER la structure haussiere ») ;
+# `_tendance_de_structure` rend un ETAT. Nous mesurons donc « la structure M15
+# EST haussiere », pas « elle VIENT DE basculer ». Un etat dure des heures la ou
+# une bascule est instantanee : ce ne sont pas les memes trades. Reduction
+# assumee, pas implementation fidele.
+M15_FACTEUR = 3      # 3 x 5 min : l'agregation, pas un reglage
+
+
+def _structure_agregee(attendu: str, facteur: int = M15_FACTEUR):
+    """Fabrique le predicat « la structure de l'echelle agregee est `attendu` »."""
+
+    def _predicat(bougies, i: int) -> bool:
+        from datetime import datetime
+
+        from backend.models.schemas import Candle
+        from backend.services.echelle_agregee import agreger
+        from backend.services.pattern_detector import _tendance_de_structure
+
+        # ⚠️ `bougies[:i]` — ce que le detecteur a vu, pas une bougie de plus.
+        vues = bougies[:i]
+        besoin = (FENETRE + 2) * facteur
+        if len(vues) < besoin:
+            return False        # fail-closed : pas d'histoire, pas de structure
+        fen = vues[-besoin:]
+        try:
+            objets = [Candle(
+                timestamp=(x["t"] if isinstance(x["t"], datetime)
+                           else datetime.fromisoformat(
+                               str(x["t"]).replace("Z", "+00:00"))),
+                open=float(x["o"]), high=float(x["h"]), low=float(x["l"]),
+                close=float(x["c"]), volume=float(x.get("tv") or 0.0))
+                for x in fen]
+            agregees = agreger(objets, facteur)
+        except Exception:  # noqa: BLE001 — bougie malformee : on ne valide pas
+            return False
+        # L'agregation ecarte les groupes incomplets : elle peut rendre moins
+        # que `FENETRE`. Dans ce cas on ne se prononce pas.
+        if len(agregees) < FENETRE:
+            return False
+        return _tendance_de_structure(agregees[-FENETRE:]) == attendu
+
+    return _predicat
+
+
 _PREDICATS = {"volume_fort": _volume_fort,
               "dans_accumulation": _dans_accumulation,
               "biais_haussier": _biais("haussiere"),
@@ -987,7 +1070,9 @@ _PREDICATS = {"volume_fort": _volume_fort,
               "en_discount": _cote_de_l_equilibre(True),
               "en_premium": _cote_de_l_equilibre(False),
               "sur_niveau_majeur_haut": _sur_niveau_majeur("haut"),
-              "sur_niveau_majeur_bas": _sur_niveau_majeur("bas")}
+              "sur_niveau_majeur_bas": _sur_niveau_majeur("bas"),
+              "structure_m15_haussiere": _structure_agregee("haussiere"),
+              "structure_m15_baissiere": _structure_agregee("baissiere")}
 _PREDICATS.update({nom: _dans_session(nom) for nom in _SESSIONS})
 
 

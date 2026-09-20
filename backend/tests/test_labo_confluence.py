@@ -107,10 +107,24 @@ class _Setup:
 #                   le niveau, donc mesuraient une cassure, pas un retest.
 #                   Le niveau ne doit pas etre depasse. Cf. le carnet et
 #                   scripts/mesurer_niveau_majeur.py.
+#   22  2026-09-20  + sweep_avec_structure_m15 haussier/baissier — le maillon
+#                   « M15 = setup, M5 = trigger », declare dans
+#                   docs/concepts-trading.md AVANT le code. La structure
+#                   d'une echelle AGREGEE devient un contexte pour un
+#                   declencheur d'une autre echelle.
+#                   🔑 Recouvrement avec le BIAIS mesure AVANT de declarer
+#                   (scripts/mesurer_structure_m15.py, 230 observations par
+#                   sens) : 29,3 %/41,5 % haussier, 46,4 %/47,1 % baissier.
+#                   Ni inclusion ni redondance — sans cette mesure, ces deux
+#                   chaines auraient double le biais en silence.
 #
-# ⚠️ Le cout n'est pas nul : ~160 cellules de plus, donc le plafond du
-# hasard monte pour TOUTES les cellules existantes.
-CHAINES_ATTENDUES = 20
+# ⚠️ Le cout n'est pas nul — mais il est CHIFFRE depuis le 2026-09-20, sur
+# les 13 nuits de `labo_or_cellules` : `plafond ≈ 1,72 + 0,249 x ln(N)`. Deux
+# chaines, soit ~160 cellules, coutent donc ~0,011 de plafond, pas davantage.
+# La courbe est logarithmique et plate ; l'emphase mise auparavant sur ce cout
+# etait exageree. Ce qui reste vrai : chaque chaine se declare et se mesure
+# avant d'exister, et le recouvrement passe avant la performance.
+CHAINES_ATTENDUES = 22
 
 
 

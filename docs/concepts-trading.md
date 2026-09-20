@@ -564,6 +564,72 @@ ce concept rend testable.
 
 ---
 
+### Structure de l'échelle agrégée (M15) — déclaré le 2026-09-20, non codé
+
+⚠️ **PROVENANCE, et elle est faible.** Le critère vient de la synthèse transmise
+par Pascal le 2026-09-20, produite par un autre assistant depuis des
+publications TradingView. Sources **non consultées de première main**, citations
+non vérifiées. Cf. `notions_vivien.SOURCE_SYNTHESE`, entrée
+`cassure_structure_m15`. Rien ici n'est « ce qu'il dit » : c'est ce qui nous a
+été rapporté, et notre réduction de ce rapport.
+
+- **Critère rapporté** : casser le high M15 fait repasser la structure M15
+  haussière ; casser le low, baissière. La structure reposerait donc sur des
+  highs/lows structurels et leur cassure, pas sur une moyenne mobile.
+- **Idée, et ce qui est VRAIMENT neuf ici.** Ce n'est pas la cassure de
+  structure : `bos_up` / `bos_down` existent depuis le 09/09. C'est que la
+  structure d'une **échelle agrégée** devienne un **prédicat** disponible pour
+  un déclencheur détecté sur une autre échelle. Aujourd'hui chaque cellule vit
+  entièrement à l'intérieur d'un seul horizon : un balayage 5 min ne sait rien
+  de l'état du M15. C'est le maillon « M15 = setup, M5 = trigger » de la
+  hiérarchie rapportée, et il manque au dispositif.
+- **Règle** — et elle n'introduit **aucun réglage neuf** :
+  - les bougies M15 viennent de `echelle_agregee.agreger(candles, 3)` — le
+    chemin d'agrégation existe depuis le 2026-09-08, mesuré avant d'être
+    construit ;
+  - l'état de structure vient de `_tendance_de_structure`, qui n'a aucun seuil
+    propre (elle coupe une fenêtre en deux et exige *à la fois* un plus-haut
+    **et** un plus-bas supérieurs) ;
+  - `structure_m15_haussiere` est vrai quand cette lecture, appliquée aux
+    bougies M15 agrégées, rend `haussiere`. Miroir pour l'autre sens.
+- ⛔ **CE QUE NOUS RÉDUISONS, et il faut le dire.** Le critère rapporté décrit un
+  **basculement** — « casser le high *fait repasser* la structure haussière ».
+  `_tendance_de_structure` rend un **état**, pas un événement de bascule. Nous
+  mesurons donc « la structure M15 *est* haussière », pas « elle *vient de*
+  basculer ». C'est une réduction assumée, pas une implémentation fidèle : un
+  état peut durer des heures là où une bascule est instantanée, et les deux ne
+  produisent pas les mêmes trades. La version fidèle exigerait un détecteur de
+  bascule ; elle n'est pas déclarée ici.
+- ⛔ **Ce n'est pas un motif, c'est un CONTEXTE** — comme le biais,
+  l'accumulation et le premium/discount. C'est donc un **prédicat**.
+- **Chaînes déclarées** : `sweep_avec_structure_m15_haussier` /
+  `sweep_avec_structure_m15_baissier` = `liquidity_sweep` sur 5 min **dans le
+  sens** de la structure M15.
+- **Prédiction falsifiable** : la chaîne doit rendre un **R moyen supérieur** à
+  `liquidity_sweep` seul, même instrument, même échelle. Si l'état du M15
+  n'ajoute rien à un balayage 5 min, le maillon « M15 = setup » est décoratif.
+- 🔑 Inclusion **stricte** → comparaison **appariée**.
+- ⛔ **L'OBJECTION À MESURER, et c'est la quatrième fois.** Le recouvrement avec
+  `biais_haussier` / `biais_baissier` sera **fort**. Les deux appellent la MÊME
+  fonction : le biais sur 400 bougies de 5 min de la même série, celle-ci sur
+  ~30 bougies M15, soit ~90 bougies de 5 min. Fenêtres différentes, lecture
+  identique, résultats corrélés.
+  ⚠️ La mesure qui tranche, **avant toute lecture de R** : la part des bougies
+  où les deux prédicats disent la même chose. **Si le recouvrement est
+  quasi-total, la chaîne n'ajoute rien et duplique une cellule que nous payons
+  déjà sur le plafond** — et il faudra soit la retirer, soit choisir laquelle
+  des deux échelles porte le contexte. Les trois recouvrements « évidents »
+  précédents (09/09, 12/09, 20/09) se sont tous révélés autres que prévu :
+  *un recouvrement se mesure, il ne se déduit pas.*
+- ⚠️ **Fréquence attendue élevée**, contrairement au niveau majeur : une
+  structure est haussière ou baissière une bonne partie du temps. La chaîne
+  aura donc du `n` — ce qui la rend mesurable vite, et rend le recouvrement
+  d'autant plus important à vérifier d'abord.
+- **Coût** : 2 chaînes, ~160 cellules, le plafond du hasard monte pour **toutes**
+  les autres cellules.
+
+---
+
 ## ⛔ Réfutés — ne pas recoder
 
 | concept | verdict | où |
