@@ -91,10 +91,11 @@ def _schema(c: sqlite3.Connection) -> None:
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         mesure_le TEXT NOT NULL, pair TEXT NOT NULL, horizon TEXT NOT NULL,
         motif TEXT NOT NULL, sens TEXT NOT NULL, n INTEGER NOT NULL,
-        r_moyen REAL, t REAL, delta_hasard REAL, plafond REAL,
-        verdict TEXT NOT NULL)""")
+        r_moyen REAL, t REAL, delta_hasard REAL, t_vs_hasard REAL,
+        plafond REAL, verdict TEXT NOT NULL)""")
     c.execute("""CREATE INDEX IF NOT EXISTS idx_labo_or_cellules
         ON labo_or_cellules(pair, horizon, motif, mesure_le)""")
+    _migrer_t_vs_hasard(c)
     c.execute("""CREATE TABLE IF NOT EXISTS labo_or_fermetures (
         destination TEXT NOT NULL, pair TEXT NOT NULL, horizon TEXT NOT NULL,
         motif TEXT NOT NULL, sens TEXT, ferme_le TEXT NOT NULL, preuve TEXT,
@@ -112,6 +113,32 @@ def _schema(c: sqlite3.Connection) -> None:
         decide_le TEXT NOT NULL, action TEXT NOT NULL, pair TEXT NOT NULL,
         horizon TEXT NOT NULL, motif TEXT NOT NULL, motif_decision TEXT)""")
 
+
+
+def _migrer_t_vs_hasard(c: sqlite3.Connection) -> None:
+    """Ajoute l'ecart au hasard aux cellules ecrites avant le 2026-09-20.
+
+    ⛔ LE DEFAUT QUE CETTE COLONNE REPARE. `_verdict` confronte au plafond
+    `t_vs_hasard` — l'ecart au hasard DE SON SENS — et non le `t` brut de la
+    cellule. Or seul le `t` brut etait enregistre. La table portait donc le
+    verdict et un `t` qui ne joue AUCUN role dans ce verdict : une cellule
+    RETENU y affichait `t = 0,47` contre un `plafond = 3,81`, ce qui ressemble
+    a une contradiction flagrante sans en etre une. Le nombre qui a decide
+    n'existait plus nulle part.
+
+    🔑 Troisieme fois le meme defaut : l'horizon (2026-08-26), la chaine
+    (2026-09-16), l'ecart au hasard (ici). A chaque fois une valeur decisive
+    qui ne vit qu'en memoire et meurt avec le processus. On ne peut pas juger
+    ce qu'on n'enregistre pas.
+
+    ⚠️ Les cellules anterieures gardent `NULL` : leur ecart est PERDU, il ne
+    se recalcule pas sans rejouer la nuit. `NULL` le dit ; une valeur
+    reconstituee mentirait.
+    """
+    colonnes = [r[1] for r in c.execute("PRAGMA table_info(labo_or_cellules)")]
+    if colonnes and "t_vs_hasard" not in colonnes:
+        c.execute("ALTER TABLE labo_or_cellules ADD COLUMN t_vs_hasard REAL")
+        logger.warning("reglage_or: colonne t_vs_hasard ajoutee aux cellules")
 
 
 def _migrer_portee(c: sqlite3.Connection) -> None:
@@ -154,10 +181,11 @@ def enregistrer(mesure: dict) -> int:
         c.executemany(
             """INSERT INTO labo_or_cellules
                (mesure_le, pair, horizon, motif, sens, n, r_moyen, t,
-                delta_hasard, plafond, verdict)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                delta_hasard, t_vs_hasard, plafond, verdict)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
             [(quand, pair, x["horizon"], x["motif"], x["sens"], x["n"],
-              x["r_moyen"], x["t"], x.get("delta_hasard"), x.get("plafond"),
+              x["r_moyen"], x["t"], x.get("delta_hasard"),
+              x.get("t_vs_hasard"), x.get("plafond"),
               x["verdict"]) for x in cellules])
     return len(cellules)
 
