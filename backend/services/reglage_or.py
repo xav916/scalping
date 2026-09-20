@@ -92,10 +92,12 @@ def _schema(c: sqlite3.Connection) -> None:
         mesure_le TEXT NOT NULL, pair TEXT NOT NULL, horizon TEXT NOT NULL,
         motif TEXT NOT NULL, sens TEXT NOT NULL, n INTEGER NOT NULL,
         r_moyen REAL, t REAL, delta_hasard REAL, t_vs_hasard REAL,
-        plafond REAL, verdict TEXT NOT NULL)""")
+        plafond REAL, verdict TEXT NOT NULL,
+        spread_r REAL, risque_pct REAL)""")
     c.execute("""CREATE INDEX IF NOT EXISTS idx_labo_or_cellules
         ON labo_or_cellules(pair, horizon, motif, mesure_le)""")
     _migrer_t_vs_hasard(c)
+    _migrer_cout(c)
     c.execute("""CREATE TABLE IF NOT EXISTS labo_or_fermetures (
         destination TEXT NOT NULL, pair TEXT NOT NULL, horizon TEXT NOT NULL,
         motif TEXT NOT NULL, sens TEXT, ferme_le TEXT NOT NULL, preuve TEXT,
@@ -113,6 +115,45 @@ def _schema(c: sqlite3.Connection) -> None:
         decide_le TEXT NOT NULL, action TEXT NOT NULL, pair TEXT NOT NULL,
         horizon TEXT NOT NULL, motif TEXT NOT NULL, motif_decision TEXT)""")
 
+
+
+def _migrer_cout(c: sqlite3.Connection) -> None:
+    """Ajoute le COUT aux cellules — la question restee sans reponse 13 nuits.
+
+    ⛔ LE TROU. `rejouer_cellule` calcule `cout = spread / risque` pour chaque
+    trade, `mesurer()` en prend la mediane par cellule sous le nom `spread_r`,
+    et **personne ne l'ecrivait**. Le dispositif mesurait donc 40 000 cellules
+    a -0,86 R de moyenne sans pouvoir dire quelle part de cette perte est
+    payee au courtier. C'est la decomposition la plus lourde du projet :
+
+        R_brut = R_net + cout
+
+    Si le cout median vaut 0,3 R, les frais expliquent un tiers de la perte et
+    il faut chercher ailleurs. S'il vaut 0,8 R, le probleme EST le cout, et le
+    levier n'est plus le motif mais la distance au stop.
+
+    🔑 `risque_pct` l'accompagne pour une raison precise : le cout n'est pas
+    une propriete du spread, c'est un RAPPORT. Le meme spread coute 0,05 R sur
+    un stop large et 0,40 R sur un stop de scalping. Sans le denominateur, on
+    lirait un cout eleve comme « le courtier est cher » alors qu'il dirait
+    « nos stops sont serres » — deux diagnostics opposes, deux remedes opposes.
+
+    ⚠️ QUATRIEME fois le meme defaut : l'horizon (2026-08-26), la chaine
+    (16/09), l'ecart au hasard (20/09), le cout (ici). A chaque fois une valeur
+    DEJA CALCULEE qui mourait avec le processus. Le defaut n'est pas le calcul,
+    c'est de croire qu'un nombre lu dans un log est un nombre enregistre.
+
+    ⚠️ Les cellules anterieures gardent `NULL` : leur cout est perdu et ne se
+    recalcule pas sans rejouer la nuit. `NULL` le dit ; une valeur reconstituee
+    mentirait — meme doctrine que `_migrer_t_vs_hasard`.
+    """
+    for colonne in ("spread_r", "risque_pct"):
+        try:
+            c.execute(f"ALTER TABLE labo_or_cellules ADD COLUMN {colonne} REAL")
+            logger.info("labo_or: colonne %s ajoutee (cellules anterieures NULL)",
+                        colonne)
+        except sqlite3.OperationalError:
+            pass                    # deja presente : rien a faire
 
 
 def _migrer_t_vs_hasard(c: sqlite3.Connection) -> None:
@@ -181,12 +222,14 @@ def enregistrer(mesure: dict) -> int:
         c.executemany(
             """INSERT INTO labo_or_cellules
                (mesure_le, pair, horizon, motif, sens, n, r_moyen, t,
-                delta_hasard, t_vs_hasard, plafond, verdict)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                delta_hasard, t_vs_hasard, plafond, verdict,
+                spread_r, risque_pct)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             [(quand, pair, x["horizon"], x["motif"], x["sens"], x["n"],
               x["r_moyen"], x["t"], x.get("delta_hasard"),
               x.get("t_vs_hasard"), x.get("plafond"),
-              x["verdict"]) for x in cellules])
+              x["verdict"], x.get("spread_r"),
+              x.get("risque_pct")) for x in cellules])
     return len(cellules)
 
 

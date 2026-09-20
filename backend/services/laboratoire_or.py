@@ -1241,7 +1241,12 @@ def rejouer_cellule(bougies, releve: dict[int, list], motif: str, sens: str,
         signe = 1 if sens == "buy" else -1
         R, sortie = _issue(bougies, i, entree, risque, objectif_r, signe,
                            spread / risque)
+        # `risque_pct` : la distance au stop en fraction du PRIX. C'est le
+        # denominateur qui decide du cout — `cout_R = spread / risque` — donc
+        # le publier a cote du cout rend la cause lisible, pas seulement
+        # l'effet. Il est deja calcule deux lignes plus haut pour PLACEBO_PCT.
         trades.append({"R": R, "risque": risque, "cout": spread / risque,
+                       "risque_pct": risque / entree,
                        "objectif_r": objectif_r})
         i = sortie + 1
     return trades
@@ -1415,6 +1420,7 @@ def mesurer(bougies_m5: list, spread: float, pair: str = PAIRE,
                 "r_moyen": moyenne, "t": t, "r_total": sum(R),
                 "ecart_type": st.stdev(R) if len(R) > 2 else 0.0,
                 "spread_r": st.median(x["cout"] for x in trades),
+                "risque_pct": st.median(x["risque_pct"] for x in trades),
             })
         for sens, d in par_sens.items():
             # ⚠️ Le contrôle a la MÊME population : autant de trades que la

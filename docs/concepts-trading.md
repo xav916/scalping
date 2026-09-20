@@ -834,6 +834,7 @@ résultat en panne de données. Le détail, par échelle :
 | CAC 40, retour à la moyenne | 168 essais ⇒ plafond t = 2,55, tous les chiffres dessous | `project_cac40_retour_moyenne_2026_09_07` |
 | `range_bounce` (version 1) | — | `project_edge_range_bounce_2026_08_04` |
 | Balayage de l'extrême d'accumulation | **n = 3 / 2** sur 5 000 bougies, pour `MIN_TRADES = 20` — mort-né par rareté, jamais codé | `scripts/mesurer_extreme_accumulation.py` |
+| Restreindre les motifs aux heures « bon marché » | effet du spread horaire **déjà mesuré le 11/08** : ×2,13 à 20h et 22h, mais **0,015 R** rapporté à la distance au stop — **1/57** de la perte moyenne de 0,86 R | `mt5_bridge._heure_defavorable` (docstring) |
 | Porte de durée 16 h | Δ = −0,15 R | `project_contrefactuel_duree_16h_2026_08_13` |
 | Gestion de sortie active | **−0,329 R** sur l'or ; désarmée ⇒ +21 % | `project_edge_gestion_sorties_2026_08_11` |
 | ML sur le critère d'ouverture | pire que le hasard, deux phases | `project_ml_verdict_2026_08_05` |
@@ -880,6 +881,43 @@ valeurs identiques (mêmes trades, re-mesurés) :
   `REFUTE` (16 %), **4** `RETENU` (0,01 %). Le goulot n'est donc PAS le volume de
   données — la moitié des cellules a assez de trades et reste indistinguable du
   hasard.
+
+---
+
+## La décomposition que la table permet enfin — 2026-09-20
+
+⛔ **Ce n'est pas un concept, c'est une colonne** — et c'est pour ça que ça figure
+ici : la prochaine session qui cherchera « une idée » doit d'abord lire ce
+paragraphe.
+
+Les cellules perdent **−0,86 R** en moyenne, le contrôle aléatoire **−0,83 R**.
+Deux populations opposées, presque la même perte : le facteur commun n'est pas le
+signal, c'est le **coût**. Or `rejouer_cellule` calcule `cout = spread / risque`
+pour chaque trade, `mesurer()` en prend la médiane par cellule sous le nom
+`spread_r` — et **personne ne l'écrivait**. Treize nuits de mesure sans pouvoir
+répondre à la question la plus lourde du projet.
+
+- Depuis le 2026-09-20, `labo_or_cellules` porte `spread_r` et `risque_pct`.
+  La décomposition `R_brut = R_net + coût` se lit donc dans la table, sans
+  rejouer une nuit et sans lire un log.
+- 🔑 **`risque_pct` n'est pas décoratif.** Le coût est un *rapport*, pas une
+  propriété du spread : le même spread coûte 0,05 R sur un stop large et 0,40 R
+  sur un stop de scalping. Sans le dénominateur, un coût élevé se lit « le
+  courtier est cher » alors qu'il dit peut-être « nos stops sont serrés ». Deux
+  diagnostics opposés, deux remèdes opposés.
+- **Ce que la première nuit dira**, et les deux lectures possibles :
+  - coût médian ≈ 0,3 R → les frais expliquent un tiers de l'écart, et il reste
+    une perte de fond à expliquer ailleurs ;
+  - coût médian ≈ 0,8 R → **le problème EST le coût**, et le levier n'est plus
+    le motif mais la distance au stop : élargir les stops, viser des horizons
+    plus longs, ou cesser de scalper cet instrument à ce spread.
+- ⚠️ **Ce que ça ne dira pas.** Un coût élevé ne prouve pas qu'un edge existe
+  sous les frais : un R brut négatif reste négatif. Cette colonne sert à
+  savoir **où chercher**, pas à conclure qu'on a trouvé.
+- ⚠️ **Quatrième occurrence du même défaut** : l'horizon (26/08), la chaîne
+  (16/09), l'écart au hasard (20/09), le coût (20/09). À chaque fois une valeur
+  **déjà calculée** qui mourait avec le processus. Le défaut n'est pas le calcul,
+  c'est de croire qu'un nombre lu dans un log est un nombre enregistré.
 
 ---
 
