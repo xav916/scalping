@@ -799,7 +799,24 @@ def _dans_session(nom: str):
 # la chaine serait mesuree sans sa condition et le verdict serait faux sans
 # que rien ne le dise.
 def _dans_accumulation(bougies, i: int) -> bool:
-    """Le balayage se produit-il DANS une zone d'accumulation ?
+    """Une zone d'accumulation EXISTE-T-ELLE sur les 30 bougies vues ?
+
+    ⛔ **LE NOM PROMET PLUS QUE LA REGLE — corrige le 2026-09-20, dans le
+    docstring et NON dans la regle.** Cette fonction s'appelait « le balayage se
+    produit-il DANS une zone d'accumulation ? ». Elle ne teste RIEN de tel : elle
+    teste que `zone_accumulation(...) is not None`. La position du balayage par
+    rapport a la zone n'est jamais verifiee. Changer la regle maintenant
+    invaliderait les 856 cellules deja mesurees depuis le 14/09 ; on corrige
+    donc ce qui mentait, c'est-a-dire la phrase.
+
+    ⚠️ **ET LA SONDE A TROUVE PIRE** (`scripts/mesurer_extreme_accumulation.py`,
+    XAU/USD 5 min, 2026-09-20) : dans **67 a 75 %** des cas ou ce predicat est
+    vrai, la zone **n'existe pas** si on retire la bougie du signal. Un percage
+    suivi d'une reintegration augmente l'amplitude et laisse le deplacement net
+    petit, donc `retour = |dcloture| / amplitude` BAISSE et passe sous 0,35.
+    Autrement dit ce « contexte » est majoritairement un **echo** de l'evenement
+    qu'il doit contextualiser. Toute lecture de ses verdicts doit le savoir.
+    La version qui lirait `bougies[:i-1]` se declarera a part, sous un autre nom.
 
     C'est notre lecture des etapes 2 et 4 des cinq de Vivien : trouver une
     zone d'accumulation, puis y attendre une prise de liquidite.
