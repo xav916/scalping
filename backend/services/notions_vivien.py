@@ -95,37 +95,87 @@ NOTIONS: tuple[dict, ...] = (
     # « ce qui est dit », « ce qui est rapporte » et « ce que nous deduisons ».
     {"nom": "cinq_etapes",
      "titre": "5 etapes pour prendre des trades gagnants",
-     "source": "Titre de video, rapporte dans le message de Xavier du 2026-09-12 13:20 UTC — lui-meme un document de recherche transmis. Contenu jamais consulte de premiere main.",
-     # ⛔ QUATRE etapes sur cinq, rapportees par Xavier le 2026-09-14 depuis
-     # une indexation AUTOMATIQUE de la video. La cinquieme est coupee avant
-     # restitution. Xavier l'a ecrit lui-meme : « je ne veux surtout pas la
-     # fabriquer a partir de ce qu'on connait deja de Vivien ».
+     "source": "Titre de video, rapporte dans le message de Xavier du 2026-09-12 13:20 UTC — lui-meme un document de recherche transmis. Contenu jamais consulte de premiere main. DECODAGE des cinq etapes transmis par Xavier le 2026-09-20 : un decodage audio relaye, toujours pas la video ouverte par nous.",
+     # ⛔ Le trou de la cinquieme etape est COMBLE le 2026-09-20 — et il faut
+     # dire COMMENT, sinon la correction ressemble a une invention rattrapee.
+     # L'indexation automatique du 14/09 ne rendait que QUATRE lignes et les
+     # numerotait 1..4 : le « grade/grab de liquidite » y portait le n°4. Le
+     # decodage du 20/09 en rend CINQ et separe deux choses que ce n°4
+     # confondait : REPERER la liquidite (n°4) et attendre qu'elle soit PRISE
+     # (n°5). Le trou etait donc un decalage de numerotation, pas une etape
+     # perdue — rien n'a ete invente pour le combler.
      #
-     # ⚠️ Les deux RECONSTRUIT sont des corrections de contexte, pas des mots
-     # entendus. Le texte brut est garde a cote : si la reconstruction est
-     # fausse, elle reste rattrapable.
+     # ⚠️ OBJECTION gardee ouverte : rien ne prouve que le « grade de
+     # liquidite » entendu le 14/09 soit le n°5 plutot que le n°4 du decodage.
+     # Les deux lectures sont compatibles avec ce qu'on a entendu. Le `brut`
+     # reste attache aux DEUX etapes pour que l'erreur soit rattrapable.
+     #
+     # ⛔ ET LA NOTION RESTE INCOMPLETE — c'est le point qui compte. La
+     # cinquieme etape est un SETUP, pas le declencheur final : Xavier l'ecrit
+     # lui-meme le 20/09, « ne pas automatiser sweep = ordre immediat,
+     # d'autres publications indiquent qu'il attend ensuite un retest et des
+     # volumes alignes ». Les six champs valent toujours None : declencheur
+     # final, echelle, invalidation, stop, cible ne sont pas dits. Aucune
+     # chaine n'en sort, et `lignes_manquantes()` continue de les nommer.
      "etapes": (
-         {"n": 1, "statut": RECONSTRUIT, "texte": "Ouvrir TradingView",
+         {"n": 1, "statut": RAPPORTE,
+          "texte": "Ouvrir TradingView et definir la structure : HH/HL contre "
+                   "LH/LL, lue sur plusieurs echelles (D1 vers M5)",
           "brut": "ouf TradingView",
-          "note": "« ouf » corrige en « ouvre » par le contexte"},
+          "note": "« ouf » corrige en « ouvre » par le contexte le 14/09 — la "
+                  "correction tient, le decodage du 20/09 dit bien TradingView. "
+                  "⛔ Le decodage precise que la video NE DONNE PAS la "
+                  "definition mathematique d'un changement de structure",
+          "brique": "_tendance_de_structure + _structure_agregee(M15), codes le "
+                    "2026-09-20. ⚠️ Cette definition est la NOTRE : elle ne "
+                    "peut pas servir de preuve de fidelite a sa methode"},
          {"n": 2, "statut": RAPPORTE,
-          "texte": "Trouver une zone d'accumulation",
-          "brique": "AUCUNE — nous n'avons pas de detecteur d'accumulation"},
+          "texte": "Identifier une zone d'accumulation : range serre, bougies "
+                   "qui se chevauchent, volatilite reduite, puis impulsion qui "
+                   "en sort",
+          "note": "Le 14/09 cette ligne portait « AUCUNE — nous n'avons pas de "
+                  "detecteur d'accumulation ». C'etait faux : `dans_accumulation` "
+                  "existe. Corrige le 2026-09-20",
+          "brique": "dans_accumulation — deja code. ⛔ DESACCORD A TRANCHER : "
+                    "sa description (chevauchement, volatilite reduite) et "
+                    "notre detection (compression <= 0.60 x amplitude "
+                    "precedente ET retour <= 0.35) ne sont pas la meme regle. "
+                    "Tant qu'il n'est pas tranche, « accumulation » designe "
+                    "deux choses differentes dans ce depot"},
          {"n": 3, "statut": RAPPORTE,
-          "texte": "Tracer le Volume Profile sur cette zone",
+          "texte": "Tracer le Volume Profile UNIQUEMENT sur cette zone "
+                   "d'accumulation, et en lire le POC",
+          "note": "Le decodage du 20/09 insiste : il dit explicitement de "
+                  "poser le Volume Profile SUR la zone, pas sur la seance",
           "brique": "market_profile.profil(..., source=VOLUME) — code le "
                     "2026-09-14. ⚠️ profil de TICKS (tick_volume), pas de "
                     "contrats : le vrai volume n'existe que sur les futures"},
-         {"n": 4, "statut": RECONSTRUIT,
-          "texte": "Attendre une prise de liquidite (liquidity grab)",
+         {"n": 4, "statut": RAPPORTE,
+          "texte": "Reperer la liquidite autour de la structure : hauts/bas "
+                   "precedents, hauts/bas relativement egaux, et les EXTREMES "
+                   "de la zone d'accumulation",
           "brut": "grade de liquidite",
-          "note": "« grade » corrige en « grab » par le contexte",
-          "brique": "liquidity_sweep — deja code"},
-         {"n": 5, "statut": MANQUANT,
-          "texte": "[MANQUANT — declencheur exact a recuperer]",
-          "note": "L'indexation coupe avant. Ni retest, ni BOS, ni delta : "
-                  "aucune preuve. Une video de 16 s ou un enregistrement "
-                  "d'ecran permettrait de la lire."},
+          "note": "⚠️ Le `brut` du 14/09 peut appartenir a cette etape ou a la "
+                  "suivante — voir l'objection ci-dessus",
+          "brique": "_find_level + _sur_niveau_majeur (2026-09-20). ⛔ NON "
+                    "CODE : les « hauts/bas relativement egaux », et les "
+                    "extremes de l'accumulation ne sont pas exposes comme "
+                    "niveaux — `dans_accumulation` rend un etat, pas ses bords"},
+         {"n": 5, "statut": RAPPORTE,
+          "texte": "Attendre que cette liquidite soit PRISE avant d'envisager "
+                   "une entree : pour un achat, liquidite prise sous un bas "
+                   "important puis reintegration ; pour une vente, prise "
+                   "au-dessus d'un haut puis rejet",
+          "brut": "grade de liquidite",
+          "note": "⛔ SETUP, PAS DECLENCHEUR. Xavier, 2026-09-20 : « ne pas "
+                  "automatiser sweep = ordre immediat », d'autres "
+                  "publications indiquant qu'il attend ensuite un retest ET "
+                  "des volumes alignes. La moitie « retest » est codable "
+                  "(retest, reintegration) ; la moitie « volumes alignes » est "
+                  "bloquee par les DONNEES — aucun footprint bid/ask sur CFD. "
+                  "Tant que le trigger final n'est pas dit, cette etape ne "
+                  "remplit pas le champ `declencheur`",
+          "brique": "liquidity_sweep + reintegration — deja codes"},
      )},
     {"nom": "strategie_trois_etapes",
      "titre": "Ma strategie en 3 etapes",

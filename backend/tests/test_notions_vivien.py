@@ -62,15 +62,22 @@ def test_aucune_source_ne_se_PRETEND_verifiee_de_premiere_main():
 
 
 def test_une_notion_verrouillee_NOMME_ce_qui_lui_manque():
-    """⚠️ Depuis le 2026-09-14, `cinq_etapes` a quatre etapes connues : ce qui
-    lui manque est donc les six lignes ET la cinquieme etape. Le test compare
-    par inclusion, pas par egalite — sinon toute avancee le casserait."""
+    """⚠️ Depuis le 2026-09-20, les CINQ etapes sont restituees : ce qui lui
+    manque n'est plus qu'une etape, ce sont les six lignes. Le test compare
+    par inclusion, pas par egalite — sinon toute avancee le casserait.
+
+    ⛔ Et c'est le moment ou le verrou se deplace : jusqu'au 20/09 la notion
+    etait bloquee par DEUX conditions independantes (une etape manquante, et
+    les six lignes). Il n'en reste qu'UNE. Ce test le dit explicitement pour
+    que personne ne croie la porte encore doublement fermee."""
     n = nv.par_nom("cinq_etapes")
     manque = set(nv.manques(n))
     assert set(nv.CHAMPS) <= manque, (
         "une notion dont aucune regle n'est formalisee doit annoncer les SIX "
         "lignes manquantes, pas zero")
-    assert "etape_5" in manque
+    assert not [x for x in manque if x.startswith("etape_")], (
+        "le 20/09 a comble le trou de numerotation : plus aucune etape ne "
+        "doit etre MANQUANTE")
     assert n["source"], "une notion sans source n'est pas tracable"
 
     # une notion dont RIEN n'est connu n'annonce que les six lignes
@@ -221,44 +228,79 @@ def test_le_message_de_la_nuit_NE_MENT_PAS_sur_la_portee(monkeypatch):
 
 # ─── Les etapes d'une notion partiellement connue (2026-09-14) ──────
 
-def test_cinq_etapes_porte_ses_QUATRE_etapes_connues():
+def test_cinq_etapes_porte_ses_CINQ_etapes_connues():
+    """2026-09-20 : 4/5 -> 5/5. Le decodage transmis ce jour-la separe deux
+    choses que l'indexation du 14/09 confondait sous un seul n°4 — REPERER la
+    liquidite, et attendre qu'elle soit PRISE. Le test pinne cette separation :
+    si un jour les deux etapes redisent la meme chose, c'est qu'on a reperdu
+    la distinction qui a comble le trou."""
     n = nv.par_nom("cinq_etapes")
     assert len(n["etapes"]) == 5, "la notion en annonce cinq, pas quatre"
     connues = [e for e in n["etapes"] if e["statut"] != nv.MANQUANT]
-    assert len(connues) == 4
+    assert len(connues) == 5
     assert "TradingView" in n["etapes"][0]["texte"]
+    assert "structure" in n["etapes"][0]["texte"].lower(), (
+        "le decodage du 20/09 ajoute la lecture de structure a l'etape 1")
     assert "accumulation" in n["etapes"][1]["texte"].lower()
     assert "volume profile" in n["etapes"][2]["texte"].lower()
-    assert "liquidit" in n["etapes"][3]["texte"].lower()
+    assert "accumulation" in n["etapes"][2]["texte"].lower(), (
+        "il dit de poser le profil SUR la zone, pas sur la seance")
+    assert "reperer" in n["etapes"][3]["texte"].lower()
+    assert "prise" in n["etapes"][4]["texte"].lower()
 
 
-def test_les_deux_mots_RECONSTRUITS_sont_marques_comme_tels():
-    """⛔ « ouf TradingView » et « grade de liquidite » sont ce que
-    l'indexation automatique restitue. « ouvre » et « grab » sont des
-    RECONSTRUCTIONS — vraisemblables, pas entendues. Les noter comme du verbatim
-    ferait passer notre lecture pour sa parole."""
+def test_le_texte_BRUT_du_14_09_est_garde_meme_apres_confirmation():
+    """⛔ « ouf TradingView » et « grade de liquidite » sont ce que l'indexation
+    automatique du 14/09 restituait ; « ouvre » et « grab » etaient NOS
+    reconstructions. Le decodage du 20/09 rend ces deux passages en clair, donc
+    les etapes passent de RECONSTRUIT a RAPPORTE.
+
+    ⚠️ Mais le brut RESTE attache. Effacer la trace ferait disparaitre le fait
+    qu'on a devine juste — et une reconstruction heureuse qu'on ne peut plus
+    relire est indistinguable d'une invention. Le n°4 et le n°5 portent le
+    MEME brut, parce qu'on ne sait pas auquel des deux il appartenait."""
     n = nv.par_nom("cinq_etapes")
-    reconstruits = [e for e in n["etapes"] if e["statut"] == nv.RECONSTRUIT]
-    assert len(reconstruits) == 2
-    for e in reconstruits:
-        assert e.get("brut"), "le texte AVANT reconstruction doit etre garde"
+    assert not [e for e in n["etapes"] if e["statut"] == nv.RECONSTRUIT], (
+        "plus aucune etape n'est une reconstruction depuis le 20/09")
+    bruts = [e for e in n["etapes"] if e.get("brut")]
+    assert len(bruts) == 3, "les deux passages devines restent tracables"
+    assert n["etapes"][3]["brut"] == n["etapes"][4]["brut"], (
+        "l'ambiguite du 14/09 doit rester lisible sur les DEUX etapes")
+    assert nv.RECONSTRUIT, "le statut reste defini : il resservira"
 
 
-def test_la_CINQUIEME_etape_est_declaree_MANQUANTE():
+def test_la_CINQUIEME_etape_est_un_SETUP_et_PAS_un_declencheur():
+    """🔑 Le test le plus important de ce fichier depuis le 2026-09-20.
+
+    La cinquieme etape est arrivee — c'est le sweep. La tentation immediate est
+    d'en faire le `declencheur` de la notion et d'armer la chaine. Xavier l'a
+    ecrit noir sur blanc le meme jour : « ne pas automatiser sweep = ordre
+    immediat », un retest et des volumes alignes suivent. Le sweep est donc un
+    SETUP. Ce test empeche la promotion silencieuse du setup en trigger."""
     n = nv.par_nom("cinq_etapes")
     cinq = n["etapes"][4]
-    assert cinq["statut"] == nv.MANQUANT
-    assert "MANQUANT" in cinq["texte"] or "recuperer" in cinq["texte"].lower()
+    assert cinq["statut"] != nv.MANQUANT, "l'etape 5 est restituee depuis le 20/09"
+    assert "liquidit" in cinq["texte"].lower()
+    assert "reintegration" in cinq["texte"].lower()
+    assert "SETUP" in cinq["note"], (
+        "la note doit dire que ce n'est PAS le declencheur final")
+    assert not n.get("declencheur"), (
+        "⛔ le sweep ne remplit pas `declencheur` : le trigger final n'est "
+        "toujours pas dit, et la moitie « volumes alignes » est bloquee par "
+        "l'absence de footprint bid/ask sur CFD")
 
 
-def test_une_etape_MANQUANTE_interdit_la_notion_pour_TOUJOURS():
+def test_la_notion_reste_BLOQUEE_meme_avec_ses_CINQ_etapes():
     """🔑 La garantie que Xavier a demandee : `allow_trade = False` tant que la
-    cinquieme condition n'est pas formalisee. Ici ce n'est pas une variable
-    qu'on pourrait oublier de tester — c'est structurel : une etape manquante
-    rend la notion incomplete, et une notion incomplete ne produit aucune
-    chaine, donc aucun trade."""
+    regle n'est pas formalisee. ⚠️ Elle ne tient PLUS a l'etape manquante —
+    elle tient maintenant aux six lignes seules, et ce test est la pour que ce
+    deplacement soit vu. Les cinq etapes decrivent une METHODE ; elles ne
+    disent ni l'echelle, ni l'invalidation, ni le stop, ni la cible."""
     n = nv.par_nom("cinq_etapes")
-    assert "etape_5" in nv.manques(n)
+    assert nv.avancement(n) == "5/5"
+    assert set(nv.CHAMPS) <= set(nv.manques(n)), (
+        "les six lignes restent la seule condition bloquante : si l'une se "
+        "remplit, elle doit venir de LUI, pas de notre lecture")
     assert n not in nv.completes()
     assert all(c["nom"] != "notion:cinq_etapes" for c in nv.chaines())
 
@@ -278,4 +320,9 @@ def test_une_notion_dont_TOUS_les_champs_sont_remplis_reste_bloquee_si_une_etape
 def test_le_rapport_dit_COMBIEN_d_etapes_sont_connues():
     lignes = nv.lignes_manquantes()
     ligne = next(x for x in lignes if "cinq_etapes" in x)
-    assert "4/5" in ligne, f"le rapport doit dire l'avancement : {ligne}"
+    # 2026-09-14 : 4/5 — l'indexation coupait avant la cinquieme.
+    # 2026-09-20 : 5/5 — decodage transmis ; le trou etait un decalage de
+    # numerotation. La notion reste incomplete : l'avancement des etapes et la
+    # completude de la notion sont deux choses, et c'est voulu.
+    assert "5/5" in ligne, f"le rapport doit dire l'avancement : {ligne}"
+    assert "manque" in ligne, "une notion 5/5 mais incomplete doit le dire"

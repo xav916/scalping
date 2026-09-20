@@ -118,6 +118,23 @@ class _Setup:
 #                   Ni inclusion ni redondance — sans cette mesure, ces deux
 #                   chaines auraient double le biais en silence.
 #
+#   22  2026-09-20  = INCHANGE. Une chaine de plus a ete declaree ce jour-la
+#                   (« balayage de l'extreme d'accumulation », etapes 4 et 5
+#                   des cinq de Vivien, decodees le meme jour) puis GELEE
+#                   AVANT CODAGE par sa propre sonde :
+#                   scripts/mesurer_extreme_accumulation.py rend n = 3 et
+#                   n = 2 sur 5 000 bougies pour MIN_TRADES = 20. Elle
+#                   sortirait INSUFFISANT indefiniment en faisant monter le
+#                   plafond de toutes les autres.
+#                   🔑 Cette ligne existe pour que le NON-ajout soit trace :
+#                   sans elle, seuls les ajouts laisseraient une marque, et le
+#                   depot ne garderait aucune memoire des regles ecartees — on
+#                   les redeclarerait tous les trois mois.
+#                   ⚠️ La meme sonde a trouve autre chose : dans 67 a 75 % des
+#                   cas ou `dans_accumulation` est vrai, la zone N'EXISTE PAS
+#                   sans la bougie du signal. Le contexte est en partie un
+#                   effet de l'evenement qu'il contextualise. Cf. le carnet.
+#
 # ⚠️ Le cout n'est pas nul — mais il est CHIFFRE depuis le 2026-09-20, sur
 # les 13 nuits de `labo_or_cellules` : `plafond ≈ 1,72 + 0,249 x ln(N)`. Deux
 # chaines, soit ~160 cellules, coutent donc ~0,011 de plafond, pas davantage.

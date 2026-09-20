@@ -630,6 +630,178 @@ non vérifiées. Cf. `notions_vivien.SOURCE_SYNTHESE`, entrée
 
 ---
 
+### Balayage de l'extrême d'accumulation — déclaré le 2026-09-20, **GELÉ le jour même par sa propre sonde**
+
+> ⛔ **VERDICT, avant toute ligne de code : NON CODÉ.** La sonde
+> `scripts/mesurer_extreme_accumulation.py` rend **n = 3** (achat) et
+> **n = 2** (vente) sur 5 000 bougies XAU/USD 5 min, pour
+> `MIN_TRADES = 20`. La cellule sortirait `INSUFFISANT` indéfiniment en
+> faisant monter le plafond du hasard de toutes les autres. La règle est
+> **mort-née par rareté**, pas réfutée sur son R — on ne saura jamais ce
+> qu'elle vaut, et c'est un résultat.
+>
+> 🔑 La sonde a coûté un fichier et trois minutes. La chaîne aurait coûté
+> deux cellules × 4 échelles × tous les instruments, chaque nuit, pour
+> rien. **C'est la déclaration préalable qui paie ici, pas le code.**
+
+⚠️ **PROVENANCE, et elle est meilleure que d'habitude — sans être bonne.** Vient
+du décodage des cinq étapes transmis par Pascal le 2026-09-20 (cf.
+`notions_vivien.NOTIONS`, `cinq_etapes`, étapes 4 et 5). C'est un décodage audio
+relayé : **la vidéo n'a pas été ouverte par nous**. Ce qui est rapporté, et qui
+fonde ce concept : l'étape 4 nomme comme liquidité « les hauts/bas précédents,
+les hauts/bas relativement égaux, **et les extrêmes de la zone
+d'accumulation** » ; l'étape 5 attend que cette liquidité soit **prise** puis
+réintégrée.
+
+- **Ce qui est VRAIMENT neuf, et c'est précis.** `chaine:prise_en_accumulation`
+  (déclarée le 14/09) exige qu'une zone d'accumulation **existe**. Elle
+  n'exige **rien** sur le niveau balayé : le balayage peut prendre n'importe
+  quel plus-bas trouvé par `_find_level`. Le décodage du 20/09 demande autre
+  chose — que le niveau pris soit **le bord de la zone**. C'est une règle
+  strictement **plus étroite**, et plus fidèle à ce qui est rapporté.
+- ⛔ **ET IL FAUT DIRE CE QUE J'AI TROUVÉ EN LE VÉRIFIANT.** `_dans_accumulation`
+  est documenté « le balayage se produit-il **DANS** une zone d'accumulation ? »
+  — mais le code ne teste que `zone_accumulation(...) is not None`. La position
+  du balayage par rapport à la zone n'est **jamais vérifiée**. Le prédicat est
+  donc plus faible que son propre docstring, depuis le 14/09. Ce n'est pas un
+  bug de mesure (les cellules mesurent bien ce que le code fait), c'est un nom
+  qui promet plus que sa règle — exactement ce que ce carnet existe pour
+  attraper. À corriger dans le docstring, **pas** dans la règle : changer la
+  règle d'un prédicat déjà mesuré invaliderait les nuits déjà enregistrées.
+- **Règle** — et elle n'introduit **aucun seuil neuf**, aucune tolérance :
+  - la zone vient de `market_profile.zone_accumulation`, qui rend déjà ses
+    bords `bas` et `haut` (ils existent depuis le 14/09, ils n'étaient pas
+    utilisés) ;
+  - `sur_extreme_accumulation_bas` est vrai quand la bougie du signal
+    **perce** `bas` (son `low` passe dessous) **et réintègre** (sa clôture
+    revient au-dessus de `bas`). Miroir sur `haut` pour l'autre sens.
+  - ⛔ **et la zone se calcule SANS la bougie du signal** — corrigé le
+    2026-09-20, avant la première mesure, parce que la règle était
+    **inatteignable** telle qu'écrite dix minutes plus tôt : `bas` est le
+    `min(low)` des dix dernières bougies *y compris* celle qui balaie. Le
+    plus-bas de la bougie qui perce EST donc le plus-bas de la zone, et
+    `low < bas` est faux **par construction**. La zone se lit sur
+    `bougies[:i-1]` (l'accumulation telle qu'elle existait *avant* le
+    balayage), le perçage sur `bougies[i-1]`. Même défaut, même correction que
+    le niveau majeur : un extrême qui inclut l'événement qu'il doit mesurer ne
+    mesure rien. C'est la deuxième règle de ce carnet réfutée par sa propre
+    géométrie avant d'être codée — et c'est exactement ce que la déclaration
+    préalable sert à attraper.
+  - Pas d'ATR, pas de pourcentage, pas de tolérance : les bords de la zone sont
+    des prix exacts, et « percer puis réintégrer » est une comparaison de
+    clôture. C'est la géométrie du balayage elle-même, appliquée à un autre
+    niveau.
+- 🔑 **LA QUESTION D'INDICE, POSÉE PUIS TRANCHÉE — dans le code, pas par
+  intuition.** Tous les prédicats lisent `bougies[:i]` et jamais la bougie `i`.
+  Or cette règle a besoin du `low` et de la clôture de **la bougie qui a
+  balayé**. Lecture de `detections()` (2026-09-20) : la détection à l'indice `i`
+  travaille sur `bougies[i - FENETRE:i]`, donc la bougie `i` **n'est pas vue par
+  le détecteur** — c'est la bougie d'**entrée**, et `rejouer_cellule` ouvre le
+  trade à `i`. La bougie du signal est donc `bougies[i-1]`.
+  ⚠️ **Conséquence pour la règle** : le perçage-réintégration se lit sur
+  `bougies[i-1]`, et il est **dans** `bougies[:i]` — la discipline tient sans
+  exception à lui faire. Lire `bougies[i]` aurait fabriqué un edge à partir
+  d'une bougie que le détecteur n'a pas vue : le défaut le plus coûteux du
+  dispositif, évité ici par une lecture de trois lignes.
+- ⛔ **Ce n'est pas un motif, c'est un CONTEXTE** — comme l'accumulation dont il
+  lit les bords. C'est donc un **prédicat**.
+- **Chaînes déclarées** (non armées) : `sweep_extreme_accumulation_haussier` /
+  `_baissier` = `liquidity_sweep` **+** `dans_accumulation` **+**
+  `sur_extreme_accumulation_*`.
+- **Prédiction falsifiable** : la chaîne doit rendre un **R moyen supérieur** à
+  `chaine:prise_en_accumulation` du même sens, même instrument, même échelle.
+  ⚠️ Le comparant n'est **pas** `liquidity_sweep` seul : la question posée est
+  « *le bord de la zone* ajoute-t-il quelque chose à *la zone* ? ». Si prendre
+  l'extrême ne vaut pas mieux que prendre n'importe quel niveau dans le même
+  contexte, alors l'étape 4 ne dit rien d'exploitable, et la fidélité gagnée
+  est décorative.
+- 🔑 Inclusion **stricte** (la nouvelle chaîne ne se déclenche que sur des
+  bougies où `prise_en_accumulation` se déclenche déjà) → comparaison
+  **appariée**, comme la double prise.
+- ⛔ **L'OBJECTION À MESURER AVANT TOUTE LECTURE DE R, et elle est sérieuse
+  dans l'autre sens que d'habitude.** Cette fois le risque n'est pas le
+  recouvrement, c'est le **`n`**. Deux mesures à produire avant de coder la
+  chaîne :
+  1. la part des `liquidity_sweep` en accumulation dont le niveau balayé est
+     déjà, de fait, le bord de la zone. **Si elle est proche de 100 %**, la
+     règle ne filtre rien et duplique une cellule que nous payons sur le
+     plafond ;
+  2. le nombre de déclenchements par instrument sur les nuits disponibles. **Si
+     `n < MIN_TRADES`**, la cellule sortira `INSUFFISANT` indéfiniment : elle
+     coûtera du plafond à toutes les autres sans jamais pouvoir conclure. C'est
+     le défaut exact du niveau majeur, et il se vérifie *avant*, par sonde.
+- ⚠️ **Fréquence attendue FAIBLE.** Il faut la conjonction d'une accumulation,
+  d'un balayage, et que ce balayage prenne précisément un bord. Contrairement
+  à la structure M15, cette chaîne n'aura **pas** de `n` facilement.
+- ⛔ **ET ELLE NE COMPLÈTE PAS LES CINQ ÉTAPES.** Ce concept code les étapes 4
+  et 5 *comme setup*. Le **déclencheur final** reste inconnu : le décodage dit
+  lui-même qu'un retest et des « volumes alignés » suivent, et la moitié
+  « volumes » est bloquée par les **données** (aucun footprint bid/ask sur CFD).
+  `notions_vivien.cinq_etapes` reste donc INCOMPLÈTE et ne produit aucune
+  chaîne — ce carnet-ci déclare un morceau mesurable, pas la méthode.
+- **Coût** : 2 chaînes, ~160 cellules, le plafond du hasard monte pour
+  **toutes** les autres cellules — ~+0,011 sur `t`, mesuré sur les 13 nuits
+  disponibles.
+
+#### Ce que la sonde a mesuré — 2026-09-20, XAU/USD 5 min, 4 948 fenêtres
+
+| | balayage des BAS (achat) | balayage des HAUTS (vente) |
+|---|---|---|
+| balayages simples | 193 | 169 |
+| dont en accumulation (**le comparant**) | 9 — **4,7 %** | 12 — **7,1 %** |
+| dont zone **inexistante sans la bougie du signal** | 6 — 66,7 % | 9 — 75,0 % |
+| **dont prennent le bord et réintègrent** | **3** | **2** |
+| ne touchent pas le bord | 0 | 0 |
+
+- ⛔ **La règle ne filtre presque rien — et ce n'est pas le problème.** Le
+  problème est au-dessus : **le comparant lui-même est rare**. 9 et 12
+  déclenchements sur 5 000 bougies, c'est `chaine:prise_en_accumulation`
+  elle-même qui frôle `MIN_TRADES` sur un instrument et une échelle. À
+  vérifier dans les cellules du laboratoire : si ses verdicts sont
+  `INSUFFISANT` depuis le 14/09, elle coûte du plafond sans rien conclure.
+- 🔑 **ET LA SONDE A TROUVÉ AUTRE CHOSE, QUI COMPTE PLUS QUE LA RÈGLE
+  DÉCLARÉE.** Dans **67 % à 75 %** des cas où `dans_accumulation` est vrai, la
+  zone **n'existe pas** si on retire la bougie du signal. Autrement dit : c'est
+  la bougie qui balaie qui **fabrique** l'accumulation. Le mécanisme est
+  lisible dans `zone_accumulation` — un perçage suivi d'une réintégration
+  augmente l'amplitude et laisse le déplacement net petit, donc
+  `retour = |Δclôture| / amplitude` **baisse** et passe sous 0,35. Le prédicat
+  de contexte est donc, majoritairement, **un effet de l'événement qu'il est
+  censé contextualiser**. Ce n'est pas un contexte, c'est un écho.
+  ⚠️ Conséquence à trancher, et elle touche une chaîne **déjà mesurée** :
+  `dans_accumulation` devrait lire `bougies[:i-1]`. Mais changer la règle d'un
+  prédicat déjà mesuré **invalide les nuits enregistrées** — donc pas de
+  modification en place : une déclaration séparée, un nom séparé, et les deux
+  se comparent. Aucun risque de trade : `prise_en_accumulation` n'est **pas**
+  dans `CHAINES_AUTORISEES`.
+
+#### Et ce que les cellules du laboratoire disent du comparant — copie de lecture, 2026-09-20
+
+| verdict | cellules | trades | `n` moyen par cellule |
+|---|---|---|---|
+| `INSUFFISANT` | **795** (93 %) | 8 552 | 10 à 12 |
+| `REFUTE` | 61 (7 %) | 2 769 | 45 |
+
+- ⛔ **93 % des cellules de `prise_en_accumulation` n'ont jamais pu conclure.**
+  La sonde ci-dessus le prévoyait sur une fixture d'un seul instrument ; les 13
+  nuits le confirment sur tous les instruments et les 4 échelles.
+- ⛔ **ET LES 61 QUI ONT CONCLU SONT TOUTES CRYPTO** — LTC (23), BNB (16),
+  UNI (12), ADA (7), XRP (2), ETH (1), avec des R moyens de −0,7 à −17. C'est
+  l'artefact de coût corrigé le 2026-09-20 : le laboratoire facturait à des
+  paires exécutées chez Kraken le spread du CFD altcoin de MT5. Autrement dit :
+  **cette chaîne n'a jamais produit un seul verdict concluant sur un instrument
+  non crypto.** Ses `REFUTE` doivent disparaître à la nuit du 21/09 — la
+  première après le filtre de classe d'actif.
+- 🔑 Conséquence pour la déclaration ci-dessus : le vrai sujet n'est pas le bord
+  de la zone, c'est que **l'accumulation telle que nous la détectons est trop
+  rare pour être mesurable** à ces échelles. Deux voies honnêtes, et « ajouter
+  une chaîne » n'en est pas : agréger (chercher l'accumulation sur une échelle
+  supérieure, où 30 bougies couvrent des heures), ou relire les quatre seuils
+  déclarés le 14/09 — en sachant que les relâcher pour obtenir du `n` est
+  exactement le geste que ce carnet interdit sans déclaration préalable.
+
+---
+
 ## ⛔ Réfutés — ne pas recoder
 
 | concept | verdict | où |
@@ -637,6 +809,7 @@ non vérifiées. Cf. `notions_vivien.SOURCE_SYNTHESE`, entrée
 | Motifs baissiers sur l'or | écart +0,002 R, **t = +0,02** | `project_motifs_baissiers_or_2026_09_08` |
 | CAC 40, retour à la moyenne | 168 essais ⇒ plafond t = 2,55, tous les chiffres dessous | `project_cac40_retour_moyenne_2026_09_07` |
 | `range_bounce` (version 1) | — | `project_edge_range_bounce_2026_08_04` |
+| Balayage de l'extrême d'accumulation | **n = 3 / 2** sur 5 000 bougies, pour `MIN_TRADES = 20` — mort-né par rareté, jamais codé | `scripts/mesurer_extreme_accumulation.py` |
 | Porte de durée 16 h | Δ = −0,15 R | `project_contrefactuel_duree_16h_2026_08_13` |
 | Gestion de sortie active | **−0,329 R** sur l'or ; désarmée ⇒ +21 % | `project_edge_gestion_sorties_2026_08_11` |
 | ML sur le critère d'ouverture | pire que le hasard, deux phases | `project_ml_verdict_2026_08_05` |
