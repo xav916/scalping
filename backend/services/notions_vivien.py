@@ -268,3 +268,225 @@ def chaines(notions: tuple[dict, ...] | None = None) -> tuple[dict, ...]:
         logger.info("notions_vivien: %d chaine(s) declaree(s) mesuree(s)",
                     len(out))
     return tuple(out)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# LE VOCABULAIRE — verrouille le 2026-09-20, AVANT tout codage
+# ─────────────────────────────────────────────────────────────────────
+#
+# ⛔ POURQUOI IL EST SEPARE DE `NOTIONS`. `NOTIONS` porte des notions qui
+# peuvent devenir des CHAINES des que leurs six lignes sont remplies. Ce
+# dictionnaire-ci ne porte que du VOCABULAIRE : ce qu'un terme designe, ce que
+# nous en savons, et quelle brique du depot s'en approche. Il ne produit AUCUNE
+# chaine et ne peut pas en produire. Les melanger ferait qu'un terme compris a
+# moitie pourrait un jour trader.
+#
+# ⚠️ PROVENANCE, et elle est plus faible qu'elle n'en a l'air. Le contenu vient
+# d'une SYNTHESE transmise par Pascal le 2026-09-20, produite par un autre
+# assistant a partir de publications TradingView. Ni lui ni moi n'avons lu ces
+# publications aux sources pour la plupart des formulations. Les phrases
+# presentees comme des citations n'ont pas ete verifiees, et rien ne permet
+# ici de distinguer une citation d'une paraphrase.
+#
+# 🔑 Consequence tenue par le code : `SOURCE_SYNTHESE` est UNE constante, que
+# toutes les entrees partagent. On ne peut donc pas faire deriver la provenance
+# d'un terme a l'autre, ni la faire monter en « Vivien dit » par recopie.
+
+SOURCE_SYNTHESE = (
+    "Synthese transmise par Pascal le 2026-09-20, produite par un autre "
+    "assistant depuis des publications TradingView. Sources NON consultees de "
+    "premiere main ; citations non verifiees."
+)
+
+SOLIDE = "SOLIDE"                # le concept est clair, une brique existe ou est proche
+A_FORMALISER = "A_FORMALISER"     # le principe est clair, la regle algorithmique non
+NON_CODABLE = "NON_CODABLE"       # definition insuffisante ET/OU donnee absente
+
+# terme -> {retenu, statut, brique, blocage?, note?}
+VOCABULAIRE: dict[str, dict] = {
+    # ── Structure et echelles ────────────────────────────────────────
+    "structure_de_marche": {
+        "retenu": "Organisation des highs/lows : HH/HL, LH/LL, ou range.",
+        "statut": SOLIDE,
+        "brique": "_tendance_de_structure, _detect_structure (bos/choch)"},
+    "htf_mtf_ltf": {
+        "retenu": "D1/H4 = contexte, H1/M15 = structure, M5 = declencheur fin.",
+        "statut": A_FORMALISER,
+        "brique": "AUCUNE hierarchie : les cellules mesurent 5/15/30/60 min en "
+                  "parallele, sans role ni ordre. Le biais (fenetre 400) est le "
+                  "seul pont entre deux echelles.",
+        "note": "Repartition tiree d'EXEMPLES, pas d'une regle annoncee."},
+    "cassure_structure_m15": {
+        "retenu": "Casser le high M15 fait repasser la structure M15 haussiere ; "
+                  "casser le low, baissiere.",
+        "statut": A_FORMALISER,
+        "brique": "PROCHE mais DIFFERENT : `_tendance_de_structure` coupe une "
+                  "fenetre en deux et exige un plus-haut ET un plus-bas "
+                  "superieurs. Une cassure de swing structurel n'est pas ca.",
+        "note": "🔑 La brique la plus interessante du lot : une regle "
+                "verifiable, codable, et plus fidele que la notre. A declarer "
+                "dans docs/concepts-trading.md avant d'etre codee."},
+    "range": {
+        "retenu": "Marche en balance entre deux extremes.",
+        "statut": A_FORMALISER,
+        "brique": "aucun detecteur de range nomme ; `dans_accumulation` en "
+                  "couvre une partie par la compression"},
+    "order_flow": {
+        "retenu": "Direction/flux que le marche est en train de produire.",
+        "statut": A_FORMALISER,
+        "brique": "AUCUNE",
+        "note": "⚠️ NE PAS confondre avec l'order flow bid/ask des trois "
+                "entrees VDelta ci-dessous : meme mot, autre chose."},
+
+    # ── Cartographie ─────────────────────────────────────────────────
+    "accumulation": {
+        "retenu": "Zone de range ou le marche construit volume et liquidites, "
+                  "avant ou entre deux mouvements directionnels.",
+        "statut": SOLIDE,
+        "brique": "dans_accumulation",
+        "note": "⛔ Les quatre seuils (10, 20, 0,60, 0,35) sont DE NOUS. Aucune "
+                "regle publique ne dit « une accumulation = N bougies sous X ». "
+                "Il l'identifie graphiquement."},
+    "volume_profile": {
+        "retenu": "Volume reparti par prix ; sert a retrouver les zones qui "
+                  "comptent A L'INTERIEUR de l'accumulation.",
+        "statut": SOLIDE,
+        "brique": "market_profile.profil()",
+        "note": "⚠️ Profil de TICKS, pas de contrats. Le vrai volume n'existe "
+                "que sur les futures."},
+    "poc": {"retenu": "Prix au volume maximal du profil.", "statut": SOLIDE,
+            "brique": "market_profile.profil() -> poc"},
+    "vah_val": {"retenu": "Bornes haute et basse de la Value Area.",
+                "statut": SOLIDE, "brique": "market_profile.profil()"},
+    "liquidite": {
+        "retenu": "Niveaux ou sont supposes se concentrer ordres et stops.",
+        "statut": A_FORMALISER,
+        "brique": "implicite : le max/min des 30 bougies, recalcule et jete a "
+                  "chaque bougie. AUCUN objet « zone » avec des bornes."},
+    "liquidite_majeure": {
+        "retenu": "Les liquidites qui comptent : swings structurels MTF/HTF "
+                  "(H1/H4/D1), pas toutes les liquidites.",
+        "statut": A_FORMALISER,
+        "brique": "`sur_niveau_majeur_{haut,bas}` — NOTRE formalisation, "
+                  "declaree le 2026-09-20, non armee",
+        "note": "Aucun critere public. Le notre : extreme de la fenetre du "
+                "biais (400), tolerance 0,5 x ATR, niveau non depasse."},
+
+    # ── Evenement ────────────────────────────────────────────────────
+    "sweep": {
+        "retenu": "Depassement d'un niveau de liquidite puis reaction ou "
+                  "reintegration.",
+        "statut": SOLIDE, "brique": "liquidity_sweep_up / _down"},
+    "double_prise": {
+        "retenu": "Deux prises successives, ou confluence de liquidites.",
+        "statut": A_FORMALISER,
+        "brique": "double_sweep_up / _down — notre regle, pas la sienne"},
+    "retest": {"retenu": "Retour sur une zone precedemment traversee.",
+               "statut": SOLIDE, "brique": "retest_up / _down"},
+
+    # ── Confirmation structurelle ────────────────────────────────────
+    "trap": {
+        "retenu": "Piege apres prise de liquidite : un comportement qui "
+                  "invalide la cassure apparente.",
+        "statut": NON_CODABLE,
+        "brique": "AUCUNE",
+        "blocage": "Quelle cloture, quelle meche, quelle cassure exactement ? "
+                   "Sans ca, on coderait notre TRAP sous son nom."},
+    "trap_interne": {
+        "retenu": "Affecte un swing SECONDAIRE a l'interieur de la leg ou de la "
+                  "structure courante (ex. la prise du dernier low cree).",
+        "statut": A_FORMALISER, "brique": "AUCUNE"},
+    "trap_externe": {
+        "retenu": "Affecte le swing qui DELIMITE la structure ou la leg ; "
+                  "consequences structurelles bien plus fortes, jusqu'a "
+                  "justifier une entree contre-tendance.",
+        "statut": A_FORMALISER, "brique": "AUCUNE"},
+    "price_delivery": {
+        "retenu": "Condition de setup DISTINCTE du TRAP, de la liquidite et du "
+                  "VDelta. Vocabulaire proche d'ICT.",
+        "statut": NON_CODABLE,
+        "brique": "AUCUNE",
+        "blocage": "⛔ Prendre une definition ICT trouvee en ligne et la lui "
+                   "attribuer serait l'erreur exacte que ce module interdit."},
+
+    # ── Order flow fin — TOUTES bloquees par la DONNEE ───────────────
+    "volume_delta": {
+        "retenu": "Difference entre volume execute a l'ask et au bid.",
+        "statut": NON_CODABLE,
+        "brique": "AUCUNE",
+        "blocage": "⛔ DONNEE ABSENTE, et c'est definitif sur cette route. Le "
+                   "pont MT5 sert `tick_volume`, jamais un footprint bid/ask. "
+                   "Un delta « estime » depuis les fluctuations de prix n'est "
+                   "pas un delta : c'est une reconstruction d'erreur inconnue. "
+                   "Il faudrait le future GC et un fournisseur order flow."},
+    "cumulative_delta": {
+        "retenu": "Somme des deltas successifs.",
+        "statut": NON_CODABLE, "brique": "AUCUNE",
+        "blocage": "Meme blocage que `volume_delta` : sans delta, pas de cumul."},
+    "absorption": {
+        "retenu": "Forte agression d'un cote, beaucoup de volume execute, et le "
+                  "prix n'avance plus : des ordres passifs absorbent le flux. "
+                  "EFFORT eleve + RESULTAT faible.",
+        "statut": A_FORMALISER,
+        "brique": "AUCUNE",
+        "note": "🔑 La seule de cette couche a etre APPROXIMABLE sans footprint : "
+                "effort/resultat est une loi Wyckoff bien anterieure a ce "
+                "corpus, mesurable sur du tick volume. Ce serait NOTRE "
+                "approximation, a ne pas presenter comme son « absorption "
+                "VDelta »."},
+    "zone_tampon_vdelta": {
+        "retenu": "Zone dans laquelle il attend une confirmation VDelta.",
+        "statut": NON_CODABLE, "brique": "AUCUNE",
+        "blocage": "Terme non standard du marche ET donnee absente."},
+    "retour_volumes": {
+        "retenu": "Retour du prix vers une zone identifiee par le profil.",
+        "statut": A_FORMALISER,
+        "brique": "market_profile donne les niveaux ; aucun detecteur de RETOUR",
+        "blocage": "Quel niveau exactement : POC ? VAL ? VAH ? un HVN ? La "
+                   "checklist ne le dit pas, et le choix change tout."},
+
+    # ── Les deux CORRECTIONS du 2026-09-20 ───────────────────────────
+    "alignement": {
+        "retenu": "Plusieurs structures / unites de temps allant dans le meme "
+                  "sens (« alignement multi UT »).",
+        "statut": SOLIDE,
+        "brique": "biais_haussier / biais_baissier, sur une seule paire "
+                  "d'echelles",
+        "note": "⛔ CORRECTION : alignement designe les UNITES DE TEMPS, PAS "
+                "les volumes. « Volumes alignes » etait une invention "
+                "anterieure de notre cote, retractee le 2026-09-20."},
+    "confirmation_volume": {
+        "retenu": "Retour sur zone de volume PUIS confirmation au VDelta — deux "
+                  "choses distinctes, pas une.",
+        "statut": NON_CODABLE,
+        "brique": "volume_fort (pic de ticks a 1,5 x la mediane des 20)",
+        "blocage": "⛔ CORRECTION LA PLUS COUTEUSE DU LOT : `volume_fort` n'est "
+                   "NI un retour sur zone de volume, NI une absorption. Ce "
+                   "n'est donc PAS la confirmation volume de la methode. Or "
+                   "quatre chaines declarees reposent dessus "
+                   "(niveau_confirme_volume et cassure_confirmee_volume, dans "
+                   "les deux sens). Elles mesurent un pic de ticks — ce qui est "
+                   "legitime en soi, mais ne doit pas etre lu comme le maillon "
+                   "« confirmation volume »."},
+}
+
+_STATUTS = (SOLIDE, A_FORMALISER, NON_CODABLE)
+
+
+def vocabulaire_par_statut(statut: str) -> tuple[str, ...]:
+    """Les termes d'un statut donne. `_STATUTS` borne l'entree."""
+    if statut not in _STATUTS:
+        raise ValueError(f"statut inconnu : {statut!r} (attendu : {_STATUTS})")
+    return tuple(sorted(t for t, v in VOCABULAIRE.items()
+                        if v["statut"] == statut))
+
+
+def blocages() -> dict[str, str]:
+    """Ce qui empeche de coder, terme par terme — pas « ce qui manque ».
+
+    🔑 La distinction est le point du dictionnaire : un terme peut etre
+    parfaitement compris et rester non codable parce que la DONNEE n'existe
+    pas. Confondre les deux ferait chercher une definition la ou il faut
+    changer de marche.
+    """
+    return {t: v["blocage"] for t, v in VOCABULAIRE.items() if v.get("blocage")}
