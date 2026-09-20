@@ -53,11 +53,31 @@ SCHEMA = "radar"
 # ecrits plus tard. Un incremental par `id` seul les manquerait pour toujours.
 REPOUSSE_JOURS = 45
 
+# ⛔ `signal_rejections` N'A PLUS DE FENETRE — corrige le 2026-09-20 APRES
+# mesure, pas par principe. C'est un journal APPEND-ONLY : une ligne de refus
+# n'est jamais modifiee apres coup. La fenetre de 45 jours la faisait pourtant
+# reecrire en ENTIER a chaque execution — 1 007 088 lignes repoussees, et
+# `n_tup_upd` = 1 640 026 cote Postgres — pour zero information nouvelle. Ce
+# n'etait pas gratuit : des minutes par nuit, de la churn sur les index, et une
+# base passee a 614 Mo pour un plan free plafonne a 500 Mo. Un miroir qui
+# depasse son quota passe en lecture seule : il aurait cesse de se remplir en
+# silence, ce que `sync_log` n'aurait meme pas pu ecrire.
+#
+# ⚠️ CE QU'ON PERD, et il faut le dire plutot que de le decouvrir : un backfill
+# qui MODIFIE d'anciennes lignes (scripts/backfill_rejections_user_id.py) ne
+# sera plus repousse tout seul. Apres un backfill, relancer le miroir UNE fois
+# avec `MIROIR_REPOUSSE_REJETS=1` pour rattraper la fenetre.
+#
+# 🔑 Les deux autres tables gardent la leur, et pour une raison precise : un
+# trade ouvert voit son `status`, son `pnl` et son `closed_at` ecrits plus tard.
+# La fenetre n'est pas une precaution generale, c'est une reponse a la mutation.
+REPOUSSE_REJETS = os.getenv("MIROIR_REPOUSSE_REJETS", "").strip() == "1"
+
 # table -> (colonne d'horodatage pour la re-poussee, ou None)
 TABLES = {
     "personal_trades": "created_at",
     "mt5_pushes": "pushed_at",
-    "signal_rejections": "created_at",
+    "signal_rejections": "created_at" if REPOUSSE_REJETS else None,
     "labo_or_cellules": None,
     "labo_or_journal": None,
     "labo_or_sorties": None,
