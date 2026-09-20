@@ -136,3 +136,59 @@ def test_quelles_paires_un_event_USD_concerne(monkeypatch, paire, attendu):
     _calendrier(monkeypatch, [{"currency": "USD", "event_name": "CPI",
                                "impact": "High", "minutes_delta": -3}])
     assert eb.is_blackout_for(paire, now=MAINTENANT)["active"] is attendu
+
+
+# ─── 5. Une seule source de verite : la base avant le reseau ─────────
+
+
+def test_le_feed_n_est_PLUS_appele_quand_la_base_repond(monkeypatch):
+    """⛔ Le defaut mesure en production le 2026-09-20 :
+
+        20:04:49  economic_calendar_service: refreshed 73 events   <- OK
+        20:04:51  forexfactory_service: JSON feed failed: 429      <- jete
+
+    Deux services, la MEME url, deux secondes d'ecart. Ce test pinne l'ordre
+    corrige : la base d'abord, le reseau seulement si elle est vide.
+    """
+    import asyncio
+
+    from backend.services import forexfactory_service as ff
+
+    appels_reseau = []
+
+    async def _jamais():
+        appels_reseau.append(1)
+        return []
+
+    monkeypatch.setattr(ff, "_fetch_from_json_feed", _jamais, raising=True)
+    monkeypatch.setattr(ff, "_fetch_from_html", _jamais, raising=True)
+    monkeypatch.setattr(ff, "_cache", None, raising=False)
+    monkeypatch.setattr(ff, "_depuis_le_calendrier",
+                        lambda heures=36: [
+                            ff.EconomicEvent(time="14:30", currency="USD",
+                                             impact=ff.EventImpact.HIGH,
+                                             event_name="Core PCE")],
+                        raising=True)
+    events = asyncio.run(ff.fetch_economic_events())
+    assert len(events) == 1 and events[0].event_name == "Core PCE"
+    assert appels_reseau == [], (
+        "la base a repondu : aucun appel reseau ne doit partir")
+
+
+def test_le_reseau_reste_le_repli_quand_la_base_est_vide(monkeypatch):
+    """⚠️ Et l'inverse doit rester vrai : une base vide ne doit pas rendre le
+    calendrier definitivement muet — sinon une premiere installation n'aurait
+    jamais d'events."""
+    import asyncio
+
+    from backend.services import forexfactory_service as ff
+
+    async def _feed():
+        return [ff.EconomicEvent(time="12:00", currency="EUR",
+                                 impact=ff.EventImpact.MEDIUM, event_name="IFO")]
+
+    monkeypatch.setattr(ff, "_cache", None, raising=False)
+    monkeypatch.setattr(ff, "_depuis_le_calendrier", lambda heures=36: [], raising=True)
+    monkeypatch.setattr(ff, "_fetch_from_json_feed", _feed, raising=True)
+    events = asyncio.run(ff.fetch_economic_events())
+    assert len(events) == 1 and events[0].event_name == "IFO"

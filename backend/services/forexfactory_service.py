@@ -58,6 +58,38 @@ _PERIME_SEC = int(os.getenv("FF_CACHE_MAX_AGE_SEC", "21600"))
 _cache: tuple[float, list[EconomicEvent]] | None = None
 
 
+def _depuis_le_calendrier(heures: int = 36) -> list[EconomicEvent]:
+    """Les events des ~36 h a venir, lus dans `economic_events`.
+
+    ⚠️ `time` reste au format "HH:MM" : c'est ce que l'UI affiche, et le
+    changer casserait le front. Ce n'est plus un probleme depuis que
+    `event_blackout` lit la base directement — mais la raison est ecrite ici
+    pour que personne ne "repare" ce format en croyant bien faire.
+    """
+    try:
+        from backend.services.economic_calendar_service import get_upcoming_events
+        brut = get_upcoming_events(within_minutes=heures * 60, min_impact="Low")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("forexfactory: economic_events illisible (%s)", e)
+        return []
+    out: list[EconomicEvent] = []
+    for e in brut:
+        try:
+            quand = datetime.fromisoformat(e["ts_utc"])
+        except (ValueError, TypeError, KeyError):
+            continue
+        out.append(EconomicEvent(
+            time=quand.strftime("%H:%M"),
+            currency=(e.get("currency") or "").upper(),
+            impact=_normalize_impact(e.get("impact") or "Low"),
+            event_name=e.get("event_name") or "?",
+            forecast=e.get("forecast") or None,
+            previous=e.get("previous") or None,
+            actual=e.get("actual") or None,
+        ))
+    return out
+
+
 def _cache_lisible(maxi: int) -> list[EconomicEvent] | None:
     if _cache is None:
         return None
@@ -87,6 +119,28 @@ async def fetch_economic_events() -> list[EconomicEvent]:
     if frais is not None:
         logger.debug("forexfactory: cache (%d events, TTL %ds)", len(frais), _TTL_SEC)
         return frais
+
+    # ⛔ LA BASE D'ABORD, LE RESEAU ENSUITE — ordre inverse jusqu'au 2026-09-20,
+    # et voici ce que les logs de production montraient au redemarrage :
+    #
+    #   20:04:49  economic_calendar_service: refreshed 73 events        <- OK
+    #   20:04:51  forexfactory_service: JSON feed failed: 429           <- jete
+    #   20:04:51  HTML scraping failed: 403 Forbidden
+    #
+    # DEUX services appelaient la MEME url a deux secondes d'intervalle. Le
+    # premier passait, le second se faisait limiter — et comme le repli HTML
+    # repond 403, l'overview repartait avec ZERO event. Le bannissement n'etait
+    # donc pas un risque a venir : il etait deja la.
+    #
+    # 🔑 Une seule source de verite : `economic_calendar_service` va au feed
+    # (dimanche et jeudi, job dedie) et stocke des `ts_utc` complets. Ici on
+    # LIT sa base. Le reseau ne sert plus que si cette base est vide.
+    depuis_base = _depuis_le_calendrier()
+    if depuis_base:
+        _cache = (_time.monotonic(), depuis_base)
+        logger.info("forexfactory: %d events lus dans economic_events "
+                    "(aucun appel reseau)", len(depuis_base))
+        return depuis_base
 
     events = await _fetch_from_json_feed()
     if events:
