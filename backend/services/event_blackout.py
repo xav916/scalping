@@ -118,8 +118,16 @@ def _depuis_le_calendrier(pair: str, currencies: set[str],
             continue
         m = int(e.get("minutes_delta") or 0)
         quand = f"dans {m}min" if m >= 0 else f"il y a {-m}min"
+        # ⚠️ `reason` reste une phrase pour les logs — les appelants la citent.
+        # Les champs structures a cote existent pour la TRACE : sans eux, on
+        # saurait qu'un ordre a ete bloque sans jamais pouvoir dire si c'etait
+        # un gagnant ou un perdant. Cf. `record_rejection(details=...)`.
         return {"active": True,
-                "reason": f"HIGH {e.get('currency')} {e.get('event_name', '?')} {quand}"}
+                "reason": f"HIGH {e.get('currency')} {e.get('event_name', '?')} {quand}",
+                "event": e.get("event_name"),
+                "currency": (e.get("currency") or "").upper(),
+                "minutes_delta": m,
+                "ts_utc": e.get("ts_utc")}
     return {"active": False, "reason": None}
 
 

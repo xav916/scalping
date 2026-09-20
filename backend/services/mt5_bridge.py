@@ -1825,6 +1825,35 @@ async def _push_to_destination(setup, dest) -> None:
             _blockers = getattr(setup, "verdict_blockers", None)
             if _blockers:
                 details["blockers"] = list(_blockers)
+            # ⛔ LA TRACE DU BLACKOUT (2026-09-20). Ce garde-fou vient de
+            # passer de « jamais declenche » a « actif ». Sans les NIVEAUX du
+            # setup, on saurait qu'un ordre a ete bloque sans pouvoir dire s'il
+            # aurait gagne ou perdu — donc sans jamais pouvoir juger le
+            # garde-fou. Avec `entry` / `stop` / `tp1` et l'heure, le rejeu sur
+            # bougies rend un R, et l'audit hebdomadaire tranche a n >= 30.
+            #
+            # 🔑 C'est ce qu'on construit A LA PLACE d'une file d'attente : le
+            # cooldown vaut 0 en production (`cooldown_symbole` : zero refus
+            # depuis toujours), donc un setup encore valide est deja re-emis au
+            # cycle suivant, avec des niveaux RECALCULES. Ce qui manquait
+            # n'etait pas la reprise, c'etait la mesure.
+            if rejection == "event_blackout":
+                try:
+                    from backend.services import event_blackout as _eb
+                    _bo = _eb.is_blackout_for(setup.pair)
+                    details["blackout"] = {
+                        "event": _bo.get("event"),
+                        "currency": _bo.get("currency"),
+                        "minutes_delta": _bo.get("minutes_delta"),
+                        "event_ts": _bo.get("ts_utc"),
+                        "entry": float(setup.entry_price),
+                        "stop": float(setup.stop_loss),
+                        "tp1": float(setup.take_profit_1),
+                    }
+                except Exception as _e:  # noqa: BLE001
+                    # ⚠️ Jamais au prix du refus lui-meme : une trace ratee ne
+                    # doit pas faire disparaitre la ligne de rejection.
+                    details["blackout"] = {"trace_incomplete": str(_e)[:120]}
             record_rejection(
                 pair=setup.pair,
                 direction=_direction_value(setup),

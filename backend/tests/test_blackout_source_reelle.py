@@ -192,3 +192,38 @@ def test_le_reseau_reste_le_repli_quand_la_base_est_vide(monkeypatch):
     monkeypatch.setattr(ff, "_fetch_from_json_feed", _feed, raising=True)
     events = asyncio.run(ff.fetch_economic_events())
     assert len(events) == 1 and events[0].event_name == "IFO"
+
+
+# ─── 6. La TRACE : savoir QUOI a ete bloque, pas seulement QUE ────────
+
+
+def test_la_decision_porte_de_quoi_juger_le_garde_fou(monkeypatch):
+    """🔑 Ce qu'on construit A LA PLACE d'une file d'attente.
+
+    Le cooldown vaut 0 en production (`cooldown_symbole` : zero refus depuis
+    toujours), donc un setup encore valide est deja re-emis au cycle suivant
+    avec des niveaux RECALCULES. Ce qui manquait n'etait pas la reprise, c'etait
+    la mesure : sans l'annonce en cause et son ecart, on saurait qu'un ordre a
+    ete bloque sans pouvoir dire si c'etait un gagnant ou un perdant.
+    """
+    _calendrier(monkeypatch, [{"currency": "USD", "event_name": "Core PCE",
+                               "impact": "High", "minutes_delta": -4,
+                               "ts_utc": "2026-09-24T12:34:00+00:00"}])
+    st = eb.is_blackout_for("XAU/USD", now=MAINTENANT)
+    assert st["active"] is True
+    # la phrase reste, pour les logs et les appelants qui la citent
+    assert "Core PCE" in st["reason"] and "il y a 4min" in st["reason"]
+    # ... et les champs structures, pour le contrefactuel
+    assert st["event"] == "Core PCE"
+    assert st["currency"] == "USD"
+    assert st["minutes_delta"] == -4
+    assert st["ts_utc"] == "2026-09-24T12:34:00+00:00"
+
+
+def test_une_decision_NEGATIVE_ne_porte_pas_de_faux_detail(monkeypatch):
+    """⚠️ Pas de champs fantomes : un dict inactif ne doit pas laisser croire
+    qu'une annonce a ete trouvee."""
+    _calendrier(monkeypatch, [])
+    st = eb.is_blackout_for("XAU/USD", now=MAINTENANT)
+    assert st["active"] is False
+    assert st.get("event") is None and st.get("minutes_delta") is None
