@@ -5,6 +5,8 @@ Falls back to HTML scraping if the feed is unavailable.
 """
 
 import logging
+import os
+import time as _time
 from datetime import datetime, timezone
 
 import httpx
@@ -39,24 +41,71 @@ def _normalize_impact(impact_str: str) -> EventImpact:
     return EventImpact.LOW
 
 
+# ⛔ CACHE — ajouté le 2026-09-20 après mesure, pas par principe. Cette
+# fonction est appelée par le cycle d'analyse du scheduler, donc TOUTES LES
+# TROIS MINUTES : les logs de production montraient « Fetched 75 events from
+# JSON feed » à 19:08, 19:11, 19:14, 19:17… soit ~480 requêtes par jour vers
+# nfs.faireconomy.media. Or ce calendrier est HEBDOMADAIRE — le scheduler a
+# d'ailleurs un job dédié qui ne le rafraîchit que dimanche et jeudi.
+#
+# 🔑 Le risque n'était pas le coût, c'était le BANNISSEMENT : un feed gratuit
+# martelé 480 fois par jour finit par répondre 403, et alors le calendrier
+# tombe — avec lui le blackout des annonces et les warnings de verdict.
+_TTL_SEC = int(os.getenv("FF_CACHE_TTL_SEC", "1800"))
+# Au-delà de cette ancienneté on préfère une liste vide à un calendrier périmé :
+# une semaine de retard ferait blackouter sur des annonces déjà passées.
+_PERIME_SEC = int(os.getenv("FF_CACHE_MAX_AGE_SEC", "21600"))
+_cache: tuple[float, list[EconomicEvent]] | None = None
+
+
+def _cache_lisible(maxi: int) -> list[EconomicEvent] | None:
+    if _cache is None:
+        return None
+    age = _time.monotonic() - _cache[0]
+    return _cache[1] if age <= maxi else None
+
+
 async def fetch_economic_events() -> list[EconomicEvent]:
     """Fetch this week's economic events.
 
     Strategy:
-    1. Try the free JSON feed (easiest, most reliable)
-    2. Fall back to HTML scraping
-    3. Si tout échoue : retourne [] plutôt que des events fictifs qui
-       pollueraient les warnings de verdict ('News high-impact à surveiller'
-       alors qu'il n'y a rien de réel).
+    1. Cache en mémoire (TTL `FF_CACHE_TTL_SEC`, 30 min par défaut)
+    2. Try the free JSON feed (easiest, most reliable)
+    3. Fall back to HTML scraping
+    4. Si tout échoue : le dernier calendrier connu s'il a moins de
+       `FF_CACHE_MAX_AGE_SEC` (6 h), sinon [] plutôt que des events fictifs
+       qui pollueraient les warnings de verdict ('News high-impact à
+       surveiller' alors qu'il n'y a rien de réel).
+
+    ⚠️ Le repli sur le cache périmé est un choix, pas un oubli : un calendrier
+    vieux de deux heures reste VRAI, alors qu'une liste vide fait croire qu'il
+    n'y a aucune annonce — et c'est cette forme de silence qui a laissé le
+    blackout des news inerte pendant dix semaines.
     """
+    global _cache
+    frais = _cache_lisible(_TTL_SEC)
+    if frais is not None:
+        logger.debug("forexfactory: cache (%d events, TTL %ds)", len(frais), _TTL_SEC)
+        return frais
+
     events = await _fetch_from_json_feed()
     if events:
+        _cache = (_time.monotonic(), events)
         return events
 
     logger.info("JSON feed unavailable, falling back to HTML scraping")
     events = await _fetch_from_html()
     if events:
+        _cache = (_time.monotonic(), events)
         return events
+
+    vieux = _cache_lisible(_PERIME_SEC)
+    if vieux is not None:
+        logger.warning(
+            "forexfactory: feed ET scraping indisponibles — on sert le dernier "
+            "calendrier connu (%d events). Un calendrier vieux reste vrai ; une "
+            "liste vide ferait croire qu'aucune annonce n'approche.", len(vieux))
+        return vieux
 
     logger.warning("ForexFactory indisponible (JSON + HTML), pas de calendrier ce cycle")
     return []
