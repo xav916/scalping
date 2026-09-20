@@ -468,6 +468,7 @@ def instruments_servis() -> list[str]:
     import urllib.request
 
     from backend.services.destinations_registry import DESTINATIONS
+    from config.settings import asset_class_for, paires_sans_classe
 
     try:
         d = DESTINATIONS[DESTINATION_MESUREE]
@@ -481,8 +482,50 @@ def instruments_servis() -> list[str]:
     declarees = [x.strip() for x in
                  os.environ.get("WATCHED_PAIRS", "").split(",") if x.strip()]
     candidates = [PAIRE] + [x for x in declarees if x != PAIRE]
+    # ⛔ CRIER SUR CE QUI N'EST PAS CLASSE (2026-09-20). `asset_class_for`
+    # retombe sur « forex » en silence, et 22 des paires crypto de l'univers ne
+    # sont reconnues que par `ASSET_CLASS_OVERRIDES` — une ligne d'`.env` tenue
+    # a la main. Un override oublie ou mal orthographie fait donc trader une
+    # crypto comme une devise : mauvaise structure de cout (fixe au lieu de
+    # proportionnelle) et mauvaise garde de correlation. Ce cri ne change aucun
+    # comportement ; il rend le manque visible la nuit meme plutot qu'au
+    # prochain incident.
+    sans_classe = paires_sans_classe(candidates)
+    if sans_classe:
+        logger.warning(
+            "labo: %d paire(s) SANS classe explicite — elles retombent sur "
+            "« forex » : %s. Verifier ASSET_CLASS_OVERRIDES.",
+            len(sans_classe), ", ".join(sans_classe))
     out: list[str] = []
     for paire in candidates:
+        # ⛔ COTE N'EST PAS SERVI (2026-09-20). Le courtier MT5 cote des CFD
+        # d'altcoins ; la destination mesuree, elle, ne sert PAS la classe
+        # crypto — le dispatch les refuserait en `asset_class_blocked`. Les
+        # mesurer ici revenait a facturer le spread CFD d'un courtier qui ne
+        # les executera jamais, et le resultat est sans appel : spread vivant
+        # de 6,08 % du prix sur DOTUSD et 3,66 % sur LTCUSD, contre 0,011 %
+        # sur XAUUSD. Le cout etant `spread / distance au stop`, le r_moyen
+        # tombait a -25 R : la cellule ne mesurait plus le motif, elle mesurait
+        # le spread. 354 des 367 refutations de la nuit du 20/09 — 96 % —
+        # portaient sur ces paires.
+        #
+        # 🔑 Le filtre est DERIVE d'`asset_classes`, jamais declare a part :
+        # une liste figee de paires interdites se perimerait au premier
+        # changement de courtier, exactement comme la liste d'instruments que
+        # cette fonction existe pour ne pas figer.
+        #
+        # ⚠️ IL NE CORRIGE QUE LA MOITIE DU DEFAUT, et il faut le savoir :
+        # `asset_class_for` classe UNI, BNB, ZEC, SUI, LDO, TAO, INJ, HBAR,
+        # AAVE, ENS et MANA en **forex**, parce que sa liste de prefixes date
+        # de l'epoque ou l'univers crypto valait BTC et ETH. Ces onze paires
+        # passent donc encore ce filtre. La reparation touche le dispatch, le
+        # modele de cout et la garde de correlation : elle se decide, elle ne
+        # se glisse pas ici.
+        classe = asset_class_for(paire)
+        if d.asset_classes and classe not in d.asset_classes:
+            logger.info("labo: %s (%s) ecarte — %s ne sert pas cette classe",
+                        paire, classe, DESTINATION_MESUREE)
+            continue
         try:
             r = json.load(urllib.request.urlopen(urllib.request.Request(
                 base + "/tick/" + paire.replace("/", ""), headers=entetes),

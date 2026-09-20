@@ -146,6 +146,15 @@ def univers_a_analyser() -> list:
 # "crypto" = crypto (BTC, ETH, ...)
 # "energy" = oil, gas
 # "equity_index" = stock indices (SPX, NDX, DAX, ...)
+# Codes ISO-4217 des devises que le forex de cet univers utilise. La seule
+# liste STABLE de ce fichier : elle sert a reconnaitre une paire de devises
+# POSITIVEMENT, au lieu de deduire « forex » de l'absence de tout le reste.
+_DEVISES = frozenset({
+    "USD", "EUR", "GBP", "JPY", "CHF", "CAD", "AUD", "NZD",
+    "SEK", "NOK", "DKK", "PLN", "CZK", "HUF", "TRY", "ZAR",
+    "MXN", "SGD", "HKD", "CNH", "CNY", "ILS", "RUB", "THB",
+})
+
 ASSET_CLASS_OVERRIDES_RAW = os.getenv("ASSET_CLASS_OVERRIDES", "")
 _asset_overrides: dict[str, str] = {}
 if ASSET_CLASS_OVERRIDES_RAW:
@@ -154,6 +163,56 @@ if ASSET_CLASS_OVERRIDES_RAW:
         if ":" in entry:
             k, v = entry.split(":", 1)
             _asset_overrides[k.strip().upper()] = v.strip().lower()
+
+
+def classe_explicite(pair: str) -> str | None:
+    """La classe quand elle est RECONNUE, `None` quand rien ne matche.
+
+    ⛔ POURQUOI CETTE FONCTION EXISTE (2026-09-20). `asset_class_for` retombe
+    sur `return "forex"` pour tout symbole inconnu, en silence. Or 22 des ~31
+    paires crypto de l'univers ne sont reconnues que par
+    `ASSET_CLASS_OVERRIDES`, une ligne d'`.env` tenue a la main : la liste de
+    prefixes ci-dessous n'en couvre que neuf, ecrite quand l'univers crypto
+    valait BTC et ETH.
+
+    Consequence si un override manque ou porte une faute de frappe : la paire
+    devient une DEVISE pour le dispatch, le modele de cout (structure fixe au
+    lieu de proportionnelle) et la garde de correlation. Et rien ne crie.
+
+    🔑 Cette fonction ne change aucun comportement : elle rend LISIBLE la
+    difference entre « classee » et « retombee sur le defaut », pour que
+    `paires_sans_classe()` puisse la signaler. `asset_class_for` garde
+    exactement la meme valeur de retour qu'avant.
+    """
+    p = pair.upper()
+    if p in _asset_overrides:
+        return _asset_overrides[p]
+    if p.startswith(("BTC", "ETH", "LTC", "XRP", "SOL", "ADA", "DOGE", "BCH", "DOT")) or p.endswith(("/BTC", "/ETH")):
+        return "crypto"
+    if p.startswith(("XAU", "XAG", "XPT", "XPD")):
+        return "metal"
+    if p.startswith(("WTI", "BRENT", "XTI", "XBR", "NGAS", "NATGAS")):
+        return "energy"
+    if p in {"SPX", "NDX", "DJI", "RUT", "DAX", "N225", "NIKKEI", "FTSE", "CAC40", "UK100", "US30", "US500", "NAS100", "DE40", "EU50", "JP225"}:
+        return "equity_index"
+    if p in {"AAPL", "TSLA", "NVDA", "MSFT", "GOOGL", "GOOG", "AMZN", "META", "AMD", "NFLX", "COIN", "PLTR", "SHOP", "JPM", "V", "MA", "DIS", "WMT"}:
+        return "equity"
+    # ⚠️ Les DEUX jambes doivent etre des devises pour qu'une paire soit du
+    # forex RECONNU. C'est la seule liste stable du lot : les codes ISO-4217
+    # ne changent pas tous les mois, contrairement aux tickers crypto.
+    jambes = [x for x in p.replace("-", "/").split("/") if x]
+    if len(jambes) == 2 and all(j in _DEVISES for j in jambes):
+        return "forex"
+    return None
+
+
+def paires_sans_classe(paires) -> list[str]:
+    """Les paires qui retomberaient sur le defaut « forex » sans etre reconnues.
+
+    A appeler la ou l'univers est lu. Une liste non vide veut dire : un
+    override manque, ou une cle est mal orthographiee.
+    """
+    return [x for x in paires if x and classe_explicite(x) is None]
 
 
 def asset_class_for(pair: str) -> str:
