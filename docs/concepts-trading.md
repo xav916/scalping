@@ -777,14 +777,27 @@ réintégrée.
 
 #### Et ce que les cellules du laboratoire disent du comparant — copie de lecture, 2026-09-20
 
-| verdict | cellules | trades | `n` moyen par cellule |
-|---|---|---|---|
-| `INSUFFISANT` | **795** (93 %) | 8 552 | 10 à 12 |
-| `REFUTE` | 61 (7 %) | 2 769 | 45 |
+⚠️ **Première version de ce paragraphe corrigée le jour même.** J'avais écrit
+« 93 % des cellules n'ont jamais pu conclure », en lisant `INSUFFISANT` comme
+« pas assez de trades ». C'est faux : `_verdict` rend `INSUFFISANT` pour **trois**
+raisons différentes — `n < MIN_TRADES`, écart au hasard non mesuré, **ou écart
+sous le plafond du hasard**. Le troisième cas est une cellule parfaitement
+mesurée, simplement indistinguable du bruit. Les confondre transformait un
+résultat en panne de données. Le détail, par échelle :
 
-- ⛔ **93 % des cellules de `prise_en_accumulation` n'ont jamais pu conclure.**
-  La sonde ci-dessus le prévoyait sur une fixture d'un seul instrument ; les 13
-  nuits le confirment sur tous les instruments et les 4 échelles.
+| échelle | manque de trades (`n` < 20) | mesurée, **sous le plafond** | `REFUTE` | `RETENU` |
+|---|---|---|---|---|
+| 5 min | 54 | **80** | 44 | **0** |
+| 15 min | 186 | 20 | 17 | **0** |
+| 30 min | 223 | 2 | 0 | **0** |
+| 60 min | **230** | 0 | 0 | **0** |
+
+- ⛔ **693 cellules sur 856 (81 %) manquent de trades** — la sonde le prévoyait
+  sur une fixture d'un seul instrument, les 13 nuits le confirment partout.
+- ⛔ **Mais là où la chaîne EST mesurable — 5 min — elle donne 80 cellules sous
+  le plafond du hasard et zéro `RETENU`.** Ce n'est plus une panne de données,
+  c'est un résultat : au pas de 5 minutes, prendre la liquidité en accumulation
+  est indistinguable du hasard de son sens.
 - ⛔ **ET LES 61 QUI ONT CONCLU SONT TOUTES CRYPTO** — LTC (23), BNB (16),
   UNI (12), ADA (7), XRP (2), ETH (1), avec des R moyens de −0,7 à −17. C'est
   l'artefact de coût corrigé le 2026-09-20 : le laboratoire facturait à des
@@ -792,13 +805,24 @@ réintégrée.
   **cette chaîne n'a jamais produit un seul verdict concluant sur un instrument
   non crypto.** Ses `REFUTE` doivent disparaître à la nuit du 21/09 — la
   première après le filtre de classe d'actif.
-- 🔑 Conséquence pour la déclaration ci-dessus : le vrai sujet n'est pas le bord
-  de la zone, c'est que **l'accumulation telle que nous la détectons est trop
-  rare pour être mesurable** à ces échelles. Deux voies honnêtes, et « ajouter
-  une chaîne » n'en est pas : agréger (chercher l'accumulation sur une échelle
-  supérieure, où 30 bougies couvrent des heures), ou relire les quatre seuils
-  déclarés le 14/09 — en sachant que les relâcher pour obtenir du `n` est
-  exactement le geste que ce carnet interdit sans déclaration préalable.
+- ⛔ **ET L'ÉCHAPPATOIRE « IL SUFFIT D'AGRÉGER » EST RÉFUTÉE PAR CES MÊMES
+  CHIFFRES.** J'allais proposer de chercher l'accumulation sur une échelle
+  supérieure, où 30 bougies couvrent des heures. Les cellules disent l'inverse,
+  et monotonement : `n` moyen **29,1** (5 min) → **10,2** (15 min) → **7,0**
+  (30 min) → **4,3** (60 min), avec un `n` **maximum de 10** à 60 min. Le
+  laboratoire agrège déjà pour chaque horizon : moins de bougies par nuit, donc
+  moins d'événements, et la fréquence par bougie ne monte pas assez pour
+  compenser. **À 60 min, aucune cellule ne peut atteindre `MIN_TRADES`, jamais.**
+  Proposition retirée avant d'être déclarée — elle aurait coûté deux chaînes de
+  plus pour une impossibilité arithmétique.
+- 🔑 **Ce qui reste, et ce n'est pas du code.** La seule voie non refermée est de
+  relire les quatre seuils du 14/09 — et les relâcher pour obtenir du `n` est
+  exactement le geste que ce carnet interdit sans déclaration préalable. Quant à
+  retirer `prise_en_accumulation` du registre pour rendre du plafond aux autres :
+  **le calcul ne le justifie pas.** Deux chaînes coûtent ~0,011 de plafond
+  (`plafond ≈ 1,72 + 0,249 × ln(N)`). Garder une chaîne qui ne conclut pas coûte
+  presque rien ; ce qui devait changer, c'est **l'attente** qu'on plaçait en
+  elle, pas le registre.
 
 ---
 
