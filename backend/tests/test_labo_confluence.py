@@ -93,10 +93,24 @@ class _Setup:
 #   18  2026-09-14  + sweep_en_discount / sweep_en_premium — concept ICT,
 #                   PAS le corpus du 12/09, ajoute a la demande explicite
 #                   de Xavier apres signalement (55959f8) AVANT le code
+#   20  2026-09-20  + sweep_sur_niveau_majeur haussier/baissier — le
+#                   MAILLON 3 de la chaine du 12/09, declare dans
+#                   docs/concepts-trading.md AVANT le code. Revue de
+#                   couverture du jour : sur treize maillons, huit sont
+#                   codes, trois partiels, un refute — et le niveau majeur
+#                   est le seul partiel qui change le SENS de tout ce qui
+#                   vient apres, puisqu'il decide OU on attend la
+#                   liquidite. Sans lui le balayage se declenche sur le max
+#                   glissant des 30, donc n'importe ou.
+#                   ⛔ Sa regle LARGE a ete mesuree puis CORRIGEE le jour
+#                   meme : 80,6 % et 94,3 % des declenchements depassaient
+#                   le niveau, donc mesuraient une cassure, pas un retest.
+#                   Le niveau ne doit pas etre depasse. Cf. le carnet et
+#                   scripts/mesurer_niveau_majeur.py.
 #
 # ⚠️ Le cout n'est pas nul : ~160 cellules de plus, donc le plafond du
 # hasard monte pour TOUTES les cellules existantes.
-CHAINES_ATTENDUES = 18
+CHAINES_ATTENDUES = 20
 
 
 

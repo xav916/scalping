@@ -461,6 +461,109 @@ complète, et c'est pourquoi ils sont **déclarés ici avant d'être codés**.
 
 ---
 
+### Niveau majeur — déclaré le 2026-09-20, non codé
+
+⛔ **Pourquoi ce concept maintenant.** La revue de couverture du 2026-09-20 a
+comparé la chaîne de treize maillons rapportée le 12/09 à ce qui est réellement
+codé. Huit maillons sont là, trois sont partiels, un est réfuté. Sur les trois
+partiels, celui-ci est le seul qui change le SENS de tout ce qui vient après.
+
+🔑 **Le défaut qu'il nomme.** Dans la chaîne rapportée, le niveau majeur décide
+**OÙ** on attend la liquidité. Chez nous, le balayage se déclenche sur le max
+glissant des **30 dernières bougies** — donc n'importe où. Nos cellules ne
+mesurent donc pas « un balayage sur un niveau qui compte », elles mesurent
+« un balayage, quelque part ». `_find_level` ne comble pas ce manque : il
+moyenne les cinq extrêmes de la fenêtre courante s'ils forment un amas — une
+seule échelle, ni plus-haut journalier, ni nombre rond, ni confluence. C'est un
+extrême local lissé, pas un niveau majeur.
+
+⚠️ **Et ça éclaire une mesure existante.** Le 2026-09-20,
+`chaine:sweep_avec_biais_baissier` rend **−0,330 R** sur 149 à 120
+échantillons, soit trois fois pire que `liquidity_sweep_down` seul (−0,096).
+Empiler une condition de DIRECTION sur un déclencheur non LOCALISÉ peut très
+bien dégrader. Ce n'est pas une explication démontrée — c'est l'hypothèse que
+ce concept rend testable.
+
+- **Tradition** : commune à l'analyse technique classique et au vocabulaire
+  Smart Money. ⛔ **Mais la définition ci-dessous est LA NÔTRE** : personne n'a
+  publié ces seuils, et le corpus rapporté le 12/09 nomme le maillon sans le
+  définir. Ne jamais la présenter comme la définition de quiconque.
+- **Idée** : un extrême de 30 bougies est un accident local. Un extrême de
+  l'échelle supérieure est un endroit que le marché a défendu à une échelle que
+  tout le monde regarde. Prendre la liquidité là n'est pas le même trade.
+- **Règle** — et elle n'introduit **aucun réglage neuf** :
+  - `niveau_majeur` = `max(haut)` / `min(bas)` de la fenêtre du **biais**,
+    soit `BIAIS_FACTEUR × FENETRE = 8 × 50 = 400` bougies. Le facteur 8 est
+    déjà déclaré (biais de l'échelle supérieure, 2026-09-14) ; on ne crée pas
+    un second réglage d'échelle.
+  - ⛔ **Correction du 2026-09-20, le jour même de la déclaration.** J'avais
+    écrit « 8 × 30 = 240 ». FAUX : le facteur 8 multiplie `FENETRE` (50, la
+    fenêtre de détection), pas le `lookback` de 30 propre au balayage. La
+    fenêtre du biais vaut donc **400** bougies, soit 33 h de marché à
+    l'échelle 5 min. Deux géométries différentes portaient le même chiffre
+    dans ma tête — exactement ce que ce carnet existe pour attraper.
+  - `sur_niveau_majeur` est vrai quand l'extrême BALAYÉ par la bougie courante
+    se trouve à moins de `0,5 × ATR(14)` du niveau majeur de son côté.
+  - 🔑 Le `0,5 × ATR` est **repris** de `_IMPULSION_MIN_ATR`, déjà utilisé par
+    les détecteurs de gap et d'order block. ⚠️ C'est une RÉUTILISATION, pas une
+    dérivation : rien ne prouve que la bonne tolérance soit celle de
+    l'impulsion. Elle est posée une fois et n'est jamais ajustée.
+- ⛔ **Ce n'est pas un motif, c'est un CONTEXTE** — comme la zone
+  d'accumulation, le biais et le premium/discount. « Être sur un niveau
+  majeur » ne dit pas d'acheter, ça dit *où* l'entrée a un sens. C'est donc un
+  **prédicat**.
+- **Chaînes déclarées** : `sweep_sur_niveau_majeur_haussier` /
+  `sweep_sur_niveau_majeur_baissier` = `liquidity_sweep` **sur** un niveau
+  majeur.
+- **Prédiction falsifiable** : la chaîne doit rendre un **R moyen supérieur** à
+  `liquidity_sweep` seul, même instrument, même échelle. Si prendre la
+  liquidité sur un niveau qui compte ne vaut pas mieux que la prendre n'importe
+  où, **le maillon 3 est décoratif** — et on l'aura appris proprement.
+- 🔑 Inclusion **stricte** : la chaîne ne se déclenche que sur des bougies où le
+  balayage se déclenche déjà. La comparaison est donc **appariée**, la forme la
+  plus lisible — celle de la double prise, pas celle chevauchante des trois
+  maillons.
+- ⛔ **L'OBJECTION À MESURER, et elle est sérieuse.** Un `liquidity_sweep_down`
+  fait par définition un nouveau plus-haut de 30 bougies. S'il est en plus à
+  portée du plus-haut de 240, il fait peut-être simplement un nouveau plus-haut
+  de 240 — et le prédicat sélectionnerait alors des **cassures de la grande
+  fourchette**, pas des balayages sur un niveau retesté. Deux populations
+  opposées sous un seul nom.
+  ⚠️ La mesure qui tranche, à faire AVANT de lire le moindre R : la part des
+  déclenchements où le niveau de 240 est **atteint pour la première fois**
+  contre celle où il était **déjà en place** dans la fenêtre. Si la première
+  domine, la règle mesure une cassure et il faudra exiger que le niveau
+  préexiste. C'est le troisième recouvrement « évident » de ce carnet — les
+  deux premiers (09/09, 12/09) se sont révélés faux. *Un recouvrement se
+  mesure, il ne se déduit pas.*
+- 🔬 **RECOUVREMENT MESURÉ le 2026-09-20, avant toute lecture de R** — fixture
+  figée XAU/USD 5 min, 4 598 fenêtres, règle LARGE (tolérance seule) :
+
+  | déclencheur | balayages | sur niveau majeur | dont **dépassent** | dont **retestent** |
+  |---|---|---|---|---|
+  | `liquidity_sweep_down` | 159 | 31 (19,5 %) | **25 (80,6 %)** | 6 (19,4 %) |
+  | `liquidity_sweep_up` | 183 | 53 (29,0 %) | **50 (94,3 %)** | 3 (5,7 %) |
+
+  ⛔ **L'objection était fondée.** La règle large mesurait majoritairement une
+  **cassure** de la grande fourchette, pas un niveau retesté. Corrigée le jour
+  même : le niveau ne doit **pas être dépassé**. Ce n'est pas un seuil neuf,
+  c'est la contrainte de sens que cette déclaration avait prévue.
+
+  🔑 **Et la leçon est la plus chère du carnet, encore une fois** : la version
+  la plus FOURNIE (31 et 53 déclenchements) était la MOINS fidèle. Lire son R
+  aurait donné un résultat exploitable statistiquement et faux sur le fond.
+
+- ⚠️ **Fréquence attendue basse, et c'est assumé.** `liquidity_sweep_down` rend
+  n = 395 sur l'or 5 min ; exiger la proximité du niveau de 240 en retirera une
+  large part. Le verdict honnête sera `INSUFFISANT` pendant longtemps. Une
+  chaîne peut être vraie et non mesurable — ce n'est pas la même chose que
+  fausse.
+- **Coût** : 2 chaînes, ~160 cellules, le plafond du hasard monte pour **toutes**
+  les autres cellules. C'est le prix, et c'est pourquoi le concept est déclaré
+  ici avant d'être codé.
+
+---
+
 ## ⛔ Réfutés — ne pas recoder
 
 | concept | verdict | où |

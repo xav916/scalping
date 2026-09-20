@@ -656,6 +656,24 @@ CHAINES: tuple[dict, ...] = (
      "motifs": ("engulfing_bearish",),
      "declencheur": "engulfing_bearish",
      "predicats": ("en_premium",), "fenetre": 0},
+    # ⛔ LE MAILLON 3 : le niveau majeur (declare le 2026-09-20 dans
+    # docs/concepts-trading.md, avant le code). Un balayage pris n'importe ou
+    # n'est pas un balayage pris sur un niveau que le marche a defendu a
+    # l'echelle que tout le monde regarde.
+    #
+    # 🔑 Un seul motif : sous-ensemble STRICT du balayage, donc comparaison
+    # APPARIEE avec `liquidity_sweep` seul.
+    #
+    # ⚠️ Balayer les HAUTS fait VENDRE : la chaine baissiere porte le predicat
+    # du cote `haut`. L'inverser mesurerait la chaine sans sa condition.
+    {"nom": "sweep_sur_niveau_majeur_haussier",
+     "motifs": ("liquidity_sweep_up",),
+     "declencheur": "liquidity_sweep_up",
+     "predicats": ("sur_niveau_majeur_bas",), "fenetre": 0},
+    {"nom": "sweep_sur_niveau_majeur_baissier",
+     "motifs": ("liquidity_sweep_down",),
+     "declencheur": "liquidity_sweep_down",
+     "predicats": ("sur_niveau_majeur_haut",), "fenetre": 0},
 )
 
 # Un pic de volume : la bougie que le detecteur vient de voir porte au moins
@@ -878,12 +896,98 @@ def _cote_de_l_equilibre(veut_discount: bool):
     return _predicat
 
 
+# ─── LE NIVEAU MAJEUR (2026-09-20) ──────────────────────────────────
+#
+# Declare dans `docs/concepts-trading.md` AVANT d'etre code. Le maillon 3 de la
+# chaine rapportee le 12/09 decide OU on attend la liquidite ; sans lui, le
+# balayage se declenche sur le max glissant des 30 dernieres bougies — donc
+# n'importe ou. `_find_level` ne le comble pas : il moyenne les cinq extremes
+# de la fenetre courante, une seule echelle.
+#
+# ⛔ AUCUN REGLAGE NEUF. La fenetre est celle du BIAIS (`BIAIS_FENETRE` = 400),
+# la tolerance est le `0,5 x ATR(14)` de `_IMPULSION_MIN_ATR`.
+# ⚠️ C'est une REUTILISATION, pas une derivation : rien ne prouve que la bonne
+# tolerance soit celle de l'impulsion. Posee une fois, jamais ajustee.
+#
+# ⛔ LE NIVEAU DOIT PREEXISTER — la bougie courante est EXCLUE de la fenetre.
+# Sans cette exclusion, toute bougie faisant un nouvel extreme de 400 serait a
+# distance ZERO de « son » niveau, et le predicat serait vrai par construction.
+# C'est l'objection declaree dans le carnet, et elle est traitee ICI, pas plus
+# tard.
+#
+# ⚠️ CE QUI EST COMPARE, et le choix est assume. On compare l'extreme que la
+# bougie a ATTEINT (son propre haut, ou son propre bas) au niveau, pas le max
+# des 30 qu'elle a franchi. Raison : le `30` du balayage est un litteral dans
+# `_detect_liquidity_sweep`, non exporte ; le recopier ici en ferait une
+# SECONDE source du meme chiffre — le defaut que ce depot paie en boucle. Les
+# deux grandeurs ne sont pas identiques (le haut de la bougie est au-dessus du
+# max des 30) : l'ecart vaut le depassement de la meche, et il est assume.
+NIVEAU_TOLERANCE_ATR = 0.5
+
+
+def _sur_niveau_majeur(cote: str):
+    """Fabrique le predicat « l'extreme atteint est a portee du niveau de 400 ».
+
+    `cote` vaut "haut" (balayage des hauts, donc une VENTE) ou "bas".
+    """
+
+    def _predicat(bougies, i: int) -> bool:
+        from datetime import datetime
+
+        from backend.models.schemas import Candle
+        from backend.services.pattern_detector import _calculate_atr
+
+        # ⚠️ `bougies[:i]` — ce que le detecteur a vu ; sa DERNIERE bougie est
+        # `vues[-1]`, celle qui porte le balayage. Pas `bougies[i]`, que le
+        # detecteur n'a jamais vue.
+        vues = bougies[:i]
+        avant = vues[:-1]
+        if len(avant) < BIAIS_FENETRE:
+            return False            # fail-closed : pas d'histoire, pas de niveau
+        fen = avant[-BIAIS_FENETRE:]
+        try:
+            if cote == "haut":
+                niveau = max(float(x["h"]) for x in fen)
+                atteint = float(vues[-1]["h"])
+            else:
+                niveau = min(float(x["l"]) for x in fen)
+                atteint = float(vues[-1]["l"])
+            objets = [Candle(
+                timestamp=(x["t"] if isinstance(x["t"], datetime)
+                           else datetime.fromisoformat(
+                               str(x["t"]).replace("Z", "+00:00"))),
+                open=float(x["o"]), high=float(x["h"]), low=float(x["l"]),
+                close=float(x["c"]), volume=float(x.get("tv") or 0.0))
+                for x in vues[-15:]]
+        except Exception:  # noqa: BLE001 — bougie malformee : on ne valide pas
+            return False
+        atr = _calculate_atr(objets, period=14)
+        if atr <= 0:
+            return False            # sans echelle, pas de tolerance
+        # ⛔ LE NIVEAU NE DOIT PAS ETRE DEPASSE — correction du 2026-09-20,
+        # imposee par la mesure de recouvrement et PREVUE par la declaration.
+        # Sans cette ligne, mesure sur la fixture figee (4 598 fenetres) :
+        #   balayage des HAUTS : 31 declenchements, dont 80,6 % DEPASSENT ;
+        #   balayage des BAS   : 53 declenchements, dont 94,3 % DEPASSENT.
+        # La regle mesurait donc une CASSURE de la grande fourchette, pas un
+        # niveau retesté — deux populations opposees sous un seul nom. La
+        # version large etait la plus fournie ET la moins fidele : c'est la
+        # forme exacte du reglage sur la donnee que ce laboratoire refuse.
+        if (atteint > niveau) if cote == "haut" else (atteint < niveau):
+            return False
+        return abs(atteint - niveau) <= NIVEAU_TOLERANCE_ATR * atr
+
+    return _predicat
+
+
 _PREDICATS = {"volume_fort": _volume_fort,
               "dans_accumulation": _dans_accumulation,
               "biais_haussier": _biais("haussiere"),
               "biais_baissier": _biais("baissiere"),
               "en_discount": _cote_de_l_equilibre(True),
-              "en_premium": _cote_de_l_equilibre(False)}
+              "en_premium": _cote_de_l_equilibre(False),
+              "sur_niveau_majeur_haut": _sur_niveau_majeur("haut"),
+              "sur_niveau_majeur_bas": _sur_niveau_majeur("bas")}
 _PREDICATS.update({nom: _dans_session(nom) for nom in _SESSIONS})
 
 
