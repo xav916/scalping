@@ -43,10 +43,13 @@ changez `VARIANTES` — mais le plafond du hasard monte avec, et c'est le but.
 
 ## Usage
 
-    sudo docker exec scalping-radar python scripts/declarer_essai_trail_en_R.py
+    # declarer
     sudo docker exec scalping-radar python scripts/declarer_essai_trail_en_R.py --vraiment
+    # abandonner (cf. MOTIF_ABANDON — l'essai s'est revele mal specifie)
+    sudo docker exec scalping-radar python scripts/declarer_essai_trail_en_R.py \
+        --abandonner --vraiment
 
-Sans `--vraiment`, le script affiche ce qu'il déclarerait et ne touche à rien.
+Sans `--vraiment`, le script affiche ce qu'il ferait et ne touche à rien.
 """
 from __future__ import annotations
 
@@ -85,14 +88,77 @@ SELECTEUR = {
 
 AUTEUR = "xavier"
 
+# ⛔ MOTIF D'ABANDON (2026-09-21, le soir meme de la declaration).
+#
+# Deux defauts, chacun suffisant :
+#
+# 1. L'hypothese nomme le stop suiveur. Or `TRAIL_DISTANCE_POINTS` vaut **0**
+#    en production — le suiveur a ete desarme le 2026-08-11 apres avoir ete
+#    mesure a -0,329 R/trade sur l'or. L'essai portait donc sur un mecanisme
+#    deja eteint : il n'aurait jamais rien pu mesurer.
+#
+# 2. Le contrefactuel de sortie, lance le meme soir, a renverse le diagnostic
+#    qui a motive cette declaration. Sur XAU/USD / admin_live depuis le 11/09 :
+#    R obtenu +0,175 contre R contrefactuel **-0,689**, soit +0,864 R par trade
+#    APPORTES par les sorties discretionnaires, et 8 clotures sur 9 qui seraient
+#    allees au stop. La destruction de valeur n'est pas dans la sortie, elle est
+#    dans les NIVEAUX.
+#
+# 🔑 Ses variantes restent comptees dans N. C'est le cout correct d'une
+# declaration faite sur une deduction plutot que sur une mesure, et le banc est
+# concu pour que ce cout ne s'efface pas.
+MOTIF_ABANDON = (
+    "hypothese doublement mal specifiee : (1) elle nomme le stop suiveur, "
+    "desarme depuis le 2026-08-11 (TRAIL_DISTANCE_POINTS=0 en production), donc "
+    "elle portait sur un mecanisme eteint ; (2) le contrefactuel de sortie du "
+    "2026-09-21 a renverse le diagnostic — sur XAU/USD admin_live depuis le "
+    "11/09, les sorties discretionnaires APPORTENT +0,864 R par trade "
+    "(+0,175 obtenu contre -0,689 contrefactuel, 8 clotures sur 9 au stop). La "
+    "cause est dans les niveaux SL/TP, pas dans la gestion de sortie."
+)
+
+
+def _abandonner(banc, vraiment: bool) -> int:
+    """Ferme l'essai sans verdict. N ne redescend pas."""
+    essai = banc.get_trial(SLUG)
+    if essai is None:
+        print(f"L'essai « {SLUG} » n'existe pas — rien a abandonner.")
+        return 1
+    if essai["status"] != "open":
+        print(f"L'essai « {SLUG} » est deja en etat « {essai['status']} ».")
+        print("Un essai clos ne se rejoue pas.")
+        return 1
+
+    print(f"slug   : {SLUG}")
+    print(f"declare: {essai['declared_at']}")
+    print(f"motif  : {MOTIF_ABANDON}")
+    print(f"N reste a {banc.counter()} — les variantes ne sont PAS rendues.")
+    print()
+    if not vraiment:
+        print("SIMULATION — rien n'a ete ecrit. Ajouter --vraiment.")
+        return 0
+
+    if not banc.abandon(SLUG, MOTIF_ABANDON):
+        print("Abandon refuse par le banc.")
+        return 1
+    final = banc.get_trial(SLUG)
+    print(f"Abandonne. Etat : {final['status']}, N toujours a {banc.counter()}.")
+    return 0
+
 
 def main() -> int:
     a = argparse.ArgumentParser(description=__doc__)
     a.add_argument("--vraiment", action="store_true",
                    help="declare pour de bon (sinon : simulation)")
+    a.add_argument("--abandonner", action="store_true",
+                   help="ferme l'essai sans verdict (cf. MOTIF_ABANDON). "
+                        "⛔ Ses variantes restent comptees dans N.")
     args = a.parse_args()
 
     from backend.services import research_bench as banc
+
+    if args.abandonner:
+        return _abandonner(banc, vraiment=args.vraiment)
 
     existant = banc.get_trial(SLUG)
     if existant is not None:
