@@ -561,10 +561,87 @@ effet qui était fausse.
 > d'essai (§3.5) a été construit pour rendre impossible. Tout ajustement de ce seuil
 > devrait passer par le banc, et être consigné.
 
+#### 4.6.5 La cause racine — un paramètre de sortie en unité dépendante de l'instrument
+
+L'investigation a été poussée jusqu'aux 14 clôtures `XAU/USD` de la fenêtre. Leur
+lecture est sans ambiguïté :
+
+| Cause de clôture | n | PnL moyen | R moyen |
+|---|---:|---:|---:|
+| `SL` (stop initial) | 6 | −11,58 € | **−1,00 R** |
+| `MANUAL` (stop suiveur) | 8 | +4,99 € | **+0,298 R** |
+
+Les 8 gagnants portent tous `post_entry_sl=1` : ce n'est pas une main, c'est le
+**stop suiveur**. Le discriminant vient du projet lui-même — mesure du 2026-08-10,
+« 215 trades portaient MANUAL, dont 215 (100 %) avec `post_entry_sl=1` ».
+
+**Le mécanisme.** `mt5-bridge/bridge.py` calcule la distance de suivi ainsi :
+
+```python
+trail_distance = TRAIL_DISTANCE_POINTS * info.point   # 150 × point du symbole
+```
+
+`TRAIL_DISTANCE_POINTS = 150` est un **entier global**, identique pour tous les
+instruments. Mais `info.point` ne vaut pas la même chose partout :
+
+| Instrument | `info.point` | Distance de suivi | Rapport au stop initial |
+|---|---|---|---|
+| EUR/USD (5 décimales) | 0,00001 | 1,5 pip | ordre de grandeur normal |
+| **XAU/USD (2 décimales)** | **0,01** | **1,50 USD** | **0,074 R** |
+
+Sur les 8 trades mesurés, la distance entrée→stop va de 12,08 à 27,13 USD
+(moyenne **20,26 USD**). Le stop suiveur est donc armé **treize fois plus près**
+que le stop initial : tout retracement de 1,50 USD — du bruit intraday ordinaire
+sur l'or — ferme la position, pendant que le côté perdant tolère 20 USD.
+
+**La conséquence est arithmétique, pas conjoncturelle :**
+
+> Espérance = (8 × 0,298 − 6 × 1,00) / 14 = **−0,26 R par trade**.
+> Avec un gain moyen de 0,298 R contre une perte de 1,00 R, il faut **77 % de
+> réussite pour atteindre l'équilibre**. Le taux observé était de **57 %**.
+
+Aucune qualité d'entrée ne survit à ce rapport. La stratégie ne pouvait pas gagner
+— non pas à cause de ses signaux, mais à cause de sa sortie.
+
+🔑 **Le régulateur avait raison et a désigné le mauvais coupable.** Le `dd_R` du
+2026-09-18 a détecté une dégradation **réelle**. Le correctif du 2026-09-08
+(drawdown en R plutôt qu'en euros) avait bien supprimé le faux signal lié à la
+taille ; ce qui restait était un vrai signal. Mais il pointe l'exécution, pas la
+sélection. Rétrograder la paire ne corrige rien — et c'est la lecture la plus
+probable des trois réadmissions manuelles suivies d'une re-pause le jour même
+(§4.6.2) : la vanne était rouverte en amont d'un défaut situé en aval.
+
+**Quatrième occurrence de la même famille de défaut.** Le tableau parle de
+lui-même :
+
+| Date | Piège d'unité |
+|---|---|
+| 2026-08-04 | `TRADING_CAPITAL` global appliqué à un compte Kraken de 103 USD → ordres 20× trop gros |
+| 2026-09-08 | Taille de contrat de l'argent lue à 100 au lieu de 1 000 |
+| 2026-09-08 | Drawdown **en euros** punissant l'or pour son dimensionnement → corrigé en R |
+| **2026-09-21** | **`TRAIL_DISTANCE_POINTS` en points, globale, sur des instruments dont le point ne vaut pas la même chose** |
+
+Le 2026-09-08, le *juge* a été rendu neutre à la taille. Dix jours plus tard l'or
+est rétrogradé quand même, parce que le même piège subsistait dans l'*exécution*,
+où la correction n'avait pas été portée.
+
+> 🔎 **Constat R-11, ÉLEVÉ.** Un paramètre de sortie exprimé dans une unité
+> dépendante de l'instrument a rendu l'espérance **structurellement négative** sur
+> l'instrument qui porte 87,6 % du résultat, et a déclenché sa rétrogradation. La
+> correction de principe — exprimer la distance de suivi en **fraction du risque du
+> trade** — est le même argument que celui qui a fait passer le drawdown en R, et
+> tient indépendamment de son effet sur les chiffres.
+>
+> ⛔ **La valeur, elle, ne doit pas être choisie sur ces données.** Retenir un seuil
+> parce qu'on vient de voir que 0,074 R perdait, c'est reproduire le défaut que
+> `research_bench` (§3.5) existe pour rendre impossible. Un essai a été déclaré au
+> banc le 2026-09-21 (`trail-en-R-or-2026-09-21`) **avant** toute modification.
+
 #### 4.6.4 Constats connexes relevés à cette occasion
 
 | Réf | Constat | Sév. |
 |---|---|---|
+| **R-11** | **`TRAIL_DISTANCE_POINTS` global en points : sur l'or, stop suiveur à 0,074 R contre un stop initial à 1 R → espérance −0,26 R/trade, 77 % de réussite requis pour l'équilibre (§4.6.5)** | **E** |
 | R-8 | `DEMOTION_MAX_DD_R` ajustable à chaud, hors banc d'essai, sur un critère qui vient de bloquer l'instrument principal | **M** |
 | R-9 | L'état effectif d'un couple `(paire, sens, destination)` dépend de **deux mécanismes non réconciliés** (machine à états + régulateur PnL) et n'est lisible nulle part d'un seul tenant | **M** |
 | R-10 | Les refus les plus structurants (`_not_admitted`) sont **absents** de `signal_rejections` ; 1 203 abandons silencieux sur XAU/USD le 2026-09-21 | **M** |
@@ -934,6 +1011,7 @@ Le service est pourtant ouvert, facturé via Stripe, et sert au moins un client 
 | **S-6** | Conteneur en root, `build-essential` conservé, `COPY . .`, pas de `HEALTHCHECK` | Sécu | **M** | 1 j |
 | **R-5** | Cycle rétrogradation auto → réadmission manuelle → re-pause le jour même, 3 fois en 4 mois sur XAU/USD, à −113 % / −120 % / −125 % de PnL (§4.6) | Risque | **E** | Process |
 | **R-6** | Promotions sur échantillon complété par des signaux **simulés** | Risque | **M** | 2 j |
+| **R-11** | Stop suiveur en points globaux : 0,074 R sur l'or contre 1 R au stop initial → espérance structurellement négative (−0,26 R/trade) sur l'instrument portant 87,6 % du résultat (§4.6.5) | Risque | **E** | 2 j |
 | **R-8** | `DEMOTION_MAX_DD_R` ajustable à chaud, hors banc d'essai, après avoir bloqué l'instrument principal pour 3,4 % de dépassement (§4.6.3) | Risque | **M** | Process |
 | **R-9** | L'état d'un couple `(paire, sens, destination)` dépend de **deux mécanismes non réconciliés**, illisible d'un seul tenant (§4.6.1) | Risque | **M** | 3 j |
 | **R-10** | Les refus `_not_admitted` sont **absents** de `signal_rejections` — 1 203 abandons silencieux sur XAU/USD le 21/09 (§4.6.1) | Risque | **M** | 2 j |
