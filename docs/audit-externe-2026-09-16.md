@@ -77,20 +77,21 @@ ses écarts.
 
 ## 1. Résumé exécutif
 
-### 1.1 Les dix constats
+### 1.1 Les constats majeurs
 
 | # | Constat | Axe | Sév. |
 |---|---|---|---|
 | 1 | **Aucun edge statistiquement établi.** Le projet l'a mesuré lui-même : `DSR = 0,017` après correction du nombre d'essais, `PBO = 0,579`, Δ contrôle aléatoire = +0,004 R sur 29 000 trades. | Perf | **C** |
 | 2 | **De l'argent réel est engagé malgré ce constat**, sur des comptes propres *et* sur le compte d'au moins un client tiers. | Gouv | **C** |
 | 3 | **Écart backtest / réel de deux ordres de grandeur** : PF annoncés 1,24–5,60, Sharpe 1,59 ; réalisé sur 4 mois = **−982,67 € / 1 085 clôtures, 28,6 % de réussite**. | Perf | **C** |
-| 4 | **Exécution automatique sur le compte d'un tiers** (`user:2`, offre Premium 39 €/mois), alors que les CGU déclarent ne fournir aucun conseil en investissement. Qualification réglementaire à faire instruire. | Conf | **C** |
-| 5 | **Jeton d'infrastructure en clair dans le dépôt**, en valeur par défaut de 6+ scripts et publié dans la documentation opérationnelle. | Sécu | **E** |
-| 6 | **Contournement du rate limiting** possible sur les endpoints sensibles (login, signup, reset) via un en-tête `X-Forwarded-For` forgé. | Sécu | **E** |
-| 7 | **Aucune intégration continue n'exécute les tests**, et la suite n'est ni installable d'une source unique ni exécutable en entier sur Linux — les tests des garde-fous de risque MT5 ne tournent donc automatiquement nulle part. | IT | **E** |
-| 8 | **CGU / CGV / Politique de confidentialité sont des gabarits non complétés** (`[À COMPLÉTER]` : éditeur, statut juridique, SIRET, adresse), alors que le service est ouvert et facturé. | Conf | **E** |
-| 9 | **SQLite en base de production** pour des données de trading et de facturation, avec sessions et rate limiting en mémoire → mono-instance par construction, aucun redémarrage sans rupture. | IT | **M** |
-| 10 | **Dispositif de garde-fous dense et de bonne facture** (17+ modules, fail-closed explicite, arbitrage humain sur dépassement) — construit *a posteriori*, incident par incident. | Risque | **Positif** |
+| 4 | **Le système n'est pas autonome sur son instrument principal.** Sur la fenêtre mesurée, **9 clôtures sur 9** de l'or en argent réel sont discrétionnaires et apportent **+0,864 R par trade** ; livrés à leurs niveaux, 8 trades sur 9 seraient allés au stop. Toute statistique incluant ces trades mesure l'opérateur autant que l'algorithme (§4.6.5). | Perf | **C** |
+| 5 | **Exécution automatique sur le compte d'un tiers** (`user:2`, offre Premium 39 €/mois), alors que les CGU déclarent ne fournir aucun conseil en investissement — et que le produit vendu comme automatique dépend, chez l'éditeur, d'interventions manuelles. Qualification réglementaire à faire instruire. | Conf | **C** |
+| 6 | **Jeton d'infrastructure en clair dans le dépôt**, en valeur par défaut de 6+ scripts et publié dans la documentation opérationnelle. | Sécu | **E** |
+| 7 | **Contournement du rate limiting** possible sur les endpoints sensibles (login, signup, reset) via un en-tête `X-Forwarded-For` forgé. | Sécu | **E** |
+| 8 | **Aucune intégration continue n'exécute les tests**, et la suite n'est ni installable d'une source unique ni exécutable en entier sur Linux — les tests des garde-fous de risque MT5 ne tournent donc automatiquement nulle part. | IT | **E** |
+| 9 | **CGU / CGV / Politique de confidentialité sont des gabarits non complétés** (`[À COMPLÉTER]` : éditeur, statut juridique, SIRET, adresse), alors que le service est ouvert et facturé. | Conf | **E** |
+| 10 | **SQLite en base de production** pour des données de trading et de facturation, avec sessions et rate limiting en mémoire → mono-instance par construction, aucun redémarrage sans rupture. | IT | **M** |
+| 11 | **Dispositif de garde-fous dense et de bonne facture** (17+ modules, fail-closed explicite, arbitrage humain sur dépassement) — construit *a posteriori*, incident par incident. | Risque | **Positif** |
 
 ### 1.2 Lecture d'ensemble
 
@@ -100,13 +101,18 @@ service d'une stratégie dont **le projet lui-même a démontré qu'elle ne bat 
 hasard**.
 
 Les risques matériels ne portent donc pas sur la qualité du code, qui est bonne. Ils
-portent sur trois écarts :
+portent sur quatre écarts :
 
 1. **Écart décision / mesure** — de l'argent réel continue d'être engagé sur des
    configurations que le banc d'essai interne juge sous le plafond du hasard.
-2. **Écart produit / statut** — une prestation d'exécution automatique sur compte de
-   tiers est vendue sous un habillage contractuel d'outil informatif.
-3. **Écart exploitation / criticité** — une infrastructure mono-instance, sans CI,
+2. **Écart mesure / réalité** — les performances observées ne sont pas celles de
+   l'algorithme. Sur l'or en argent réel, l'intervention manuelle apporte +0,864 R
+   par trade, et les niveaux laissés à eux-mêmes en rendent −0,689. Aucune métrique
+   du dossier ne sépare les deux contributions (§4.6.5).
+3. **Écart produit / statut** — une prestation d'exécution automatique sur compte de
+   tiers est vendue sous un habillage contractuel d'outil informatif, alors que
+   l'automatisme lui-même est démenti par la mesure.
+4. **Écart exploitation / criticité** — une infrastructure mono-instance, sans CI,
    avec un secret partagé en clair, opère des ordres en argent réel.
 
 ### 1.3 Recommandation de séquence
@@ -561,10 +567,83 @@ effet qui était fausse.
 > d'essai (§3.5) a été construit pour rendre impossible. Tout ajustement de ce seuil
 > devrait passer par le banc, et être consigné.
 
+#### 4.6.5 Ce que les niveaux auraient donné — la mesure qui renverse l'hypothèse
+
+> ⚠️ **Cette section a été réécrite le 2026-09-21 après mesure.** Trois hypothèses
+> successives ont été avancées puis écartées au cours de l'investigation (stop
+> suiveur, clôture partielle à TP1, « l'intervention humaine détruit de la
+> valeur »). Les trois raisonnaient sur une structure plausible du code ; le
+> contrefactuel les a toutes réfutées. Le détail de ces fausses pistes est
+> conservé dans l'historique git de ce rapport — il documente le coût de déduire
+> au lieu de mesurer, dans un projet dont c'est précisément la doctrine.
+
+**Le fait mesuré.** `contrefactuel_sortie.py` rejoue, bougie par bougie, ce que le
+SL/TP aurait donné sur **les trades effectivement sortis autrement** — même trades,
+mêmes prix, ce qui supprime le biais de sélection. Sur `XAU/USD` / `admin_live`,
+depuis le 2026-09-11 :
+
+| | n | R moyen |
+|---|---:|---:|
+| **R obtenu** (sorties discrétionnaires) | 9 | **+0,175** |
+| **R si les niveaux avaient joué** | 9 | **−0,689** |
+| **Écart** | | **+0,864 R par trade** |
+
+**Huit trades sur neuf seraient allés au stop.** Un seul aurait atteint son
+objectif.
+
+Le même calcul sur l'ensemble des clôtures non automatiques depuis le 2026-08-25
+va dans le même sens, à un ordre de grandeur comparable :
+
+| Destination | n | R obtenu | R contrefactuel | Écart |
+|---|---:|---:|---:|---:|
+| `admin_live` | 55 | +0,330 | −0,287 | **+0,617** |
+| `admin_legacy` | 23 | +0,513 | −0,270 | **+0,782** |
+
+> 🔑 **Le problème n'est pas la sortie, ce sont les niveaux.** Le SL/TP produit par
+> le système a une espérance **négative** sur l'or : livrés à eux-mêmes, ces trades
+> perdent 0,689 R en moyenne. L'intervention discrétionnaire est ce qui ramène le
+> résultat en territoire positif.
+
+**La chaîne causale de la rétrogradation, correctement orientée.** Les trades que la
+main n'intercepte pas vont au bout de leurs niveaux et perdent — ce sont les 6 stops
+à −1,03 R du §4.6.5 précédent. C'est ce chemin-là, automatique, qui a creusé le
+drawdown de 5,168 R et déclenché la rétrogradation du 2026-09-18.
+
+**Le régulateur a donc eu raison, et pour la bonne raison.** Il a coupé un instrument
+dont les niveaux perdent de l'argent. Réadmettre l'or sans corriger les niveaux
+revient à réexposer le compte à ce chemin. Les trois réadmissions manuelles du
+§4.6.2, chacune suivie d'une re-pause, s'expliquent dès lors sans mystère.
+
+**Le coût de la politique est réel et borné.** Le trade du 2026-09-14 19h49 a été
+coupé à +0,132 R alors que son objectif à +1,8 R aurait été atteint : **−1,668 R de
+gain renoncé**, sur ce seul trade. C'est le prix de l'interception — et il reste
+très inférieur aux sept stops évités.
+
+> 🔎 **Constat R-11, ÉLEVÉ — reformulé.** Les niveaux (SL/TP) générés par le système
+> ont une espérance **négative** sur l'instrument qui porte 87,6 % du résultat :
+> −0,689 R par trade sur la fenêtre qui a déclenché la rétrogradation, 8 clôtures
+> sur 9 au stop en contrefactuel. C'est une troisième voie de mesure indépendante
+> qui converge avec `DSR = 0,017`, `PBO = 0,579` et Δ contrôle aléatoire
+> `+0,004 R` : **il n'y a pas d'edge, et cette fois le constat porte sur les niveaux
+> eux-mêmes, pas sur la sélection des setups.**
+
+> ⛔ **Constat R-13, ÉLEVÉ — et c'est le plus important pour un auditeur externe.**
+> La performance observée du système **dépend d'interventions humaines non
+> documentées**. Sur la fenêtre étudiée, 9 clôtures sur 9 sont discrétionnaires, et
+> elles apportent +0,864 R par trade. Autrement dit : **toute statistique de
+> performance incluant ces trades mesure l'opérateur autant que l'algorithme.** Un
+> système présenté comme automatisé, et vendu comme tel en offre Premium (§6.2), ne
+> l'est pas sur son instrument principal. Aucune des métriques du §3 ne sépare les
+> deux contributions ; aucune trace ne consigne la décision humaine au moment où
+> elle est prise.
+
 #### 4.6.4 Constats connexes relevés à cette occasion
 
 | Réf | Constat | Sév. |
 |---|---|---|
+| **R-11** | **Les niveaux SL/TP ont une espérance négative sur l'or : −0,689 R/trade en contrefactuel, 8 clôtures sur 9 au stop. Troisième voie de mesure convergeant avec DSR 0,017 (§4.6.5)** | **E** |
+| **R-13** | **La performance dépend d'interventions humaines non documentées : +0,864 R/trade apportés par des clôtures discrétionnaires. Le système n'est pas autonome sur son instrument principal (§4.6.5)** | **E** |
+| R-12 | `contrefactuel_sortie.bilan()` rend un verdict (« sortir tôt a MIEUX fait ») sur une différence de moyennes, **sans test de significativité**, dans un projet qui calcule ailleurs un Sharpe dégonflé et un plafond du hasard | **M** |
 | R-8 | `DEMOTION_MAX_DD_R` ajustable à chaud, hors banc d'essai, sur un critère qui vient de bloquer l'instrument principal | **M** |
 | R-9 | L'état effectif d'un couple `(paire, sens, destination)` dépend de **deux mécanismes non réconciliés** (machine à états + régulateur PnL) et n'est lisible nulle part d'un seul tenant | **M** |
 | R-10 | Les refus les plus structurants (`_not_admitted`) sont **absents** de `signal_rejections` ; 1 203 abandons silencieux sur XAU/USD le 2026-09-21 | **M** |
@@ -934,6 +1013,9 @@ Le service est pourtant ouvert, facturé via Stripe, et sert au moins un client 
 | **S-6** | Conteneur en root, `build-essential` conservé, `COPY . .`, pas de `HEALTHCHECK` | Sécu | **M** | 1 j |
 | **R-5** | Cycle rétrogradation auto → réadmission manuelle → re-pause le jour même, 3 fois en 4 mois sur XAU/USD, à −113 % / −120 % / −125 % de PnL (§4.6) | Risque | **E** | Process |
 | **R-6** | Promotions sur échantillon complété par des signaux **simulés** | Risque | **M** | 2 j |
+| **R-11** | Niveaux SL/TP à espérance négative sur l'or : −0,689 R/trade en contrefactuel, 8/9 au stop (§4.6.5) | Perf | **E** | Décision |
+| **R-13** | Performance dépendante d'interventions humaines non tracées (+0,864 R/trade) : le système n'est pas autonome sur son instrument principal, alors qu'il est vendu comme tel (§4.6.5, §6.2) | Gouv | **E** | Décision |
+| **R-12** | `bilan()` rend un verdict sans test de significativité, sous le standard méthodologique du projet | Perf | **M** | 1 j |
 | **R-8** | `DEMOTION_MAX_DD_R` ajustable à chaud, hors banc d'essai, après avoir bloqué l'instrument principal pour 3,4 % de dépassement (§4.6.3) | Risque | **M** | Process |
 | **R-9** | L'état d'un couple `(paire, sens, destination)` dépend de **deux mécanismes non réconciliés**, illisible d'un seul tenant (§4.6.1) | Risque | **M** | 3 j |
 | **R-10** | Les refus `_not_admitted` sont **absents** de `signal_rejections` — 1 203 abandons silencieux sur XAU/USD le 21/09 (§4.6.1) | Risque | **M** | 2 j |
