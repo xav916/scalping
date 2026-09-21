@@ -637,12 +637,64 @@ très inférieur aux sept stops évités.
 > deux contributions ; aucune trace ne consigne la décision humaine au moment où
 > elle est prise.
 
+#### 4.6.6 Le respect des stops — une question posée, et refermée par la mesure
+
+Le trade du 2026-09-11 a clôturé à **−1,705 R** : le stop a été dépassé de 7,13 USD,
+soit **0,705 R au-delà** du niveau. L'hypothèse examinée était qu'un dépassement
+systématique fausserait tous les budgets de risque, qui supposent tous qu'un stop
+borne la perte à 1 R.
+
+**La mesure la réfute.** Sur l'ensemble des clôtures `SL`, en écartant les stops
+placebos (< 0,1 % du prix, seuil déjà employé par `laboratoire_or`) :
+
+| `admin_live` | n | Dépassement moyen |
+|---|---:|---:|
+| XAU/USD sell | 13 | +0,127 R |
+| BCH/USD sell | 44 | +0,070 R |
+| BCH/USD buy | 23 | −0,011 R |
+| XAU/USD buy | 9 | −0,032 R |
+| ETH/USD sell | 70 | −0,241 R |
+| **Agrégat** | **159** | **−0,080 R** |
+
+Sur le compte réel, les stops sortent en moyenne **mieux** que leur niveau. Il n'y a
+pas de dépassement systémique, et les budgets de risque ne sont pas faussés.
+
+⚠️ **Sans le filtre placebo, le même agrégat valait +0,166 R, et l'or vendeur
++0,960 R avec un pire cas à +14,091 R** — porté par cinq stops sur dix-huit dont la
+distance était trop faible pour que le R veuille dire quelque chose. C'est une
+illustration nette du piège : **le R n'a de sens que si le stop en a un.**
+`promotion_engine` applique d'ailleurs ce filtre dans son calcul de `dd_R`
+(vérifié) — le 5,168 R qui a rétrogradé l'or est donc calculé sur de vrais stops,
+tous entre 0,22 % et 0,63 %.
+
+Le trade du 11/09 est le **pire cas de l'échantillon filtré**, pas la norme : une
+queue de distribution, clôturée 23 minutes après le CPI américain, sans protection
+news puisque le garde-fou était inerte jusqu'au 2026-09-20 (§4.6.5).
+
+Deux constats subsistent, modestes :
+
+> 🔎 **R-14, FAIBLE.** Le **slippage de sortie n'est instrumenté nulle part.**
+> `slippage_pips` ne mesure que l'entrée (`fill_price` contre `entry_requested`), et
+> `slippage_instrumentation_check` surveille seulement que cette colonne se remplit.
+> Qu'un stop soit honoré ou non n'est suivi par rien : il a fallu une requête ad hoc
+> pour l'établir. Une grandeur qui n'est mesurée par aucun dispositif permanent
+> redevient invisible dès qu'on cesse de la chercher.
+
+> 🔎 **R-15, MOYEN — réserve méthodologique.** Sur l'or vendeur, la démo rend
+> **−0,040 R** de dépassement et le réel **+0,127 R**. Les fills simulés honorent le
+> stop ; le courtier réel prend environ 13 % de plus. L'écart est faible, mais il est
+> **systématique et orienté** : toute calibration de risque validée en démo
+> sous-estime le réel. Cela concerne directement la phase shadow et les seuils
+> promus depuis `admin_legacy` vers `admin_live`.
+
 #### 4.6.4 Constats connexes relevés à cette occasion
 
 | Réf | Constat | Sév. |
 |---|---|---|
 | **R-11** | **Les niveaux SL/TP ont une espérance négative sur l'or : −0,689 R/trade en contrefactuel, 8 clôtures sur 9 au stop. Troisième voie de mesure convergeant avec DSR 0,017 (§4.6.5)** | **E** |
 | **R-13** | **La performance dépend d'interventions humaines non documentées : +0,864 R/trade apportés par des clôtures discrétionnaires. Le système n'est pas autonome sur son instrument principal (§4.6.5)** | **E** |
+| R-14 | Le **slippage de sortie** n'est instrumenté par aucun dispositif permanent (§4.6.6) | **F** |
+| R-15 | La démo honore les stops (−0,040 R), le réel non (+0,127 R) : toute calibration de risque validée en démo sous-estime le réel (§4.6.6) | **M** |
 | R-12 | `contrefactuel_sortie.bilan()` rend un verdict (« sortir tôt a MIEUX fait ») sur une différence de moyennes, **sans test de significativité**, dans un projet qui calcule ailleurs un Sharpe dégonflé et un plafond du hasard | **M** |
 | R-8 | `DEMOTION_MAX_DD_R` ajustable à chaud, hors banc d'essai, sur un critère qui vient de bloquer l'instrument principal | **M** |
 | R-9 | L'état effectif d'un couple `(paire, sens, destination)` dépend de **deux mécanismes non réconciliés** (machine à états + régulateur PnL) et n'est lisible nulle part d'un seul tenant | **M** |
@@ -1015,7 +1067,9 @@ Le service est pourtant ouvert, facturé via Stripe, et sert au moins un client 
 | **R-6** | Promotions sur échantillon complété par des signaux **simulés** | Risque | **M** | 2 j |
 | **R-11** | Niveaux SL/TP à espérance négative sur l'or : −0,689 R/trade en contrefactuel, 8/9 au stop (§4.6.5) | Perf | **E** | Décision |
 | **R-13** | Performance dépendante d'interventions humaines non tracées (+0,864 R/trade) : le système n'est pas autonome sur son instrument principal, alors qu'il est vendu comme tel (§4.6.5, §6.2) | Gouv | **E** | Décision |
+| **R-15** | Démo et réel ne respectent pas les stops de la même façon (−0,040 R contre +0,127 R) : une calibration validée en démo sous-estime le réel (§4.6.6) | Risque | **M** | Process |
 | **R-12** | `bilan()` rend un verdict sans test de significativité, sous le standard méthodologique du projet | Perf | **M** | 1 j |
+| **R-14** | Slippage de **sortie** non instrumenté : le respect des stops n'est suivi par rien (§4.6.6) | Risque | **F** | 1 j |
 | **R-8** | `DEMOTION_MAX_DD_R` ajustable à chaud, hors banc d'essai, après avoir bloqué l'instrument principal pour 3,4 % de dépassement (§4.6.3) | Risque | **M** | Process |
 | **R-9** | L'état d'un couple `(paire, sens, destination)` dépend de **deux mécanismes non réconciliés**, illisible d'un seul tenant (§4.6.1) | Risque | **M** | 3 j |
 | **R-10** | Les refus `_not_admitted` sont **absents** de `signal_rejections` — 1 203 abandons silencieux sur XAU/USD le 21/09 (§4.6.1) | Risque | **M** | 2 j |
