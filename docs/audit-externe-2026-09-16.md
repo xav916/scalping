@@ -7,7 +7,7 @@
 | **Objet** | Système automatisé de détection et d'exécution de setups de trading |
 | **Dépôt** | `xav916/scalping` — branche `claude/scalping-audit-report-qym1b0` |
 | **Commit analysé** | `5cf5994` (2026-09-16) |
-| **Date du rapport** | 2026-09-16 |
+| **Date du rapport** | 2026-09-16 — **addendum du 2026-09-21 (§4.6)** |
 | **Périmètre** | Performance & edge · Maîtrise du risque · Architecture & sécurité IT · Gouvernance & conformité |
 | **Destinataire** | Auditeur externe (technique, quantitatif ou réglementaire) |
 | **Production** | `https://app.scalping-radar.online` — AWS EC2, argent réel engagé |
@@ -34,7 +34,7 @@ comptes courtiers, ni aux serveurs. Il vise à donner à un auditeur externe :
 | Code source | Lu directement. Les affirmations sur le code sont vérifiables ligne à ligne. |
 | Suite de tests | **Exécutée** dans le conteneur d'audit (résultats en §5.6). |
 | Chiffres de performance | **Repris de la documentation interne du projet**, non recalculés. Chaque chiffre porte sa source. |
-| Base de production, comptes courtiers, logs serveur | **Non accessibles.** Tout ce qui en dépend est marqué comme à vérifier. |
+| Base de production, comptes courtiers, logs serveur | **Non accessibles à la rédaction initiale.** Tout ce qui en dépend est marqué comme à vérifier. ⚠️ **Exception, cf. addendum §4.6** : le 2026-09-21, des requêtes sur `trades.db` de production ont été exécutées par l'exploitant et leur sortie brute transmise. Les constats du §4.6 en dérivent et sont donc de premier rang, contrairement au reste du rapport. |
 
 ### 0.3 Limites de cette inspection — à lire avant toute conclusion
 
@@ -45,6 +45,11 @@ comptes courtiers, ni aux serveurs. Il vise à donner à un auditeur externe :
 - ⚠️ **Les chiffres de performance ne sont pas reproduits.** Ils proviennent du
   journal de recherche et des rapports internes. Leur reproduction exige la base
   `trades.db` / `backtest.db` de production.
+- ✅ **Levée partielle le 2026-09-21** : des requêtes sur la base de production ont été
+  exécutées par l'exploitant et leurs sorties transmises brutes. Elles ne couvrent que
+  l'état d'admission, les rejets et les abandons silencieux sur XAU/USD — pas la
+  performance. Les constats qui en découlent sont isolés en **§4.6** et signalés comme
+  tels ; le reste du rapport conserve son statut documentaire.
 - ⚠️ **Aucun relevé de courtier n'a été consulté.** Le rapprochement entre le PnL
   interne et les relevés officiels IC Markets / Kraken / Pepperstone reste à faire —
   c'est le premier travail d'un auditeur financier (§3.7).
@@ -464,11 +469,107 @@ binaire : prendre ou refuser.
 | R-2 | `RESEARCH_BENCH_GATE_ENABLED=false` par défaut : la porte censée bloquer le passage à l'argent réel est **ouverte** | **E** |
 | R-3 | Portes de risque **restreintes aux routes MT5** ; Kraken, Binance, IBKR ne bénéficient pas des mêmes contrôles | **E** |
 | R-4 | Risque par trade **subi** (lot minimum) et non choisi ; incompatibilité 9,2 % vs plafond journalier 3 % | **E** |
-| R-5 | Promotions `AUTO_EXEC` **manuelles** possibles, contournant les critères automatiques (14 transitions `admin_manual` le 2026-08-07) | **M** |
+| R-5 | **Cycle rétrogradation automatique → réadmission manuelle → re-pause immédiate**, documenté sur 4 mois et constaté sur l'instrument portant 87,6 % du résultat. Trois passages en force suivis d'une re-pause le jour même, à −113 % / −120 % / −125 % de PnL. **Détail et preuves en §4.6.** | **E** |
 | R-6 | Promotions auto sur échantillon **complété par des signaux simulés** quand les trades réels manquent (« 0/30 requis ; complété par 30 signaux simulés ») | **M** |
 | R-7 | Aucun mécanisme de limite de perte **cumulée** (le plafond est journalier et glissant) | **M** |
 
 ---
+
+### 4.6 Addendum du 2026-09-21 — le cycle réadmission manuelle / re-pause
+
+> ⚠️ **Statut particulier de cette section.** Contrairement au reste du rapport, elle
+> s'appuie sur des **données de production réelles**, extraites le 2026-09-21 par
+> l'exploitant depuis `/opt/scalping/data/trades.db` et transmises brutes. Elle a été
+> ajoutée après la rédaction initiale, sans réécrire ce qui précède — conformément à
+> la règle « pas de réécriture rétroactive » du journal de recherche du projet.
+>
+> **Origine** : investigation d'une absence de trade sur XAU/USD le 2026-09-21.
+
+#### 4.6.1 Ce que l'incident a révélé
+
+L'or n'a pas tradé sur le compte réel ce jour-là, pour deux raisons **indépendantes** et
+antérieures à la séance :
+
+| Sens | Mécanisme | État |
+|---|---|---|
+| **sell** | Machine à états d'admission | `TELEGRAM` depuis le **2026-09-18 03:00 UTC** — `auto:demotion:dd_above_5.0R_7d:5.168` |
+| **buy** | `pair_pnl_regulator` (couche **distincte**) | En pause — 942 refus `pair_auto_paused` sur la journée |
+
+Deux garde-fous différents, deux codes de refus différents (`_not_admitted` contre
+`pair_auto_paused`), pour le même instrument. La lecture de l'état d'un couple
+`(paire, sens, destination)` exige donc d'interroger **deux sources** — ce qui n'est
+documenté nulle part.
+
+⚠️ **Le refus côté vente est invisible dans `signal_rejections`.** Les motifs préfixés
+`_` (`_not_admitted`, `_not_a_star`, `_user_excluded_pair`…) ne sont comptés que dans
+`silent_drop_counters`. Le 2026-09-21, cela représentait **1 203 abandons silencieux**
+sur le seul XAU/USD. Un exploitant qui ne consulte que la table des rejets conclut que
+rien n'a bloqué l'or — alors que c'est la voie principale qui était coupée.
+
+#### 4.6.2 Le cycle, sur quatre mois
+
+Extrait de `pair_admission_state` (table append-only, colonne `transitioned_by`) :
+
+| Date | Transition | Motif enregistré |
+|---|---|---|
+| 2026-05-25 | → PAUSED | `auto-pause: pnl_pct -6,49 %` |
+| 2026-06-09 | → PAUSED | `auto-pause: pnl_pct **-125,18 %**` |
+| 2026-06-12 | → AUTO_EXEC | `admin:xavier-manual` — *« accept risk of re-pause »* |
+| **2026-06-12** | → PAUSED | `auto-pause: pnl_pct **-120,23 %**` — **le jour même** |
+| 2026-06-26 | → DEMOTED | `auto-demote: 3 pauses on 60d (max 2)` |
+| 2026-07-13 | → AUTO_EXEC | `manual override` — *« unblock alpha whitelist »* |
+| **2026-07-13** | → PAUSED | `auto-pause: pnl_pct **-113,16 %**` — **le jour même** |
+| 2026-07-28 | → DEMOTED | `auto-demote: 3 pauses on 60d (max 2)` |
+| 2026-08-21 | → TELEGRAM (`admin_live` buy) | `auto:demotion:dd_above_10.0%_7d:18.98` |
+| 2026-08-25 | → AUTO_EXEC (2 sens, 2 comptes) | `manual:xavier` |
+| 2026-09-01 | → TELEGRAM (`admin_live` sell) | `auto:demotion:dd_above_10.0%_7d:13.71` |
+| 2026-09-08 | → TELEGRAM (`admin_live` buy) | `auto:demotion:dd_above_10.0%_7d:13.96` |
+| 2026-09-08 | → AUTO_EXEC (2 sens) | `manual:xavier` — réadmission |
+| 2026-09-18 | → TELEGRAM (`admin_live` sell) | `auto:demotion:dd_above_5.0R_7d:5.168` |
+
+**Trois réadmissions manuelles, trois re-pauses automatiques — dont deux le jour même.**
+Sur `admin_live` seul : 2 forçages manuels contre 4 rétrogradations automatiques en
+moins d'un mois.
+
+🔑 **Ce n'est pas un dysfonctionnement du régulateur : c'est un désaccord persistant
+entre le régulateur et l'exploitant, arbitré à chaque fois en faveur de l'exploitant,
+et démenti à chaque fois par le marché en quelques heures.** Le motif du 2026-06-12
+(« accept risk of re-pause ») montre que le risque était compris et assumé. La question
+d'audit n'est donc pas la traçabilité — elle est excellente — mais l'absence de règle
+limitant le nombre de forçages sur un couple donné.
+
+#### 4.6.3 Le seuil qui a mordu au premier cas réel
+
+Le critère de rétrogradation a changé d'unité entre le 2026-09-08 (`dd_above_10.0%_7d`)
+et le 2026-09-18 (`dd_above_5.0R_7d`). `DEMOTION_MAX_DD_R = 5.0` a été introduit
+explicitement **comme un desserrement**, et le code le documente :
+
+> ⛔ *Le drawdown en R d'abord : il est NEUTRE À LA TAILLE. […] sinon on retomberait à
+> **punir l'or pour son dimensionnement**.*
+> ⚠️ *CONSÉQUENCE ASSUMÉE : sur les trois dernières semaines, ce seuil n'aurait
+> rétrogradé **AUCUN** couple.*
+
+Trois semaines plus tard, il rétrograde — à **5,168 R contre un plafond de 5,0**, soit
+3,4 % de dépassement — et il rétrograde **l'instrument même qu'il avait été écrit pour
+protéger**. Le mécanisme a fonctionné comme spécifié ; c'est l'anticipation de son
+effet qui était fausse.
+
+> 🔎 **Point de vigilance (R-8, MOYEN)** : `DEMOTION_MAX_DD_R` est réglable par variable
+> d'environnement, sans redéploiement. Le relever maintenant, après avoir constaté
+> qu'il a bloqué l'instrument le plus rentable pour 3,4 % de dépassement, reviendrait à
+> **choisir un seuil après avoir vu la donnée** — précisément le défaut que le banc
+> d'essai (§3.5) a été construit pour rendre impossible. Tout ajustement de ce seuil
+> devrait passer par le banc, et être consigné.
+
+#### 4.6.4 Constats connexes relevés à cette occasion
+
+| Réf | Constat | Sév. |
+|---|---|---|
+| R-8 | `DEMOTION_MAX_DD_R` ajustable à chaud, hors banc d'essai, sur un critère qui vient de bloquer l'instrument principal | **M** |
+| R-9 | L'état effectif d'un couple `(paire, sens, destination)` dépend de **deux mécanismes non réconciliés** (machine à états + régulateur PnL) et n'est lisible nulle part d'un seul tenant | **M** |
+| R-10 | Les refus les plus structurants (`_not_admitted`) sont **absents** de `signal_rejections` ; 1 203 abandons silencieux sur XAU/USD le 2026-09-21 | **M** |
+| IT-4 | `mt5_pushes` utilise `pushed_at` / `date` et `pair_admission_state` utilise `state_since` : aucun schéma de la base n'est documenté hors du code | **F** |
+| IT-5 | `scalping.db` (dont `economic_events`, source du blackout news depuis le 2026-09-20) **n'est pas dans la boucle de sauvegarde** de `deploy/backup-s3.sh` | **M** |
 
 ## 5. Axe C — Architecture et sécurité IT
 
@@ -831,14 +932,19 @@ Le service est pourtant ouvert, facturé via Stripe, et sert au moins un client 
 | **S-4** | E-mails réels d'utilisateurs dans `.env.example` et la documentation | Sécu | **M** | 1 h |
 | **S-5** | Sessions + rate limiting en mémoire, SQLite en production → mono-instance | IT | **M** | 1 mois |
 | **S-6** | Conteneur en root, `build-essential` conservé, `COPY . .`, pas de `HEALTHCHECK` | Sécu | **M** | 1 j |
-| **R-5** | Promotions `AUTO_EXEC` manuelles contournant les critères automatiques | Risque | **M** | Process |
+| **R-5** | Cycle rétrogradation auto → réadmission manuelle → re-pause le jour même, 3 fois en 4 mois sur XAU/USD, à −113 % / −120 % / −125 % de PnL (§4.6) | Risque | **E** | Process |
 | **R-6** | Promotions sur échantillon complété par des signaux **simulés** | Risque | **M** | 2 j |
+| **R-8** | `DEMOTION_MAX_DD_R` ajustable à chaud, hors banc d'essai, après avoir bloqué l'instrument principal pour 3,4 % de dépassement (§4.6.3) | Risque | **M** | Process |
+| **R-9** | L'état d'un couple `(paire, sens, destination)` dépend de **deux mécanismes non réconciliés**, illisible d'un seul tenant (§4.6.1) | Risque | **M** | 3 j |
+| **R-10** | Les refus `_not_admitted` sont **absents** de `signal_rejections` — 1 203 abandons silencieux sur XAU/USD le 21/09 (§4.6.1) | Risque | **M** | 2 j |
+| **IT-5** | `scalping.db` (dont `economic_events`) **hors de la boucle de sauvegarde** S3 | IT | **M** | 15 min |
 | **R-7** | Pas de limite de perte cumulée (seulement journalière) | Risque | **M** | 2 j |
 | **G-3** | RGPD : pas de registre des traitements, pas de DPA, pas de durée de conservation | Conf | **M** | 1 sem |
 | **IT-2** | VPS Windows = point de défaillance unique pour l'exécution MT5 | IT | **M** | 1 mois |
 | **S-7** | Bridge : clé API générée et journalisée en clair si absente (fail-open config) | Sécu | **F** | 1 h |
 | **S-8** | Basic Auth conservé en repli | Sécu | **F** | 2 h |
 | **IT-3** | `yfinance>=0.2.40` non épinglé | IT | **F** | 5 min |
+| **IT-4** | Aucun schéma de base documenté hors du code (`pushed_at`, `state_since`…) | IT | **F** | 1 j |
 
 **Légende** — C : critique · E : élevé · M : moyen · F : faible
 
@@ -888,7 +994,8 @@ Un audit qui n'inscrit que des manquements donne une image fausse de ce système
 7. **Comment les 49 paires opérées** se réconcilient-elles avec les 16 annoncées ?
 8. **Quel est le plan de reprise** en cas de perte du VPS Windows ?
 9. **Qui a l'autorité** de promouvoir une paire en `AUTO_EXEC` manuellement, et sous
-   quel contrôle ?
+   quel contrôle ? Quelle règle limite le **nombre de forçages** sur un même couple,
+   au vu des trois réadmissions suivies d'une re-pause le jour même (§4.6.2) ?
 10. **Les paires à 100 % de réussite** ont-elles été instruites comme artefact de log,
     et les chiffres publiés corrigés ?
 
@@ -940,6 +1047,17 @@ grep -n "USER\|HEALTHCHECK" Dockerfile   # aucun résultat attendu
 
 # Constat R-2 — état de la porte vers l'argent réel
 grep -n "RESEARCH_BENCH_GATE_ENABLED" config/settings.py
+
+# Constats §4.6 — état d'admission et abandons silencieux (sur la PROD)
+DB=/opt/scalping/data/trades.db
+sqlite3 -readonly $DB "SELECT destination, direction, state, state_since, transitioned_by,
+  substr(reason,1,110) FROM pair_admission_state WHERE pair='XAU/USD'
+  ORDER BY destination, direction, state_since DESC;"
+sqlite3 -readonly $DB "SELECT destination_id, direction, reason_code, count, last_at
+  FROM silent_drop_counters WHERE day = date('now') ORDER BY count DESC;"
+
+# Constat IT-5 — scalping.db absent de la sauvegarde
+grep -n "for db in" deploy/backup-s3.sh
 
 # Constat G-2 — mentions légales non complétées
 grep -c "À COMPLÉTER" frontend/docs/cgu.html frontend/docs/cgv.html
