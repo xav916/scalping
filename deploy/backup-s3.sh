@@ -70,8 +70,33 @@ fi
 echecs=()
 reussites=()
 
-for db in trades.db backtest.db macro.db; do
-    src="$DATA_DIR/$db"
+# ⛔ LA LISTE ETAIT ECRITE EN DUR, ET IL EN MANQUAIT UNE (2026-09-21).
+#
+# `scalping.db` n'y figurait pas. Elle porte `economic_events` — la source du
+# blackout news depuis le correctif du 20/09 — et le calendrier economique
+# n'existe nulle part ailleurs : il n'a donc JAMAIS ete sauvegarde.
+#
+# ⚠️ Et le controle de restauration ne pouvait pas le voir : il comparait a la
+# MEME liste en dur, alors que son propre commentaire annonce une liste
+# deduite du dossier. Un detecteur qui herite du defaut qu'il surveille ne
+# detecte rien. Cf. `restore-drill.sh`, corrige du meme geste.
+#
+# 🔑 Trouve en enquetant sur une absence de trade, pas par une alerte. C'est
+# la lecon du registre des destinations : ce qu'il faut tenir a jour a la main
+# finit par diverger, en silence. On enumere donc ce qui EST dans le dossier —
+# une base ajoutee demain sera sauvegardee sans que personne y pense.
+shopt -s nullglob
+bases=("$DATA_DIR"/*.db)
+shopt -u nullglob
+
+if [ ${#bases[@]} -eq 0 ]; then
+    notifier "Scalping backup FAILED: aucune base .db dans $DATA_DIR"
+    exit 1
+fi
+log "Bases a sauvegarder : $(for b in "${bases[@]}"; do basename "$b"; done | tr '\n' ' ')"
+
+for src in "${bases[@]}"; do
+    db="$(basename "$src")"
     [ -f "$src" ] || continue
     snap="$TMP_DIR/$db"
 

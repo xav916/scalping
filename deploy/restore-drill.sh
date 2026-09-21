@@ -86,10 +86,23 @@ fi
 # La liste attendue se DÉDUIT de ce qui existe reellement dans DATA_DIR : une
 # liste ecrite en dur crierait au loup le jour ou une base disparait
 # legitimement, et se tairait le jour ou une nouvelle base n'est pas sauvegardee.
+#
+# ⛔ CE COMMENTAIRE DECRIVAIT UNE INTENTION QUE LE CODE NE TENAIT PAS
+# (corrige le 2026-09-21). La ligne suivante enumerait `trades.db backtest.db
+# macro.db` en dur — exactement la liste de `backup-s3.sh`. Le controle ne
+# comparait donc pas la sauvegarde au DOSSIER, mais a la sauvegarde
+# elle-meme : `scalping.db`, jamais sauvegardee, etait aussi jamais attendue.
+#
+# 🔑 Le second cas annonce par ce commentaire — « se tairait le jour ou une
+# nouvelle base n'est pas sauvegardee » — s'etait donc deja produit, et le
+# commentaire qui l'annoncait etait la depuis le 04/09. Ecrire la regle ne
+# suffit pas : il faut que le code soit la regle.
 attendues=()
-for db in trades.db backtest.db macro.db; do
-    [ -f "$DATA_DIR/$db" ] && attendues+=("$db")
+shopt -s nullglob
+for chemin_db in "$DATA_DIR"/*.db; do
+    attendues+=("$(basename "$chemin_db")")
 done
+shopt -u nullglob
 log "  bases attendues : ${attendues[*]:-aucune}"
 
 # ⛔ La completude se juge sur le LISTING S3, pas sur ce qu'on a reussi a
