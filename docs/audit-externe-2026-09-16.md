@@ -571,11 +571,28 @@ lecture est sans ambiguïté :
 | `SL` (stop initial) | 6 | −11,58 € | **−1,00 R** |
 | `MANUAL` (stop suiveur) | 8 | +4,99 € | **+0,298 R** |
 
-Les 8 gagnants portent tous `post_entry_sl=1` : ce n'est pas une main, c'est le
-**stop suiveur**. Le discriminant vient du projet lui-même — mesure du 2026-08-10,
-« 215 trades portaient MANUAL, dont 215 (100 %) avec `post_entry_sl=1` ».
+Les 8 gagnants portent tous `post_entry_sl=1` : leur stop a été **déplacé après
+l'entrée**, donc la sortie est le fait d'un mécanisme automatique et non d'une main.
+Le discriminant vient du projet lui-même — mesure du 2026-08-10, « 215 trades
+portaient MANUAL, dont 215 (100 %) avec `post_entry_sl=1` ».
 
-**Le mécanisme.** `mt5-bridge/bridge.py` calcule la distance de suivi ainsi :
+⚠️ **Le mécanisme exact n'est PAS établi, et l'hypothèse initiale de cet audit était
+probablement fausse.** Deux candidats produisent la même signature :
+
+1. le **stop suiveur** (`TRAIL_DISTANCE_POINTS`) — mais il a été **désarmé le
+   2026-08-11**, après avoir été mesuré à **−0,329 R par trade sur l'or**
+   (`bridge.py` : *« désarmé le 2026-08-11, +21 % à la clé. Doit rester à 0. »*) ;
+2. la **clôture partielle à TP1** (`PARTIAL_CLOSE_PCT = 50`), suivie du
+   déplacement du stop à l'équilibre. Elle est envoyée par l'API Python, que MT5
+   étiquette `DEAL_REASON_CLIENT`, donc « MANUAL » — exactement la confusion que le
+   commit du 2026-09-15 a documentée.
+
+Trancher exige de lire la valeur **en production** de `TRAIL_DISTANCE_POINTS`
+(exposée par l'endpoint de configuration du pont). Si elle vaut 0, le candidat 1
+tombe et la destruction vient de la clôture partielle.
+
+**Le piège d'unité, lui, est réel dans le code — mais il ne mord que si le suiveur
+est armé.** `mt5-bridge/bridge.py` calcule la distance de suivi ainsi :
 
 ```python
 trail_distance = TRAIL_DISTANCE_POINTS * info.point   # 150 × point du symbole
@@ -586,7 +603,7 @@ instruments. Mais `info.point` ne vaut pas la même chose partout :
 
 | Instrument | `info.point` | Distance de suivi | Rapport au stop initial |
 |---|---|---|---|
-| EUR/USD (5 décimales) | 0,00001 | 1,5 pip | ordre de grandeur normal |
+| EUR/USD (5 décimales) | 0,00001 | **15 pips** (0,0015) | ordre de grandeur normal |
 | **XAU/USD (2 décimales)** | **0,01** | **1,50 USD** | **0,074 R** |
 
 Sur les 8 trades mesurés, la distance entrée→stop va de 12,08 à 27,13 USD
@@ -625,23 +642,37 @@ Le 2026-09-08, le *juge* a été rendu neutre à la taille. Dix jours plus tard 
 est rétrogradé quand même, parce que le même piège subsistait dans l'*exécution*,
 où la correction n'avait pas été portée.
 
-> 🔎 **Constat R-11, ÉLEVÉ.** Un paramètre de sortie exprimé dans une unité
-> dépendante de l'instrument a rendu l'espérance **structurellement négative** sur
-> l'instrument qui porte 87,6 % du résultat, et a déclenché sa rétrogradation. La
-> correction de principe — exprimer la distance de suivi en **fraction du risque du
-> trade** — est le même argument que celui qui a fait passer le drawdown en R, et
-> tient indépendamment de son effet sur les chiffres.
+> 🔎 **Constat R-11, ÉLEVÉ — ce qui est établi.** La **gestion de sortie** rend
+> l'espérance structurellement négative sur l'instrument qui porte 87,6 % du
+> résultat : gains coupés à +0,298 R, pertes laissées à −1,00 R, soit −0,26 R par
+> trade et 77 % de réussite requis pour l'équilibre. C'est mesuré, et c'est la cause
+> immédiate de la rétrogradation du 2026-09-18.
 >
-> ⛔ **La valeur, elle, ne doit pas être choisie sur ces données.** Retenir un seuil
-> parce qu'on vient de voir que 0,074 R perdait, c'est reproduire le défaut que
-> `research_bench` (§3.5) existe pour rendre impossible. Un essai a été déclaré au
-> banc le 2026-09-21 (`trail-en-R-or-2026-09-21`) **avant** toute modification.
+> ⚠️ **Ce qui n'est PAS établi : lequel des deux mécanismes de sortie en est
+> responsable** (stop suiveur ou clôture partielle à TP1). L'attribution au suiveur
+> avancée initialement par cet audit est douteuse, le suiveur ayant été désarmé six
+> semaines plus tôt.
+>
+> 🔑 **Et c'est la deuxième fois que la même destruction est mesurée.** Le
+> 2026-08-11, la gestion de sortie était déjà chiffrée à **−0,329 R par trade sur
+> l'or** — `laboratoire_or.py` en fait « LE PRIOR À RESPECTER ». Le suiveur a été
+> désarmé, +21 % à la clé. Que l'asymétrie réapparaisse six semaines plus tard, au
+> même ordre de grandeur, signifie que **la destruction a une seconde source qui a
+> survécu au premier correctif**. C'est le vrai constat, et il est plus lourd que
+> celui d'un paramètre mal unité.
+>
+> ⛔ **Aucune valeur ne doit être choisie sur ces données**, et aucune modification
+> engagée avant que le mécanisme soit attribué. Un essai déclaré au banc le
+> 2026-09-21 (`trail-en-R-or-2026-09-21`) nomme le stop suiveur : si le suiveur est
+> à 0 en production, cet essai est **mal spécifié** et doit être abandonné — ses
+> variantes restant comptées dans `N`, ce qui est le coût correct d'une déclaration
+> hâtive.
 
 #### 4.6.4 Constats connexes relevés à cette occasion
 
 | Réf | Constat | Sév. |
 |---|---|---|
-| **R-11** | **`TRAIL_DISTANCE_POINTS` global en points : sur l'or, stop suiveur à 0,074 R contre un stop initial à 1 R → espérance −0,26 R/trade, 77 % de réussite requis pour l'équilibre (§4.6.5)** | **E** |
+| **R-11** | **La gestion de sortie rend l'espérance négative sur l'or : gains coupés à +0,298 R, pertes à −1,00 R → −0,26 R/trade, 77 % de réussite requis. Déjà mesurée à −0,329 R le 2026-08-11 : le correctif d'alors n'a pas supprimé la cause (§4.6.5)** | **E** |
 | R-8 | `DEMOTION_MAX_DD_R` ajustable à chaud, hors banc d'essai, sur un critère qui vient de bloquer l'instrument principal | **M** |
 | R-9 | L'état effectif d'un couple `(paire, sens, destination)` dépend de **deux mécanismes non réconciliés** (machine à états + régulateur PnL) et n'est lisible nulle part d'un seul tenant | **M** |
 | R-10 | Les refus les plus structurants (`_not_admitted`) sont **absents** de `signal_rejections` ; 1 203 abandons silencieux sur XAU/USD le 2026-09-21 | **M** |
@@ -1011,7 +1042,7 @@ Le service est pourtant ouvert, facturé via Stripe, et sert au moins un client 
 | **S-6** | Conteneur en root, `build-essential` conservé, `COPY . .`, pas de `HEALTHCHECK` | Sécu | **M** | 1 j |
 | **R-5** | Cycle rétrogradation auto → réadmission manuelle → re-pause le jour même, 3 fois en 4 mois sur XAU/USD, à −113 % / −120 % / −125 % de PnL (§4.6) | Risque | **E** | Process |
 | **R-6** | Promotions sur échantillon complété par des signaux **simulés** | Risque | **M** | 2 j |
-| **R-11** | Stop suiveur en points globaux : 0,074 R sur l'or contre 1 R au stop initial → espérance structurellement négative (−0,26 R/trade) sur l'instrument portant 87,6 % du résultat (§4.6.5) | Risque | **E** | 2 j |
+| **R-11** | Gestion de sortie à espérance négative sur l'or (−0,26 R/trade, 77 % de réussite requis), déjà mesurée à −0,329 R le 11/08 et non éliminée par le correctif d'alors ; mécanisme non attribué (§4.6.5) | Risque | **E** | 3 j |
 | **R-8** | `DEMOTION_MAX_DD_R` ajustable à chaud, hors banc d'essai, après avoir bloqué l'instrument principal pour 3,4 % de dépassement (§4.6.3) | Risque | **M** | Process |
 | **R-9** | L'état d'un couple `(paire, sens, destination)` dépend de **deux mécanismes non réconciliés**, illisible d'un seul tenant (§4.6.1) | Risque | **M** | 3 j |
 | **R-10** | Les refus `_not_admitted` sont **absents** de `signal_rejections` — 1 203 abandons silencieux sur XAU/USD le 21/09 (§4.6.1) | Risque | **M** | 2 j |
