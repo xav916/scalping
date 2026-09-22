@@ -115,8 +115,15 @@ aléatoire à +0,004 R — par une troisième voie, et sur un objet différent.
 ## Artefacts
 
 - Scripts : `scripts/contrefactuel-sortie.sh`, `backend/services/contrefactuel_sortie.py`
-- Essai de banc `trail-en-R-or-2026-09-21` : **abandonné**, hypothèse mal spécifiée
-  (elle nommait le stop suiveur, désarmé depuis le 2026-08-11). Ses variantes restent
-  comptées dans `N`. Cf. `scripts/declarer_essai_trail_en_R.py`.
+- Essai de banc `trail-en-R-or-2026-09-21` : **jamais déclaré**. Rédigé le
+  2026-09-21 sur une hypothèse qui nommait le stop suiveur — lequel est désarmé
+  depuis le 2026-08-11 — l'appel a échoué sur un `ModuleNotFoundError` non vu, et la
+  vérification du 2026-09-22 rend « l'essai n'existe pas ». **`N` n'a donc jamais été
+  gonflé par cette hypothèse** (1 226 au dépouillement, 1 233 avant les deux essais
+  de réhabilitation). Le script subsiste dans le dépôt pour l'histoire :
+  `scripts/declarer_essai_trail_en_R.py`.
+- Essais de réhabilitation déclarés le 2026-09-22 : `rehabilitation-or-2026-09-22`
+  (empreinte `4cf95985…`) et `rehabilitation-wti-2026-09-22` (`f97397fd…`).
+  **N = 1 235.**
 - Rapport d'audit : `docs/audit-externe-2026-09-16.md` §4.6.5 à §4.6.8
 - Commits : `1598c53`, `519c991`, `f36e111`, `dd69c46`
