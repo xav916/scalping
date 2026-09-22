@@ -27,7 +27,7 @@ on:
         required: true
         default: rejets-wti
         type: choice
-        options: [rejets-wti, rejets-or, admission, banc, trades-recents, sante]
+        options: [rejets-wti, rejets-or, divergence, admission, banc, trades-recents, sante]
 
 jobs:
   diagnostic:

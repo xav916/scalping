@@ -99,3 +99,58 @@ les vider.
 - Carnet : `2026-09-22-decision-xauusd-admin-live.md` (`dec-1`, supersédé)
 - Rapport : `docs/audit-externe-2026-09-16.md` §4.6.5 à §4.6.8, constats R-11 à R-18
 - Diagnostic : `scripts/diagnostic_or_wti_live.py`
+
+---
+
+## Addendum — premier dépouillement, soir du 2026-09-22
+
+Lu en production à 20:00 UTC, seize heures après la réouverture de 04:07. Cet
+addendum n'amende pas la décision ci-dessus : il consigne ce qu'elle a produit.
+
+### Les deux signaux précoces, à J+0
+
+**Le premier a parlé.** Un seul ordre est parti sur l'or, et il a pris son stop :
+
+```
+06:11:57  XAU/USD sell  breakout_down 5min  ticket 1359344756  → envoyé
+10:01:22  XAU/USD sell  −19,33 €  close_reason = SL
+```
+
+Sixième clôture au stop plein en huit jours, du côté qu'annonçait le contrefactuel
+(8/9 au stop, −0,689 R). Un trade ne réfute rien — mais il ne contredit rien non plus.
+
+**Le second n'a rien pu dire.** Le WTI n'a pas tradé, et ne le pouvait pas : sur
+1 531 setups évalués pour `admin_live`, 815 refus `price_divergence` (l'entrée calculée
+sur Twelve Data s'écarte de plus de 0,5 % du mid servi par le bridge IC Markets) et
+716 refus `kill_switch`. Zéro ordre. L'or, au même moment et sur le même compte, ne
+compte que 15 divergences : le bridge n'est pas en cause, le symbole WTI d'IC Markets
+n'est probablement pas le contrat que cote Twelve Data.
+
+### Ce que cela change pour les essais
+
+`live-wti-2026-09-22` **accumule un échantillon nul** et le fera tant que la divergence
+n'est pas résolue. Il pèse pourtant +1 sur `N`. Un essai qui ne peut pas produire de
+mesure n'est pas un essai en cours : c'est un compteur qui tourne à vide. À reclasser
+(`abandon()`) si la cause n'est pas levée, plutôt qu'à laisser ouvert.
+
+`live-or-2026-09-22` accumule normalement : 1 clôture sur les 30 requises.
+
+### Ce que le dépouillement a révélé par ailleurs
+
+Deux constats qui ne concernent pas la décision mais qu'elle a mis au jour, versés au
+rapport en **R-19** et **R-20** (§4.6.10) :
+
+- `AUTO_EXEC` avec six portes au vert **ne garantit pas qu'un instrument trade** : la
+  validation de tick est une septième porte, en aval, qu'aucun diagnostic d'admission
+  ne montre.
+- Le stop de 10:01 a franchi le plafond journalier de `admin_live` et ouvert un
+  `plafond_arbitrage`. Le compte réel est resté fermé **8 h 43**, jusqu'à 18:44 —
+  et seul un `CONTINUER` sur Telegram peut le rouvrir. Les 716 refus `kill_switch`
+  du WTI sont le dommage collatéral de la perte de l'or.
+
+### Méthode
+
+Relevé par la commande forcée `deploy/diag-lecture-seule.sh` (rapports `rejets-wti`,
+`rejets-or`, `trades-recents`), en lecture seule, sans accès shell à l'EC2. La frontière
+a été éprouvée avant usage : une demande `DROP TABLE trades;` est refusée en code 64
+sans exécution.

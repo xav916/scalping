@@ -117,9 +117,31 @@ case "$DEMANDE" in
           GROUP BY 1 ORDER BY n DESC LIMIT 20;"
     ;;
 
+  divergence)
+    # ⚠️ SEUL rapport qui lise autre chose que la base. Justification : la
+    # magnitude de la divergence (`entry`, `mid`) N'EST PAS persistee. Le
+    # `details` d'un refus ne porte que `signal_pattern` et `horizon` — on sait
+    # qu'un ordre a ete bloque, jamais de combien les deux prix s'ecartaient.
+    # C'est exactement le manque que le projet avait comble pour `event_blackout`
+    # en y ajoutant `entry`/`stop`/`tp1`. Tant qu'il ne l'est pas ici, le chiffre
+    # ne vit que dans le journal du conteneur.
+    #
+    # ⛔ Le filtre est FIXE et DOUBLE : prefixe du logueur ET code du refus.
+    # Aucune entree client n'y entre. La ligne produite par
+    # `bridge_tick_validator` ne contient que paire, entry, mid et pourcentage —
+    # aucun jeton, aucun identifiant de compte. Elargir ce filtre exposerait le
+    # journal entier : ne pas le faire sans relire ce qui y transite.
+    echo "=== divergences radar/bridge mesurees (24 h, 40 dernieres) ==="
+    docker logs --since 24h scalping-radar 2>&1 \
+      | grep -F 'bridge_tick_validator [' \
+      | grep -F 'price_divergence' \
+      | tail -40 \
+      || echo "(aucune ligne — journal vide, conteneur absent, ou droits docker manquants)"
+    ;;
+
   *)
     echo "Rapport inconnu : « ${DEMANDE:-aucun} »" >&2
-    echo "Disponibles : rejets-wti rejets-or admission banc trades-recents sante" >&2
+    echo "Disponibles : rejets-wti rejets-or divergence admission banc trades-recents sante" >&2
     exit 64
     ;;
 esac
