@@ -57,14 +57,24 @@ def main() -> int:
     from backend.services.mt5_bridge import LIVE_WHITELIST_PAIRS, asset_class_for
 
     bloquees = {p.upper() for p in getattr(settings, "MT5_BRIDGE_BLOCKED_PAIRS", ())}
-    classes = set(getattr(settings, "MT5_BRIDGE_ALLOWED_ASSET_CLASSES", ()) or ())
+    # ⛔ La variable GLOBALE n'est pas celle d'admin_live (corrige le 2026-09-22).
+    # `bridge_destinations` resout les classes PAR DESTINATION :
+    #   admin_live   -> MT5_BRIDGE_LIVE_ALLOWED_ASSET_CLASSES   (repli : globale)
+    #   admin_legacy -> MT5_BRIDGE_LEGACY_ALLOWED_ASSET_CLASSES (repli : globale)
+    #   user:N       -> la GLOBALE, sans surcharge possible
+    # Lire la globale pour juger admin_live etait donc faux des que la surcharge
+    # existe — et masquait que toucher la globale ouvre le compte des clients.
+    classes = set(getattr(settings, "MT5_BRIDGE_LIVE_ALLOWED_ASSET_CLASSES", ()) or ())
+    globales = set(getattr(settings, "MT5_BRIDGE_ALLOWED_ASSET_CLASSES", ()) or ())
     wl = {p.upper() for p in LIVE_WHITELIST_PAIRS}
     banc_arme = bool(getattr(settings, "RESEARCH_BENCH_GATE_ENABLED", False))
 
     print("⛔ admin_live — ARGENT REEL. Etat des six portes.\n")
     print(f"  1. blocklist globale     : {sorted(bloquees) or 'vide'}")
     print(f"  2. whitelist admin_live  : {sorted(wl) or 'vide (= tout passe)'}")
-    print(f"  3. classes admises       : {sorted(classes) or 'non lisible'}")
+    print(f"  3. classes admin_live    : {sorted(classes) or 'non lisible'}")
+    print(f"     classes GLOBALES      : {sorted(globales) or 'non lisible'}"
+          f"   <- lues telles quelles par les comptes clients `user:N`")
     print(f"  6. banc d'essai          : "
           f"{'ARME — il refusera' if banc_arme else 'DESARME (constat R-2 du rapport)'}")
     print()
