@@ -1,0 +1,71 @@
+# Rapports de diagnostic sur la production, en LECTURE SEULE.
+#
+# ⛔ Ce workflow ne peut rien faire d'autre que demander un rapport nomme. Le
+# serveur repond par sa commande forcee `deploy/diag-lecture-seule.sh`, qui
+# n'evalue JAMAIS ce qu'on lui envoie : elle s'en sert pour choisir dans une
+# liste ecrite dans le script. La securite vit la-bas, pas ici.
+#
+# Mise en place, une fois :
+#   1. ssh-keygen -t ed25519 -f diag-key -C "diagnostic lecture seule"
+#   2. sur l'EC2, dans ~ec2-user/.ssh/authorized_keys :
+#        command="/usr/local/bin/diag-lecture-seule.sh",no-port-forwarding,\
+#        no-agent-forwarding,no-pty,no-X11-forwarding ssh-ed25519 AAAA... diag
+#   3. sudo install -m 755 deploy/diag-lecture-seule.sh /usr/local/bin/
+#   4. secret de depot `EC2_DIAG_KEY` = contenu de `diag-key` (la cle PRIVEE)
+#   5. supprimer `diag-key` de la machine qui l'a generee
+#
+# ⚠️ La cle privee dans les secrets a un rayon d'explosion : qui peut modifier
+# un workflow peut s'en servir autrement. C'est la commande forcee qui borne ce
+# rayon — pas le secret. Ne jamais mettre ici `scalping-key.pem`.
+name: Diagnostic prod (lecture seule)
+
+on:
+  workflow_dispatch:
+    inputs:
+      rapport:
+        description: "Rapport a produire"
+        required: true
+        default: rejets-wti
+        type: choice
+        options: [rejets-wti, rejets-or, admission, banc, trades-recents, sante]
+
+jobs:
+  diagnostic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Cle privee depuis les secrets
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "${{ secrets.EC2_DIAG_KEY }}" > ~/.ssh/diag
+          chmod 600 ~/.ssh/diag
+
+      # ⛔ On EPINGLE l'empreinte du serveur au lieu d'accepter aveuglement.
+      # `StrictHostKeyChecking=no` ferait de ce workflow une cible d'interception
+      # triviale : n'importe quel detournement DNS ou BGP recevrait la cle.
+      - name: Verifier l'identite du serveur
+        env:
+          HOTE: 13.63.77.180
+          EMPREINTE: SHA256:9t4d4s4UcBHIlq9BHVKelAh9xfAvpAWJckVcPlGNJLA
+        run: |
+          ssh-keyscan -t ed25519 "$HOTE" > ~/.ssh/known_hosts 2>/dev/null
+          vue="$(ssh-keygen -lf ~/.ssh/known_hosts | awk '{print $2}')"
+          echo "empreinte vue : $vue"
+          if [ "$vue" != "$EMPREINTE" ]; then
+            echo "::error::empreinte INATTENDUE — attendue $EMPREINTE. Connexion refusee."
+            exit 1
+          fi
+          echo "identite du serveur confirmee"
+
+      - name: Demander le rapport
+        env:
+          HOTE: 13.63.77.180
+        run: |
+          echo "rapport demande : ${{ inputs.rapport }}"
+          echo "-----------------------------------------------"
+          ssh -i ~/.ssh/diag -o BatchMode=yes -o ConnectTimeout=15 \
+              "ec2-user@$HOTE" "${{ inputs.rapport }}"
+
+      - name: Effacer la cle
+        if: always()
+        run: shred -u ~/.ssh/diag 2>/dev/null || rm -f ~/.ssh/diag
