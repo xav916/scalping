@@ -112,6 +112,40 @@ mesure indépendante dit la même chose que lui.
 sélection des setups. Il converge avec `DSR = 0,017`, `PBO = 0,579` et le contrôle
 aléatoire à +0,004 R — par une troisième voie, et sur un objet différent.
 
+## Suite du 2026-09-22 — la porte du banc rendue effective
+
+Après armement du banc (`RESEARCH_BENCH_GATE_ENABLED=true`), le diagnostic a
+montré que l'or et le WTI passaient quand même : `porte 6 : PASSERAIT — couvert
+par la clause d'antériorité`. Les octrois posés le 2026-08-25 à l'installation du
+banc les exemptaient **sans aucune borne** (`direction` et `destination` à `NULL`,
+et `_couvre(None, …)` rend `True` sur toute demande, y compris `user:N`).
+
+⛔ **Huit octrois supprimés le 2026-09-22**, quatre par paire. La porte refuse
+désormais les deux sur `admin_live` et `admin_kraken`.
+
+### Restauration, si la décision est révisée
+
+```sql
+INSERT INTO bench_legacy_grants (pair, direction, destination, granted_at, reason) VALUES
+ ('WTI/USD', NULL,   NULL,         '2026-08-25T22:24:00.307430+00:00', 'restaure'),
+ ('WTI/USD', 'buy',  NULL,         '2026-08-25T22:24:00.312469+00:00', 'restaure'),
+ ('WTI/USD', 'buy',  'admin_live', '2026-08-25T22:24:00.317572+00:00', 'restaure'),
+ ('WTI/USD', 'sell', NULL,         '2026-08-25T22:24:00.322856+00:00', 'restaure'),
+ ('XAU/USD', NULL,   NULL,         '2026-08-25T22:24:00.333641+00:00', 'restaure'),
+ ('XAU/USD', 'buy',  NULL,         '2026-08-25T22:24:00.340286+00:00', 'restaure'),
+ ('XAU/USD', 'buy',  'admin_live', '2026-08-25T22:24:00.345405+00:00', 'restaure'),
+ ('XAU/USD', 'sell', 'admin_live', '2026-08-25T22:24:00.350399+00:00', 'restaure');
+```
+
+⚠️ **Ce que la suppression ne fait PAS.** `gate_promotion` n'est consulté que dans
+`set_state`, donc au moment d'une **transition**. `WTI/USD` étant déjà `AUTO_EXEC`
+sur `admin_live`, il continue de trader en argent réel : seules les promotions
+**futures** sont désormais gardées. Fermer WTI serait une autre décision, non prise
+à ce jour.
+
+**Les 25 autres paires exemptées sans borne** (dont `XAG/USD`) conservent leurs
+octrois. Traitées séparément, à froid.
+
 ## Artefacts
 
 - Scripts : `scripts/contrefactuel-sortie.sh`, `backend/services/contrefactuel_sortie.py`
