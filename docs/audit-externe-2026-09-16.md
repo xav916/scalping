@@ -687,12 +687,59 @@ Deux constats subsistent, modestes :
 > sous-estime le réel. Cela concerne directement la phase shadow et les seuils
 > promus depuis `admin_legacy` vers `admin_live`.
 
+#### 4.6.7 Le seuil placebo ne protège pas tous les instruments de la même façon
+
+Le filtre du §4.6.6 écarte les stops de moins de **0,1 % du prix**
+(`laboratoire_or.PLACEBO_PCT = 0.001`). L'examen des clôtures `WTI/USD` montre que
+ce seuil, unique et exprimé en pourcentage du prix, ne vaut pas la même chose selon
+l'instrument :
+
+| | 0,1 % du prix |
+|---|---|
+| Or à 4 300 USD | **4,30 USD** — un vrai stop |
+| WTI à 80 USD | **0,08 USD** — rien |
+
+Sur les 9 clôtures `SL` de `WTI/USD` en démo, le dépassement suit exactement la
+serre du stop :
+
+| Distance du stop | Dépassement |
+|---:|---:|
+| 0,22 % · 0,31 % · 0,37 % | **8,59 R · 4,59 R · 9,83 R** |
+| 0,48 % · 0,48 % · 0,61 % | +0,05 R · −0,07 R · −0,04 R |
+| 0,78 % · 0,79 % · 1,07 % | 1,98 R · 2,00 R · 0,51 R |
+
+Les trois pires dépassements sont les trois stops les plus serrés ; au-delà de
+0,48 % le stop est honoré. En valeur absolue les dépassements valent 1,24 à
+3,44 USD — banal pour du pétrole. **C'est un artefact de dénominateur, pas un défaut
+d'exécution.**
+
+> 🔎 **Constat R-16, MOYEN.** `PLACEBO_PCT` est un seuil unique en pourcentage du
+> prix, appliqué à des instruments dont le prix varie d'un facteur 50. Il protège
+> l'or et laisse passer WTI. **Toute métrique exprimée en R — y compris le `dd_R` qui
+> rétrograde les paires — peut donc rester gonflée sur un instrument à bas prix,
+> après le filtre.** Un seuil relatif à la **volatilité** (fraction d'ATR) plutôt
+> qu'au prix vaudrait pour tous.
+>
+> ⚠️ **L'or n'est pas concerné** : ses stops dans la fenêtre de rétrogradation
+> valaient 10 à 27 USD (0,22 % à 0,63 % d'un prix à 4 300), réels en valeur absolue.
+> La rétrogradation du 2026-09-18 tient.
+
+⚠️ **Note de méthode.** L'hypothèse initialement retenue pour expliquer ces
+dépassements — le gap de réouverture du dimanche, documenté par l'incident WTI du
+2026-08-03 — est **fausse** : les 9 clôtures sont toutes en milieu de semaine
+(mardi à vendredi). Elles datent toutes de juin 2026, période où le WTI a perdu 20 %
+en seize jours, et sont antérieures aux deux correctifs de week-end
+(`NO_FRIDAY_LATE_OPEN_ENERGY` le 2026-08-03, élargissement de la fermeture du
+vendredi le 2026-09-04). Aucune clôture postérieure au 2026-09-04 : ce défaut-là est
+refermé.
+
 #### 4.6.4 Constats connexes relevés à cette occasion
 
 | Réf | Constat | Sév. |
 |---|---|---|
 | **R-11** | **Les niveaux SL/TP ont une espérance négative sur l'or : −0,689 R/trade en contrefactuel, 8 clôtures sur 9 au stop. Troisième voie de mesure convergeant avec DSR 0,017 (§4.6.5)** | **E** |
 | **R-13** | **La performance dépend d'interventions humaines non documentées : +0,864 R/trade apportés par des clôtures discrétionnaires. Le système n'est pas autonome sur son instrument principal (§4.6.5)** | **E** |
+| R-16 | `PLACEBO_PCT` : seuil unique en % du prix sur des instruments variant d'un facteur 50 — protège l'or, laisse passer WTI. Les métriques en R restent gonflables sur les bas prix (§4.6.7) | **M** |
 | R-14 | Le **slippage de sortie** n'est instrumenté par aucun dispositif permanent (§4.6.6) | **F** |
 | R-15 | La démo honore les stops (−0,040 R), le réel non (+0,127 R) : toute calibration de risque validée en démo sous-estime le réel (§4.6.6) | **M** |
 | R-12 | `contrefactuel_sortie.bilan()` rend un verdict (« sortir tôt a MIEUX fait ») sur une différence de moyennes, **sans test de significativité**, dans un projet qui calcule ailleurs un Sharpe dégonflé et un plafond du hasard | **M** |
@@ -1069,6 +1116,7 @@ Le service est pourtant ouvert, facturé via Stripe, et sert au moins un client 
 | **R-13** | Performance dépendante d'interventions humaines non tracées (+0,864 R/trade) : le système n'est pas autonome sur son instrument principal, alors qu'il est vendu comme tel (§4.6.5, §6.2) | Gouv | **E** | Décision |
 | **R-15** | Démo et réel ne respectent pas les stops de la même façon (−0,040 R contre +0,127 R) : une calibration validée en démo sous-estime le réel (§4.6.6) | Risque | **M** | Process |
 | **R-12** | `bilan()` rend un verdict sans test de significativité, sous le standard méthodologique du projet | Perf | **M** | 1 j |
+| **R-16** | Seuil placebo en % du prix, non transposable entre instruments : les métriques en R restent gonflables sur un instrument à bas prix (§4.6.7) | Perf | **M** | 2 j |
 | **R-14** | Slippage de **sortie** non instrumenté : le respect des stops n'est suivi par rien (§4.6.6) | Risque | **F** | 1 j |
 | **R-8** | `DEMOTION_MAX_DD_R` ajustable à chaud, hors banc d'essai, après avoir bloqué l'instrument principal pour 3,4 % de dépassement (§4.6.3) | Risque | **M** | Process |
 | **R-9** | L'état d'un couple `(paire, sens, destination)` dépend de **deux mécanismes non réconciliés**, illisible d'un seul tenant (§4.6.1) | Risque | **M** | 3 j |
