@@ -54,7 +54,17 @@ Sans `--vraiment`, le script affiche ce qu'il ferait et ne touche à rien.
 from __future__ import annotations
 
 import argparse
+import pathlib
 import sys
+
+# ⛔ `python scripts/x.py` met `scripts/` dans sys.path, PAS la racine du projet :
+# `import backend` echoue alors avec ModuleNotFoundError. Meme piege que le
+# lanceur du bilan croise (2026-09-09), qui exigeait un PYTHONPATH a l'appel.
+# On le resout ICI plutot que dans chaque invocation — un script qui ne tourne
+# que sous une variable d'environnement finit par ne pas tourner.
+_RACINE = str(pathlib.Path(__file__).resolve().parent.parent)
+if _RACINE not in sys.path:
+    sys.path.insert(0, _RACINE)
 
 SLUG = "trail-en-R-or-2026-09-21"
 
