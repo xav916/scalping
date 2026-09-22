@@ -779,6 +779,36 @@ nécessaire, jamais suffisante.
 > l'activité à presque rien. C'est assumé : un instrument dont les niveaux rendent
 > −0,689 R ne devient pas rentable parce qu'il est le moins mauvais.
 
+#### 4.6.9 Addendum — la décision du §4.6.8 a été renversée le même jour
+
+> ⚠️ Le §4.6.8 consigne la décision de **maintenir** la rétrogradation de l'or. Elle
+> a été **révisée par l'exploitant le 2026-09-22**, quelques heures plus tard. Le
+> §4.6.8 n'est pas réécrit : il reste le compte rendu de la décision telle qu'elle a
+> été prise, avec sa base.
+
+**État à la clôture de la journée du 2026-09-22**, sur `admin_live` (IC Markets,
+argent réel) :
+
+| Paire | buy | sell | Portes |
+|---|---|---|---|
+| `XAU/USD` | `AUTO_EXEC` | `AUTO_EXEC` | les six passent |
+| `WTI/USD` | `AUTO_EXEC` | `AUTO_EXEC` | les six passent |
+
+Gestes enregistrés : pause du régulateur PnL levée sur l'or (elle courait depuis le
+2026-09-17), huit octrois d'antériorité restaurés, `XAU/USD sell` promu
+`TELEGRAM → AUTO_EXEC` (transition 380, `manual:xavier`).
+
+C'est la **quatrième réadmission manuelle de l'or en argent réel**. Les trois
+précédentes — 2026-06-12, 2026-07-13, 2026-09-08 — ont toutes été suivies d'une
+re-pause automatique, deux fois le jour même.
+
+> 🔎 **Ce que cet addendum établit pour un auditeur**, et qui vaut plus que la
+> décision elle-même : le dispositif de mesure fonctionne, il a produit un verdict
+> chiffré en moins de vingt-quatre heures, ce verdict a été consigné — et la
+> décision opérationnelle s'en est écartée. **Le constat R-5 (§4.6.2) n'est donc pas
+> historique : il s'est reproduit pendant l'audit, et il est documenté en temps
+> réel.** Détail complet au carnet, entrée `dec-2`.
+
 #### 4.6.4 Constats connexes relevés à cette occasion
 
 | Réf | Constat | Sév. |

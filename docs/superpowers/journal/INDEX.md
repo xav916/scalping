@@ -33,6 +33,7 @@ Ordre chronologique, par track. Mettre à jour à chaque clôture d'expérience.
 | obs-1 | 2026-04-30 | hors-track | [Drawdown V1 cluster range_bounce_down](2026-04-30-v1-drawdown-observation.md) | closed-negative | 9 SL consécutifs XAU/XAG short (-185.65€ en 5h) ; pattern unique répété sans cooldown ; **anticipable structurellement, pas spécifiquement** — confirme verdict V1 sans edge |
 | pipe-1 | 2026-05-08 | hors-track | [Pipeline géopolitique → veto scoring → analyse contrefactuelle](2026-05-08-veto-geopolitical-pipeline.md) | closed-positive | 10 commits + 5 routines posés en une session ; veto scoring V1 actif (4 règles), Track A shadow log enrichi `geopolitical_features_json`, script contrefactuel prêt — **cycle complet observation→décision posé bout-à-bout** |
 | dec-1 | 2026-09-22 | hors-track | [Decision XAU/USD reste retrograde sur admin_live](2026-09-22-decision-xauusd-admin-live.md) | closed-negative | Contrefactuel n=9 : **8 clotures sur 9 au stop**, R contrefactuel **-0,689** contre +0,175 obtenu. Les NIVEAUX perdent ; les sorties discretionnaires apportent +0,864 R/trade - **INFIRMEE**. Retrogradation maintenue. |
+| dec-2 | 2026-09-22 | hors-track | [Reouverture XAU/USD et WTI/USD sur IC Markets](2026-09-22-decision-reouverture-ic-markets.md) | closed-neutral | **SUPERSEDE dec-1 le meme jour.** Reouverture en argent reel des deux paires, contre les mesures du 21/09 (contrefactuel -0,689 R) et du gate S8 (WTI 6,1 %). Quatrieme readmission manuelle de l or ; les trois precedentes ont ete re-pausees. |
 
 ## Conventions
 
