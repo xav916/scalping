@@ -809,6 +809,135 @@ re-pause automatique, deux fois le jour même.
 > historique : il s'est reproduit pendant l'audit, et il est documenté en temps
 > réel.** Détail complet au carnet, entrée `dec-2`.
 
+#### 4.6.10 Le lendemain de la réouverture — ce que seize heures d'argent réel ont produit
+
+La réouverture du §4.6.9 est intervenue à **04:07 UTC** le 2026-09-22. Les chiffres
+ci-dessous couvrent la journée entière qui a suivi, lus en production le même soir.
+
+**Sur le WTI : 1 531 setups évalués pour `admin_live`, zéro ordre envoyé.**
+
+| Porte | Refus | Dernier | Confiance moy. |
+|---|---|---|---|
+| `kill_switch` | 716 | 18:44 | 58,5 / 60,5 |
+| `price_divergence` | 815 | 19:54 | 72,7 / 74,0 |
+
+Aucun autre motif. Aucun abandon silencieux. Le radar produit — la démo `admin_legacy`
+enregistre exactement les mêmes 1 531 évaluations, toutes refusées en `pair_auto_paused`.
+
+**Sur l'or : un ordre est parti, et il a pris son stop.**
+
+```
+06:11:57  XAU/USD sell  breakout_down 5min  ticket 1359344756  → envoyé
+10:01:22  XAU/USD sell  −19,33 €  close_reason = SL
+```
+
+C'est la **sixième clôture au stop plein en huit jours** sur l'instrument principal, et
+la première mesure produite par la réouverture. Elle tombe du côté qu'annonçait le
+contrefactuel du §4.6.5 (8 clôtures sur 9 au stop, −0,689 R/trade).
+
+##### a) Ce que le WTI révèle : `AUTO_EXEC` ne veut pas dire « négociable »
+
+L'ordre d'évaluation dans `mt5_bridge.py` place la validation de tick **entre** le
+kill switch et le seuil de confiance :
+
+```
+pair_auto_paused → kill_switch (l. 970) → … → price_divergence (l. 1045) → below_confidence (l. 1057)
+```
+
+Trois conséquences se lisent directement dans les compteurs.
+
+**Le seuil de confiance n'a jamais été atteint sur le WTI.** Il est testé *après* la
+divergence de prix. La crainte formulée la veille — la distribution de confiance du WTI
+(38,6 % des `sell` au-dessus de 60) ferait mur — était hors sujet : aucun setup n'est
+allé jusque-là.
+
+**Le kill switch a masqué la cause réelle jusqu'à 18:44.** Étant en amont, il a
+absorbé 716 refus qui portaient probablement déjà la divergence en dessous.
+
+**La cause vivante est `price_divergence`, et ce n'est pas une décision de risque :**
+
+```python
+divergence_pct = abs(entry - mid) / mid * 100.0
+if divergence_pct > 0.5:            # BRIDGE_PRICE_DIVERGENCE_MAX_PCT
+    return "price_divergence"
+```
+
+Le prix d'entrée calculé par le radar (Twelve Data) s'écarte du mid renvoyé par le
+bridge IC Markets de **plus de 0,5 %** — soit plus de 31 cents sur un WTI à ~62 $,
+quand le spread tourne autour de 3 à 5 cents. Répété 815 fois sans exception, ce n'est
+ni de la latence ni du bruit. Le contrôle est par ailleurs *best-effort* : il rend
+`None` en cas de timeout ou d'erreur réseau. 815 refus signifient donc **815 réponses
+effectives du bridge, avec un prix réellement différent**.
+
+**L'or discrimine.** Sur la même journée et le même compte, `XAU/USD` totalise
+15 `price_divergence` sur 1 608 refus, toutes arrêtées à 08:57 — et l'or atteint
+couramment des portes très en aval (`horizon_not_allowed`, `below_confidence`,
+`pattern_not_allowed`, `fees_exceed_edge`, `max_positions_per_pair`, `sl_too_close`)
+que le WTI n'effleure jamais. **Le bridge `admin_live` n'est donc pas en cause : le
+défaut est propre au WTI.** L'hypothèse restante est un mappage de symbole — le
+contrat WTI servi par IC Markets n'est pas celui que cote Twelve Data (cash rollé
+contre *front-month*, dont la base dépasse aisément 0,5 %).
+
+**Et la magnitude n'est pas conservée.** Le `details` d'un refus `price_divergence`
+ne porte que `signal_pattern` et `horizon` : ni `entry`, ni `mid`, ni l'écart. La base
+dit qu'un ordre a été bloqué, jamais de combien les deux prix s'écartaient — le chiffre
+ne vit que dans le journal du conteneur, purgé avec lui. C'est exactement le manque que
+le projet avait identifié et comblé pour `event_blackout` le 2026-09-20, en y ajoutant
+`entry` / `stop` / `tp1` avec ce commentaire : « sans les NIVEAUX du setup, on saurait
+qu'un ordre a été bloqué sans pouvoir dire s'il aurait gagné ou perdu — donc sans jamais
+pouvoir juger le garde-fou ». Le raisonnement vaut mot pour mot ici, et n'y a pas été
+appliqué. Correctif : une ligne, sur le modèle déjà écrit à côté.
+
+> 🔎 **Ce que cela établit pour un auditeur.** Le WTI affiche `AUTO_EXEC` dans les deux
+> sens sur argent réel, ses six portes d'admission au vert, et n'a envoyé **aucun
+> ordre en seize heures**. Le diagnostic d'admission ne voit pas la validation de tick :
+> c'est une **septième porte, en aval, invisible depuis l'état d'admission**. Un
+> exploitant qui lit « `AUTO_EXEC`, six portes vertes » conclut que l'instrument trade.
+> Il ne trade pas. → **R-19**
+>
+> Corollaire pour le banc d'essai : l'essai `live-wti-2026-09-22`, déclaré la veille et
+> facturé +1 à `N`, **accumule un échantillon nul**. Un essai qui ne peut pas produire
+> de mesure ne se conclura jamais, et pèse pourtant sur le compteur de Bailey.
+
+##### b) Ce que l'or révèle : huit heures d'argent réel suspendues à un message
+
+La chronologie du compte `admin_live` se lit sans ambiguïté dans les compteurs.
+Jusqu'à 09:59, l'or est refusé sur des portes **en aval** du kill switch
+(`max_positions_per_pair` à 09:59:58, `horizon_not_allowed` à 09:57) : le kill switch
+n'est donc pas actif. À **10:01:22**, le stop plein à −19,33 €. À partir de là, et
+jusqu'à **18:44**, l'intégralité des refus du compte bascule en `kill_switch` — l'or
+comme le WTI.
+
+Le code dit ce qui débloque :
+
+> « Depuis le 2026-09-04, franchir le plafond ne gèle plus automatiquement : ça ouvre un
+> **arbitrage** (`plafond_arbitrage`). Le compte est bloqué dès le franchissement et le
+> reste jusqu'à ce que Xavier réponde sur Telegram — **seul un `CONTINUER` enregistré
+> débloque**. »
+> — `trade_log_service.silent_mode_active_for_destination`
+
+Aucune clôture n'est intervenue entre 10:01 et 18:44 qui aurait pu rétablir le solde.
+La seule voie de sortie documentée est donc la réponse humaine.
+
+> 🔎 **Ce que cela établit.** Le compte en argent réel est resté fermé **8 h 43**, et sa
+> réouverture n'a tenu qu'à une réponse sur Telegram. Le WTI n'y était pour rien : ses
+> 716 refus `kill_switch` sont un dommage collatéral de la perte de l'or. Aucun des six
+> rapports de diagnostic ne montre cet arbitrage — sa durée ne se déduit qu'en
+> recoupant des horodatages de refus. **C'est R-13 en fonctionnement, sur un mécanisme
+> de sécurité et non plus sur la performance** : la disponibilité du compte réel est une
+> variable humaine, non tracée et non mesurée. → **R-20**
+
+##### c) Où en est la réouverture, au soir du premier jour
+
+| | Attendu par `dec-2` | Observé |
+|---|---|---|
+| `XAU/USD` | échantillon en cours de constitution | 1 trade, 1 stop plein, −19,33 € |
+| `WTI/USD` | échantillon en cours de constitution | 0 trade — mécaniquement impossible |
+
+L'un des deux signaux précoces inscrits au carnet `dec-2` s'est déclenché dès le premier
+jour. Le second instrument ne peut pas produire de mesure tant que la divergence de prix
+n'est pas résolue : sa réhabilitation sur IC Markets est **nominale**.
+
 #### 4.6.4 Constats connexes relevés à cette occasion
 
 | Réf | Constat | Sév. |
@@ -817,6 +946,8 @@ re-pause automatique, deux fois le jour même.
 | **R-13** | **La performance dépend d'interventions humaines non documentées : +0,864 R/trade apportés par des clôtures discrétionnaires. Le système n'est pas autonome sur son instrument principal (§4.6.5)** | **E** |
 | **R-18** | **La clause d'antériorité du banc exempte 27 paires sans aucune borne.** Leurs octrois portent `direction=NULL, destination=NULL`, et `_couvre(None, …)` rend `True` sur toute demande : l'exemption vaut pour `admin_live`, `admin_kraken` **et les comptes clients**. XAU, XAG et WTI en font partie. Armer le banc ne change donc presque rien pour l'univers existant. **Remédiation partielle le 2026-09-22** : les 8 octrois de XAU et WTI supprimés, la porte les refuse désormais ; **25 paires restent exemptées sans borne**, dont XAG (§4.6.4) | **E** |
 | **R-17** | **La porte du banc ne protège PAS les comptes clients.** `is_real_money()` ignore les destinations `user:N` (« hors `user:N`, dynamique ») et rend `False` : le banc les classe « fictives » et laisse passer toute promotion en `AUTO_EXEC`, sans essai, **même armé**. Le défaut « inconnue ⇒ fictive ⇒ silencieuse » est sûr pour une notification et s'inverse pour une porte (§4.6.4) | **E** |
+| **R-19** | **`AUTO_EXEC` ne signifie pas « négociable ».** La validation de tick (`bridge_tick_validator`) est une **septième porte, en aval des six portes d'admission et invisible depuis l'état d'admission**. Le WTI est resté seize heures en `AUTO_EXEC` sur argent réel, six portes au vert, sans envoyer un seul ordre : 815 refus `price_divergence` (écart radar/bridge > 0,5 %, soit > 31 cents sur un WTI à 62 $). L'or, au même moment et sur le même compte, n'en compte que 15 — le défaut est propre au WTI, pas au bridge. **La magnitude de l'écart n'est pas persistée** (`details` ne porte que `signal_pattern` et `horizon`), alors que le même manque avait été comblé pour `event_blackout` cinq jours plus tôt. Corollaire : l'essai `live-wti-2026-09-22` accumule un échantillon nul tout en pesant +1 sur `N` (§4.6.10 a) | **E** |
+| **R-20** | **La disponibilité du compte réel est une variable humaine non tracée.** Le franchissement du plafond journalier ouvre un `plafond_arbitrage` que **seul un `CONTINUER` sur Telegram lève**. Le 2026-09-22, un stop à −19,33 € sur l'or a fermé `admin_live` de 10:01 à 18:44 — **8 h 43**, toutes paires confondues, le WTI compris (716 refus `kill_switch` collatéraux). Aucun dispositif ne mesure ni n'expose cette durée : elle ne se reconstitue qu'en recoupant des horodatages de refus (§4.6.10 b) | **E** |
 | R-16 | `PLACEBO_PCT` : seuil unique en % du prix sur des instruments variant d'un facteur 50 — protège l'or, laisse passer WTI. Les métriques en R restent gonflables sur les bas prix (§4.6.7) | **M** |
 | R-14 | Le **slippage de sortie** n'est instrumenté par aucun dispositif permanent (§4.6.6) | **F** |
 | R-15 | La démo honore les stops (−0,040 R), le réel non (+0,127 R) : toute calibration de risque validée en démo sous-estime le réel (§4.6.6) | **M** |
@@ -1196,6 +1327,8 @@ Le service est pourtant ouvert, facturé via Stripe, et sert au moins un client 
 | **R-12** | `bilan()` rend un verdict sans test de significativité, sous le standard méthodologique du projet | Perf | **M** | 1 j |
 | **R-18** | Antériorité illimitée sur 27 paires (`direction` et `destination` à NULL) : le banc armé laisse passer XAU, XAG et WTI vers l'argent réel et les comptes clients sans essai. Origine : un backfill du 2026-05-18 dont le NULL signifiait « non scopé », relu comme « tout » | Risque | **E** | 1 j |
 | **R-17** | Le banc d'essai ne couvre pas les destinations `user:N` : la promotion en `AUTO_EXEC` sur le compte d'un client passe sans essai, banc armé ou non. Vérifié : `gate_promotion(..., 'user:2')` rend « destination fictive » | Risque | **E** | 1 j |
+| **R-19** | `AUTO_EXEC` ≠ négociable : la validation de tick est une 7ᵉ porte invisible depuis l'état d'admission. WTI 16 h en `AUTO_EXEC` sur argent réel, 0 ordre, 815 refus `price_divergence` dont la magnitude n'est pas persistée (§4.6.10 a) | Risque | **E** | 2 j |
+| **R-20** | Disponibilité du compte réel suspendue à une réponse Telegram : 8 h 43 de gel non tracé le 2026-09-22, toutes paires (§4.6.10 b) | Gouv | **E** | 3 j |
 | **R-16** | Seuil placebo en % du prix, non transposable entre instruments : les métriques en R restent gonflables sur un instrument à bas prix (§4.6.7) | Perf | **M** | 2 j |
 | **R-14** | Slippage de **sortie** non instrumenté : le respect des stops n'est suivi par rien (§4.6.6) | Risque | **F** | 1 j |
 | **R-8** | `DEMOTION_MAX_DD_R` ajustable à chaud, hors banc d'essai, après avoir bloqué l'instrument principal pour 3,4 % de dépassement (§4.6.3) | Risque | **M** | Process |
