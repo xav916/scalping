@@ -733,6 +733,52 @@ en seize jours, et sont antérieures aux deux correctifs de week-end
 vendredi le 2026-09-04). Aucune clôture postérieure au 2026-09-04 : ce défaut-là est
 refermé.
 
+#### 4.6.8 Décision consignée — XAU/USD, 2026-09-22
+
+> ⚠️ **Ceci n'est pas une conclusion d'audit.** C'est la décision de l'exploitant,
+> consignée ici à sa demande parce que le présent rapport reproche ailleurs
+> (§4.6.2, §8.2) l'absence de trace écrite des décisions d'admission. Un auditeur
+> constate ; il ne décide pas à la place de l'audité.
+
+| | |
+|---|---|
+| **Décideur** | Xavier, exploitant |
+| **Date** | 2026-09-22 |
+| **Objet** | `XAU/USD` sur `admin_live` (argent réel) |
+| **Décision** | **Maintenir la rétrogradation du 2026-09-18. Ne pas réadmettre en `AUTO_EXEC`.** |
+
+**Portée exacte.** La décision couvre `XAU/USD sell` (état `TELEGRAM` depuis le
+2026-09-18) et `XAU/USD buy` (en pause régulateur) sur `admin_live` uniquement.
+`admin_legacy` et `admin_kraken` restent inchangés.
+
+**Base de la décision — trois mesures convergentes :**
+
+1. **Contrefactuel de sortie du 2026-09-21** : sur 9 clôtures, **8 seraient allées au
+   stop**. R contrefactuel **−0,689** contre +0,175 obtenu. Les niveaux perdent.
+2. **Le `dd_R` de 5,168 est sain** : calculé sur de vrais stops (0,22 % à 0,63 %),
+   placebos écartés par `promotion_engine` (vérifié dans le code). Le déclencheur de
+   la rétrogradation n'est pas un artefact.
+3. **Aucun biais d'exécution ne l'explique** : l'agrégat des dépassements de stop sur
+   `admin_live` vaut **−0,080 R** hors placebos (§4.6.6). Les stops sont honorés.
+
+**Ce qui distingue cette décision des trois précédentes.** Les réadmissions manuelles
+du 2026-06-12, 2026-07-13 et 2026-09-08 (§4.6.2) ont toutes été décidées **sans
+mesure contrefactuelle**, et toutes suivies d'une re-pause — deux fois le jour même.
+C'est la première fois que le régulateur automatique et une mesure indépendante
+disent la même chose, et que la décision consiste à les suivre.
+
+**Condition de révision — une mesure, jamais un délai.** La réadmission ne sera
+envisagée que si un contrefactuel sur une fenêtre postérieure rend un
+`r_contrefactuel_moyen ≥ 0` sur `XAU/USD` — c'est-à-dire si les niveaux cessent de
+perdre. Le cool-off de 14 jours (`PAC_PAUSE_COOLOFF_DAYS`) est une condition
+nécessaire, jamais suffisante.
+
+> 🔑 **Ce que cette décision coûte, et il faut l'écrire.** `XAU/USD` est le seul
+> instrument à edge volumique apparent du portefeuille (223 trades, 38,4 %, +432,54 USD
+> au gate S8) et porte 87,6 % du résultat. S'en priver en argent réel réduit
+> l'activité à presque rien. C'est assumé : un instrument dont les niveaux rendent
+> −0,689 R ne devient pas rentable parce qu'il est le moins mauvais.
+
 #### 4.6.4 Constats connexes relevés à cette occasion
 
 | Réf | Constat | Sév. |
