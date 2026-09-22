@@ -785,6 +785,7 @@ nécessaire, jamais suffisante.
 |---|---|---|
 | **R-11** | **Les niveaux SL/TP ont une espérance négative sur l'or : −0,689 R/trade en contrefactuel, 8 clôtures sur 9 au stop. Troisième voie de mesure convergeant avec DSR 0,017 (§4.6.5)** | **E** |
 | **R-13** | **La performance dépend d'interventions humaines non documentées : +0,864 R/trade apportés par des clôtures discrétionnaires. Le système n'est pas autonome sur son instrument principal (§4.6.5)** | **E** |
+| **R-18** | **La clause d'antériorité du banc exempte 27 paires sans aucune borne.** Leurs octrois portent `direction=NULL, destination=NULL`, et `_couvre(None, …)` rend `True` sur toute demande : l'exemption vaut pour `admin_live`, `admin_kraken` **et les comptes clients**. XAU, XAG et WTI en font partie. Armer le banc ne change donc presque rien pour l'univers existant (§4.6.4) | **E** |
 | **R-17** | **La porte du banc ne protège PAS les comptes clients.** `is_real_money()` ignore les destinations `user:N` (« hors `user:N`, dynamique ») et rend `False` : le banc les classe « fictives » et laisse passer toute promotion en `AUTO_EXEC`, sans essai, **même armé**. Le défaut « inconnue ⇒ fictive ⇒ silencieuse » est sûr pour une notification et s'inverse pour une porte (§4.6.4) | **E** |
 | R-16 | `PLACEBO_PCT` : seuil unique en % du prix sur des instruments variant d'un facteur 50 — protège l'or, laisse passer WTI. Les métriques en R restent gonflables sur les bas prix (§4.6.7) | **M** |
 | R-14 | Le **slippage de sortie** n'est instrumenté par aucun dispositif permanent (§4.6.6) | **F** |
@@ -1163,6 +1164,7 @@ Le service est pourtant ouvert, facturé via Stripe, et sert au moins un client 
 | **R-13** | Performance dépendante d'interventions humaines non tracées (+0,864 R/trade) : le système n'est pas autonome sur son instrument principal, alors qu'il est vendu comme tel (§4.6.5, §6.2) | Gouv | **E** | Décision |
 | **R-15** | Démo et réel ne respectent pas les stops de la même façon (−0,040 R contre +0,127 R) : une calibration validée en démo sous-estime le réel (§4.6.6) | Risque | **M** | Process |
 | **R-12** | `bilan()` rend un verdict sans test de significativité, sous le standard méthodologique du projet | Perf | **M** | 1 j |
+| **R-18** | Antériorité illimitée sur 27 paires (`direction` et `destination` à NULL) : le banc armé laisse passer XAU, XAG et WTI vers l'argent réel et les comptes clients sans essai. Origine : un backfill du 2026-05-18 dont le NULL signifiait « non scopé », relu comme « tout » | Risque | **E** | 1 j |
 | **R-17** | Le banc d'essai ne couvre pas les destinations `user:N` : la promotion en `AUTO_EXEC` sur le compte d'un client passe sans essai, banc armé ou non. Vérifié : `gate_promotion(..., 'user:2')` rend « destination fictive » | Risque | **E** | 1 j |
 | **R-16** | Seuil placebo en % du prix, non transposable entre instruments : les métriques en R restent gonflables sur un instrument à bas prix (§4.6.7) | Perf | **M** | 2 j |
 | **R-14** | Slippage de **sortie** non instrumenté : le respect des stops n'est suivi par rien (§4.6.6) | Risque | **F** | 1 j |
