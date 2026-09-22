@@ -139,9 +139,48 @@ case "$DEMANDE" in
       || echo "(aucune ligne — journal vide, conteneur absent, ou droits docker manquants)"
     ;;
 
+  macro)
+    # ⚠️ Lit le journal, comme `divergence`, et pour une raison du meme ordre :
+    # le regime macro n'est persiste NULLE PART. `get_macro_snapshot()` rend
+    # `_cache_snapshot`, qui vit dans la MEMOIRE du processus serveur — un
+    # `docker exec` demarre un interpreteur neuf et ne peut donc pas le lire.
+    # C'est le meme obstacle que le projet avait deja nomme pour le solde du
+    # plafond journalier. La ligne `macro_applied` est la seule trace de ce qui
+    # a REELLEMENT ete applique.
+    #
+    # ⛔ Filtre FIXE et DOUBLE : prefixe du logueur ET paire. Aucune entree
+    # client n'y entre. La ligne ne porte que paire, sens, score et
+    # multiplicateur — aucun jeton, aucun identifiant de compte.
+    #
+    # 🔑 Ce que la colonne `final max` tranche : si aucun achat d'or n'atteint
+    # 60 alors que les ventes y sont, R-21 est confirme par la mesure et non
+    # plus deduit de la repartition.
+    _agrege() {
+      awk '
+        { delete v; for (i=1;i<=NF;i++) { split($i,a,"="); if (a[1]!="") v[a[1]]=a[2] }
+          k = v["dir"] " x" v["mult"]
+          n[k]++; sf[k]+=v["final"]; sb[k]+=v["base"]
+          if (!(k in mf) || v["final"]+0 > mf[k]) mf[k]=v["final"]+0
+          if (v["final"]+0 >= 60) ok[k]++ }
+        END { for (k in n) printf "%-14s %6d %10.1f %10.1f %10.1f %7d%%\n",
+                k, n[k], sb[k]/n[k], sf[k]/n[k], mf[k], (ok[k]*100)/n[k] }' | sort
+    }
+    for paire in XAU/USD WTI/USD EUR/USD; do
+      echo "=== multiplicateur macro applique a ${paire} (24 h) ==="
+      printf '%-14s %6s %10s %10s %10s %8s\n' "sens x mult" "n" "base moy" "final moy" "final max" ">= 60"
+      docker logs --since 24h scalping-radar 2>&1 \
+        | grep -F "macro_applied pair=${paire}" \
+        | _agrege \
+        || echo "(aucune ligne — journal vide, conteneur absent, ou droits docker manquants)"
+    done
+    echo "=== dernieres lignes brutes sur l'or (8) ==="
+    docker logs --since 24h scalping-radar 2>&1 \
+      | grep -F 'macro_applied pair=XAU/USD' | tail -8 || true
+    ;;
+
   *)
     echo "Rapport inconnu : « ${DEMANDE:-aucun} »" >&2
-    echo "Disponibles : rejets-wti rejets-or divergence admission banc trades-recents sante" >&2
+    echo "Disponibles : rejets-wti rejets-or divergence macro admission banc trades-recents sante" >&2
     exit 64
     ;;
 esac

@@ -1019,9 +1019,18 @@ Trois conséquences pratiques :
    meilleurs signaux et rien d'autre.
 2. **L'objet à éprouver est la règle macro, pas le sens du motif.** Elle est isolable :
    un drapeau, une hypothèse économique nommée, un essai déclarable au banc.
-3. **Le régime reste à confirmer.** Le sens de DXY / US10Y / VIX sur la fenêtre est
-   *déduit* de la répartition 63,1 % / 0,7 %, il n'a pas été lu. La ligne
-   `macro_applied … mult=… reason=…` du journal le donne directement.
+3. **Le régime reste à confirmer — et il n'est conservé nulle part.**
+   `macro_context_service.get_macro_snapshot()` rend `_cache_snapshot` : le régime
+   macro qui conditionne chaque achat d'or **vit dans la mémoire du processus
+   serveur et n'est persisté dans aucune base**. Un `docker exec` démarre un
+   interpréteur neuf et ne peut donc pas le lire — le même obstacle que le projet
+   avait déjà nommé pour le solde du plafond journalier. La seule trace de ce qui a
+   réellement été appliqué est la ligne `macro_applied pair=… dir=… base=… mult=…
+   final=…`, purgée avec le conteneur. Le sens de DXY / US10Y / VIX sur la fenêtre
+   est donc ici *déduit* de la répartition 63,1 % / 0,7 %, non mesuré. Le rapport
+   `macro` de `deploy/diag-lecture-seule.sh` agrège ces lignes et tranche : si
+   aucun achat d'or n'atteint 60 en `final` là où les ventes y sont, R-21 passe de
+   déduit à mesuré.
 
 ##### e) Le même avis macro est appliqué deux fois, par deux chemins
 
