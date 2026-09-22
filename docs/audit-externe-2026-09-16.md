@@ -938,6 +938,108 @@ L'un des deux signaux précoces inscrits au carnet `dec-2` s'est déclenché dè
 jour. Le second instrument ne peut pas produire de mesure tant que la divergence de prix
 n'est pas résolue : sa réhabilitation sur IC Markets est **nominale**.
 
+#### 4.6.11 Pourquoi l'or ne prend presque jamais d'achat — et ce que ça dit du −0,689 R
+
+Constat de départ, relevé en production le 2026-09-22 : sur `XAU/USD`, **63,1 % des
+setups `sell` dépassent 60 de confiance, contre 0,7 % des `buy`**. Une telle asymétrie
+sur un instrument sans biais structurel appelait une lecture du code plutôt qu'un pari.
+
+##### a) Le barème de base ne connaît pas le sens
+
+`_factors_v2` (barème en vigueur) n'a que deux composantes :
+
+```python
+score = pattern.confidence * 60      # Pattern
+      + {HAUTE: 6.0, MOYENNE: 24.0, BASSE: 40.0}[volatilite]
+```
+
+Aucune ne dépend de la direction, et les formules du détecteur de motifs vont par
+paires symétriques (`breakout_up` / `breakout_down` partagent le même calcul, au signe
+près). **Le score de base est donc direction-aveugle.** Conséquence immédiate, qui
+servira plus bas : `pattern.confidence` étant plafonnée à **0,85**, le score de base
+ne peut pas dépasser **91**, et non 100.
+
+##### b) L'asymétrie vient d'une couche multiplicative, et elle est spécifique à l'or
+
+`macro_scoring` applique à `XAU/USD` trois signaux macro, chacun compté `±1` selon le
+sens du setup :
+
+```python
+if pair_u in _XAU:
+    align = setup_sign * _vix_sign(ctx.vix_level)      # refuge
+    align = -setup_sign * _dir_sign(ctx.dxy_direction) # dollar fort → or faible
+    align = -setup_sign * _dir_sign(ctx.us10y_trend)   # taux qui montent → or faible
+```
+
+Puis une échelle convertit leur moyenne en multiplicateur :
+
+| moyenne d'alignement | ≥ 0,6 | ≥ 0,2 | \|·\| < 0,2 | > −0,6 | sinon |
+|---|---|---|---|---|---|
+| multiplicateur | **×1,20** | ×1,10 | ×1,00 | ×0,90 | **×0,75** |
+
+Le comptage est parfaitement antisymétrique entre achat et vente — **l'échelle, non.**
+Aux barreaux extrêmes, `+1` vaut `×1,20` et `−1` vaut `×0,75` : la pénalité de
+désalignement est **1,6 fois** le bonus d'alignement. Rien ne documente ce choix.
+
+##### c) L'effet, contre un seuil fixe, est une élimination quasi totale
+
+Dans un régime macro défavorable à l'or — dollar qui monte, taux qui montent, VIX bas —
+tout achat reçoit `×0,75` et toute vente `×1,20`. Contre le seuil de 60 :
+
+| Volatilité | Base max | Vente ×1,20 | Achat ×0,75 | Franchit 60 ? |
+|---|---|---|---|---|
+| Basse | 91,0 | 109,2 | **68,2** | vente oui / achat **oui** |
+| Moyenne | 75,0 | 90,0 | **56,2** | vente oui / achat **non** |
+| Haute | 57,0 | 68,4 | **42,8** | vente oui / achat **non** |
+
+Autrement dit : une vente a besoin d'un score de base de **50** ; un achat, de **80**,
+sur un maximum absolu de **91**. En volatilité basse, il lui faut en plus
+`pattern.confidence ≥ 0,667` contre un plafond du détecteur à `0,85`.
+
+> 🔎 **Ce que cela établit.** Sur l'or, en régime macro adverse, **un achat ne peut
+> franchir le seuil qu'en volatilité basse, et jamais autrement** — quelle que soit la
+> qualité du motif. Ce n'est pas une préférence du modèle : c'est une impossibilité
+> arithmétique, produite par l'interaction d'un multiplicateur (×0,75), d'un plafond de
+> score (91) et d'un seuil fixe (60), dont aucun des trois ne mentionne les deux autres.
+> Les 0,7 % d'achats observés sont exactement les cas de volatilité basse. → **R-21**
+
+##### d) Ce que cela change pour l'interprétation du −0,689 R
+
+Le système **ne « propose » pas des achats sur l'or qu'il faudrait retourner : il est
+empêché d'en proposer.** Ce qui a tourné sur `admin_live` est un **pari macro
+unidirectionnel à la vente**, et le `−0,689 R` sur 9 trades (§4.6.5) est la performance
+mesurée **de ce pari**, pas celle du moteur de motifs.
+
+Trois conséquences pratiques :
+
+1. **Retourner le signal ne teste pas ce qu'on croit.** Inverser reviendrait à acheter
+   l'or pendant que dollar et taux montent, dans les 0,7 % de cas où un achat passe —
+   c'est-à-dire précisément les setups les mieux conditionnés (volatilité basse, motif
+   au-dessus de 0,667), en laissant les 63,1 % de ventes intacts. On inverserait ses
+   meilleurs signaux et rien d'autre.
+2. **L'objet à éprouver est la règle macro, pas le sens du motif.** Elle est isolable :
+   un drapeau, une hypothèse économique nommée, un essai déclarable au banc.
+3. **Le régime reste à confirmer.** Le sens de DXY / US10Y / VIX sur la fenêtre est
+   *déduit* de la répartition 63,1 % / 0,7 %, il n'a pas été lu. La ligne
+   `macro_applied … mult=… reason=…` du journal le donne directement.
+
+##### e) Le même avis macro est appliqué deux fois, par deux chemins
+
+`macro_scoring` agit sur la **confiance** avec l'échelle ci-dessus. `macro_alignment`
+agit sur le **sizing**, avec un second jeu de constantes propre à l'or :
+
+```python
+def _gold_alignment(pair, direction, us10y):
+    if _is_up(us10y):    return (0.7, …) if is_long else (1.1, …)
+    if _is_down(us10y):  return (1.1, …) if is_long else (0.7, …)
+```
+
+Un achat d'or en régime adverse est donc pénalisé **sur la confiance** (×0,75) **et sur
+la taille** (×0,7) — soit `×0,53` cumulés sur deux axes, par deux modules qui ne se
+citent pas et dont les constantes diffèrent. Ce peut être délibéré (moins de conviction,
+moins de taille) ; rien ne le dit. Et le barème v2 a précisément retiré sa composante
+« Contexte éco » au motif que « c'était aussi un double comptage ». → **R-22**
+
 #### 4.6.4 Constats connexes relevés à cette occasion
 
 | Réf | Constat | Sév. |
@@ -946,6 +1048,8 @@ n'est pas résolue : sa réhabilitation sur IC Markets est **nominale**.
 | **R-13** | **La performance dépend d'interventions humaines non documentées : +0,864 R/trade apportés par des clôtures discrétionnaires. Le système n'est pas autonome sur son instrument principal (§4.6.5)** | **E** |
 | **R-18** | **La clause d'antériorité du banc exempte 27 paires sans aucune borne.** Leurs octrois portent `direction=NULL, destination=NULL`, et `_couvre(None, …)` rend `True` sur toute demande : l'exemption vaut pour `admin_live`, `admin_kraken` **et les comptes clients**. XAU, XAG et WTI en font partie. Armer le banc ne change donc presque rien pour l'univers existant. **Remédiation partielle le 2026-09-22** : les 8 octrois de XAU et WTI supprimés, la porte les refuse désormais ; **25 paires restent exemptées sans borne**, dont XAG (§4.6.4) | **E** |
 | **R-17** | **La porte du banc ne protège PAS les comptes clients.** `is_real_money()` ignore les destinations `user:N` (« hors `user:N`, dynamique ») et rend `False` : le banc les classe « fictives » et laisse passer toute promotion en `AUTO_EXEC`, sans essai, **même armé**. Le défaut « inconnue ⇒ fictive ⇒ silencieuse » est sûr pour une notification et s'inverse pour une porte (§4.6.4) | **E** |
+| **R-21** | **Sur l'or en régime macro adverse, un achat ne peut PAS franchir le seuil de confiance, sauf en volatilité basse — quelle que soit la qualité du motif.** Impossibilité arithmétique née de l'interaction d'un multiplicateur (×0,75), d'un plafond de score de base (91, non 100) et d'un seuil fixe (60), dont aucun ne mentionne les deux autres. Mesuré : 63,1 % des `sell` au-dessus de 60 contre **0,7 %** des `buy`. Le `−0,689 R` du §4.6.5 est donc la performance d'un **pari macro unidirectionnel**, pas celle du moteur de motifs. L'échelle est de surcroît asymétrique à ses barreaux extrêmes (`+1 → ×1,20`, `−1 → ×0,75`), sans justification écrite (§4.6.11) | **E** |
+| **R-22** | **Le même avis macro est appliqué deux fois par deux chemins**, avec des constantes différentes : `macro_scoring` sur la confiance (×0,75) et `macro_alignment._gold_alignment` sur le sizing (×0,7), soit **×0,53 cumulés** sur un achat d'or en régime adverse. Les deux modules ne se citent pas. Le barème v2 avait retiré sa composante « Contexte éco » au motif que « c'était aussi un double comptage » (§4.6.11 e) | **M** |
 | **R-19** | **`AUTO_EXEC` ne signifie pas « négociable ».** La validation de tick (`bridge_tick_validator`) est une **septième porte, en aval des six portes d'admission et invisible depuis l'état d'admission**. Le WTI est resté seize heures en `AUTO_EXEC` sur argent réel, six portes au vert, sans envoyer un seul ordre : 815 refus `price_divergence` (écart radar/bridge > 0,5 %, soit > 31 cents sur un WTI à 62 $). L'or, au même moment et sur le même compte, n'en compte que 15 — le défaut est propre au WTI, pas au bridge. **La magnitude de l'écart n'est pas persistée** (`details` ne porte que `signal_pattern` et `horizon`), alors que le même manque avait été comblé pour `event_blackout` cinq jours plus tôt. Corollaire : l'essai `live-wti-2026-09-22` accumule un échantillon nul tout en pesant +1 sur `N` (§4.6.10 a) | **E** |
 | **R-20** | **La disponibilité du compte réel est une variable humaine non tracée.** Le franchissement du plafond journalier ouvre un `plafond_arbitrage` que **seul un `CONTINUER` sur Telegram lève**. Le 2026-09-22, un stop à −19,33 € sur l'or a fermé `admin_live` de 10:01 à 18:44 — **8 h 43**, toutes paires confondues, le WTI compris (716 refus `kill_switch` collatéraux). Aucun dispositif ne mesure ni n'expose cette durée : elle ne se reconstitue qu'en recoupant des horodatages de refus (§4.6.10 b) | **E** |
 | R-16 | `PLACEBO_PCT` : seuil unique en % du prix sur des instruments variant d'un facteur 50 — protège l'or, laisse passer WTI. Les métriques en R restent gonflables sur les bas prix (§4.6.7) | **M** |
@@ -1327,6 +1431,8 @@ Le service est pourtant ouvert, facturé via Stripe, et sert au moins un client 
 | **R-12** | `bilan()` rend un verdict sans test de significativité, sous le standard méthodologique du projet | Perf | **M** | 1 j |
 | **R-18** | Antériorité illimitée sur 27 paires (`direction` et `destination` à NULL) : le banc armé laisse passer XAU, XAG et WTI vers l'argent réel et les comptes clients sans essai. Origine : un backfill du 2026-05-18 dont le NULL signifiait « non scopé », relu comme « tout » | Risque | **E** | 1 j |
 | **R-17** | Le banc d'essai ne couvre pas les destinations `user:N` : la promotion en `AUTO_EXEC` sur le compte d'un client passe sans essai, banc armé ou non. Vérifié : `gate_promotion(..., 'user:2')` rend « destination fictive » | Risque | **E** | 1 j |
+| **R-21** | Sur l'or en régime macro adverse, un achat ne peut pas franchir le seuil de confiance hors volatilité basse : 63,1 % des `sell` contre 0,7 % des `buy`. Le `−0,689 R` mesure un pari macro unidirectionnel, pas le moteur de motifs (§4.6.11) | Perf | **E** | 2 j |
+| **R-22** | Même avis macro appliqué sur la confiance ET le sizing, par deux modules aux constantes distinctes qui ne se citent pas : ×0,53 cumulés (§4.6.11 e) | Risque | **M** | 1 j |
 | **R-19** | `AUTO_EXEC` ≠ négociable : la validation de tick est une 7ᵉ porte invisible depuis l'état d'admission. WTI 16 h en `AUTO_EXEC` sur argent réel, 0 ordre, 815 refus `price_divergence` dont la magnitude n'est pas persistée (§4.6.10 a) | Risque | **E** | 2 j |
 | **R-20** | Disponibilité du compte réel suspendue à une réponse Telegram : 8 h 43 de gel non tracé le 2026-09-22, toutes paires (§4.6.10 b) | Gouv | **E** | 3 j |
 | **R-16** | Seuil placebo en % du prix, non transposable entre instruments : les métriques en R restent gonflables sur un instrument à bas prix (§4.6.7) | Perf | **M** | 2 j |
