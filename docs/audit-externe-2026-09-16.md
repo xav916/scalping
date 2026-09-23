@@ -1281,6 +1281,66 @@ ont été nécessaires, et **c'est en soi le premier constat**.
 
 ---
 
+### 5.7 Le contrôle de santé du bridge est vide de sens
+
+Relevé le 2026-09-23, à l'occasion d'une indisponibilité signalée du VPS Windows.
+
+`monitoring/ea-health-check.sh` tourne **quatre fois par jour** depuis le 2026-05-19,
+**414 exécutions, toutes vertes**. Il est le seul dispositif automatique censé détecter
+qu'un bridge ne répond plus.
+
+**Il ne peut pas le détecter.** Tous ses contrôles sont à l'intérieur d'une boucle :
+
+```python
+for u in d.get('users', []):
+    ...  # heartbeat OFFLINE, ordres zombies, taux d'exécution faible
+```
+
+Une liste vide parcourt zéro itération et produit zéro anomalie. Le seul contrôle
+hors boucle lit `totals`, vide lui aussi quand la charge utile l'est :
+
+```python
+if (T.get('users_offline') or 0) > 0: ...
+```
+
+**Rien ne vérifie que la liste ne devrait pas être vide.** Un système sans utilisateur
+enregistré et un système dont la flotte entière a disparu rendent le même verdict.
+
+La mesure le confirme. Le rapport du 2026-09-23 à 04:50 UTC :
+
+```
+Users: 0 total | 0 live | 0 offline | 0 stale
+Orders 24h: 0 total | exec_rate=None | zombies=0
+Status: All healthy ✓
+```
+
+Et celui du **2026-09-22 à 05:03 UTC — un jour où le système a envoyé un ordre sur l'or
+à 06:11 et l'a clôturé au stop à 10:01 — est identique, mot pour mot.** Le contrôle
+affichait déjà « 0 ordre sur 24 h » et « All healthy ✓ » pendant que le compte réel
+tradait. Il était donc **déjà aveugle avant la panne**, et son verdict vert n'apporte
+aucune information sur l'état du VPS, ni aujourd'hui ni les 413 fois précédentes.
+
+Le script ne sort par ailleurs jamais en erreur au-delà de l'étape 1 : une anomalie
+détectée déclenche un Telegram, puis le job se termine à zéro. La couleur verte dans
+GitHub Actions ne signifie donc que « le point de santé de l'EC2 a répondu 200 ».
+
+> 🔎 **La famille de défauts est celle que ce rapport a déjà nommée deux fois.** R-18 :
+> un `NULL` signifiant « non scopé » relu comme « tout », et `_couvre(None, …)` rendant
+> `True` sur toute demande. `analyze_trend` : une fonction qui « n'a jamais produit
+> BEARISH sur 278 252 signaux », conservée quatre mois. Ici : **l'ensemble vide
+> satisfait toutes les conditions**. « Pour tout utilisateur, le heartbeat est frais »
+> est trivialement vrai quand il n'y a aucun utilisateur. → **R-23**
+
+Deux détails de sécurité relevés dans le même fichier, qui documentent **S-1** d'un cas
+concret plutôt que d'un principe :
+
+- Le jeton d'administration est **en clair à la ligne 7**, dans un script exécuté par
+  GitHub Actions. Il ouvre `/api/admin/auto-exec/health-token` et
+  `/api/admin/notify-infra-telegram`. Quiconque lit le dépôt peut interroger la santé
+  de la production et déclencher des notifications Telegram.
+- Tous les appels utilisent `curl -sk` : **la vérification TLS est désactivée**, sur des
+  requêtes qui portent ce jeton.
+
 ## 6. Axe D — Gouvernance et conformité
 
 ### 6.1 Statut réel : démo ou argent réel ?
@@ -1440,6 +1500,7 @@ Le service est pourtant ouvert, facturé via Stripe, et sert au moins un client 
 | **R-12** | `bilan()` rend un verdict sans test de significativité, sous le standard méthodologique du projet | Perf | **M** | 1 j |
 | **R-18** | Antériorité illimitée sur 27 paires (`direction` et `destination` à NULL) : le banc armé laisse passer XAU, XAG et WTI vers l'argent réel et les comptes clients sans essai. Origine : un backfill du 2026-05-18 dont le NULL signifiait « non scopé », relu comme « tout » | Risque | **E** | 1 j |
 | **R-17** | Le banc d'essai ne couvre pas les destinations `user:N` : la promotion en `AUTO_EXEC` sur le compte d'un client passe sans essai, banc armé ou non. Vérifié : `gate_promotion(..., 'user:2')` rend « destination fictive » | Risque | **E** | 1 j |
+| **R-23** | **Le seul contrôle automatique de santé des bridges est vide de sens.** Tous ses tests sont dans une boucle `for u in users` : une liste vide produit zéro anomalie et le verdict « All healthy ✓ ». 414 exécutions vertes depuis mai. Vérifié : le rapport du 2026-09-22 05:03, jour où le compte réel a tradé, affiche déjà « 0 utilisateur, 0 ordre sur 24 h, All healthy ». Le script ne sort jamais en erreur au-delà de l'étape 1. Même famille que R-18 : l'ensemble vide satisfait toute condition universelle (§5.7) | IT | **E** | 1 j |
 | **R-21** | Sur l'or en régime macro adverse, un achat ne peut pas franchir le seuil de confiance hors volatilité basse : 63,1 % des `sell` contre 0,7 % des `buy`. Le `−0,689 R` mesure un pari macro unidirectionnel, pas le moteur de motifs (§4.6.11) | Perf | **E** | 2 j |
 | **R-22** | Même avis macro appliqué sur la confiance ET le sizing, par deux modules aux constantes distinctes qui ne se citent pas : ×0,53 cumulés (§4.6.11 e) | Risque | **M** | 1 j |
 | **R-19** | `AUTO_EXEC` ≠ négociable : la validation de tick est une 7ᵉ porte invisible depuis l'état d'admission. WTI 16 h en `AUTO_EXEC` sur argent réel, 0 ordre, 815 refus `price_divergence` dont la magnitude n'est pas persistée (§4.6.10 a) | Risque | **E** | 2 j |
