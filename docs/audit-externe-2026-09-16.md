@@ -1324,6 +1324,44 @@ Le script ne sort par ailleurs jamais en erreur au-delà de l'étape 1 : une ano
 détectée déclenche un Telegram, puis le job se termine à zéro. La couleur verte dans
 GitHub Actions ne signifie donc que « le point de santé de l'EC2 a répondu 200 ».
 
+**Interrogation directe du point de santé, 2026-09-23** (avec l'accord de l'exploitant,
+en lecture) :
+
+```json
+{"users": [],
+ "totals": {"users_with_auto_exec": 0, "users_live": 0, "users_stale": 0,
+            "users_offline": 0, "orders_24h": 0, "executed_rate_24h": null,
+            "zombies_total": 0}}
+```
+
+La cause de la liste vide est alors apparue, et elle est plus grave que la boucle.
+`api_admin_auto_exec_health` construit sa population ainsi :
+
+```python
+for u in users_service.list_all_users():
+    cfg = users_service.get_broker_config(u["id"])
+    if cfg.get("auto_exec_enabled"):
+        auto_exec_users.append((u, cfg))
+```
+
+Ce sont les **comptes clients** du SaaS. Les destinations de l'exploitant —
+`admin_live` (IC Markets, argent réel), `admin_legacy`, `admin_kraken` — ne sont pas
+des utilisateurs : ce sont des entrées du registre de destinations. Elles sont donc
+**structurellement hors du périmètre de ce point de santé**.
+
+> ⛔ **Conséquence.** Le seul dispositif automatique de surveillance du pipeline
+> d'exécution ne regarde aucun des comptes sur lesquels l'exploitant trade réellement,
+> **le compte en argent réel compris**. Même avec dix clients en ligne, il n'aurait
+> jamais rien dit de `admin_live`. La liste vide n'est pas une panne de collecte : c'est
+> le périmètre nominal du dispositif.
+
+Question ouverte relevée au passage : `users_with_auto_exec = 0` alors que **C-1**
+constate une exécution automatique sur un compte de tiers. Soit cette exécution a été
+désactivée depuis, soit elle emprunte un autre chemin que `auto_exec_enabled` — les
+destinations `user:N` du registre, celles-là mêmes que **R-17** montre non couvertes par
+le banc d'essai. Dans le second cas, l'exécution chez le client échapperait **aussi** à
+cette surveillance. À trancher sur le registre des destinations, pas à déduire.
+
 > 🔎 **La famille de défauts est celle que ce rapport a déjà nommée deux fois.** R-18 :
 > un `NULL` signifiant « non scopé » relu comme « tout », et `_couvre(None, …)` rendant
 > `True` sur toute demande. `analyze_trend` : une fonction qui « n'a jamais produit
@@ -1500,7 +1538,7 @@ Le service est pourtant ouvert, facturé via Stripe, et sert au moins un client 
 | **R-12** | `bilan()` rend un verdict sans test de significativité, sous le standard méthodologique du projet | Perf | **M** | 1 j |
 | **R-18** | Antériorité illimitée sur 27 paires (`direction` et `destination` à NULL) : le banc armé laisse passer XAU, XAG et WTI vers l'argent réel et les comptes clients sans essai. Origine : un backfill du 2026-05-18 dont le NULL signifiait « non scopé », relu comme « tout » | Risque | **E** | 1 j |
 | **R-17** | Le banc d'essai ne couvre pas les destinations `user:N` : la promotion en `AUTO_EXEC` sur le compte d'un client passe sans essai, banc armé ou non. Vérifié : `gate_promotion(..., 'user:2')` rend « destination fictive » | Risque | **E** | 1 j |
-| **R-23** | **Le seul contrôle automatique de santé des bridges est vide de sens.** Tous ses tests sont dans une boucle `for u in users` : une liste vide produit zéro anomalie et le verdict « All healthy ✓ ». 414 exécutions vertes depuis mai. Vérifié : le rapport du 2026-09-22 05:03, jour où le compte réel a tradé, affiche déjà « 0 utilisateur, 0 ordre sur 24 h, All healthy ». Le script ne sort jamais en erreur au-delà de l'étape 1. Même famille que R-18 : l'ensemble vide satisfait toute condition universelle (§5.7) | IT | **E** | 1 j |
+| **R-23** | **Le seul contrôle automatique de santé des bridges est vide de sens.** Tous ses tests sont dans une boucle `for u in users` : une liste vide produit zéro anomalie et le verdict « All healthy ✓ ». 414 exécutions vertes depuis mai. Vérifié : le rapport du 2026-09-22 05:03, jour où le compte réel a tradé, affiche déjà « 0 utilisateur, 0 ordre sur 24 h, All healthy ». Le script ne sort jamais en erreur au-delà de l'étape 1. **Et la liste est vide par construction** : le point de santé itère sur les comptes clients (`auto_exec_enabled`), jamais sur les destinations de l'exploitant — `admin_live` compris. Le compte en argent réel n'a donc jamais été surveillé. Même famille que R-18 : l'ensemble vide satisfait toute condition universelle (§5.7) | IT | **E** | 1 j |
 | **R-21** | Sur l'or en régime macro adverse, un achat ne peut pas franchir le seuil de confiance hors volatilité basse : 63,1 % des `sell` contre 0,7 % des `buy`. Le `−0,689 R` mesure un pari macro unidirectionnel, pas le moteur de motifs (§4.6.11) | Perf | **E** | 2 j |
 | **R-22** | Même avis macro appliqué sur la confiance ET le sizing, par deux modules aux constantes distinctes qui ne se citent pas : ×0,53 cumulés (§4.6.11 e) | Risque | **M** | 1 j |
 | **R-19** | `AUTO_EXEC` ≠ négociable : la validation de tick est une 7ᵉ porte invisible depuis l'état d'admission. WTI 16 h en `AUTO_EXEC` sur argent réel, 0 ordre, 815 refus `price_divergence` dont la magnitude n'est pas persistée (§4.6.10 a) | Risque | **E** | 2 j |
