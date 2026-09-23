@@ -178,9 +178,37 @@ case "$DEMANDE" in
       | grep -F 'macro_applied pair=XAU/USD' | tail -8 || true
     ;;
 
+  bridge)
+    # ⚠️ Date une panne de bridge DEPUIS L'EC2, sans rien demander au VPS.
+    # Quand le bridge ne repond plus, le backend continue de pousser et
+    # d'echouer : chaque echec laisse une ligne `bridge_timeout` ou
+    # `bridge_error` dans `signal_rejections`. Le premier horodatage borne le
+    # debut de la panne, le dernier dit si elle dure.
+    #
+    # 🔑 Ajoute le 2026-09-23 parce que le controle automatique cense jouer ce
+    # role ne le joue pas : tous ses tests sont dans une boucle sur une liste
+    # d'utilisateurs vide, donc il rend « All healthy » quoi qu'il arrive
+    # (R-23). Celui-ci lit des faits, pas une absence de faits.
+    echo "=== echecs de bridge, 7 jours, par destination et par jour ==="
+    lire "SELECT substr(created_at,1,10) jour, destination_id, reason_code,
+                 COUNT(*) n, MIN(created_at) premier, MAX(created_at) dernier
+          FROM signal_rejections
+          WHERE reason_code IN ('bridge_timeout','bridge_error')
+            AND created_at >= date('now','-7 days')
+          GROUP BY 1,2,3 ORDER BY 1 DESC, n DESC LIMIT 40;"
+    echo "=== dernier ordre REELLEMENT parti, par destination ==="
+    lire "SELECT destination_id, MAX(pushed_at) dernier_push, COUNT(*) n_7j
+          FROM mt5_pushes WHERE pushed_at >= date('now','-7 days')
+          GROUP BY 1 ORDER BY 2 DESC;"
+    echo "=== positions encore OUVERTES (leur stop vit chez le courtier) ==="
+    lire "SELECT created_at, pair, direction, entry_price, stop_loss,
+                 mt5_ticket, destination_id
+          FROM personal_trades WHERE status='OPEN' ORDER BY created_at DESC;"
+    ;;
+
   *)
     echo "Rapport inconnu : « ${DEMANDE:-aucun} »" >&2
-    echo "Disponibles : rejets-wti rejets-or divergence macro admission banc trades-recents sante" >&2
+    echo "Disponibles : rejets-wti rejets-or divergence macro bridge admission banc trades-recents sante" >&2
     exit 64
     ;;
 esac
