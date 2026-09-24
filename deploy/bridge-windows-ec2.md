@@ -100,8 +100,25 @@ n'a pas besoin d'être exposé du tout : le backend joint le bridge par son adre
   et devient juste avec MT5 ouvert sur 16 à 49 symboles plus le bridge Python.
 - **Disque** : 50 Gio `gp3`. Windows en consomme ~30 à lui seul.
 - **Région** : **la même que l'EC2 backend.** À vérifier dans la console, pas à deviner.
-- **VPC** : **le même que l'EC2 backend.** C'est ce qui permet de ne jamais exposer le
-  bridge sur Internet.
+- **VPC** : **le même que l'EC2 backend.** ⛔ **C'est la décision qui supprime R-24.**
+  Dans le même VPC, le backend joint le bridge par une **IP privée** (`10.x`),
+  filtrée par *security group*. Tailscale n'est alors **plus sur le chemin
+  critique** :
+
+  | | Avant | Après |
+  |---|---|---|
+  | route EC2 → bridge | tunnel Tailscale | IP privée, même VPC |
+  | accès administrateur | RDP via Tailscale | SSM Fleet Manager |
+  | démarrage du bridge | `AtLogOn` après RDP | ouverture de session automatique |
+
+  Les trois fonctions qui tombaient ensemble le 2026-09-24 — parce qu'elles
+  passaient toutes par le même tunnel — deviennent **trois chemins
+  indépendants**. Une expiration de clé Tailscale ne peut plus arrêter le
+  trading, parce que le trading ne passe plus par Tailscale.
+
+  ⚠️ Gardez Tailscale si vous voulez, pour votre confort d'accès. Mais ne le
+  remettez pas sur la route du bridge : c'est précisément ce qui a coûté
+  l'incident.
 - **Paire de clés** : nécessaire au lancement pour déchiffrer le mot de passe
   Administrator, même si l'accès courant passera par SSM.
 
