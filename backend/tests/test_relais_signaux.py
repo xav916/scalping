@@ -133,3 +133,44 @@ def test_la_confiance_hors_bornes_est_refusee():
     for mauvaise in (0.0, -5.0, 101.0):
         with pytest.raises(Refus, match="confiance"):
             lire("XAUUSD SELL 3900 SL 3920", "orvion", mauvaise)
+
+
+# --- la forme REELLE d'Orvion, relevee le 2026-09-24 ----------------------
+# Trois messages authentiques, captures dans l'application MQL5. Le parseur les
+# lit sans avoir ete modifie pour eux — ces tests figent ce fait, pour qu'une
+# retouche de regex ne casse pas en silence le seul format qu'on ait vu.
+
+ORVION_REELS = [
+    ("""📊 Vente : XAUUSD
+🎯 Prix d'entrée : 4605
+⛔ SL : 4614,20
+🚀 TP1 : 4588,46""", 4605.0, 4614.20, 4588.46),
+    ("""📊 Vente : XAUUSD
+🎯 Prix d'entrée : 4596,11
+⛔ SL : 4598,98
+🚀 TP : 4590,36""", 4596.11, 4598.98, 4590.36),
+    ("""📊 Vente : XAUUSD
+🎯 Prix d'entrée : 4572,93
+⛔ SL : 4585,26
+🚀 TP : 4548,21""", 4572.93, 4585.26, 4548.21),
+]
+
+
+@pytest.mark.parametrize("texte,entree,stop,objectif", ORVION_REELS)
+def test_la_forme_reelle_d_orvion_est_lue(texte, entree, stop, objectif):
+    """Emoji en tête, « Prix d'entrée » accentué, virgule décimale, « TP1 »
+    numéroté, tout sur plusieurs lignes."""
+    s = lire(texte, "orvion", 75.0)
+    assert (s.pair, s.direction) == ("XAU/USD", "sell")
+    assert (s.entry_price, s.stop_loss, s.take_profit) == (entree, stop, objectif)
+
+
+@pytest.mark.parametrize("texte", ["SL touché ⛔", "TP1 atteint 🚀", "BE ✅"])
+def test_un_message_de_cloture_ne_produit_aucun_signal(texte):
+    """⛔ Orvion poste le résultat de chaque appel : « SL touché », « TP
+    atteint ». Ces messages suivent le signal dans le même fil et ne doivent
+    surtout pas devenir des ordres. Ils n'ont ni instrument ni prix : les deux
+    gardes existants suffisent, et ce test empêche qu'un assouplissement futur
+    de la whitelist les fasse passer."""
+    with pytest.raises(Refus):
+        lire(texte, "orvion", 75.0)
