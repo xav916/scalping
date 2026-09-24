@@ -29,8 +29,9 @@ Conception : `docs/superpowers/specs/2026-08-26-bot-externe-demo-design.md`
 from __future__ import annotations
 
 import logging
+import os
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -133,6 +134,84 @@ def _fournisseurs() -> dict[str, str]:
 CAUSE_OK = "ok"
 CAUSE_AUTH = "auth"        # fournisseur inconnu, jeton faux, rien de declare
 CAUSE_FORME = "forme"      # champ manquant, sens inconnu, nombre illisible
+CAUSE_DOUBLON = "doublon"  # deja recu — par identifiant OU par contenu
+
+
+# ─── Doublon SEMANTIQUE (R-28, 2026-09-24) ──────────────────────────────
+
+# ⛔ L'ECART SE MESURE EN R, PAS EN PRIX NI EN POURCENTAGE. C'est la seule
+# unite qui traverse les instruments. Ce depot a deja paye trois fois le
+# defaut inverse — une constante dont le SENS change d'un instrument a
+# l'autre : `PLACEBO_PCT` en % du prix protege l'or et laisse passer le WTI
+# (R-16), `BRIDGE_PRICE_DIVERGENCE_MAX_PCT` vaut 31 cents sur le petrole et
+# 19,50 $ sur l'or (R-19), `TRADING_CAPITAL` global applique a un compte de
+# 103 USD. La distance au stop, elle, est le risque du trade : deux appels
+# dont les entrees different de moins d'un quart de leur risque decrivent le
+# meme trade, que l'instrument cote 1,08 ou 3 900.
+_FENETRE_DOUBLON_MIN = float(os.getenv("EXTERNAL_SIGNAL_DEDUP_WINDOW_MIN", "15"))
+_ECART_DOUBLON_R = float(os.getenv("EXTERNAL_SIGNAL_DEDUP_R", "0.25"))
+
+
+def doublon_semantique(charge: dict[str, Any]) -> tuple[bool, str | None]:
+    """Un signal RECENT, toutes sources confondues, decrit-il deja ce trade ?
+
+    ⛔ Ce que l'unicite `(source, external_id)` ne peut pas voir. Elle empeche
+    UN fournisseur de rejouer sa file ; elle ne voit pas DEUX fournisseurs
+    emettant le meme appel. Or les canaux de signaux se recopient — c'est la
+    norme du milieu. Deux canaux suivis, un meme « XAU sell 3900, SL 3920 » :
+    deux identifiants, deux sources, donc deux ordres et une position doublee.
+
+    ⚠️ La comparaison porte sur TOUTES les sources, y compris celle du signal
+    entrant : un canal qui republie son propre appel sous un nouvel identifiant
+    doublerait tout autant.
+
+    ⛔ Ce que ce controle COUTE, et qui est assume : un renforcement legitime
+    (« on ajoute a 3905 ») est refuse comme un doublon. Perdre une entree
+    partielle coute un trade ; doubler une position coute une perte doublee.
+    L'asymetrie tranche, et elle tranche du cote du refus.
+
+    ⚠️ Sur doute — registre illisible, horodatage absurde — on REFUSE, comme
+    `enregistrer`. Ne pas pouvoir verifier n'autorise pas a passer.
+    """
+    try:
+        entree = float(charge["entry_price"])
+        stop = float(charge["stop_loss"])
+    except (KeyError, TypeError, ValueError):
+        return True, "prix illisibles — refus par prudence"
+    risque = abs(entree - stop)
+    if risque <= 0:
+        return True, "risque nul (entree == stop) — refus par prudence"
+    tolerance = risque * _ECART_DOUBLON_R
+    depuis = (datetime.now(timezone.utc)
+              - timedelta(minutes=_FENETRE_DOUBLON_MIN)).isoformat()
+    # ⛔ `_ensure_schema()` est DANS le `try`. Hors de lui, une base injoignable
+    # levait une exception non rattrapee qui remontait jusqu'a la route en 500,
+    # au lieu du refus prudent que cette fonction promet. Attrape par son propre
+    # test le 2026-09-24.
+    try:
+        _ensure_schema()
+        with sqlite3.connect(_db_path()) as c:
+            lignes = c.execute(
+                """SELECT source, external_id, entry_price, received_at
+                     FROM external_signals
+                    WHERE pair = ? AND direction = ? AND received_at >= ?""",
+                (str(charge["pair"]).upper(), str(charge["direction"]).lower(),
+                 depuis)).fetchall()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("external_signals: controle de doublon impossible (%s) — refus", e)
+        return True, f"controle de doublon impossible ({e})"
+
+    for source, ext_id, entree_vue, recu_a in lignes:
+        if entree_vue is None:
+            continue
+        ecart = abs(float(entree_vue) - entree)
+        if ecart <= tolerance:
+            return True, (
+                f"meme trade deja recu de « {source} » (#{ext_id}) a {recu_a} : "
+                f"ecart d'entree {ecart:.5f} <= {tolerance:.5f} "
+                f"({_ECART_DOUBLON_R} R sur un risque de {risque:.5f})")
+    return False, None
+
 
 
 def valider_detaille(charge: dict[str, Any],
@@ -230,11 +309,20 @@ async def ingerer(charge: dict[str, Any], jeton: str) -> dict[str, Any]:
         logger.info("external_signals: refusé — %s", motif)
         return {"accepte": False, "motif": motif, "cause": cause}
 
+    # ⛔ Le doublon SEMANTIQUE se teste AVANT l'enregistrement : sinon le signal
+    # entrant serait deja en base et se verrait lui-meme comme son propre
+    # doublon au prochain appel. L'ordre des deux controles n'est pas libre.
+    est_doublon, detail = doublon_semantique(charge)
+    if est_doublon:
+        logger.info("external_signals: doublon semantique — %s", detail)
+        return {"accepte": False, "motif": f"signal déjà reçu — {detail}",
+                "cause": CAUSE_DOUBLON}
+
     if not enregistrer(charge):
         # ⛔ Un rejeu n'est PAS une erreur : c'est l'idempotence qui fonctionne.
         # Le signaler comme un echec apprendrait au fournisseur a reessayer.
         return {"accepte": False, "motif": "signal déjà reçu (external_id connu)",
-                "cause": "doublon"}
+                "cause": CAUSE_DOUBLON}
 
     setup = construire_setup(charge)
     from backend.services.mt5_bridge import send_setup
