@@ -26,7 +26,7 @@ from parseur import Refus, construire, lire  # noqa: E402
     ("xauusd sell 3900,5 stop loss 3920,5", "sell", 3900.5, 3920.5, None),
 ])
 def test_les_formes_courantes_sont_lues(texte, sens, entree, stop, objectif):
-    s = lire(texte, "orvion")
+    s = lire(texte, "orvion", 75.0)
     assert (s.pair, s.direction) == ("XAU/USD", sens)
     assert (s.entry_price, s.stop_loss, s.take_profit) == (entree, stop, objectif)
 
@@ -44,7 +44,7 @@ def test_les_formes_courantes_sont_lues(texte, sens, entree, stop, objectif):
 ])
 def test_un_message_incertain_ne_produit_rien(texte, attendu):
     with pytest.raises(Refus, match=attendu):
-        lire(texte, "orvion")
+        lire(texte, "orvion", 75.0)
 
 
 @pytest.mark.parametrize("texte", [
@@ -60,7 +60,7 @@ def test_les_mots_francais_ordinaires_ne_sont_pas_des_instruments(texte):
     sur l'or à partir d'un message qui n'en parle pas.
     """
     with pytest.raises(Refus, match="aucun instrument"):
-        lire(texte, "orvion")
+        lire(texte, "orvion", 75.0)
 
 
 @pytest.mark.parametrize("sens,entree,stop", [
@@ -71,19 +71,19 @@ def test_un_stop_du_mauvais_cote_est_refuse(sens, entree, stop):
     """L'erreur la plus chère : un stop inversé transforme un risque borné en
     risque ouvert."""
     with pytest.raises(Refus, match="stop"):
-        construire("orvion", "XAU/USD", sens, entree, stop)
+        construire("orvion", "XAU/USD", sens, entree, stop, 75.0)
 
 
 @pytest.mark.parametrize("sens,objectif", [("sell", 3950.0), ("buy", 3850.0)])
 def test_un_objectif_du_mauvais_cote_est_refuse(sens, objectif):
     stop = 3920.0 if sens == "sell" else 3880.0
     with pytest.raises(Refus, match="objectif"):
-        construire("orvion", "XAU/USD", sens, 3900.0, stop, objectif)
+        construire("orvion", "XAU/USD", sens, 3900.0, stop, 75.0, objectif)
 
 
 def test_un_instrument_hors_whitelist_est_refuse():
     with pytest.raises(Refus, match="whitelist"):
-        construire("orvion", "DOGE/USD", "buy", 1.0, 0.9)
+        construire("orvion", "DOGE/USD", "buy", 1.0, 0.9, 75.0)
 
 
 # --- l'identifiant, donc l'idempotence ------------------------------------
@@ -93,22 +93,22 @@ def test_le_meme_appel_saisi_deux_fois_porte_le_meme_identifiant():
     ne doit pas produire un second ordre. L'unicité serveur portant sur
     `(source, external_id)`, un identifiant aléatoire ferait exactement
     l'inverse."""
-    a = lire("XAUUSD SELL 3900 SL 3920 TP 3880", "orvion")
-    b = lire("xauusd sell 3900 stop 3920 target 3880", "orvion")
+    a = lire("XAUUSD SELL 3900 SL 3920 TP 3880", "orvion", 75.0)
+    b = lire("xauusd sell 3900 stop 3920 target 3880", "orvion", 75.0)
     assert a.external_id == b.external_id
 
 
 def test_deux_appels_identiques_a_deux_heures_sont_deux_signaux():
     """⚠️ Le pendant : `ref` prime, parce qu'un même appel réémis plus tard EST
     un autre signal."""
-    a = lire("XAUUSD SELL 3900 SL 3920", "orvion", ref="2026-09-24T09:00")
-    b = lire("XAUUSD SELL 3900 SL 3920", "orvion", ref="2026-09-24T14:00")
+    a = lire("XAUUSD SELL 3900 SL 3920", "orvion", 75.0, ref="2026-09-24T09:00")
+    b = lire("XAUUSD SELL 3900 SL 3920", "orvion", 75.0, ref="2026-09-24T14:00")
     assert a.external_id != b.external_id
 
 
 def test_deux_sources_ne_partagent_pas_leurs_identifiants():
-    a = lire("XAUUSD SELL 3900 SL 3920", "orvion")
-    b = lire("XAUUSD SELL 3900 SL 3920", "apollo")
+    a = lire("XAUUSD SELL 3900 SL 3920", "orvion", 75.0)
+    b = lire("XAUUSD SELL 3900 SL 3920", "apollo", 75.0)
     assert a.external_id != b.external_id
 
 
@@ -117,7 +117,19 @@ def test_deux_sources_ne_partagent_pas_leurs_identifiants():
 def test_la_charge_porte_exactement_les_champs_obligatoires():
     """`external_signals._OBLIGATOIRES` — source, external_id, pair, direction,
     entry_price, stop_loss. `take_profit` est optionnel et absent s'il est nul."""
-    s = lire("XAU buy 3900 stop 3880", "orvion")
+    s = lire("XAU buy 3900 stop 3880", "orvion", 75.0)
     assert set(s.charge()) == {"source", "external_id", "pair", "direction",
-                               "entry_price", "stop_loss"}
-    assert "take_profit" in lire("XAU buy 3900 stop 3880 tp 3950", "orvion").charge()
+                               "entry_price", "stop_loss", "confidence"}
+    assert "take_profit" in lire("XAU buy 3900 stop 3880 tp 3950", "orvion", 75.0).charge()
+
+
+# --- la confiance est une decision, pas une lecture ------------------------
+
+def test_la_confiance_hors_bornes_est_refusee():
+    """⛔ Elle n'est jamais lue dans le message : un canal n'en publie pas.
+    C'est ce que l'exploitant attribue a la source, et le serveur l'exige —
+    sans elle, `confidence_score` valait 0 et la porte refusait TOUT signal
+    externe, en silence, depuis la conception du 2026-08-26."""
+    for mauvaise in (0.0, -5.0, 101.0):
+        with pytest.raises(Refus, match="confiance"):
+            lire("XAUUSD SELL 3900 SL 3920", "orvion", mauvaise)

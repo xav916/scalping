@@ -175,3 +175,46 @@ def test_le_setup_construit_est_refuse_par_le_verrou(fournisseurs):
     from backend.services.external_signals import construire_setup
 
     assert bd._est_externe(construire_setup(CHARGE)) is True
+
+
+# ── La porte de confiance voit-elle la confiance ? (2026-09-24) ───────────
+
+def _dest(min_conf: float):
+    from types import SimpleNamespace
+    return SimpleNamespace(
+        destination_id="admin_legacy", min_confidence=min_conf, user_id=None,
+        allowed_asset_classes=frozenset({"metal"}), watched_pairs=frozenset(),
+        excluded_pairs=frozenset(), symbol_map=None, auto_exec_enabled=True,
+        bridge_url="", bridge_api_key="")
+
+
+@pytest.mark.parametrize("confiance,refuse", [(92.0, False), (45.0, True)])
+def test_la_porte_de_confiance_lit_bien_la_confiance_du_signal(confiance, refuse):
+    """⛔ LE défaut que ce test fige, et qui a rendu tout le chemin inerte.
+
+    Toute la chaîne de refus lit `setup.confidence_score`, jamais `confidence` :
+    `getattr(setup, "confidence_score", None) or 0`. `ExternalSetup` ne posait
+    que `confidence`. L'attribut manquant valait donc **0**, et un signal
+    annonçant 92 était refusé en `below_confidence` contre un seuil de 60 — en
+    silence, et depuis la conception du 2026-08-26.
+
+    Un mécanisme écrit, testé en isolation, et inerte en composition : la
+    famille de défauts que ce dépôt a déjà nommée quatre fois.
+    """
+    from backend.services.external_signals import ExternalSetup
+    from backend.services.mt5_bridge import _check_rejection
+    setup = ExternalSetup({**CHARGE, "confidence": confiance})
+    motif = _check_rejection(setup, _dest(60.0))
+    assert (motif == "below_confidence") is refuse, motif
+
+
+def test_un_signal_sans_confiance_est_refuse_A_L_ENTREE(fournisseurs):
+    """⚠️ Bruyamment, à la porte — pas silencieusement au septième portillon.
+
+    Un canal ne publie pas de score : la confiance est ce que l'exploitant
+    ATTRIBUE à une source. Sans elle, on refuse en `forme`, avec le motif.
+    """
+    from backend.services.external_signals import valider_detaille
+    charge = {k: v for k, v in CHARGE.items() if k != "confidence"}
+    ok, motif, cause = valider_detaille(charge, "jeton_x")
+    assert ok is False and cause == "forme" and "confidence" in motif
