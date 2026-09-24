@@ -78,6 +78,7 @@ class Signal:
     direction: str
     entry_price: float
     stop_loss: float
+    confidence: float
     take_profit: float | None = None
 
     def charge(self) -> dict[str, Any]:
@@ -135,7 +136,8 @@ def _identifiant(source: str, paire: str, sens: str, entree: float,
 
 
 def construire(source: str, paire: str, sens: str, entree: float, stop: float,
-               objectif: float | None = None, ref: str | None = None) -> Signal:
+               confiance: float, objectif: float | None = None,
+               ref: str | None = None) -> Signal:
     """Valide des champs DÉJÀ structurés. Le chemin sûr, sans interprétation.
 
     ⛔ Le contrôle qui compte : le stop du bon côté de l'entrée. Une inversion
@@ -148,6 +150,11 @@ def construire(source: str, paire: str, sens: str, entree: float, stop: float,
         raise Refus(f"sens invalide : {sens}")
     if entree <= 0 or stop <= 0:
         raise Refus("prix nul ou négatif")
+    # ⛔ La confiance n'est pas lue dans le message : un canal n'en publie pas.
+    # C'est ce que VOUS attribuez à cette source. Le serveur l'exige depuis le
+    # 2026-09-24 — sans elle, la porte de confiance refusait tout, en silence.
+    if not 0 < confiance <= 100:
+        raise Refus(f"confiance hors bornes (0 < c <= 100) : {confiance}")
     if sens == "buy" and stop >= entree:
         raise Refus(f"achat : le stop ({stop}) doit être SOUS l'entrée ({entree})")
     if sens == "sell" and stop <= entree:
@@ -162,10 +169,10 @@ def construire(source: str, paire: str, sens: str, entree: float, stop: float,
     return Signal(source=source,
                   external_id=_identifiant(source, paire, sens, entree, stop, ref),
                   pair=paire, direction=sens, entry_price=entree,
-                  stop_loss=stop, take_profit=objectif)
+                  stop_loss=stop, confidence=confiance, take_profit=objectif)
 
 
-def lire(texte: str, source: str, ref: str | None = None) -> Signal:
+def lire(texte: str, source: str, confiance: float, ref: str | None = None) -> Signal:
     """Interprète un message brut. Lève `Refus` dès que la lecture est incertaine.
 
     ⛔ L'ENTRÉE EN ZONE EST REFUSÉE. « XAU sell 3900-3902 » est très fréquent, et
@@ -201,4 +208,4 @@ def lire(texte: str, source: str, ref: str | None = None) -> Signal:
             raise Refus("entrée donnée en ZONE — préciser le prix avec --entree")
         entree = _nombre(restants[0])
 
-    return construire(source, paire, sens, entree, stop, objectif, ref)
+    return construire(source, paire, sens, entree, stop, confiance, objectif, ref)

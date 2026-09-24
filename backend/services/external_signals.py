@@ -38,8 +38,13 @@ logger = logging.getLogger(__name__)
 
 _SCHEMA_ENSURED = False
 
+# ⛔ `confidence` est OBLIGATOIRE depuis le 2026-09-24. Un canal ne publie pas
+# de score : c'est l'exploitant qui ATTRIBUE une confiance a une source, et
+# cette decision doit etre explicite. Sans ce champ, `confidence_score` valait
+# 0 et la porte de confiance refusait TOUT signal externe — silencieusement,
+# et depuis la conception du 26/08.
 _OBLIGATOIRES = ("source", "external_id", "pair", "direction",
-                 "entry_price", "stop_loss")
+                 "entry_price", "stop_loss", "confidence")
 _NUMERIQUES = ("entry_price", "stop_loss", "take_profit")
 _SENS = ("buy", "sell")
 
@@ -74,6 +79,22 @@ class ExternalSetup:
         self.pattern = charge.get("pattern")
         self.confidence = (float(charge["confidence"])
                            if charge.get("confidence") is not None else None)
+        # ⛔ LE NOM QUI COMPTE. Toute la chaine de refus lit `confidence_score`,
+        # jamais `confidence` : `getattr(setup, "confidence_score", None) or 0`.
+        # L'attribut manquant valait donc 0, et un signal annoncant 92 etait
+        # refuse en `below_confidence` contre un seuil de 60. Le chemin des
+        # signaux externes n'a JAMAIS pu produire un ordre depuis sa conception.
+        #
+        # 🔑 Meme famille que les defauts que ce depot a deja nommes : un
+        # mecanisme ecrit, teste en isolation, et inerte en composition —
+        # `external_signals` que rien n'appelait, `analyze_trend` sans jamais un
+        # BEARISH, le controle de sante qui boucle sur une liste vide.
+        self.confidence_score = self.confidence
+        # ⚠️ Explicite, et pas seulement parce que `None` est la bonne valeur :
+        # un `MagicMock` fabrique tout attribut qu'on lui demande, donc un test
+        # qui l'oublierait verrait des blockers truthy. Cf. `_mk_setup` dans
+        # `test_bridge_destinations`, et les cinq tests rouges qu'il raconte.
+        self.verdict_blockers = None
         self.emitted_at = charge.get("emitted_at")
         # Un signal tiers n'est pas une simulation : il engage un ordre réel sur
         # le démo. `is_simulated=True` le ferait écarter par `_check_rejection`.

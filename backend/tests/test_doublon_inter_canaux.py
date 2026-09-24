@@ -20,7 +20,8 @@ import pytest
 
 def _charge(**kw):
     base = {"source": "orvion", "external_id": "o-1", "pair": "XAU/USD",
-            "direction": "sell", "entry_price": 3900.0, "stop_loss": 3920.0}
+            "direction": "sell", "entry_price": 3900.0, "stop_loss": 3920.0,
+            "confidence": 80.0}
     base.update(kw)
     return base
 

@@ -33,13 +33,13 @@ Côté serveur, dans le `.env` de l'EC2 :
 ## Emploi
 
     # message brut — le parseur interprète, et refuse s'il n'est pas certain
-    ./releve.py --message "XAUUSD SELL 3900 SL 3920 TP 3880"
+    ./releve.py --confiance 75 --message "XAUUSD SELL 3900 SL 3920 TP 3880"
 
     # champs explicites — aucune interprétation, le chemin sûr
-    ./releve.py --paire XAU/USD --sens sell --entree 3900 --stop 3920 --objectif 3880
+    ./releve.py --confiance 75 --paire XAU/USD --sens sell --entree 3900 --stop 3920
 
     # voir ce qui serait envoyé, sans rien envoyer
-    ./releve.py --message "..." --essai
+    ./releve.py --confiance 75 --message "..." --essai
 """
 from __future__ import annotations
 
@@ -60,6 +60,10 @@ def _arguments() -> argparse.Namespace:
     a.add_argument("--paire"); a.add_argument("--sens", choices=("buy", "sell"))
     a.add_argument("--entree", type=float); a.add_argument("--stop", type=float)
     a.add_argument("--objectif", type=float)
+    a.add_argument("--confiance", type=float, required=True,
+                   help="ce que VOUS attribuez a cette source (0-100). Un canal "
+                        "n'en publie pas : c'est une decision d'exploitant, et "
+                        "elle doit etre explicite a chaque appel.")
     a.add_argument("--ref", help="référence du message (horodatage) — prime sur "
                                  "l'identifiant déduit du contenu")
     a.add_argument("--essai", action="store_true", help="affiche sans envoyer")
@@ -74,9 +78,9 @@ def _signal(args):
         if not args.paire or not args.sens:
             raise Refus("--paire et --sens sont requis avec --entree/--stop")
         return construire(args.source, args.paire, args.sens, args.entree,
-                          args.stop, args.objectif, args.ref)
+                          args.stop, args.confiance, args.objectif, args.ref)
     if args.message:
-        return lire(args.message, args.source, args.ref)
+        return lire(args.message, args.source, args.confiance, args.ref)
     raise Refus("fournir --message, ou --paire --sens --entree --stop")
 
 
