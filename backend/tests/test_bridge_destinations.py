@@ -600,3 +600,67 @@ def test_admin_kraken_spot_excluded_when_sell(monkeypatch):
     ids = [d.destination_id for d in dests]
 
     assert "admin_kraken_spot" not in ids
+
+
+# --- R-25 : le verrou des signaux tiers couvre AUSSI les comptes clients ---
+# Aucun test ne fixait ce verrou avant le 2026-09-24. C'est ce qui lui a permis
+# de laisser passer les destinations `user:N` pendant un mois : `is_real_money`
+# les rendait « fictives », et `[d for d in destinations if not is_real_money]`
+# les CONSERVAIT donc pour un setup venu d'un bot tiers.
+
+def _mk_dest(destination_id: str) -> MagicMock:
+    """Destination minimale : le filtre ne lit que `destination_id`, et
+    `paire_dans_la_portee` que `watched_pairs`."""
+    d = MagicMock()
+    d.destination_id = destination_id
+    d.watched_pairs = frozenset()
+    return d
+
+
+def test_un_signal_tiers_n_atteint_aucun_compte_client(monkeypatch):
+    """⛔ Le cas exact de R-25 : barré du compte réel de l'exploitant, et
+    routé vers celui d'un client. La docstring du verrou disait « n'atteint
+    JAMAIS l'argent réel » — c'était vrai pour `admin_live`, faux pour un
+    compte de tiers."""
+    setup = _mk_setup()
+    setup.source = "bot_tiers"
+
+    monkeypatch.setattr(bridge_destinations, "_admin_legacy_destination",
+                        lambda: _mk_dest("admin_legacy"))
+    monkeypatch.setattr(bridge_destinations, "_admin_live_destination",
+                        lambda: _mk_dest("admin_live"))
+    for nom in ("_admin_binance_destination", "_admin_kraken_destination",
+                "_admin_kraken_spot_destination",
+                "_admin_kraken_stocks_destination", "_admin_ibkr_destination"):
+        monkeypatch.setattr(bridge_destinations, nom, lambda: None)
+    monkeypatch.setattr(bridge_destinations, "_user_destinations",
+                        lambda s: [_mk_dest("user:2"), _mk_dest("user:7")])
+
+    ids = {d.destination_id for d in bridge_destinations.resolve_destinations(setup)}
+    assert "admin_live" not in ids, "le compte réel de l'exploitant doit être écarté"
+    assert "user:2" not in ids, "R-25 : un compte client aussi"
+    assert "user:7" not in ids
+    assert ids == {"admin_legacy"}, "seule la démo reste"
+
+
+def test_un_signal_interne_atteint_toujours_tout_le_monde(monkeypatch):
+    """⚠️ Le pendant du test précédent : le verrou ne doit mordre QUE sur les
+    setups externes. Sans cette garde, resserrer `is_real_money` couperait
+    notre propre flux — c'est la panne que le commentaire de `_mk_setup`
+    raconte déjà (cinq tests rouges pour un attribut jamais écrit)."""
+    setup = _mk_setup()
+    setup.source = None
+
+    monkeypatch.setattr(bridge_destinations, "_admin_legacy_destination",
+                        lambda: _mk_dest("admin_legacy"))
+    monkeypatch.setattr(bridge_destinations, "_admin_live_destination",
+                        lambda: _mk_dest("admin_live"))
+    for nom in ("_admin_binance_destination", "_admin_kraken_destination",
+                "_admin_kraken_spot_destination",
+                "_admin_kraken_stocks_destination", "_admin_ibkr_destination"):
+        monkeypatch.setattr(bridge_destinations, nom, lambda: None)
+    monkeypatch.setattr(bridge_destinations, "_user_destinations",
+                        lambda s: [_mk_dest("user:2")])
+
+    ids = {d.destination_id for d in bridge_destinations.resolve_destinations(setup)}
+    assert ids == {"admin_legacy", "admin_live", "user:2"}
