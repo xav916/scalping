@@ -133,3 +133,50 @@ def test_le_dump_json_est_exploitable():
     assert set(d) == reg.ids()
     for dest_id, meta in d.items():
         assert {"badge", "mode", "reel", "bridge_type", "plateforme"} <= set(meta)
+
+
+# --- le défaut sûr d'une PORTE (R-17, R-25, 2026-09-24) -------------------
+
+def test_un_compte_client_compte_comme_argent_reel():
+    """⛔ `user:N` DOIT valoir « argent réel » pour les portes de sécurité.
+
+    Le registre ne peut pas savoir : une sentinelle unique et partagée répond
+    pour tous les clients, et c'est le client qui branche son compte MT5. Pour
+    une porte, « on ne sait pas » vaut « réel » — se tromper du côté sûr coûte
+    un essai de banc, se tromper de l'autre fait exécuter les appels d'un
+    inconnu sur le compte d'un client.
+    """
+    assert reg.is_real_money("user:2") is True
+    assert reg.is_real_money("user:42") is True
+
+
+def test_la_donnee_declaree_reste_honnete():
+    """⚠️ `USER_DESTINATION.reel` reste False, et ce n'est pas une incohérence.
+
+    La déclaration dit ce qu'on sait — c'est-à-dire rien. C'est son
+    INTERPRÉTATION qui penche, dans `is_real_money`, et nulle part ailleurs.
+    """
+    assert reg.USER_DESTINATION.reel is False
+    assert reg.get("user:7").reel is False
+
+
+@pytest.mark.parametrize("brut", ["user:", "user:abc", "userX:2", "USER:2",
+                                  "user:2 ", " user:2", "admin_truc"])
+def test_un_faux_identifiant_client_ne_devient_pas_reel(brut):
+    """⛔ Le filtre réutilise `USER_DESTINATION_RE`, la MÊME expression que
+    `get()`. Deux tests distincts dériveraient, et un identifiant reconnu d'un
+    côté mais pas de l'autre est exactement l'écart que ce registre supprime.
+    """
+    assert reg.is_real_money(brut) is False
+
+
+def test_none_reste_faux_et_c_est_a_l_appelant_de_le_lire():
+    """⚠️ « Aucune destination » n'est pas une destination réelle.
+
+    L'appelant qui doit lire `None` comme « TOUTES les destinations » le traite
+    lui-même : `research_bench._touche_argent_reel` le fait explicitement, et
+    c'est le bon endroit. Le faire ici casserait les appelants qui demandent
+    bien « cette destination-ci ».
+    """
+    assert reg.is_real_money(None) is False
+    assert reg.is_real_money("") is False

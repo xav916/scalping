@@ -316,7 +316,47 @@ def is_known(destination_id: str | None) -> bool:
 
 
 def is_real_money(destination_id: str | None) -> bool:
-    """Inconnue ⇒ fictive ⇒ silencieuse. Ne jamais supposer sur l'argent."""
+    """Cette destination peut-elle engager de l'ARGENT RÉEL ?
+
+    ⛔ **C'est le défaut sûr d'une PORTE, pas celui d'une notification.** Ses
+    deux appelants sont des portes de sécurité : `research_bench.
+    _touche_argent_reel` et le verrou qui interdit l'argent réel aux signaux
+    tiers dans `bridge_destinations.resolve_destinations`. La notification
+    Telegram a sa propre fonction et sa propre table (`telegram_service.
+    destination_is_real_money`) ; elle ne passe pas par ici. L'ancienne
+    docstring — « inconnue ⇒ fictive ⇒ silencieuse » — décrivait une sémantique
+    de notification qu'aucun appelant n'utilisait.
+
+    ⛔ **`user:N` rend `True`**, bien que `USER_DESTINATION.reel` vaille
+    `False`. Ce n'est pas une incohérence : le registre ne PEUT PAS savoir.
+    Une sentinelle **unique et partagée** répond pour tous les clients, et
+    c'est le client qui branche son compte MT5 — démo ou réel, rien ici ne le
+    sait. Pour une porte, « on ne sait pas » doit valoir « réel », parce que
+    l'erreur n'a pas le même prix des deux côtés :
+
+    - se tromper du côté sûr coûte un essai de banc exigé, et un signal tiers
+      non routé vers un compte client ;
+    - se tromper de l'autre côté fait exécuter **les appels d'un inconnu sur
+      le compte d'un client**, sans aucune mesure.
+
+    Corrige R-17 (le banc ne couvrait pas `user:N`) et R-25 (le verrou des
+    signaux tiers laissait passer les comptes clients). Le champ
+    `USER_DESTINATION.reel` reste `False` : c'est une **donnée déclarée**, et
+    la déclaration est honnête — on ne sait pas. C'est son INTERPRÉTATION qui
+    doit pencher, et elle penche ici.
+
+    ⚠️ `None` rend toujours `False` : « aucune destination » n'est pas une
+    destination réelle. L'appelant qui doit lire `None` comme « toutes les
+    destinations » le traite lui-même — `research_bench._touche_argent_reel`
+    le fait explicitement, et c'est le bon endroit pour ça.
+
+    ⚠️ Le filtrage `user:N` réutilise `USER_DESTINATION_RE`, la MÊME expression
+    que `get()`. Deux tests distincts dériveraient : un identifiant reconnu
+    d'un côté et pas de l'autre est exactement le genre d'écart que ce registre
+    existe pour supprimer.
+    """
+    if USER_DESTINATION_RE.match(destination_id or ""):
+        return True
     d = get(destination_id)
     return bool(d and d.reel)
 
