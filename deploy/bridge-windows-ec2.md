@@ -39,6 +39,60 @@ de défaillance unique pour l'exécution MT5. Il est seulement mieux tenu.
 
 ---
 
+## 0 bis. AVANT TOUT : retirer l'ancien nœud du tailnet
+
+> ⛔ **Le seul geste vraiment urgent, et le seul que vous puissiez faire sans
+> atteindre la machine.**
+
+L'ancienne machine est injoignable parce que sa clé Tailscale a expiré
+(constaté le 2026-09-24). Elle est donc **inerte** : le backend ne la joint plus,
+aucun ordre ne part. C'est, paradoxalement, le moment le plus sûr pour migrer.
+
+Mais si quelqu'un la ré-authentifie plus tard — vous, ou l'hébergeur au cours
+d'une intervention — elle **revient dans le tailnet avec son bridge**, et vous
+avez deux bridges vivants sur la même destination. C'est le seul risque sérieux
+du chantier, celui qui double les positions.
+
+**Depuis la console Tailscale, supprimez ce nœud** (*Remove machine*), ne le
+ré-authentifiez pas. Un nœud supprimé ne peut pas revenir tout seul : il faudrait
+un `tailscale up` délibéré avec une nouvelle clé. C'est une garantie, pas une
+précaution.
+
+⚠️ Et faites-le **avant** que le nouveau bridge ne tourne, pas après.
+
+## 0 ter. Ce que l'ancienne machine emporte avec elle
+
+Vous ne pouvez plus lire son `.env`. Voici ce qu'il faut reconstituer, et d'où :
+
+| Valeur | Où la retrouver |
+|---|---|
+| `BRIDGE_API_KEY` | **irrécupérable** — en générer une NOUVELLE, et la poser des deux côtés en même temps (bridge et destination du backend) |
+| `MT5_LOGIN` / `MT5_PASSWORD` / `MT5_SERVER` | auprès d'IC Markets — ce sont vos identifiants de compte |
+| `MT5_SYMBOL_MAP` | à redéfinir. ⚠️ C'est l'occasion de trancher **R-19** : le symbole WTI d'IC Markets ne cotait pas le même contrat que Twelve Data (815 refus `price_divergence` le 22/09) |
+| `TRAIL_DISTANCE_POINTS` | **doit valoir 0.** `bridge.py:2310` : « le suiveur détruisait 0,329 R/trade sur l'or ; désarmé le 2026-08-11, +21 % à la clé » |
+| plafonds de risque, poches, heures | valeurs par défaut de `bridge.py`, à relire une par une |
+
+> 🔑 Le modèle `mt5-bridge/.env.example` ne porte que le minimum. Les constantes
+> ajustées au fil des mois vivent dans les défauts de `bridge.py` et dans les
+> commentaires qui les expliquent. Relisez-les plutôt que de les recopier : c'est
+> la seule occasion de le faire à froid.
+
+## 0 quater. Tailscale : l'expiration de clé
+
+Le nœud d'origine est tombé sur une expiration de clé, pas sur une panne. Sur la
+nouvelle machine, et **aussi sur l'EC2** :
+
+- console Tailscale → le nœud → **Disable key expiry**.
+
+Une machine de production n'a pas à se ré-authentifier tous les six mois par
+surprise. C'est la cause racine de l'incident du 2026-09-24, et elle se ferme en
+un clic.
+
+⚠️ Si vous gardez Tailscale plutôt que le VPC AWS de la section 2, le port 8787
+n'a pas besoin d'être exposé du tout : le backend joint le bridge par son adresse
+`100.x`. Adaptez la section 2 en conséquence — et dans ce cas, `LISTEN_HOST` doit
+écouter l'interface Tailscale, pas `0.0.0.0`.
+
 ## 1. Dimensionner et lancer l'instance
 
 - **AMI** : Windows Server 2022 Base (l'agent SSM y est préinstallé).
