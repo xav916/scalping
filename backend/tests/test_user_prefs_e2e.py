@@ -22,6 +22,7 @@ Driver : demande Xavier 2026-06-14 « preuve par test métier que le workflow
 modification UI → dispatch EA est fonctionnel ».
 """
 
+import sqlite3
 from types import SimpleNamespace
 
 import pytest
@@ -92,8 +93,30 @@ def cedric_backup():
 
     On skippe explicitement quand la donnée n'est pas là. Un skip est honnête :
     il se voit dans le rapport, contrairement à un test qu'on aurait supprimé.
+
+    ⛔ **Deux absences, pas une** (corrigé le 2026-09-24). Le garde d'origine ne
+    couvrait que « l'utilisateur manque dans la table ». Il ne couvrait pas
+    « la table manque dans la base » — l'état de TOUTE machine qui n'est pas la
+    production. Or `get_user_by_id` ne rend pas `None` dans ce cas : il **lève**
+    `sqlite3.OperationalError: no such table: users`. La condition `is None`
+    n'était donc jamais évaluée, le skip ne partait jamais, et pytest signalait
+    trois ERREURS de fixture — précisément les trois rouges permanents que ce
+    garde existait pour supprimer.
+
+    ⚠️ Le rattrapage est ICI et **jamais dans `users_service`**. Faire rendre
+    `None` à `get_user_by_id` quand la table manque transformerait une base
+    cassée en base vide, en silence, et sur le chemin de production. C'est le
+    mode de panne que ce dépôt combat partout ailleurs : mieux vaut une erreur
+    bruyante en prod et un skip explicite en test.
     """
-    if users_service.get_user_by_id(CEDRIC_USER_ID) is None:
+    try:
+        utilisateur = users_service.get_user_by_id(CEDRIC_USER_ID)
+    except sqlite3.Error as e:
+        pytest.skip(
+            f"base sans schéma `users` ({e}) — test e2e prod-only, "
+            "voir docstring du module"
+        )
+    if utilisateur is None:
         pytest.skip(
             f"user_id {CEDRIC_USER_ID} absent de la DB — test e2e prod-only, "
             "voir docstring du module"
