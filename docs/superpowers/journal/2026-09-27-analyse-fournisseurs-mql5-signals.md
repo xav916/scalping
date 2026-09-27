@@ -211,6 +211,102 @@ Le crible révisé, dans l'ordre :
 5. **avis d'abonnés sur la copie effective**, pas sur la performance ;
 6. semaines, profit factor, charge de dépôt, dépôt initial.
 
+## 7. Le crible appliqué à quinze fournisseurs — zéro survivant
+
+Relevé du 2026-09-27, quinze fiches détaillées. Le résultat n'est pas « peu de
+bons » : c'est **aucun**, et l'échec est du même type pour tous.
+
+### Critère 1 — la concentration de la croissance
+
+MQL5 publie lui-même, sur chaque fiche, la part des jours qui produit 80 % de la
+croissance. **Neuf fiches l'affichent. Les neuf échouent.**
+
+| Signal | 80 % de la croissance en | Part des jours |
+|---|---|---|
+| GOLD HUAT EA | 8 jours | **0,70 %** |
+| Gold Minion | 10 jours / 1 054 | **0,95 %** |
+| CWDT GOLD | 6 jours / 234 | 2,56 % |
+| Challenge 40K | 6 jours / 227 | 2,64 % |
+| Pure Gold 2000 Vantage | 6 jours | ~2,9 % |
+| Gold Breakout PRO All Star | 9 jours / 262 | 3,44 % |
+| Swing XAU | 5 jours / 124 | 4,03 % |
+| Gold Reaper New V2 2 | 32 jours / 695 | 4,60 % |
+| GUNS FX V2 | « initial period » | — |
+
+**Pas une seule au-dessus de 5 %.** Médiane autour de 2,9 %. Sur trois ans
+d'historique, `Gold Minion` doit tout à **dix journées**.
+
+### Critère 4 — le rapport équité / solde, sur les six qui ne publient pas la concentration
+
+| Signal | DD solde | DD équité | Rapport |
+|---|---|---|---|
+| NoPain MT5 | 6,89 % | 20,63 % | **3,00×** ⛔ |
+| World PEACE Multi FX Algo | 15,49 % | 34,22 % | 2,21× ⛔ |
+| GoldWave signal | 8,05 % | 17,52 % | 2,18× ⛔ |
+| MSC Gold Stable Pro | 15,45 % | 33,70 % | 2,18× ⛔ |
+| MegaGold | 30,70 % | 16,34 % | 0,53 ✅ mais PF 1,18, compte de 200 $ |
+| Lucky Cat MT5 | 28,61 % | 11,05 % | 0,39 ✅ mais PF 1,50, avis accablants |
+
+> 🔎 **Les fiches qui publient la concentration échouent sur la concentration.
+> Celles qui ne la publient pas échouent sur l'équité.** Aucune ne passe les
+> deux.
+
+### Critère 2 — le fournisseur-catalogue
+
+29 signaux · 21 · 11 · 11 · 10+ · 3 · 2 · 2 · 1. La médiane est à **onze
+signaux par fournisseur**. On n'achète pas une méthode, on achète le survivant
+d'une portée — `PBO = 0,579` à l'échelle d'un catalogue.
+
+### Le signal le plus suivi du catalogue est une grille assumée
+
+`World PEACE Multi FX Algo` : **70 abonnés, 375 000 $ sous gestion** — le plus
+suivi de tous ceux relevés. Son propre fournisseur écrit sur sa fiche :
+
+> « grid-based strategy … **Severe loss, account stop-out, or eventual account
+> failure cannot be excluded.** »
+
+82 % de réussite, DD équité 34,22 % contre 15,45 % en solde. Tout est déclaré,
+et 70 personnes ont souscrit quand même.
+
+### ⚠️ Un relevé qui concerne directement ce projet
+
+Un abonné de `GUNS FX V2` rapporte avoir **arrêté au bout de 8 jours pour cause
+de slippage sur IC Markets** — le courtier de `admin_live`. Le même motif revient
+ailleurs : `GoldWave` (symbole `XAUUSD+` classé CFD, zéro trade copié),
+`Gold Reaper` (« *not a single trade was copied for the entire month* »),
+`NoPain` (trades non copiés).
+
+**L'échec de copie est un mode de panne à part entière**, indépendant de la
+qualité de la stratégie, et il frappe précisément sur l'or — instrument à spread
+large et à exécution sensible.
+
+### Les dépôts initiaux, pour lire les pourcentages
+
+50 $ · 100 $ · 139 $ · 200 $ · 350 $ · 750 € · 1 000 $ · 1 500 $ · 1 500 $ ·
+2 000 SGD · 4 000 $ · 145 000 JPY.
+
+Sept comptes sur douze démarrent **sous 1 000 $**. Une croissance de 1 470 % sur
+un dépôt de 139 $ représente 2 040 $ — le pourcentage est un artefact d'échelle,
+pas une performance.
+
+### Conclusion du crible
+
+**Quinze fournisseurs, zéro survivant.** Et les motifs d'échec ne sont pas des
+accidents individuels : concentration extrême de la croissance, fournisseurs qui
+exploitent des dizaines de signaux, équité qui plonge deux à trois fois plus que
+le solde, copie qui échoue chez l'abonné, comptes de démonstration financière à
+100 $.
+
+Ce sont les **propriétés du modèle économique** de la place de marché. Elle
+rémunère qui lance beaucoup de signaux et vend celui qui a survécu ; elle
+n'a aucun moyen — ni aucun intérêt — à distinguer la chance de la méthode.
+
+> ⛔ **Recommandation : ne pas souscrire.** Ni pour copier, ni pour mesurer.
+> Le seul dispositif de ce projet qui ait jamais rendu un verdict fiable est son
+> banc d'essai pré-enregistré — celui qui a réfuté `preenr-1` le 2026-09-26,
+> « l'écart s'effondre d'un facteur 7 hors échantillon ». C'est lui qu'il faut
+> alimenter, pas un abonnement.
+
 ## Sources
 
 - [Trading Signals MetaTrader 5](https://www.mql5.com/en/signals/mt5)
