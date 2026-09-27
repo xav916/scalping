@@ -133,6 +133,84 @@ second terminal en mode portable, `MT5_TERMINAL_PATH` obligatoire sur le bridge.
 
 ---
 
+## 6. Addendum — le regard rapproché élimine les DEUX finalistes
+
+Approfondissement demandé le même jour sur les deux qui ressortaient. Les fiches
+détaillées portent des informations que les statistiques de tête ne montrent pas.
+**Elles disqualifient les deux**, et pour les mêmes trois raisons.
+
+### Le critère le plus fort, et c'est MQL5 qui le calcule
+
+MQL5 publie lui-même, sur chaque fiche, **la concentration de la croissance** :
+
+| | Concentration publiée |
+|---|---|
+| `Pure Gold 2000 Vantage` | **80 % de la croissance en 6 jours** |
+| `Gold Reaper New V2 2` | **80 % de la croissance en 32 jours sur 695** — 4,6 % des jours |
+
+> ⛔ **Un edge qui tient dans 4,6 % des jours n'est pas un edge : c'est quelques
+> fenêtres favorables.** Le guide MQL5 recommande de privilégier « *signals with
+> smooth growth of profit* ». Aucun des deux n'y répond.
+
+C'est le critère à placer **en premier**, avant même le rapport équité/solde : il
+se lit sur la fiche, il est calculé par la plateforme, et il ne se maquille pas.
+
+### Le fournisseur n'est pas un trader, c'est un catalogue
+
+| | Signaux exploités | Produits vendus |
+|---|---|---|
+| `Pure Gold 2000 Vantage` | **11** | 5 |
+| `Gold Reaper New V2 2` | **29** | 27 |
+
+Quelqu'un qui exploite 29 signaux simultanément ne suit pas 29 stratégies : il
+place 29 paris et vend celui qui a survécu. Les autres sont retirés sans bruit.
+
+**C'est exactement le biais de sélection que `PBO = 0,579` mesure**, appliqué à
+l'échelle d'un catalogue plutôt qu'à celle d'un backtest. Vous n'achetez pas une
+méthode, vous achetez le survivant d'une portée.
+
+### La copie échoue en pratique
+
+Ce n'est pas un risque de stratégie, c'est un risque d'exécution — et il coûte
+autant :
+
+- `Gold Reaper` : *« Not a single trade was copied for the entire month »*
+  (inadéquation de taille de dépôt), échecs de *mapping* de symboles, slippage,
+  support absent ;
+- `Pure Gold` : avertissements MQL5 répétés — *« too frequent deals »*, *« no
+  trading activity detected »* — tout au long de 2026.
+
+### Deux relevés de plus qui achèvent le dossier
+
+**L'historique n'est pas homogène.** `Pure Gold` a **changé de stratégie le
+9 avril** (« switching from UBS to EA Pure Gold »). Ses 29 semaines ne sont donc
+pas 29 semaines de ce système. Un historique qu'on croit long est en réalité
+plus court que le système qu'on achète.
+
+**Le Sharpe de `Gold Reaper` est de 0,23** sur 100 semaines. À comparer au
+`DSR = 0,017` de ce projet : ni l'un ni l'autre n'établit d'edge.
+
+⚠️ Et une incohérence non résolue sur `Pure Gold` : la fiche annonce
+**3 trades/semaine**, alors que 637 trades sur 29 semaines en font 22. Les deux
+chiffres viennent de la même page. Je ne sais pas lequel est juste.
+
+### Verdict de l'addendum
+
+**Aucun des deux finalistes ne passe.** Et les trois motifs — croissance
+concentrée sur quelques jours, fournisseur-catalogue, copie défaillante — ne sont
+pas propres à eux : ce sont des propriétés du modèle économique de la place de
+marché.
+
+Le crible révisé, dans l'ordre :
+
+1. **concentration de la croissance** — rejeter si 80 % tient dans moins de 15 %
+   des jours ;
+2. **nombre de signaux du fournisseur** — au-delà de 3, c'est un catalogue ;
+3. **historique homogène** — aucun changement de stratégie en cours de route ;
+4. **DD équité < DD solde** ;
+5. **avis d'abonnés sur la copie effective**, pas sur la performance ;
+6. semaines, profit factor, charge de dépôt, dépôt initial.
+
 ## Sources
 
 - [Trading Signals MetaTrader 5](https://www.mql5.com/en/signals/mt5)
