@@ -921,6 +921,79 @@ répondre à la question la plus lourde du projet.
 
 ---
 
+## ⚡ EXPÉRIENCE ARMÉE — `sweep_avec_structure_m15` sur XAU/USD, argent réel
+
+**Déclarée le 2026-09-21, AVANT armement.** Demandée par Pascal, qui a mis de côté
+une enveloppe qu'il peut perdre sans conséquence. Cette section existe pour que le
+résultat ne puisse pas être surinterprété dans un sens ni dans l'autre.
+
+### Ce que cette expérience mesure — et ce n'est PAS l'edge
+
+⛔ **Le laboratoire donne 700 trades par nuit sur cette chaîne ; le réel en donnera
+deux ou trois par jour.** Distinguer −0,01 R de zéro en direct prendrait des mois.
+Cette expérience ne peut donc pas trancher la question de l'edge, et ne sera jamais
+lue comme le faisant.
+
+🔑 **Ce que seul le réel enseigne** : le prix de remplissage contre le prix annoncé,
+le spread réellement payé, le stop honoré ou non, le glissement. Aucun rejeu ne le
+simule — le laboratoire facture un spread lu sur un seul tick et suppose des
+remplissages parfaits. C'est la seule inconnue que l'argent réel lève.
+
+### L'espérance déclarée d'avance
+
+Mesure de la nuit du 21/09, cellules XAU/USD 5 min, **pondérées par les trades** :
+
+| sens | n | R net | coût | R brut |
+|---|---|---|---|---|
+| haussier | 127 | **−0,009** | 0,024 | +0,014 |
+| baissier | 122 | **−0,013** | 0,023 | +0,010 |
+
+- **Espérance annoncée : ≈ −0,011 R par trade.** Sur 30 ordres, ≈ **−0,33 R au
+  total**, soit un tiers du risque d'un seul trade. C'est le prix de l'information.
+- ⛔ **Et la moyenne non pondérée aurait menti.** Sur l'ensemble des paires, la
+  moyenne des moyennes de cellules donnait **+0,195 R** — portée par des cellules à
+  3, 4 et 9 trades à +1,0 R. Pondérée : **−0,131 R**. Le même piège que
+  `_R_par_politique` avait payé le 14/09. Toute lecture de cette expérience se fait
+  pondérée par les trades, jamais par les cellules.
+
+### Le périmètre, et pourquoi il est si étroit
+
+- **XAU/USD seulement.** ⛔ **XAG/USD est exclu** : coût de **0,19–0,20 R** par
+  trade contre 0,023 sur l'or, et c'est lui qui portait toute la perte de la chaîne
+  (355 des 706 trades de la nuit).
+- **5 min seulement** : c'est la seule échelle où la chaîne produit des cellules.
+- ⛔ **`niveau_majeur` n'est PAS armée** : `n` moyen de 2,3 et 3,4 par cellule. Elle
+  ne tirerait pratiquement jamais, et l'armer donnerait l'illusion d'un essai.
+- **Taille minimale**, plafond de perte journalière et kill switch existants inchangés.
+
+### La règle d'arrêt, écrite d'avance
+
+**30 ordres ou 20 % de l'enveloppe, le premier atteint.** Puis on désarme et on lit.
+
+⛔ **Ce qu'on ne lira pas : le P&L.** Sur 30 trades il ne dit rien — un tirage au
+hasard de même taille produit régulièrement ±1 R de moyenne. Ce qui sera lu :
+remplissage contre entrée annoncée, spread réel contre spread supposé, stops
+honorés, glissement. Trois chiffres, aucun verdict sur la méthode.
+
+### Ce qui bloquait, et qu'il faut ouvrir
+
+⚠️ `chaine:sweep_avec_biais_haussier` était **déjà armée** et n'a jamais produit un
+ordre en trois semaines. Cause : deux portes en amont du registre des chaînes —
+`pattern_not_allowed` (6 486 refus sur `liquidity_sweep_*` depuis le 01/09) et
+`horizon_not_allowed` (6 726). Armer une chaîne sans ouvrir le motif et l'horizon
+ne produit rien. Et `sl_too_close` (3 214 refus) en écartera encore une partie :
+c'est le même problème de distance au stop qui fait le coût.
+
+### L'asymétrie assumée
+
+Les motifs qui tradent aujourd'hui (`momentum`, `breakout`) sont documentés
+**négatifs** dans `config/settings.py` — respectivement −0,037 et −0,088 R/trade —
+et n'y sont que par antériorité. Armer un balayage à −0,011 R n'est donc pas un
+relâchement de la discipline : c'est **moins mauvais** que ce qui tourne déjà. Ce
+constat ne justifie pas l'armement, il en borne le reproche.
+
+---
+
 ## Le contrôle qui tranche
 
 Un concept n'est **jamais** jugé sur son R moyen seul. Le laboratoire le rejoue
