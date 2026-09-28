@@ -202,9 +202,19 @@ def test_un_setup_de_chaine_NON_ARMEE_est_refuse_meme_si_son_motif_est_autorise(
     de_chaine = mb._patterns_autorises(
         _S("engulfing_bullish", "chaine:avalement_en_discount_haussier", "5min"),
         _D("admin_live"))
-    assert de_chaine == set(), (
-        "un setup de chaine non armee passe par la porte des motifs simples : "
-        "deux ordres partiraient pour un seul signal")
+    # ⛔ REM-001 (2026-09-28) — ASSERTION CORRIGEE, et c'est le coeur du defaut.
+    # Elle exigeait `de_chaine == set()` : elle assertait le VEHICULE (un
+    # ensemble vide) au lieu de l'EFFET (le setup est refuse). Or le
+    # consommateur lit `if allowed_patterns and ...` — un ensemble vide est
+    # FAUX en Python, donc le filtre entier etait saute et le setup PARTAIT.
+    # Le test etait vert sur le mecanisme exact qui ouvrait la porte.
+    #
+    # 🔑 On juge desormais l'effet : la chaine non armee n'ouvre aucun motif de
+    # son fait, et le refus lui-meme est verifie par le test d'effet plus bas
+    # (`test_REM001_une_chaine_non_armee_est_REFUSEE_par_le_dispatch`).
+    assert not (set(de_chaine) - set(ordinaire)), (
+        "une chaine non armee ne doit RIEN ouvrir de plus qu'un setup "
+        "ordinaire — elle ne doit surtout pas elargir la porte")
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -334,3 +344,29 @@ def test_la_porte_lit_le_motif_COMME_la_liste_blanche(monkeypatch):
     ouvert = mb._patterns_autorises(setup, _D("admin_live"))
     lu_par_la_whitelist = mb._pattern_value(setup)
     assert lu_par_la_whitelist in ouvert
+
+
+def test_REM001_une_chaine_non_armee_est_REFUSEE_par_le_dispatch(monkeypatch):
+    """L'assertion que le test d'origine aurait du porter.
+
+    ⛔ Le test historique exigeait que `_patterns_autorises` rende `set()`.
+    C'etait asserter le vehicule du defaut : un ensemble vide etait relu
+    « aucun filtre » par `if allowed_patterns and ...`, et le setup partait.
+    Ici on demande la seule chose qui compte : le dispatch le REFUSE, et il le
+    refuse sous un motif qui lui est propre.
+    """
+    from backend.services.chain_execution_gate import REJECTION_REASON
+
+    monkeypatch.setenv("CHAINES_AUTORISEES",
+                       '{"admin_live": {"5min": ["%s"]}}' % VRAIE)
+    ca._cache = None
+    monkeypatch.setattr(mb, "MT5_BRIDGE_ALLOWED_PATTERNS",
+                        frozenset({"engulfing_bullish"}))
+
+    raison = mb._check_rejection(
+        _S("engulfing_bullish", "chaine:avalement_en_discount_haussier",
+           "5min"),
+        _D("admin_live"))
+    assert raison == REJECTION_REASON, (
+        f"attendu {REJECTION_REASON!r}, obtenu {raison!r} — si c'est None, "
+        "deux ordres partiraient pour un seul signal")

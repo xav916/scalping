@@ -113,3 +113,57 @@ def limiteur_debit_neuf():
     yield
     price_service._twelvedata_seau = None
     shadow_v2_core_long._CACHE_1D.clear()
+
+
+# ─── REM-002 / REM-003 : le harnais ARME, il n'exempte pas ──────────────
+# ⛔ Le verrou d'execution global est fail-closed : sans manifest lisible et
+# sans etat arme, `_check_rejection` refuse tout. C'est le comportement voulu
+# EN PRODUCTION.
+#
+# 🔑 La tentation etait d'ajouter un drapeau « ne pas appliquer en test ».
+# C'eut ete un fail-OPEN de plus, et exactement le defaut que REM-001 vient de
+# supprimer : un chemin ou la porte ne s'applique pas. Le harnais pose donc un
+# VRAI manifest et un VRAI armement dans un dossier temporaire, et les tests
+# traversent le code de production sans exception.
+#
+# ⚠️ Un test qui veut eprouver la FERMETURE desarme explicitement (voir
+# `test_rem002_global_execution_switch.py`).
+@pytest.fixture(autouse=True)
+def _armer_execution_globale(tmp_path, monkeypatch):
+    import json
+
+    manifest = tmp_path / "deployment_manifest.json"
+    etat = tmp_path / "global_execution_switch.json"
+    monkeypatch.setenv("DEPLOYMENT_MANIFEST_PATH", str(manifest))
+    monkeypatch.setenv("GLOBAL_EXECUTION_STATE_PATH", str(etat))
+    monkeypatch.delenv("EXPECTED_GIT_COMMIT", raising=False)
+
+    manifest.write_text(json.dumps({
+        "git_commit_sha": "0" * 40,
+        "git_branch": "test",
+        "git_dirty": False,
+        "build_timestamp": "2026-01-01T00:00:00+00:00",
+        "configuration_hash": "test",
+        "build_environment": "pytest",
+        "manifest_schema": 1,
+    }), encoding="utf-8")
+
+    from backend.services import deployment_manifest, global_execution_switch
+
+    etat.write_text(json.dumps({
+        "armed": True,
+        "armed_fingerprint": deployment_manifest.fingerprint(),
+        "armed_at": "2026-01-01T00:00:00+00:00",
+        "armed_by": "pytest",
+        "armed_reason": "harnais de test",
+        "blocages": {},
+    }), encoding="utf-8")
+
+    # Garde-fou du harnais : si l'armement ne prend pas, on veut le savoir ici
+    # et non dans 4 000 echecs incomprehensibles ailleurs.
+    d = global_execution_switch.execution_allowed()
+    assert d.allowed, (
+        f"le harnais n'a pas su armer l'execution : {d.reason_code} "
+        f"({d.detail}). Corriger la fixture, ne PAS exempter la porte."
+    )
+    yield

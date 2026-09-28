@@ -40,6 +40,10 @@ REASON_LABELS_FR = {
     "heure_spread_defavorable": "Heure où le spread coûte le double",
     "below_confidence": "Confiance < seuil",
     "pattern_not_allowed": "Pattern hors whitelist",
+    # REM-001 : distinct de `pattern_not_allowed`, qui etait indiscernable.
+    "chaine_non_armee": "Chaîne non armée (porte fail-closed)",
+    # REM-002 : integrite du deploiement / comptabilite / surveillance.
+    "execution_globale_fermee": "Exécution globale fermée (intégrité)",
     "asset_class_blocked": "Classe d'actif bloquée",
     "max_positions_per_pair": "Cap positions par pair",
     "max_positions_per_pair_indecidable": "Cap par pair indécidable (bridge muet)",

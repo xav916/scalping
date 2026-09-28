@@ -95,6 +95,18 @@ from config.settings import (
 
 logger = logging.getLogger(__name__)
 
+
+# ─── REM-001 : porte des chaines (fail-closed, decision explicite) ──────
+from backend.services.chain_execution_gate import (  # noqa: E402
+    REJECTION_REASON as CHAIN_REJECTION_REASON,
+    chain_execution_gate,
+)
+
+# ─── REM-002 : verrou d'execution global (integrite, pas marche) ────────
+from backend.services.global_execution_switch import (  # noqa: E402
+    REJECTION_REASON as GLOBAL_EXEC_REJECTION_REASON,
+    execution_allowed,
+)
 # Dedup in-memory : même setup dans la journée = pas de re-push.
 # Clé : (date_iso, pair, direction, entry_arrondi_5dp).
 _sent_setups_today: set[tuple[str, str, str, str]] = set()
@@ -783,17 +795,35 @@ def _patterns_autorises(setup, dest):
             logger.warning("registre des chaines illisible : %s", e)
             _armee = False          # ⛔ fail-CLOSED
         if not _armee:
-            # ⛔ SONDE (2026-09-15). Ce `return set()` est la seule porte du
-            # pont qui ferme un setup SANS rien dire : le refus qui suit est
-            # `pattern_not_allowed`, indiscernable d'un motif ordinaire hors
-            # liste blanche. Huit heures d'armement ont produit zero ordre et
-            # zero ligne de journal — le silence ressemblait, pour la
-            # quatrieme fois, a « la chaine ne se declenche pas ».
+            # ⛔ REM-001 (2026-09-28). ICI SE TROUVAIT UN `return set()`, ET
+            # C'ETAIT UN FAIL-**OPEN** SUR DE L'ARGENT REEL.
+            #
+            # Le consommateur lit `if allowed_patterns and ...` : un ensemble
+            # vide est FAUX en Python, donc le filtre entier etait saute. Le
+            # `return set()`, ecrit pour dire « rien ne passe », etait lu
+            # « aucun filtre de motif » — l'inverse exact de l'intention, et
+            # une porte plus GRANDE ouverte que pour un setup ordinaire.
+            #
+            # 🔑 La decision est desormais prise EN AMONT, dans
+            # `_check_rejection`, par `chain_execution_gate()` : elle rend un
+            # objet qui NOMME sa decision, et son refus porte son propre motif
+            # (`chaine_non_armee`), traçable au journal des refus.
+            #
+            # ⛔ Ne JAMAIS remettre un `return set()` ici : `frozenset()` a
+            # deja un sens OPPOSE dans ce fichier (« desactiver le filtre pour
+            # cette destination »). Deux sens pour la meme valeur, c'est le
+            # defaut lui-meme.
+            #
+            # A ce stade, la porte amont a deja refuse. Si l'on arrive ici
+            # malgre tout (appel direct de `_patterns_autorises` hors
+            # dispatch), on n'ouvre RIEN de plus : la chaine n'ajoute pas son
+            # motif, et la liste blanche de base reste seule en vigueur.
             logger.warning(
-                "chaine %s NON armee sur %s (%s/%s) : setup ferme",
+                "chaine %s NON armee sur %s (%s/%s) : aucun motif ouvert "
+                "(le refus est porte par chain_execution_gate)",
                 _chaine, _dest_c, getattr(setup, "pair", None),
                 getattr(setup, "horizon", None))
-            return set()            # rien ne peut partir pour ce setup
+            _chaine = None          # la chaine n'ouvre rien
         # ⛔ LES DEUX COTES DE LA PORTE LISAIENT LE MOTIF AUTREMENT
         # (2026-09-15, trouve par la sonde). Ici on lisait `setup.pattern.value`
         # — or `setup.pattern` est un `PatternDetection`, qui n'a PAS de champ
@@ -806,7 +836,7 @@ def _patterns_autorises(setup, dest):
         #
         # 🔑 Une seule lecture du motif, celle que la porte utilise deja.
         # Deux facons de lire la meme chose, c'est deux regles du meme nom.
-        _motif = _pattern_value(setup)
+        _motif = _pattern_value(setup) if _chaine else None
         if _motif:
             base = base | {str(_motif)}
             logger.info("chaine %s armee sur %s : %s ouvert",
@@ -862,6 +892,38 @@ def _check_rejection(setup, dest=None) -> str | None:
     ``is_configured()`` (la résolution garantit déjà la config). Sans ``dest``,
     comportement legacy mono-tenant inchangé.
     """
+    # ─── REM-002 : verrou d'execution GLOBAL, fail-CLOSED, avant tout ──
+    # ⛔ Il ne juge pas le marche mais l'INTEGRITE : sait-on quel code tourne,
+    # la comptabilite se reconcilie-t-elle, la surveillance parle-t-elle. Un
+    # nouveau deploiement doit etre re-arme EXPLICITEMENT.
+    #
+    # 🔑 Il ne coupe que les ordres NEUFS. `_check_rejection` n'est traverse
+    # que par le chemin d'ouverture : les fermetures, la surveillance des
+    # positions et la reconciliation passent ailleurs et restent actives.
+    _exec_decision = execution_allowed()
+    if not _exec_decision.allowed:
+        logger.warning(
+            "REM-002 execution globale fermee : %s (%s)",
+            _exec_decision.reason_code, _exec_decision.detail)
+        return GLOBAL_EXEC_REJECTION_REASON
+
+    # ─── REM-001 : porte des chaines, fail-CLOSED, EN PREMIER ──────────
+    # ⛔ Elle passe AVANT tout le reste, et son refus porte son PROPRE motif.
+    # Avant le 2026-09-28 cette decision voyageait dans la valeur de retour de
+    # `_patterns_autorises` (un `set()` vide), que le consommateur lisait comme
+    # « aucun filtre » : la liste blanche etait SUPPRIMEE au lieu d'etre
+    # appliquee. Voir `chain_execution_gate` pour le detail.
+    #
+    # 🔑 Un setup sans chaine rend ALLOW/NO_CHAIN : cette porte ne change rien
+    # pour lui, toutes les autres portes s'appliquent normalement.
+    _chain_decision = chain_execution_gate(setup, dest)
+    if not _chain_decision.allowed:
+        logger.warning(
+            "REM-001 refus de chaine : %s (%s) sur %s",
+            _chain_decision.reason_code, _chain_decision.chain_id,
+            _chain_decision.destination_id)
+        return CHAIN_REJECTION_REASON
+
     if dest is None and not is_configured():
         return "_not_configured"  # privé, non enregistré
     # Per-user excluded_pairs (Cédric & futurs clients Premium avec garde-fou

@@ -70,6 +70,14 @@ def _marche_ouvert(monkeypatch):
 
 def _mk_setup(pair: str = "EUR/USD") -> MagicMock:
     s = MagicMock()
+    # ⛔ REM-001 (2026-09-28) : un `MagicMock()` FABRIQUE ses attributs, donc
+    # `s.chaine` serait un Mock VRAI et la porte des chaines refuserait le
+    # setup a juste titre. Un setup ordinaire porte `chaine = None` en
+    # production : la doublure doit avoir la MEME forme.
+    # 🔑 Ces tests passaient auparavant GRACE au fail-open : `autorisee()`
+    # rendait False, `_patterns_autorises` rendait `set()`, et un ensemble
+    # vide etait relu « aucun filtre ». Le defaut etait PORTEUR de 14 tests.
+    s.chaine = None
     s.pair = pair
     s.direction = MagicMock(value="buy")
     s.entry_price = 1.10

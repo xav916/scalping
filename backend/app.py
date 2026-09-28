@@ -2055,6 +2055,22 @@ async def drift(_=Depends(verify_credentials)):
     return find_drifts()
 
 
+# ─── REM-003 / REM-002 : identite du code qui tourne, et etat de l'execution ──
+# ⛔ NON authentifie a dessein, et il ne rend AUCUN secret : un endpoint
+# d'integrite qui exige un jeton ne sert a rien quand c'est justement la
+# configuration qu'on soupconne. Cf. `deployment_manifest.public_version`,
+# qui liste explicitement les champs exposes.
+@app.get("/system/version")
+async def system_version():
+    """Quel code tourne, contre quel code est attendu, et l'execution est-elle
+    ouverte. C'est la reponse a « commite n'est pas deploye »."""
+    from backend.services import deployment_manifest, global_execution_switch
+
+    version = deployment_manifest.public_version()
+    version["execution"] = global_execution_switch.status()
+    return version
+
+
 @app.get("/api/status")
 async def system_status(_=Depends(verify_credentials)):
     """Observabilité : dernier cycle d'analyse, dernières syncs COT / Fear & Greed,

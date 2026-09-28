@@ -89,8 +89,28 @@ with open("docs/changelog.json", "w", encoding="utf-8") as f:
     json.dump({"commits": commits}, f, ensure_ascii=False, indent=2)
 print(f"Generated docs/changelog.json with {len(commits)} commits")
 PY
+# ─── REM-003 : manifest de deploiement, AVANT le build ─────────────────
+# ⛔ Doit tourner ICI : le manifest lit `.git`, qui est exclu de l'image par
+# `.dockerignore`. Genere apres le pull, il porte le commit REELLEMENT
+# construit — c'est la seule chose qui rend « deploye » verifiable.
+#
+# 🔑 `--exiger-propre` : un arbre de travail sale rend le commit insuffisant
+# pour identifier le code. On refuse de construire une image qu'on ne saurait
+# pas nommer.
+echo "=== REM-003 manifest de deploiement ==="
+sudo env BUILD_ENVIRONMENT=ec2-prod      DEPLOYMENT_TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"      python3 scripts/generer_manifest_deploiement.py      --out deployment_manifest.json --exiger-propre
+EXPECTED_COMMIT="$(sudo git rev-parse HEAD)"
+echo "commit attendu : ${EXPECTED_COMMIT:0:12}"
+
 echo "=== docker build ==="
 sudo docker build -t scalping-radar:latest .
+
+# ─── REM-003 : le commit attendu est pose dans l'environnement du service ──
+# Le runtime compare `EXPECTED_GIT_COMMIT` a ce que le manifest de l'image
+# declare. Une divergence ferme l'execution (REM-002), elle ne la signale pas.
+echo "=== REM-003 EXPECTED_GIT_COMMIT dans /opt/scalping/.env ==="
+sudo sed -i '/^EXPECTED_GIT_COMMIT=/d' /opt/scalping/.env
+echo "EXPECTED_GIT_COMMIT=${EXPECTED_COMMIT}" | sudo tee -a /opt/scalping/.env >/dev/null
 # IMPORTANT : pas de `prune -a -f` ici (entre build et restart), sinon la
 # nouvelle image scalping-radar:latest qu'on vient de tagger n'est référencée
 # par AUCUN container running (le container actuel est sur l'ancienne image)
