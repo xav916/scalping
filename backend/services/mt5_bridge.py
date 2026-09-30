@@ -970,6 +970,21 @@ _MOTIFS_DEFINITIFS = (
 )
 
 
+def _risk_money_pour_persistance(sz: dict):
+    """`risk_money` prêt pour la base. ⛔ `None` plutôt que zéro sur l'inconnu.
+
+    La valeur peut arriver en chaîne depuis un JSON. Une valeur illisible ne
+    vaut pas « zéro risque » : elle vaut « on ne sait pas ».
+    """
+    v = (sz or {}).get("risk_money")
+    if v is None:
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
 def _refus_transitoire(reponse) -> bool:
     """Ce refus a-t-il une chance d'aboutir a la prochaine tentative ?
 
@@ -1121,9 +1136,15 @@ async def _mirror_fill_to_live(setup, sz: dict, fill: dict, source_id: str) -> N
                     f"{MIROIR_DELAIS_REPRISE[min(tentative, len(MIROIR_DELAIS_REPRISE)-1)]} s"
                 )
         ok = bool(data.get("ok"))
+        # ⚠️ `risk_money` est ici le risque CALCULÉ pour le compte réel, alors
+        # que le lot envoyé est celui rempli en démo (`payload["lots"]` est
+        # écrasé plus haut). Les deux coïncident quand les deux comptes ont
+        # une taille voisine, et divergent sinon. Un contrôle de réciprocité
+        # doit donc traiter les lignes du MIROIR à part.
         mt5_pushes_service.update_push_result(
             cible.destination_id, push_date, setup.pair, direction, entry_5dp,
             ok=ok, response=data or {"status": r.status_code, "body": r.text[:200]},
+            risk_money=_risk_money_pour_persistance(sz),
         )
         if ok:
             logger.info(
@@ -1440,6 +1461,7 @@ async def _push_to_destination(setup, dest) -> None:
                 dest.destination_id, push_date, setup.pair, direction, entry_5dp,
                 ok=True,
                 response={"enqueued_order_id": order_id, "via": "ea_queue"},
+                risk_money=_risk_money_pour_persistance(sz),
             )
             logger.info(
                 f"MT5 ea_queue[{dest.destination_id}] enqueued "
@@ -1487,6 +1509,7 @@ async def _push_to_destination(setup, dest) -> None:
                 mt5_pushes_service.update_push_result(
                     dest.destination_id, push_date, setup.pair, direction, entry_5dp,
                     ok=True, response=data,
+                    risk_money=_risk_money_pour_persistance(sz),
                 )
                 logger.info(
                     f"MT5 bridge[{dest.destination_id}] → {setup.pair} {direction} "

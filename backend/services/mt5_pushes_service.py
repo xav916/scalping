@@ -59,6 +59,19 @@ def _ensure_schema() -> None:
             ON mt5_pushes(destination_id, date, pair)
             """
         )
+        # risk_money (2026-08-25) : le risque VOULU, pour pouvoir le comparer
+        # au risque réellement engagé. Le 25/08 il a fallu le reconstruire par
+        # arithmétique inverse — journalctl ne tient qu'un jour et
+        # bridge_response ne le porte pas.
+        #
+        # ⛔ NULLABLE, et ajouté par ALTER pour ne pas toucher aux lignes
+        # existantes : `mt5_pushes` porte l'historique des ordres réels. Un
+        # risk_money inconnu ne vaut pas zéro — les confondre rendrait tout
+        # contrôle de réciprocité ininterprétable.
+        try:
+            c.execute("ALTER TABLE mt5_pushes ADD COLUMN risk_money REAL")
+        except sqlite3.OperationalError:
+            pass        # colonne déjà présente — migration idempotente
 
 
 def try_register_push(
@@ -116,10 +129,16 @@ def update_push_result(
     *,
     ok: bool,
     response: dict[str, Any] | None = None,
+    risk_money: float | None = None,
 ) -> None:
     """Met à jour la ligne avec le résultat du push HTTP.
 
     Best-effort : toute erreur DB est loggée et silenced.
+
+    ``risk_money`` est le risque VOULU, en devise du compte. ⛔ `COALESCE` :
+    un appelant qui ne le fournit pas n'efface pas une valeur déjà écrite —
+    les appelants qui n'ont pas le sizing en portée laissent donc la colonne
+    à NULL, ce qui est la vérité, plutôt qu'à un zéro inventé.
     """
     try:
         body = json.dumps(response, default=str)[:500] if response else None
@@ -127,13 +146,15 @@ def update_push_result(
             c.execute(
                 """
                 UPDATE mt5_pushes
-                SET ok = ?, bridge_response = ?
+                SET ok = ?, bridge_response = ?,
+                    risk_money = COALESCE(?, risk_money)
                 WHERE destination_id = ? AND date = ? AND pair = ?
                   AND direction = ? AND entry_price_5dp = ?
                 """,
                 (
                     1 if ok else 0,
                     body,
+                    risk_money,
                     destination_id,
                     push_date,
                     pair,
