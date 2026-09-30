@@ -1338,3 +1338,84 @@ pas testée ici et n'a pas de barre : la mentionner ne la valide pas.
 
 ⛔ Et si le trading est arrêté, ou si les fermetures manuelles cessent, la
 fenêtre est **déclarée incomplète** — pas jugée sur ce qu'elle contient.
+
+---
+
+## 🔬 LA MÉTHODE VIVIEN, ÉPROUVÉE EN BLOC — déclaré le 2026-10-01 AVANT le code
+
+Demande de Xavier : « je veux que la méthode Vivien soit éprouvée ». Objet
+exact, relevé dans le laboratoire : **22 chaînes** (`sweep_sur_order_block`,
+`choch_puis_fvg`, `cassure_killzone_londres`, `avalement_en_premium`,
+`prise_en_accumulation`, `niveau_confirme_volume`, `sweep_avec_structure_m15`,
+`sweep_sur_niveau_majeur`, `sweep_avec_biais`, `cassure_confirmee_volume`,
+`sweep_puis_structure`, chacune en deux sens) **+ 22 motifs** (`order_block`,
+`liquidity_sweep`, `poc_return`, `opening_range`, `retest`, `reintegration`,
+`double_sweep`, `fvg`, `fvg_inverse`, `bos`, `choch`, deux sens chacun).
+
+⇒ **168 des 232 cellules** mesurées chaque nuit sur l'or, soit **72 %** du
+laboratoire.
+
+### ⛔ Ce qui est DÉJÀ tranché, et qu'on ne refait pas
+
+Chaque cellule est mesurée chaque nuit. Bilan sur l'or, toutes nuits
+confondues : **4 570 `INSUFFISANT`, 10 `REFUTE`, ZÉRO `RETENU`**. Et la
+meilleure de toutes, `fvg_up`, vient d'être **réfutée hors échantillon** le
+30/09 (+2,47 → **+0,101** contre une barre de 0,798).
+
+### 🔬 La question RÉELLEMENT neuve
+
+Un test **par cellule** n'a de puissance que sur ~50 à 170 trades, et le
+plafond de multiplicité pour 168 cellules est écrasant. Un effet **faible mais
+réel**, commun à la famille, serait donc invisible.
+
+⇒ **On met TOUT en commun en UNE seule mesure** : tous les trades produits par
+les 44 constructions Vivien, sur la même fenêtre, contre le même contrôle. Un
+seul test, une seule barre, et un échantillon d'un ordre de grandeur supérieur.
+Cela n'a jamais été fait.
+
+### Le protocole
+
+- **Fenêtre DISJOINTE** : jours **90 à 365**, jamais vus par les nuits
+  glissantes. Recouvrement vérifié nul, arrêt sinon.
+- **Or uniquement** pour le verdict : `CHAINES_PAIRES` est figé sur `XAU/USD`
+  dans le code, les chaînes n'existent pas ailleurs.
+- **Spread épinglé à 0,20**, la valeur de référence. ⛔ Le tick vivant valait
+  **0,50** dans la nuit du 30/09 : deux bancs à deux heures différentes ne sont
+  pas comparables.
+- **Contrôle aléatoire 30 graines, sens respecté**, au risque médian des trades
+  Vivien eux-mêmes.
+- Garde-fous `COUT_MAX_R = 0,25` et `R_MAX_PLAUSIBLE = 3` : la mesure refuse de
+  publier un chiffre absurde.
+
+### La barre
+
+**|t| > 2,0** contre le contrôle, la même que les deux tests pré-enregistrés
+précédents. ⛔ Un seul test est éligible au verdict — le **bloc entier**. La
+décomposition chaînes / motifs sera publiée pour lecture mais **ne peut pas
+retenir l'effet** : trois tests éligibles rouvriraient la multiplicité que ce
+protocole ferme.
+
+### Les prédictions falsifiables
+
+1. **Appareil** : le bloc Vivien doit produire **n > 3 000** trades sur la
+   fenêtre disjointe. En dessous, la mise en commun n'apporte pas la puissance
+   qui justifie ce test, et on le dit.
+2. ⛔ **Je prédis l'ÉCHEC** : **|t| < 2,0**. Et cette fois je l'assume sans
+   réserve, contrairement à `fvg_up` — l'argument n'est pas un pressentiment :
+   4 580 cellules mesurées n'en ont jamais retenu une, et la meilleure de
+   toutes s'est effondrée hors échantillon. Mettre en commun des cellules dont
+   aucune ne gagne ne fabrique pas un gagnant.
+3. **Signe** : le R moyen du bloc sera **négatif**, entre −0,05 et −0,35 R.
+
+### La règle de décision, écrite d'avance
+
+| résultat | décision |
+|---|---|
+| n < 3 000 ou recouvrement non nul | ⛔ **test invalide**, aucun verdict |
+| \|t\| > 2,0 et R moyen > 0 | 🔬 **fait neuf** — à répliquer avant toute production |
+| \|t\| > 2,0 et R moyen < 0 | ⛔ la méthode est **mesurablement NUISIBLE** |
+| \|t\| < 2,0 | ⛔ **RÉFUTÉE en bloc** — à inscrire dans les verdicts |
+
+⚠️ Et quel que soit le résultat : **il ne change RIEN aux portes**. Aucun motif
+Vivien n'est dans la liste blanche de l'or, et ce test ne demande pas qu'on
+l'y mette.
