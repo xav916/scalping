@@ -340,8 +340,8 @@ négocie pas.
 | REM-002 kill switch global | ✅ codé, testé, muté |
 | REM-003 manifest de déploiement | ✅ codé, testé, muté |
 | REM-004 source unique de code | ⚠️ partiel — le dossier de scripts de l'hôte diverge toujours |
-| REM-005 ledger financier | ⛔ non commencé |
-| REM-006 classification du P&L | ⛔ non commencé |
+| REM-005 ledger financier | ✅ POSÉ le 01/10 — `trade_financial_ledger`, 31 colonnes du cahier + 6 de provenance, 1 353 lignes. ⛔ largement VIDE et c'est le livrable : 11 colonnes quasi complètes, 10 sous 50 %, 6 vides ASSUMÉES. L'argent n'est vérifié au courtier que sur **496 trades sur 1 353** (36,7 %). |
+| REM-006 classification du P&L | ✅ POSÉ le 01/10 — `categorie_pnl` : algorithme **−362,06 €** (232 trades) · main **+177,45 €** (152) · recherche −82,24 € (99), sur argent vérifié seulement. ⛔ 383 trades NON CLASSABLES : le cahier exigeait « exactement une catégorie » et 385 trades n'ont pas d'environnement. ⛔ les 10 ordres du fail-open sont FLAGUÉS `bug_affected`, pas blanchis en « recherche ». |
 | REM-007 monitoring end-to-end | ⛔ non commencé |
 | Rebuild de l'image | ⛔ non fait |
 | Vérification du runtime | ⛔ non faite |
