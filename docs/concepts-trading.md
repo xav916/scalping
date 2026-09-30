@@ -1195,3 +1195,71 @@ cumulatives**, pas une.
 
 ⛔ Aucun seuil neuf : `PLACEBO_PCT`, `FENETRE`, `MAX_BOUGIES_TENUE`, l'objectif
 du setup et `plafond_hasard` sont ceux du laboratoire.
+
+---
+
+## 🔬 LA MAIN — test HORS ÉCHANTILLON, déclaré le 2026-10-01 AVANT le code
+
+Le 08/09, la main a été mesurée comme **l'effet le plus significatif du
+projet** : **+0,728 R** contre le contrefactuel, **t=+4,07** sur 44 sorties ;
+33 stops évités. Sur le vrai chemin intra-trade : main **+0,459 R (t=+5,04)**
+contre **+0,040 R (t=+0,17)** pour les SL/TP laissés courir.
+
+⛔ Cette mesure n'a **jamais** été rejouée. Deux effets se sont effondrés hors
+échantillon en une soirée — la chaîne armée (t≈5 → 0,72) et `fvg_up`
+(+2,47 → +0,101). **Le plus fort résultat du projet doit subir le même test.**
+
+### La donnée
+
+**38 contrefactuels résolus sur `admin_live` postérieurs au 08/09 18h00** —
+jamais vus par la mesure d'origine, et d'une taille comparable à ses 35-44.
+Fenêtre de référence : 32 résolus antérieurs.
+
+### ⚠️ La tension d'UNITÉ que ce test doit trancher
+
+| | médiane | moyenne |
+|---|---|---|
+| fermetures manuelles avant 08/09 (n=74) | **+1,57 €** | **+0,02 €** |
+
+La note du 08/09 citait la **médiane**. La **moyenne** est nulle : la règle
+gagne souvent et perd gros parfois. Or `+0,459 R` est une **moyenne en R**, sur
+des trades dont le risque varie de **8 à 65 €**.
+
+🔑 Sommer des R sur des risques incomparables sur-pondère les petits risques —
+c'est le piège d'unité déjà payé par le régulateur. Le test doit donc mesurer
+**dans les deux unités**, et dire laquelle paie.
+
+### La barre
+
+**|t| > 2,0**, la même que le test pré-enregistré de la chaîne. ⛔ Pas
+`plafond_hasard(1) = 0,798` : c'est le |t| **attendu** sous l'hypothèse nulle,
+pas un quantile — bien trop permissif pour un test unique. (Pour `fvg_up` cette
+barre permissive avait été utilisée et le résultat, 0,101, échouait quand même.)
+
+### Les prédictions falsifiables
+
+1. **Appareil** : sur les 32 trades antérieurs, la mesure doit reproduire un
+   gain de la main **> +0,4 R** avec **t > 3**. Sinon on s'arrête : aucun
+   verdict, l'appareil ne reproduit pas.
+2. **Effondrement partiel** : sur les 38 trades neufs, le gain en R sera
+   **inférieur à +0,728 R**. Trois effets sur trois se sont effondrés ; je
+   prédis le même sens, mais **pas** une disparition.
+3. **La main SURVIT en R** : je prédis que le gain restera **> +0,3 R avec
+   |t| > 2,0** — ce serait le **premier effet de ce projet à survivre à un test
+   hors échantillon**. C'est une prédiction risquée et je l'assume.
+4. **⛔ Mais l'euro dira moins que le R** : le gain par trade en euros sera
+   **inférieur à la moitié** de ce que le gain en R laisse croire une fois
+   multiplié par le risque médian. Autrement dit : l'effet est réel mais
+   **sur-représenté par la mesure en R**.
+
+### La règle de décision, écrite d'avance
+
+| résultat | décision |
+|---|---|
+| P1 fausse | ⛔ **aucun verdict**, réparer l'appareil |
+| R > +0,3 et \|t\| > 2,0 **et** euro > 0 | ✅ **effet confirmé** — le seul du projet |
+| R survit mais euro ≈ 0 ou négatif | ⚠️ **effet d'unité** : vrai en R, sans valeur en caisse |
+| R < +0,3 ou \|t\| < 2,0 | ⛔ **effondré comme les deux autres** |
+
+⛔ Aucun réglage neuf : contrefactuel stocké, `r_realise`/`r_contrefactuel` du
+laboratoire, test **apparié** sur les mêmes trades.
