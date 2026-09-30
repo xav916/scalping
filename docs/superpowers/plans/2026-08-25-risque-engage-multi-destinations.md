@@ -8,6 +8,12 @@
 
 **Tech Stack :** Python 3.12, FastAPI, pytest, `urllib.request` (les scripts n'ont pas `requests`), Flask côté bridges, Docker sur EC2.
 
+> **État au 2026-09-30.** Tasks 1 à 7 faites et commitées ; suite complète
+> passée (7 échecs préexistants, aucun imputable à ce chantier). ⛔ **Tout ce
+> qui exige EC2 reste OUVERT** — l'hôte `100.103.107.75` est injoignable
+> depuis la session de travail (IP Tailscale, tunnel non monté). Restent donc
+> à faire : Task 2 Step 5, Task 5 Step 7, Task 6 Step 6 et toute la Task 8.
+
 **Spec :** `docs/superpowers/specs/2026-08-25-risque-engage-multi-destinations-design.md`
 
 ## Contraintes globales
@@ -55,7 +61,7 @@ Refactor pur — aucun changement de comportement. Il crée le point d'accroche 
 
 ⛔ **Ne PAS modifier `verdict()` pour régler ça** : elle est partagée avec la sonde horaire de saturation, et la changer déplacerait le seuil d'alerte du cron. Le filtre s'ajoute ici, dans le nouveau module.
 
-- [ ] **Step 1 : Écrire le test qui verrouille l'aiguillage par dialecte**
+- [x] **Step 1 : Écrire le test qui verrouille l'aiguillage par dialecte**
 
 Dans `backend/tests/test_risque_engage_dialectes.py` :
 
@@ -132,14 +138,14 @@ def test_le_filtre_laisse_MT5_intact():
     assert verdict_destination({"lisible": False}, 72.0) == "illisible"
 ```
 
-- [ ] **Step 2 : Lancer le test, vérifier qu'il échoue**
+- [x] **Step 2 : Lancer le test, vérifier qu'il échoue**
 
 ```bash
 ./venv/Scripts/python.exe -m pytest backend/tests/test_risque_engage_dialectes.py -q
 ```
 Attendu : `ModuleNotFoundError: No module named 'backend.services.risque_engage'`
 
-- [ ] **Step 3 : Créer le module avec le seul dialecte MT5**
+- [x] **Step 3 : Créer le module avec le seul dialecte MT5**
 
 `backend/services/risque_engage.py` :
 
@@ -244,7 +250,7 @@ def mesurer(destination_ids: tuple[str, ...] = DESTINATIONS_MESUREES) -> list[di
     return mesures
 ```
 
-- [ ] **Step 4 : Ajouter les quatre dialectes manquants en bouchon `illisible`**
+- [x] **Step 4 : Ajouter les quatre dialectes manquants en bouchon `illisible`**
 
 Toujours dans `risque_engage.py`, juste avant `DIALECTES` :
 
@@ -277,7 +283,7 @@ DIALECTES = {
 
 Le premier test de Task 1 (`test_chaque_type_de_bridge_a_un_dialecte`) reverrouille cette correspondance contre le registre : il tombera si un `bridge_type` change ou si une destination est ajoutée sans dialecte.
 
-- [ ] **Step 5 : Faire déléguer `backend/app.py`**
+- [x] **Step 5 : Faire déléguer `backend/app.py`**
 
 Remplacer le corps de `_mesurer_risque_destinations` par :
 
@@ -296,14 +302,14 @@ def _mesurer_risque_destinations() -> list[dict]:
 
 Supprimer la constante `_RISQUE_DESTINATIONS` devenue inutilisée.
 
-- [ ] **Step 6 : Lancer les deux suites**
+- [x] **Step 6 : Lancer les deux suites**
 
 ```bash
 ./venv/Scripts/python.exe -m pytest backend/tests/test_risque_engage_dialectes.py backend/tests/test_commande_risque_telegram.py -q
 ```
 Attendu : tout passe. Les 21 tests existants **ne doivent pas être modifiés** — s'ils cassent, c'est le refactor qui est faux.
 
-- [ ] **Step 7 : Commit**
+- [x] **Step 7 : Commit**
 
 ```bash
 git add backend/services/risque_engage.py backend/app.py backend/tests/test_risque_engage_dialectes.py
@@ -331,7 +337,7 @@ Aucun changement de bridge : `/openorders` expose déjà `stopPrice`, `reduceOnl
 - Produces : `risque_position_stop(entree, stop, taille) -> float | None` — `None` si l'un des trois manque ou si `entree == stop`.
 - Produces : `_stops_reduce_only(charge_openorders: dict) -> dict[str, float]` — `{symbole: prix_de_declenchement}`.
 
-- [ ] **Step 1 : Écrire les tests des fonctions pures**
+- [x] **Step 1 : Écrire les tests des fonctions pures**
 
 Ajouter à `backend/tests/test_risque_engage_dialectes.py` :
 
@@ -410,14 +416,14 @@ def test_sans_plafond_il_n_y_a_ni_pct_ni_restant():
     assert e["indecidable"] is False
 ```
 
-- [ ] **Step 2 : Lancer, vérifier l'échec**
+- [x] **Step 2 : Lancer, vérifier l'échec**
 
 ```bash
 ./venv/Scripts/python.exe -m pytest backend/tests/test_risque_engage_dialectes.py -q
 ```
 Attendu : `ImportError: cannot import name 'risque_position_stop'`
 
-- [ ] **Step 3 : Implémenter**
+- [x] **Step 3 : Implémenter**
 
 Dans `backend/services/risque_engage.py` :
 
@@ -533,7 +539,7 @@ def _dialecte_kraken_futures(dest) -> dict:
                                   devise="USD")
 ```
 
-- [ ] **Step 4 : Lancer les tests**
+- [x] **Step 4 : Lancer les tests**
 
 ```bash
 ./venv/Scripts/python.exe -m pytest backend/tests/test_risque_engage_dialectes.py -q
@@ -553,7 +559,7 @@ Attendu : `risque_total` ≈ **1,4090 USD** sur les 2 positions vivantes (0,5216
 
 ⚠️ Ce contrôle exige que l'image soit reconstruite d'abord (Task 8 en donne la recette). Si les positions ont changé depuis le 25/08, recalculer à la main depuis `/positions` et `/openorders` avant de conclure.
 
-- [ ] **Step 6 : Commit**
+- [x] **Step 6 : Commit**
 
 ```bash
 git add backend/services/risque_engage.py backend/tests/test_risque_engage_dialectes.py
@@ -580,7 +586,7 @@ Kraken n'a pas de plafond de risque engagé."
 - Produces : `taux_eurusd() -> float | None` — `None` si illisible.
 - Produces : `en_euros(montant: float | None, devise: str, taux: float | None) -> float | None`.
 
-- [ ] **Step 1 : Écrire les tests**
+- [x] **Step 1 : Écrire les tests**
 
 ```python
 # --------------------------------------------------------------------------
@@ -611,14 +617,14 @@ def test_un_montant_absent_reste_absent():
     assert en_euros(None, "USD", 1.08) is None
 ```
 
-- [ ] **Step 2 : Lancer, vérifier l'échec**
+- [x] **Step 2 : Lancer, vérifier l'échec**
 
 ```bash
 ./venv/Scripts/python.exe -m pytest backend/tests/test_risque_engage_dialectes.py -q -k euros
 ```
 Attendu : `ImportError: cannot import name 'en_euros'`
 
-- [ ] **Step 3 : Implémenter**
+- [x] **Step 3 : Implémenter**
 
 ```python
 def taux_eurusd() -> float | None:
@@ -660,14 +666,14 @@ def en_euros(montant, devise: str, taux) -> float | None:
     return montant / t
 ```
 
-- [ ] **Step 4 : Lancer les tests**
+- [x] **Step 4 : Lancer les tests**
 
 ```bash
 ./venv/Scripts/python.exe -m pytest backend/tests/test_risque_engage_dialectes.py -q
 ```
 Attendu : tout passe.
 
-- [ ] **Step 5 : Commit**
+- [x] **Step 5 : Commit**
 
 ```bash
 git add backend/services/risque_engage.py backend/tests/test_risque_engage_dialectes.py
@@ -691,7 +697,7 @@ s'affiche."
 - Consumes : `taux_eurusd()`, `en_euros()` de Task 3.
 - Produces : `_formater_risque(mesures: list[dict], taux: float | None = None) -> str`.
 
-- [ ] **Step 1 : Écrire les tests de mise en mots**
+- [x] **Step 1 : Écrire les tests de mise en mots**
 
 Ajouter à `backend/tests/test_commande_risque_telegram.py` :
 
@@ -776,14 +782,14 @@ def test_le_verdict_FABRIQUE_ici_est_bien_celui_que_la_PRODUCTION_rend():
         fabrique["verdict"]
 ```
 
-- [ ] **Step 2 : Lancer, vérifier l'échec**
+- [x] **Step 2 : Lancer, vérifier l'échec**
 
 ```bash
 ./venv/Scripts/python.exe -m pytest backend/tests/test_commande_risque_telegram.py -q -k "plafond or taux or devises"
 ```
 Attendu : `TypeError: _formater_risque() got an unexpected keyword argument 'taux'`
 
-- [ ] **Step 3 : Modifier `_formater_risque`**
+- [x] **Step 3 : Modifier `_formater_risque`**
 
 Changer la signature et ajouter le bloc sans plafond. Dans `backend/app.py` :
 
@@ -824,7 +830,7 @@ Puis, dans la boucle, **juste après** le bloc `if e.get("desarme"):` et **avant
 
 ⚠️ `_html` est déjà importé en tête de `_formater_risque` (`import html as _html`).
 
-- [ ] **Step 4 : Faire passer le taux depuis `_build_risque_text`**
+- [x] **Step 4 : Faire passer le taux depuis `_build_risque_text`**
 
 ```python
 async def _build_risque_text() -> str:
@@ -835,14 +841,14 @@ async def _build_risque_text() -> str:
     return _formater_risque(mesures, taux=taux)
 ```
 
-- [ ] **Step 5 : Lancer toute la suite de la commande**
+- [x] **Step 5 : Lancer toute la suite de la commande**
 
 ```bash
 ./venv/Scripts/python.exe -m pytest backend/tests/test_commande_risque_telegram.py backend/tests/test_risque_engage_dialectes.py -q
 ```
 Attendu : tout passe, **y compris les 21 tests d'origine** — la valeur par défaut `taux=None` les laisse intacts.
 
-- [ ] **Step 6 : Mutation — vérifier que les tests mordent**
+- [x] **Step 6 : Mutation — vérifier que les tests mordent**
 
 Remplacer temporairement dans `_formater_risque` :
 
@@ -859,7 +865,7 @@ par
 ```
 Attendu : `test_sans_taux_le_total_est_IMPOSSIBLE_meme_si_tout_est_lisible` et `test_sans_TAUX_la_destination_USD_devient_non_convertible` **échouent**. Restaurer ensuite.
 
-- [ ] **Step 7 : Commit**
+- [x] **Step 7 : Commit**
 
 ```bash
 git add backend/app.py backend/tests/test_commande_risque_telegram.py
@@ -891,7 +897,7 @@ pas une mesure."
 - Consumes : le fabricant de test `_eval_sans_plafond`, défini dans les tests de Task 4 (`backend/tests/test_commande_risque_telegram.py`). Il est réutilisé tel quel à l'étape 5.
 - Produces : le watcher porte désormais `entry: float`.
 
-- [ ] **Step 1 : Écrire le test du dialecte spot**
+- [x] **Step 1 : Écrire le test du dialecte spot**
 
 ```python
 # --------------------------------------------------------------------------
@@ -932,14 +938,14 @@ def test_zero_watcher_et_zero_position_est_un_VRAI_zero():
     assert e["risque_total"] == 0.0
 ```
 
-- [ ] **Step 2 : Lancer, vérifier l'échec**
+- [x] **Step 2 : Lancer, vérifier l'échec**
 
 ```bash
 ./venv/Scripts/python.exe -m pytest backend/tests/test_risque_engage_dialectes.py -q -k spot
 ```
 Attendu : `ImportError: cannot import name 'evaluation_spot'`
 
-- [ ] **Step 3 : Implémenter le dialecte**
+- [x] **Step 3 : Implémenter le dialecte**
 
 Dans `backend/services/risque_engage.py` :
 
@@ -980,14 +986,14 @@ def _dialecte_kraken_spot(dest) -> dict:
     return evaluation_spot(charge)
 ```
 
-- [ ] **Step 4 : Lancer les tests**
+- [x] **Step 4 : Lancer les tests**
 
 ```bash
 ./venv/Scripts/python.exe -m pytest backend/tests/test_risque_engage_dialectes.py -q
 ```
 Attendu : tout passe.
 
-- [ ] **Step 5 : Faire DIRE au message que le stop est logiciel**
+- [x] **Step 5 : Faire DIRE au message que le stop est logiciel**
 
 Test à ajouter dans `backend/tests/test_commande_risque_telegram.py` :
 
@@ -1019,7 +1025,7 @@ Le lancer, vérifier qu'il échoue, puis compléter le bloc `sans_plafond` de `_
 
 Relancer : le test passe.
 
-- [ ] **Step 6 : Ajouter `entry` côté bridge spot**
+- [x] **Step 6 : Ajouter `entry` côté bridge spot**
 
 Dans `kraken-spot-bridge/bridge.py`, changer la signature de `_start_watcher` (ligne ~368) :
 
@@ -1094,7 +1100,7 @@ ssh -i scalping-key.pem ec2-user@100.103.107.75 \
 
 Attendu : `active_watchers` porte désormais `entry`. **Le spot a 0 position aujourd'hui** — la liste sera vide, ce qui ne prouve que l'absence de régression. Le noter comme tel.
 
-- [ ] **Step 8 : Commit**
+- [x] **Step 8 : Commit**
 
 ```bash
 git add kraken-spot-bridge/bridge.py backend/services/risque_engage.py backend/tests/test_risque_engage_dialectes.py
@@ -1125,7 +1131,7 @@ processus ; le présenter comme un stop courtier surestimerait la protection.
 - Consumes : `evaluer_positions_stop` de Task 2.
 - Produces : `GET /openorders` rendant `{"ok": true, "orders": [{"symbol", "conId", "orderType", "auxPrice", "totalQuantity", "action"}]}`.
 
-- [ ] **Step 1 : Écrire le test du dialecte IBKR**
+- [x] **Step 1 : Écrire le test du dialecte IBKR**
 
 ```python
 # --------------------------------------------------------------------------
@@ -1165,14 +1171,14 @@ def test_un_ordre_d_ACHAT_ne_protege_rien():
     assert e["nues"] == 1
 ```
 
-- [ ] **Step 2 : Lancer, vérifier l'échec**
+- [x] **Step 2 : Lancer, vérifier l'échec**
 
 ```bash
 ./venv/Scripts/python.exe -m pytest backend/tests/test_risque_engage_dialectes.py -q -k ibkr
 ```
 Attendu : `ImportError: cannot import name 'evaluation_ibkr'`
 
-- [ ] **Step 3 : Implémenter le dialecte**
+- [x] **Step 3 : Implémenter le dialecte**
 
 ```python
 def _stops_ibkr(charge: dict, sens_position: dict) -> dict:
@@ -1230,14 +1236,14 @@ def _dialecte_ibkr(dest) -> dict:
     return evaluation_ibkr(pos, oo)
 ```
 
-- [ ] **Step 4 : Lancer les tests**
+- [x] **Step 4 : Lancer les tests**
 
 ```bash
 ./venv/Scripts/python.exe -m pytest backend/tests/test_risque_engage_dialectes.py -q
 ```
 Attendu : tout passe.
 
-- [ ] **Step 5 : Ajouter `/openorders` au bridge IBKR**
+- [x] **Step 5 : Ajouter `/openorders` au bridge IBKR**
 
 Dans `ibkr-bridge/bridge.py`, après la route `/positions` (ligne ~330), insérer :
 
@@ -1295,7 +1301,7 @@ print(mesurer_destination(DESTINATIONS[\"admin_ibkr_us\"]))"'
 ```
 Attendu : `lisible: False` — **c'est le verdict juste**, pas un échec. Consigner dans le message de commit que le chemin `/openorders` n'a **pas** été exercé.
 
-- [ ] **Step 7 : Commit**
+- [x] **Step 7 : Commit**
 
 ```bash
 git add ibkr-bridge/bridge.py backend/services/risque_engage.py backend/tests/test_risque_engage_dialectes.py
@@ -1326,7 +1332,7 @@ Prérequis du contrôle de réciprocité (spec §4 et §9). Aujourd'hui `risk_mo
 - Produces : `update_push_result(..., *, ok, response=None, risk_money=None)` — nouveau paramètre **nommé et optionnel**, pour que les cinq appelants existants (`binance_bridge_client.py:230`, `bridge_push_ledger.py:97` et `:110`, `mt5_bridge.py:1124` et `:1439`) continuent de fonctionner sans modification.
 - Produces : `_risk_money_pour_persistance(sz: dict) -> float | None` dans `mt5_bridge.py`.
 
-- [ ] **Step 1 : Écrire le test**
+- [x] **Step 1 : Écrire le test**
 
 `backend/tests/test_risk_money_persiste.py` :
 
@@ -1394,14 +1400,14 @@ def test_une_valeur_ABSENTE_reste_NULL_et_ne_devient_pas_zero():
     assert _risk_money_pour_persistance({"risk_money": "illisible"}) is None
 ```
 
-- [ ] **Step 2 : Lancer, vérifier l'échec**
+- [x] **Step 2 : Lancer, vérifier l'échec**
 
 ```bash
 ./venv/Scripts/python.exe -m pytest backend/tests/test_risk_money_persiste.py -q
 ```
 Attendu : `AssertionError: assert 'risk_money' in cols`
 
-- [ ] **Step 3 : Ajouter la colonne, en migration idempotente**
+- [x] **Step 3 : Ajouter la colonne, en migration idempotente**
 
 Dans `backend/services/mt5_pushes_service.py`, à la fin de `_ensure_schema()` (après la création de l'index, ligne ~62), à l'intérieur du même `with sqlite3.connect(...) as c:` :
 
@@ -1463,7 +1469,7 @@ et remplacer le `UPDATE` par :
 
 ⚠️ `COALESCE` : un appelant qui ne fournit pas `risk_money` **ne doit pas effacer** une valeur déjà écrite. Les cinq appelants existants passent donc `None` sans dommage.
 
-- [ ] **Step 4 : Écrire le convertisseur défensif**
+- [x] **Step 4 : Écrire le convertisseur défensif**
 
 Dans `backend/services/mt5_bridge.py` :
 
@@ -1494,14 +1500,14 @@ Puis, aux **deux** appels de `update_push_result` dans `mt5_bridge.py` (lignes 1
 
 ⚠️ **Ne pas toucher** aux appels de `binance_bridge_client.py:230` ni de `bridge_push_ledger.py:97`/`:110` : `sz` n'y est pas en portée, et le `COALESCE` fait qu'ils n'effacent rien. Ces lignes-là garderont `risk_money` à NULL, ce qui est la vérité — mieux qu'un zéro inventé.
 
-- [ ] **Step 5 : Lancer les tests**
+- [x] **Step 5 : Lancer les tests**
 
 ```bash
 ./venv/Scripts/python.exe -m pytest backend/tests/test_risk_money_persiste.py -q
 ```
 Attendu : tout passe.
 
-- [ ] **Step 6 : Commit**
+- [x] **Step 6 : Commit**
 
 ```bash
 git add backend/services/mt5_bridge.py backend/tests/test_risk_money_persiste.py
@@ -1587,7 +1593,7 @@ ssh -i scalping-key.pem ec2-user@100.103.107.75 \
 ```
 Attendu : identique à avant la manipulation. ⛔ Interroger le système ne doit pas faire taire son alerte suivante.
 
-- [ ] **Step 7 : Suite complète, contre la base de référence**
+- [x] **Step 7 : Suite complète, contre la base de référence**
 
 ```bash
 ./venv/Scripts/python.exe -m pytest backend/tests/ -q \
