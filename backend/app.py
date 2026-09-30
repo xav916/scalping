@@ -2947,8 +2947,16 @@ async def _build_sales_recap_text(date_iso: str | None = None) -> str:
 # de l'argent réel avec le plafond le PLUS LARGE des trois (50 %).
 # ⚠️ Un compte injoignable rend « illisible », jamais un zéro : IBKR
 # éteint le dira, ce qui vaut mieux que de le passer sous silence.
+#
+# ⚠️ Kraken SPOT ajouté le 30/09 : il était mesurable mais jamais montré.
+# `_lire_destination` route déjà `kraken_spot` vers `_lire_kraken`, et son
+# bridge expose désormais `/risque` — sans quoi le compte serait rendu
+# `illisible`, ce qui REFUSE le total tous comptes à chaque appel.
+# ⛔ Le spot n'a aucune porte de risque engagé : il s'affiche « désarmé »,
+# jamais avec un pourcentage. Son stop est un THREAD du bridge, pas un ordre
+# du carnet — il ne survit pas à un redémarrage.
 _RISQUE_DESTINATIONS = ("admin_live", "admin_legacy", "admin_kraken",
-                        "admin_ibkr_us")
+                        "admin_kraken_spot", "admin_ibkr_us")
 
 
 def _eur(x: float) -> str:
@@ -3056,6 +3064,26 @@ def _formater_risque(mesures: list[dict]) -> str:
         if e.get("desarme"):
             lignes.append("⚪ Plafond de risque <b>désarmé</b> — il n'y a pas "
                           "de plafond à saturer.")
+            # ⛔ Désarmé ne veut pas dire « n'engage rien ». Le spot n'a aucune
+            # porte de risque, mais ses watchers donnent un montant CONNU : le
+            # taire reviendrait à le compter pour zéro dans la tête du lecteur,
+            # et à l'exclure d'un total qui se présenterait quand même comme
+            # complet.
+            #
+            # ⚠️ Rien n'est affiché quand `risque_total` est None : c'est « on
+            # ne sait pas », et « 0,00 € » y mettrait une mesure inexistante.
+            if e.get("risque_total") is not None:
+                total += e["risque_total"]
+                lignes.append(
+                    f"✅ <b>{_eur(e['risque_total'])} €</b> engagés · "
+                    f"{e.get('positions', 0)} position(s) — mesurés, mais "
+                    "sans plafond auquel les comparer.")
+            if e.get("stop_logiciel"):
+                lignes.append(
+                    "⚠️ Stop <b>logiciel</b> : il vit dans un thread du "
+                    "bridge, pas dans le carnet d'ordres. Un redémarrage le "
+                    "perd — cette protection n'a pas la solidité d'un stop "
+                    "courtier.")
             continue
 
         if v == "indecidable":
