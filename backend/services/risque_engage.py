@@ -157,8 +157,43 @@ def _dialecte_kraken_futures(dest) -> dict:
                                   devise="USD")
 
 
+def evaluation_spot(charge: dict) -> dict:
+    """Risque du spot Kraken, dont le stop vit dans un watcher LOGICIEL.
+
+    ⚠️ `stop_logiciel=True` n'est pas cosmétique : un watcher est un thread du
+    bridge, pas un ordre du carnet. Il meurt avec le processus. Le présenter
+    comme un stop courtier surestimerait la protection.
+    """
+    watchers = (charge or {}).get("active_watchers") or []
+    total, non_mesurables = 0.0, 0
+    for w in watchers:
+        if not isinstance(w, dict):
+            non_mesurables += 1
+            continue
+        r = risque_position_stop(w.get("entry"), w.get("sl"), w.get("qty"))
+        if r is None:
+            non_mesurables += 1
+            continue
+        total += r
+    positions = (charge or {}).get("positions") or []
+    # Une position sans watcher n'a AUCUN stop : risque non borné.
+    nues = max(0, len(positions) - len(watchers))
+    return {
+        "lisible": True,
+        "indecidable": bool(nues or non_mesurables),
+        "risque_total": total, "plafond": None, "pct": None, "restant": None,
+        "nues": nues, "non_mesurables": non_mesurables,
+        "positions": len(positions),
+        "candidats": 0, "liberable": 0.0, "login": None, "devise": "USD",
+        "sans_plafond": True, "stop_logiciel": True,
+    }
+
+
 def _dialecte_kraken_spot(dest) -> dict:
-    return evaluation_illisible("USD")      # Task 5
+    charge, ok = _appel(dest, "/positions")
+    if not ok or not isinstance(charge, dict):
+        return evaluation_illisible("USD")
+    return evaluation_spot(charge)
 
 
 def _dialecte_ibkr(dest) -> dict:

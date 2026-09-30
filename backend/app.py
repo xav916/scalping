@@ -2945,6 +2945,11 @@ def _formater_risque(mesures: list[dict], taux: float | None = None) -> str:
                 "⚪ <b>Aucun plafond de risque</b> n'est armé sur cette "
                 "destination : il n'y a pas de pourcentage à en tirer.",
             ]
+            if e.get("stop_logiciel"):
+                lignes.append(
+                    "⚠️ Stop <b>logiciel</b> : il vit dans un thread du bridge, "
+                    "pas dans le carnet d'ordres. Un redémarrage le perd — "
+                    "cette protection n'a pas la solidité d'un stop courtier.")
             continue
 
         if v == "indecidable":

@@ -170,3 +170,41 @@ def test_un_taux_ABSENT_ou_ABSURDE_rend_None(taux):
 def test_un_montant_absent_reste_absent():
     from backend.services.risque_engage import en_euros
     assert en_euros(None, "USD", 1.08) is None
+
+
+# --------------------------------------------------------------------------
+# Kraken Spot — le stop vit dans un WATCHER, pas dans le carnet d'ordres
+# --------------------------------------------------------------------------
+
+def test_le_dialecte_spot_lit_les_watchers():
+    from backend.services.risque_engage import evaluation_spot
+    charge = {"positions": [{"asset": "XBT", "qty": 0.001, "price_usd": 60000.0}],
+              "active_watchers": [
+                  {"pair": "BTC/USD", "kraken_pair": "XBTUSD", "qty": 0.001,
+                   "entry": 61000.0, "sl": 59000.0, "tp": 65000.0}]}
+    e = evaluation_spot(charge)
+    assert e["risque_total"] == pytest.approx(2.0)      # |61000−59000| × 0,001
+    assert e["stop_logiciel"] is True
+    assert e["plafond"] is None
+
+
+def test_un_watcher_SANS_entree_est_non_mesurable_pas_zero():
+    """Un bridge spot pas encore mis à jour ne porte pas `entry`. ⛔ Le compter
+    pour zéro rabaisserait le total et cacherait le risque."""
+    from backend.services.risque_engage import evaluation_spot
+    charge = {"positions": [{"asset": "XBT", "qty": 0.001}],
+              "active_watchers": [
+                  {"pair": "BTC/USD", "qty": 0.001, "sl": 59000.0}]}
+    e = evaluation_spot(charge)
+    assert e["non_mesurables"] == 1
+    assert e["risque_total"] == 0.0
+    assert e["indecidable"] is True
+
+
+def test_zero_watcher_et_zero_position_est_un_VRAI_zero():
+    """Le spot est vide aujourd'hui. Vide mesuré ≠ illisible."""
+    from backend.services.risque_engage import evaluation_spot
+    e = evaluation_spot({"positions": [], "active_watchers": []})
+    assert e["lisible"] is True
+    assert e["indecidable"] is False
+    assert e["risque_total"] == 0.0

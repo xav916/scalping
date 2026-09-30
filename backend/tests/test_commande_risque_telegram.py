@@ -433,3 +433,18 @@ def test_le_verdict_FABRIQUE_ici_est_bien_celui_que_la_PRODUCTION_rend():
     fabrique = _kraken(_eval_sans_plafond())
     assert verdict_destination(fabrique["evaluation"], SEUIL_PCT) == \
         fabrique["verdict"]
+
+
+def test_un_stop_LOGICIEL_est_signale_comme_tel():
+    """⛔ Un watcher est un thread du bridge, pas un ordre du carnet : il meurt
+    avec le processus. Le présenter comme un stop courtier surestimerait la
+    protection — et cette différence-là ne se voit nulle part ailleurs."""
+    from backend.app import _formater_risque
+
+    e = _eval_sans_plafond(total=2.0)
+    e["stop_logiciel"] = True
+    texte = _formater_risque(
+        [{"id": "admin_kraken_spot", "badge": "🪙 Kraken Spot",
+          "evaluation": e, "verdict": "sans_plafond"}], taux=1.08)
+
+    assert "logiciel" in texte.lower(), texte

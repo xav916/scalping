@@ -365,8 +365,14 @@ def _watcher_loop(
         time.sleep(5)
 
 
-def _start_watcher(txid: str, pair: str, kraken_pair: str, qty: float, sl: float, tp: float) -> None:
-    """Démarre le watcher SL/TP dans un daemon thread."""
+def _start_watcher(txid: str, pair: str, kraken_pair: str, qty: float,
+                   sl: float, tp: float, entry: float = 0.0) -> None:
+    """Démarre le watcher SL/TP dans un daemon thread.
+
+    `entry` (2026-08-25) est republié par `/positions` pour que le risque
+    engagé du spot soit mesurable : sans prix d'entrée, `|entrée − stop| ×
+    taille` n'a pas de premier terme.
+    """
     t = threading.Thread(
         target=_watcher_loop,
         args=(txid, pair, kraken_pair, qty, sl, tp),
@@ -378,11 +384,33 @@ def _start_watcher(txid: str, pair: str, kraken_pair: str, qty: float, sl: float
             "pair": pair,
             "kraken_pair": kraken_pair,
             "qty": qty,
+            "entry": entry,
             "sl": sl,
             "tp": tp,
             "thread": t,
         }
     t.start()
+
+
+def _prix_de_remplissage(txid: str) -> float:
+    """Prix moyen réellement obtenu, demandé au courtier.
+
+    ⛔ `AddOrder` ne rend PAS le prix obtenu — sa réponse ne porte que `txid`
+    et `descr`. Il faut donc le demander, ce qui est de toute façon la règle :
+    l'entrée se lit chez le courtier, jamais chez nous.
+
+    ⛔ Rend `0.0` si Kraken ne l'a pas encore consolidé — un ordre au marché
+    peut être `pending` une fraction de seconde. Le dialecte traduira ce zéro
+    en NON MESURABLE, jamais en « risque nul ». Deviner un prix d'entrée
+    fausserait le risque sans que rien ne le dise.
+    """
+    try:
+        d = _signed_post("/0/private/QueryOrders", {"txid": txid})
+        o = ((d.get("result") or {}).get(txid) or {})
+        return float(o.get("price") or 0.0)
+    except Exception as e:
+        logger.warning(f"prix de remplissage indisponible pour {txid} : {e}")
+        return 0.0
 
 
 # ─── Flask app + auth decorator ────────────────────────────────────────
@@ -678,7 +706,8 @@ def place_order():
             decimals = specs.get("pair_decimals", 1)
             sl_val = round(sl_val, decimals)
             tp_val = round(tp_val, decimals)
-        _start_watcher(txid, pair, sym, qty, sl_val, tp_val)
+        _start_watcher(txid, pair, sym, qty, sl_val, tp_val,
+                       entry=_prix_de_remplissage(txid))
         watcher_started = True
 
     logger.warning(
