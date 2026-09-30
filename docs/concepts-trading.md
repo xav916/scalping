@@ -1009,3 +1009,74 @@ testées :
 ⚠️ **Un R moyen positif ne prouve rien** tant qu'il n'a pas dépassé ce plafond
 sur plusieurs nuits. C'est la leçon la plus chère de ce projet, et la seule qui
 ne se périme pas.
+
+---
+
+## 🔬 Balayage de la LARGEUR DU STOP sur l'or — déclaré le 2026-09-30, AVANT le code
+
+Xavier a demandé s'il fallait **réduire** le TP et le SL de l'or. Réduire le TP
+est déjà réfuté ([banc des objectifs du 15/09] : aucune cible de 0,5 à 3,5 R ne
+bat 1,8, et rapprocher est **pire** à 15 min, t = −2,41 / −2,58 / −2,81). Le
+**stop**, lui, n'a jamais été balayé : le banc des objectifs le tenait constant.
+
+### Ce que le code dit déjà, et qui motive le sens du balayage
+
+Dans `laboratoire_or`, le coût passe à `_issue` sous la forme `spread / risque`.
+Le spread est une distance de **prix** ; `risque` **est** la distance au stop.
+⇒ **le coût en R est inversement proportionnel à la largeur du stop.** Mesuré
+sur l'or (spread 0,20 pt, stop médian 16,2 pt) : stop ÷2 ⇒ coût 0,0247 R ;
+stop ×2 ⇒ coût 0,0062 R.
+
+C'est donc **élargir**, pas resserrer, qui allège la charge. Le balayage teste
+cette direction.
+
+### La règle
+
+Mêmes entrées, même objectif **en R** (1,8), seule la largeur du stop change :
+`risque_k = k × risque_observé`, pour **k ∈ {0,5 ; 0,75 ; 1 ; 1,5 ; 2 ; 3}**.
+
+⚠️ Rejeu **séquentiel par k** : un stop plus large tient la position plus
+longtemps et décale toutes les entrées suivantes. Figer les entrées une fois
+pour toutes fabriquerait une comparaison fausse — c'est le piège que
+`comparer_sorties` existe pour fermer.
+
+⚠️ `k` n'est **pas** un réglage de production : en réel, un stop deux fois plus
+large impose un lot deux fois plus petit pour tenir le même risque en euros.
+Le R est justement l'unité invariante au lot, donc le balayage est licite —
+mais il ne dit rien sur la taille de position.
+
+⚠️ Le filtre `PLACEBO_PCT` (0,1 % du prix) reste appliqué **après**
+multiplication : à k = 0,5 une partie des cellules disparaîtra, et c'est le
+résultat, pas un défaut. 18 des 163 stops réels sont **déjà** sous ce seuil.
+
+### Les prédictions falsifiables — écrites AVANT de coder
+
+1. **Mécanique** : le coût mesuré par trade suivra `spread / (k × risque)` à
+   ±15 %. Si cette identité ne sort pas, **le banc est faux** et rien d'autre
+   n'est interprétable. C'est le contrôle de l'appareil, pas de l'hypothèse.
+
+2. **Monotonie** : le R moyen sera **croissant en k** sur 0,5 → 3. En
+   particulier `R_moyen(k=0,5) < R_moyen(k=1) < R_moyen(k=2)`.
+
+3. ⛔ **LA PRÉDICTION QUI COMPTE — je prédis un échec** : **aucun k ne franchira
+   le plafond du hasard.** L'écart au contrôle aléatoire (30 graines, sens
+   respecté) restera sous `plafond_hasard(6)` pour les six valeurs. Autrement
+   dit : élargir le stop **retire une charge, ne crée pas d'avantage**, parce
+   que l'entrée 5 min vaut ≈ −0,008 R avant frais — rien.
+
+4. **Ce qui rendrait l'expérience intéressante** : si un k franchit le plafond,
+   c'est un fait neuf, et il devra être répliqué en **validation croisée sur
+   les 20 instruments** avant toute décision de production.
+
+### La règle d'arrêt, écrite d'avance
+
+- Prédiction 1 fausse ⇒ on **arrête** et on répare le banc. Aucun verdict.
+- Prédictions 2 et 3 vraies ⇒ **verdict négatif assumé** : ne pas toucher au
+  stop en production, et l'écrire dans les verdicts « ne pas refaire ».
+- Prédiction 3 fausse ⇒ passer en validation croisée 20 instruments, plafond
+  recalculé sur le **total** des tests, jamais par instrument.
+
+⛔ Aucun seuil neuf : `k` réutilise le `risque` observé, l'objectif reste 1,8 R,
+le spread reste celui du courtier, `PLACEBO_PCT` et `MAX_BOUGIES_TENUE` sont
+inchangés. Chaque réglage neuf serait un degré de liberté, donc de l'edge
+fabriqué.
