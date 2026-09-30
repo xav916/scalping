@@ -418,7 +418,7 @@ def _cost_rejection(setup, dest) -> str | None:
     # Restreint aux routes MT5 : la porte de coût de Kraken repose sur des
     # frais 10× supérieurs et sur un portage, l'ouvrir par effet de bord
     # ferait passer des trades crypto non rentables.
-    if getattr(dest, "bridge_type", "mt5") == "mt5" and _jeton_derogation_restant():
+    if getattr(dest, "bridge_type", "mt5") == "mt5" and _jeton_derogation_restant(setup, dest):
         return None
 
     # Exemption NOMMEE, par couple (destination, paire) — 2026-08-29.
@@ -1151,7 +1151,7 @@ def _check_rejection(setup, dest=None) -> str | None:
     # destination. Permet de garder `range_bounce` sur l'argent réel MT5 tout
     # en ouvrant une destination d'observation.
     allowed_patterns = _patterns_autorises(setup, dest)
-    if allowed_patterns and not _jeton_derogation_restant():
+    if allowed_patterns and not _jeton_derogation_restant(setup, dest):
         if _pattern_value(setup) not in allowed_patterns:
             return "pattern_not_allowed"
     # Filtre direction par pair (diagnostic 2026-04-24 : les BUY ont 18%
@@ -1298,8 +1298,20 @@ def _notify_first_live_push(setup, bridge_response: dict) -> None:
         logger.warning(f"first_live_push send_infra_text failed: {e}")
 
 
-def _jeton_derogation_restant() -> bool:
-    """Reste-t-il un jeton de dérogation, et lesquelles portes il lève.
+def _jeton_derogation_restant(setup=None, dest=None) -> bool:
+    """Reste-t-il un jeton de dérogation POUR CE PÉRIMÈTRE, et il lève deux portes.
+
+    ⛔ CORRIGÉ LE 2026-10-01 — la dérogation est désormais NOMMÉE. Avant, elle
+    levait les portes pour **toute** route MT5 et comptait les pushes
+    d'`admin_legacy`, parce qu'à sa conception ce compte PILOTAIT le réel par
+    le miroir démo→réel. Ce miroir est coupé depuis le 04/09
+    (`_mirror_active()` = False), donc une dérogation destinée à `admin_live`
+    n'y consommait AUCUN jeton, les pushes ordinaires d'`admin_legacy` le
+    consommaient à sa place, et les deux comptes s'ouvraient ensemble.
+    **Le garde-fou existait mais il bornait la mauvaise chose.**
+
+    ⚠️ Sans `dest`, on ne peut pas vérifier le périmètre : le jeton est REFUSÉ.
+    Un doute ne doit pas ouvrir la vanne.
 
     Mécanisme **à usage unique et auto-réarmant** (2026-08-06). UN seul jeton
     lève DEUX portes à la fois — le filtre de patterns et la porte de coût —
@@ -1330,11 +1342,25 @@ def _jeton_derogation_restant() -> bool:
     Défaut `0` = filtre toujours actif, comportement d'avant.
     """
     try:
-        from config.settings import TRADE_DEROGATION_PUSHES
+        from config.settings import (TRADE_DEROGATION_DEST,
+                                     TRADE_DEROGATION_PAIR,
+                                     TRADE_DEROGATION_PUSHES)
         quota = int(TRADE_DEROGATION_PUSHES)
     except Exception:
         return False
     if quota <= 0:
+        return False
+
+    # ⛔ LA PORTÉE D'ABORD. Une dérogation qui lèverait les portes hors du
+    # périmètre déclaré ouvrirait des comptes que personne n'a demandés.
+    portee = (TRADE_DEROGATION_DEST or "").strip()
+    if not portee:
+        return False
+    dest_id = getattr(dest, "destination_id", None)
+    if dest_id != portee:
+        return False
+    paire_voulue = (TRADE_DEROGATION_PAIR or "").strip()
+    if paire_voulue and getattr(setup, "pair", None) != paire_voulue:
         return False
     # Compte depuis l'instant d'ARMEMENT, pas depuis minuit.
     #
@@ -1357,11 +1383,23 @@ def _jeton_derogation_restant() -> bool:
         from backend.services.trade_log_service import _DB_PATH
 
         with sqlite3.connect(str(_DB_PATH)) as c:
-            n = c.execute(
-                "SELECT COUNT(*) FROM mt5_pushes "
-                "WHERE destination_id = 'admin_legacy' AND pushed_at >= ?",
-                (depuis,),
-            ).fetchone()[0]
+            # ⚠️ Le compteur ne distingue pas un push dérogatoire d'un push
+            # ordinaire DANS le périmètre : il peut donc fermer TROP TÔT,
+            # jamais trop tard. C'est le bon sens de l'erreur pour un
+            # garde-fou, et c'est préféré à une seconde résolution de la liste
+            # blanche, qui dériverait de celle que la porte applique.
+            if paire_voulue:
+                n = c.execute(
+                    "SELECT COUNT(*) FROM mt5_pushes WHERE destination_id = ? "
+                    "AND pair = ? AND pushed_at >= ?",
+                    (portee, paire_voulue, depuis),
+                ).fetchone()[0]
+            else:
+                n = c.execute(
+                    "SELECT COUNT(*) FROM mt5_pushes WHERE destination_id = ? "
+                    "AND pushed_at >= ?",
+                    (portee, depuis),
+                ).fetchone()[0]
         return int(n) < quota
     except Exception as e:
         # Compteur illisible ⇒ filtre ACTIF. Un doute ne doit pas ouvrir la

@@ -725,6 +725,27 @@ TRADE_DEROGATION_PUSHES = int(os.getenv("TRADE_DEROGATION_PUSHES", "0"))
 # le demande. Vide ⇒ filtre maintenu (on ne compte pas depuis une base
 # inconnue).
 TRADE_DEROGATION_SINCE = os.getenv("TRADE_DEROGATION_SINCE", "").strip()
+# ⛔ PORTEE de la derogation, ajoutee le 2026-10-01. Le quota comptait les
+# pushes d `admin_legacy` parce qu a sa conception ce compte PILOTAIT le reel
+# par le miroir demo->reel. Ce miroir est coupe depuis le 04/09
+# (`_mirror_active()` = False), donc :
+#   - une derogation destinee a `admin_live` n y consommait AUCUN jeton ;
+#   - les pushes ordinaires d `admin_legacy` le consommaient a sa place ;
+#   - et les portes s ouvraient sur les DEUX comptes.
+# Le garde-fou existait mais il bornait la mauvaise chose.
+#
+# ⇒ La derogation est desormais NOMMEE : elle ne leve les portes que pour la
+# destination (et si precisee, la paire) declaree, et le quota compte les
+# pushes de ce perimetre-la.
+#
+# ⚠️ Le compteur ne distingue pas un push derogatoire d un push ordinaire dans
+# le perimetre : il peut donc fermer TROP TOT, jamais trop tard. C est le bon
+# sens de l erreur pour un garde-fou, et c est prefere a une seconde
+# resolution de la liste blanche qui deriverait de celle de la porte.
+#
+# Defaut `admin_legacy` : comportement d avant conserve pour qui ne declare rien.
+TRADE_DEROGATION_DEST = os.getenv("TRADE_DEROGATION_DEST", "admin_legacy").strip()
+TRADE_DEROGATION_PAIR = os.getenv("TRADE_DEROGATION_PAIR", "").strip()
 
 # ─── Retour de pause : délai + comparaison inter-paires (2026-08-05) ─────
 #

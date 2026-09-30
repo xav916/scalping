@@ -19,8 +19,11 @@ from backend.services import mt5_bridge as mb
 def base(tmp_path, monkeypatch):
     f = tmp_path / "trades.db"
     with sqlite3.connect(f) as c:
+        # ⛔ `pair` fait partie de la forme de la PRODUCTION. Sans elle, le
+        # compteur scope par paire (2026-10-01) tomberait sur une colonne
+        # absente et le test aurait l'air de passer sur un chemin mort.
         c.execute("CREATE TABLE mt5_pushes (id INTEGER PRIMARY KEY, "
-                  "destination_id TEXT, date TEXT, pushed_at TEXT)")
+                  "destination_id TEXT, pair TEXT, date TEXT, pushed_at TEXT)")
     monkeypatch.setattr("backend.services.trade_log_service._DB_PATH", f)
     return f
 
@@ -28,17 +31,28 @@ def base(tmp_path, monkeypatch):
 ARME = "2026-08-06T20:00:00+00:00"
 
 
-def _pousse(f, n, dest="admin_legacy", quand="2026-08-06T21:00:00+00:00"):
+def _pousse(f, n, dest="admin_legacy", quand="2026-08-06T21:00:00+00:00",
+            pair="XAU/USD"):
     with sqlite3.connect(f) as c:
         for _ in range(n):
-            c.execute("INSERT INTO mt5_pushes (destination_id, date, pushed_at) "
-                      "VALUES (?,?,?)", (dest, quand[:10], quand))
+            c.execute("INSERT INTO mt5_pushes (destination_id, pair, date, "
+                      "pushed_at) VALUES (?,?,?,?)",
+                      (dest, pair, quand[:10], quand))
 
 
-def _quota(monkeypatch, n, depuis=ARME):
+class _Setup:
+    """Le minimum que la porte lit : la paire."""
+
+    def __init__(self, pair="XAU/USD"):
+        self.pair = pair
+
+
+def _quota(monkeypatch, n, depuis=ARME, dest="admin_legacy", pair=""):
     import config.settings
     monkeypatch.setattr(config.settings, "TRADE_DEROGATION_PUSHES", n)
     monkeypatch.setattr(config.settings, "TRADE_DEROGATION_SINCE", depuis)
+    monkeypatch.setattr(config.settings, "TRADE_DEROGATION_DEST", dest)
+    monkeypatch.setattr(config.settings, "TRADE_DEROGATION_PAIR", pair)
 
 
 # ── L'ouverture, puis la fermeture automatique ────────────────────────
@@ -46,12 +60,12 @@ def _quota(monkeypatch, n, depuis=ARME):
 def test_quota_nul_le_filtre_reste_actif(base, monkeypatch):
     """Comportement par défaut : aucune levée."""
     _quota(monkeypatch, 0)
-    assert mb._jeton_derogation_restant() is False
+    assert mb._jeton_derogation_restant(_Setup(), _dest()) is False
 
 
 def test_avec_un_quota_de_1_la_porte_est_ouverte(base, monkeypatch):
     _quota(monkeypatch, 1)
-    assert mb._jeton_derogation_restant() is True
+    assert mb._jeton_derogation_restant(_Setup(), _dest()) is True
 
 
 def test_le_filtre_SE_REARME_apres_le_premier_push(base, monkeypatch):
@@ -59,7 +73,7 @@ def test_le_filtre_SE_REARME_apres_le_premier_push(base, monkeypatch):
     ouverte jusqu'à ce que quelqu'un y repense."""
     _quota(monkeypatch, 1)
     _pousse(base, 1)
-    assert mb._jeton_derogation_restant() is False
+    assert mb._jeton_derogation_restant(_Setup(), _dest()) is False
 
 
 def test_seuls_les_pushes_du_compte_PILOTE_consomment_le_quota(base, monkeypatch):
@@ -68,7 +82,7 @@ def test_seuls_les_pushes_du_compte_PILOTE_consomment_le_quota(base, monkeypatch
     _quota(monkeypatch, 1)
     _pousse(base, 3, dest="admin_live")
     _pousse(base, 2, dest="user:2")
-    assert mb._jeton_derogation_restant() is True
+    assert mb._jeton_derogation_restant(_Setup(), _dest()) is True
 
 
 def test_les_pushes_ANTERIEURS_a_l_armement_ne_consomment_rien(base, monkeypatch):
@@ -76,13 +90,13 @@ def test_les_pushes_ANTERIEURS_a_l_armement_ne_consomment_rien(base, monkeypatch
     le soir. Compter par jour calendaire l'aurait epuise d'avance."""
     _quota(monkeypatch, 1)
     _pousse(base, 8, quand="2026-08-06T09:00:00+00:00")
-    assert mb._jeton_derogation_restant() is True
+    assert mb._jeton_derogation_restant(_Setup(), _dest()) is True
 
 
 def test_sans_instant_d_armement_le_filtre_est_MAINTENU(base, monkeypatch):
     """On ne compte pas depuis une base inconnue."""
     _quota(monkeypatch, 1, depuis="")
-    assert mb._jeton_derogation_restant() is False
+    assert mb._jeton_derogation_restant(_Setup(), _dest()) is False
 
 
 # ── Le doute doit fermer, pas ouvrir ──────────────────────────────────
@@ -91,7 +105,7 @@ def test_compteur_illisible_MAINTIENT_le_filtre(monkeypatch, tmp_path):
     """Un doute ne doit pas ouvrir la vanne."""
     _quota(monkeypatch, 1)
     monkeypatch.setattr("backend.services.trade_log_service._DB_PATH", tmp_path)
-    assert mb._jeton_derogation_restant() is False
+    assert mb._jeton_derogation_restant(_Setup(), _dest()) is False
 
 
 # ── L'effet sur la porte du dispatch ──────────────────────────────────
@@ -104,7 +118,7 @@ def test_un_pattern_hors_whitelist_passe_pendant_la_levee(base, monkeypatch):
     class S:
         pair = "XAU/USD"; direction = "buy"; signal_pattern = "momentum_up"
     assert mb._pattern_value(S()) not in mb.MT5_BRIDGE_ALLOWED_PATTERNS
-    assert mb._jeton_derogation_restant() is True
+    assert mb._jeton_derogation_restant(_Setup(), _dest()) is True
 
 
 def test_apres_le_quota_le_meme_pattern_est_refuse(base, monkeypatch):
@@ -112,16 +126,24 @@ def test_apres_le_quota_le_meme_pattern_est_refuse(base, monkeypatch):
     _pousse(base, 1)
     monkeypatch.setattr(mb, "MT5_BRIDGE_ALLOWED_PATTERNS",
                         frozenset({"range_bounce_up"}))
-    assert mb._jeton_derogation_restant() is False
+    assert mb._jeton_derogation_restant(_Setup(), _dest()) is False
 
 
 # ── Le jeton leve AUSSI la porte de cout, mais pas sur Kraken ─────────
 
-def _dest(bridge_type="mt5"):
+def _dest(bridge_type="mt5", destination_id="admin_legacy"):
+    """⛔ Cette doublure doit porter TOUT ce que les portes lisent.
+
+    Il lui manquait `destination_id`, et la derogation nommee (2026-10-01) le
+    lit pour verifier son perimetre : sans lui, ces tests echouaient sur un
+    attribut absent au lieu de mesurer la regle. C'est le defaut « doublure
+    sans la forme de la production », paye le 28/09 sur `min_confidence`.
+    """
     from backend.services.cost_model import CostModel
     class D: pass
     d = D()
     d.bridge_type = bridge_type
+    d.destination_id = destination_id
     d.cost_model = CostModel(proportional_rate_per_leg=0.0005)
     d.expected_edge_r = 0.11
     return d
@@ -154,3 +176,76 @@ def test_le_jeton_n_ouvre_JAMAIS_kraken(base, monkeypatch):
     faire passer un trade crypto non rentable."""
     _quota(monkeypatch, 1)
     assert mb._cost_rejection(_setup_stop_serre(), _dest("kraken")) == "fees_exceed_edge"
+
+
+# ── LA PORTÉE, ajoutée le 2026-10-01 ────────────────────────────────
+#
+# ⛔ Le quota comptait les pushes d'`admin_legacy` parce qu'à sa conception ce
+# compte PILOTAIT le réel par le miroir démo→réel. Ce miroir est coupé depuis
+# le 04/09, donc une dérogation destinée à `admin_live` n'y consommait aucun
+# jeton, les pushes ordinaires d'`admin_legacy` le consommaient à sa place, et
+# les DEUX comptes s'ouvraient ensemble. Le garde-fou bornait la mauvaise chose.
+
+
+def test_le_jeton_est_REFUSE_hors_du_perimetre_declare(base, monkeypatch):
+    """Le cœur du correctif : une dérogation nommée pour un compte ne doit
+    RIEN ouvrir sur un autre."""
+    _quota(monkeypatch, 5, dest="admin_live")
+    assert mb._jeton_derogation_restant(_Setup(), _dest(
+        destination_id="admin_legacy")) is False
+    assert mb._jeton_derogation_restant(_Setup(), _dest(
+        destination_id="admin_live")) is True
+
+
+def test_sans_destination_le_jeton_est_REFUSE(base, monkeypatch):
+    """On ne peut pas vérifier le périmètre : le doute doit fermer."""
+    _quota(monkeypatch, 5, dest="admin_live")
+    assert mb._jeton_derogation_restant(_Setup(), None) is False
+    assert mb._jeton_derogation_restant() is False
+
+
+def test_une_PORTEE_VIDE_refuse_tout(base, monkeypatch):
+    """Un réglage effacé ne doit pas valoir « toutes les destinations ».
+
+    ⚠️ Ce test doit se mesurer sur une destination dont l'identifiant est VIDE
+    lui aussi : avec un identifiant renseigné, c'est la comparaison
+    `dest_id != portee` qui refuse, et le test passerait pour la mauvaise
+    raison — il l'a fait, et une mutation l'a montré.
+    """
+    _quota(monkeypatch, 5, dest="")
+    assert mb._jeton_derogation_restant(_Setup(), _dest(destination_id="")) is False
+
+
+def test_les_pushes_d_un_AUTRE_compte_ne_consomment_pas_le_quota(base, monkeypatch):
+    """C'est le défaut réparé : `admin_legacy` pousse plusieurs fois par jour,
+    et consommait un quota armé pour `admin_live`."""
+    _quota(monkeypatch, 2, dest="admin_live")
+    _pousse(base, 10, dest="admin_legacy")
+    assert mb._jeton_derogation_restant(_Setup(), _dest(
+        destination_id="admin_live")) is True
+
+
+def test_les_pushes_DU_perimetre_consomment_bien_le_quota(base, monkeypatch):
+    """Et la fermeture automatique doit toujours mordre."""
+    _quota(monkeypatch, 2, dest="admin_live")
+    _pousse(base, 2, dest="admin_live")
+    assert mb._jeton_derogation_restant(_Setup(), _dest(
+        destination_id="admin_live")) is False
+
+
+def test_la_PAIRE_restreint_aussi_le_perimetre(base, monkeypatch):
+    """Déclarer `XAU/USD` ne doit rien ouvrir sur les autres paires."""
+    _quota(monkeypatch, 5, dest="admin_live", pair="XAU/USD")
+    d = _dest(destination_id="admin_live")
+    assert mb._jeton_derogation_restant(_Setup("XAU/USD"), d) is True
+    assert mb._jeton_derogation_restant(_Setup("EUR/USD"), d) is False
+
+
+def test_les_pushes_d_une_AUTRE_paire_ne_consomment_pas_le_quota(base, monkeypatch):
+    _quota(monkeypatch, 2, dest="admin_live", pair="XAU/USD")
+    _pousse(base, 10, dest="admin_live", pair="EUR/USD")
+    assert mb._jeton_derogation_restant(_Setup("XAU/USD"), _dest(
+        destination_id="admin_live")) is True
+    _pousse(base, 2, dest="admin_live", pair="XAU/USD")
+    assert mb._jeton_derogation_restant(_Setup("XAU/USD"), _dest(
+        destination_id="admin_live")) is False
