@@ -1263,3 +1263,78 @@ barre permissive avait été utilisée et le résultat, 0,101, échouait quand m
 
 ⛔ Aucun réglage neuf : contrefactuel stocké, `r_realise`/`r_contrefactuel` du
 laboratoire, test **apparié** sur les mêmes trades.
+
+---
+
+## 🔬 LA MAIN EN EUROS — déclaré le 2026-10-01, jugé sur une fenêtre qui N'EXISTE PAS ENCORE
+
+Le test du 01/10 (`accafd0` → `2591349`) a donné : critère déclaré en R
+**ÉCHOUÉ** (+0,338 R, t=+1,59 contre une barre de 2,0), mais **+231,81 €** et
+**25 stops évités sur 37**. Et le piège d'unité joue à l'inverse de ma
+prédiction : le R **sous-estime** l'euro d'un facteur **3,24**.
+
+⛔ Cet euro n'était **pas** le critère pré-enregistré. Le promouvoir en verdict
+serait déplacer la cible après le tir. Il est donc déclaré **ici**, avant, pour
+être jugé sur des trades **qui n'ont pas encore eu lieu**.
+
+### La fenêtre — la plus propre possible
+
+Trades `admin_live` fermés **`MANUAL`** avec contrefactuel résolu, **clôturés
+après le 2026-10-01 00h00**. 🔑 Au moment de cette déclaration, cette donnée
+**n'existe pas** : aucune sélection n'est possible, même involontaire.
+
+### Le critère PRIMAIRE, en euros
+
+`gain_eur = (r_realise − r_contrefactuel) × risque_eur`, trade par trade, avec
+le `risk_eur.calculer` de la production. Test **apparié**.
+
+**Retenu si et seulement si** : moyenne **> +3,00 €/trade** ET **|t| > 2,0**.
+
+⚠️ Le seuil de 3 € est fixé **maintenant**, à moitié du +6,27 € observé — pour
+laisser la place à une régression vers la moyenne sans rendre le test
+inutilement facile.
+
+### ⛔ Les garde-fous contre un seul gros trade
+
+L'euro est dominé par les trades à gros risque : un seul peut porter le
+verdict. Trois conditions **cumulatives** :
+
+1. la **médiane** doit être positive elle aussi ;
+2. la **moyenne tronquée à 10 %** doit rester **> +1,50 €** ;
+3. retirer le **meilleur trade** ne doit pas faire passer la moyenne sous
+   **+1,50 €**.
+
+Une seule de ces trois qui tombe ⇒ **effet porté par la queue, non retenu**.
+
+### Taille minimale, et interdiction de regarder avant
+
+**Jugé quand n ≥ 30** contrefactuels résolus dans la fenêtre, **et pas avant**.
+Au rythme observé (~37 par trois semaines), c'est **fin octobre**.
+
+⛔ **Aucune lecture intermédiaire.** Regarder à n=12 puis attendre un chiffre
+qui plaît serait de l'arrêt optionnel — la forme de tricherie la plus facile et
+la plus invisible. La sonde programmée refuse de mesurer sous n=30 et ne parle
+qu'une fois.
+
+### Le critère SECONDAIRE, explicitement NON éligible à un verdict
+
+Le gain en **R** sera publié à titre de continuité (il valait +0,338 R,
+t=+1,59). ⛔ Il ne peut **pas** retenir l'effet à lui seul cette fois : il a
+déjà échoué sur sa propre barre, et le reprendre comme critère principal serait
+lui offrir une seconde chance après coup.
+
+⚠️ De même, la règle « couper les achats » (achats coupés 76,7 % contre 34,2 %
+pour les ventes, z=+4,38) reste **dérivée de ses propres données**. Elle n'est
+pas testée ici et n'a pas de barre : la mentionner ne la valide pas.
+
+### La règle de décision, écrite d'avance
+
+| résultat | décision |
+|---|---|
+| n < 30 à la date de lecture | ⏳ **on attend**, aucun verdict |
+| moyenne > +3 € · \|t\| > 2,0 · les 3 garde-fous tiennent | ✅ **PREMIER effet confirmé du projet** |
+| seuils atteints mais un garde-fou tombe | ⚠️ **porté par la queue** — non retenu |
+| moyenne < +3 € ou \|t\| < 2,0 | ⛔ **réfuté** ; la main n'est pas mécanisable |
+
+⛔ Et si le trading est arrêté, ou si les fermetures manuelles cessent, la
+fenêtre est **déclarée incomplète** — pas jugée sur ce qu'elle contient.
