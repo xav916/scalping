@@ -32,6 +32,12 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+# ⛔ Python met le repertoire du SCRIPT sur `sys.path`, pas le repertoire
+# courant : `docker exec scalping-radar python scripts/ce-fichier.py` echouait
+# sur `ModuleNotFoundError: No module named 'backend'`. Un cron toutes les 5
+# min aurait echoue en silence. Meme convention que `execution_switch.py`.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 PAIRE = os.getenv("ALERTE_OR_PAIRE", "XAU/USD")
 DESTINATION = os.getenv("ALERTE_OR_DESTINATION", "admin_live")
 SEUIL_ORDRES = int(os.getenv("ALERTE_OR_SEUIL_ORDRES", "3"))
