@@ -1,4 +1,7 @@
 #!/bin/bash
+# BUT: reconstruit le ledger financier REM-005 et classe le P&L (REM-006)
+# PERIODE_MIN: 1440
+#
 # REM-005/006 — reconstruit le ledger financier chaque nuit.
 #
 # 🔑 IL COPIE LE CODE DEPUIS LE DÉPÔT À CHAQUE PASSAGE. `docker cp` ne
