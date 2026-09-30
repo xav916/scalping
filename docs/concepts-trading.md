@@ -1419,3 +1419,80 @@ protocole ferme.
 ⚠️ Et quel que soit le résultat : **il ne change RIEN aux portes**. Aucun motif
 Vivien n'est dans la liste blanche de l'or, et ce test ne demande pas qu'on
 l'y mette.
+
+---
+
+## ⚡ EXPÉRIENCE EN ARGENT RÉEL — les motifs Vivien sur l'or, `admin_live`
+
+Demandée explicitement par Xavier le 2026-10-01, **après** que les chiffres du
+laboratoire lui ont été présentés. Décision assumée, pas une découverte.
+
+### ⛔ Ce que la mesure dit AVANT d'ouvrir — c'est le contexte du pari
+
+| construction | n | R moyen | t vs hasard |
+|---|---|---|---|
+| `double_sweep_up` | 16 | **−0,840** | **−4,61** ⛔ pire que le hasard |
+| `poc_return_up` | 88 | −0,349 | −2,04 |
+| `chaine:sweep_sur_order_block_haussier` | 76 | **−0,220** | −1,39 |
+| `fvg_up` (le meilleur) | 170 | +0,117 | +2,02, **réfuté hors échantillon** |
+
+Bilan or, toutes nuits : **4 570 `INSUFFISANT`, 10 `REFUTE`, 0 `RETENU`**.
+
+⇒ **L'espérance déclarée d'avance est NÉGATIVE.** Au risque médian mesuré de
+**5,73 €** et à un R moyen de famille de l'ordre de **−0,2**, le coût attendu
+est **≈ −1,15 € par ordre**. Sur le quota déclaré, **≈ −23 €**.
+
+### ⛔ LE DÉFAUT DU GARDE-FOU EXISTANT, qu'il faut réparer d'abord
+
+Le projet a déjà le bon outil : `TRADE_DEROGATION_PUSHES`. **Un jeton lève les
+DEUX portes** (`pattern_not_allowed` et `fees_exceed_edge`) et elles **se
+referment seules** au quota — « retirer la whitelist le temps de voir laisse
+toujours une fenêtre ouverte plus longtemps que prévu ».
+
+⚠️ Mais il compte les pushes d'**`admin_legacy`**, parce qu'à sa conception ce
+compte **pilotait** le réel par le miroir. Or `_mirror_active()` est **False**
+depuis le 04/09. Donc, tel quel :
+
+- les ordres Vivien sur `admin_live` **ne consommeraient pas** le quota ;
+- les ordres **ordinaires** d'`admin_legacy` le consommeraient ;
+- et les portes s'ouvriraient **aussi sur `admin_legacy`**, non demandé.
+
+⇒ Le quota doit compter **les pushes que la dérogation a effectivement
+permis** : ceux dont le motif n'est **pas** dans la liste blanche de leur
+destination. C'est la seule définition qui borne la chose mesurée.
+
+### Le périmètre, étroit par construction
+
+- **`admin_live` seulement**, **`XAU/USD` seulement**.
+- Seuls les motifs **hors liste blanche** consomment un jeton ; les 8 motifs
+  classiques continuent comme avant, sans toucher au quota.
+- Les portes non concernées **restent fermées** : verrou d'intégrité, kill
+  switch, plafond journalier, plafond par paire, corrélation, `sl_too_close`,
+  `below_confidence` (barre 66), `price_divergence`, et les 8 portes du pont.
+
+### La règle d'arrêt, écrite d'avance
+
+**Quota : 20 pushes dérogatoires.** Atteint ⇒ les deux portes se referment
+**seules**, sans dépendre de personne.
+
+Et une alerte Telegram, **et une fermeture immédiate**, au premier des trois :
+
+| déclencheur | seuil |
+|---|---|
+| ordres dérogatoires | **20** |
+| perte cumulée sur ces ordres | **−40 €** |
+| durée | **7 jours** |
+
+⛔ Aucune prolongation « pour voir un peu plus ». Reconduire exigerait une
+nouvelle déclaration, avec les chiffres obtenus en face.
+
+### La prédiction, déclarée d'avance
+
+**Je prédis une perte.** R moyen entre **−0,05 et −0,40** sur les ordres
+dérogatoires, et un P&L net **négatif**. Si le résultat est positif, ce sera un
+fait à répliquer — **pas** une validation : 20 ordres ne renversent pas 4 580
+cellules.
+
+⚠️ Et quoi qu'il arrive : ces ordres seront marqués pour être **exclus des
+verdicts de stratégie**. Le P&L d'une dérogation n'est pas une mesure d'edge —
+c'est la leçon des 9 ordres du fail-open de septembre.
