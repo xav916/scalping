@@ -121,6 +121,7 @@ def _config() -> dict[str, Any]:
         PAIR_PNL_REGULATOR_PAUSE_THRESHOLD_PCT,
         PAIR_PNL_REGULATOR_PAUSE_DURATION_DAYS,
         PAIR_PNL_REGULATOR_MAX_AGE_DAYS,
+        PAIR_PNL_REGULATOR_MIN_NOUVEAUX_APRES_REPRISE,
         TRADING_CAPITAL,
     )
     return {
@@ -130,6 +131,7 @@ def _config() -> dict[str, Any]:
         "pause_threshold_pct": PAIR_PNL_REGULATOR_PAUSE_THRESHOLD_PCT,
         "pause_duration_days": PAIR_PNL_REGULATOR_PAUSE_DURATION_DAYS,
         "max_age_days": PAIR_PNL_REGULATOR_MAX_AGE_DAYS,
+        "min_nouveaux_apres_reprise": PAIR_PNL_REGULATOR_MIN_NOUVEAUX_APRES_REPRISE,
         "capital": TRADING_CAPITAL,
     }
 
@@ -549,6 +551,61 @@ def apply_pause(pair: str, reason: str, pnl_pct: float, trades_count: int,
     return new_id
 
 
+#: Motif ecrit par la levee AUTOMATIQUE a l'expiration. Tout autre motif de
+#: reprise est le geste d'un humain, et c'est cette distinction qui porte le
+#: plancher de preuves nouvelles.
+MOTIF_REPRISE_AUTO = "expired_re_evaluate"
+
+
+def derniere_reprise_manuelle(pair: str,
+                              destination: str | None = None) -> str | None:
+    """Horodatage de la derniere reprise MANUELLE, ou None.
+
+    ⛔ La levee automatique a l'expiration (`expired_re_evaluate`) n'en est pas
+    une : la confondre avec un arbitrage humain rendrait la pause impossible a
+    reposer apres chaque expiration, ce qui serait un vrai desserrage.
+    """
+    _ensure_schema()
+    with sqlite3.connect(_db_path()) as c:
+        c.row_factory = sqlite3.Row
+        if destination is None:
+            clause, args = "destination is null", ()
+        else:
+            clause, args = "destination = ?", (destination,)
+        row = c.execute(
+            f"""
+            select resumed_at from auto_paused_pairs
+            where pair = ? and {clause} and resumed_at is not null
+              and ifnull(resumed_reason, '') not like ?
+            order by resumed_at desc limit 1
+            """,
+            (pair, *args, MOTIF_REPRISE_AUTO + "%"),
+        ).fetchone()
+    return row["resumed_at"] if row else None
+
+
+def n_trades_depuis(pair: str, depuis: str,
+                    destination: str | None = None) -> int:
+    """Combien de trades de cette paire ont ete CLOTURES depuis `depuis`.
+
+    Mesure la preuve NOUVELLE disponible : c'est elle, et non l'horloge, qui
+    autorise le regulateur a reposer une pause qu'un humain a levee.
+    """
+    with sqlite3.connect("file:" + _db_path() + "?mode=ro", uri=True) as c:
+        if destination is None:
+            clause, args = "", ()
+        else:
+            clause, args = "and destination_id = ?", (destination,)
+        return int(c.execute(
+            f"""
+            select count(*) from personal_trades
+            where pair = ? {clause} and pnl is not null
+              and closed_at is not null and closed_at > ?
+            """,
+            (pair, *args, depuis),
+        ).fetchone()[0])
+
+
 def apply_resume(pair: str, reason: str, destination: str | None = None) -> bool:
     """UPDATE row active : resumed_at + resumed_reason. True si effectif.
 
@@ -696,6 +753,51 @@ def evaluate_pair(pair: str, destination: str | None = None) -> dict[str, Any]:
                            "portée globale mélange les comptes : aucune pause "
                            "posée — chaque destination est jugée séparément"),
             }
+        # ⛔ LA FENETRE GELEE (2026-09-30). Une pause levee a la main se
+        # reposait au cycle suivant, 60 min plus tard, sur EXACTEMENT la meme
+        # donnee — et `apply_pause` repartait sur 14 jours pleins.
+        #
+        # Le 30/09, l'or sur `admin_live` etait ainsi verrouille jusqu'en
+        # DECEMBRE, pas 14 jours : la fenetre ne se renouvelle que par des
+        # trades de cette paire sur ce compte, or la pause les empeche. A
+        # l'expiration le regulateur relisait les memes 30 trades et reposait
+        # 14 jours. Le plus vieux trade de la fenetre datait du 09/09 et le
+        # plancher d'age est a 90 jours.
+        #
+        # 🔑 On exige donc des preuves NOUVELLES apres un arbitrage humain :
+        # tant que moins de `min_nouveaux_apres_reprise` trades ont ete
+        # clotures depuis la reprise, le regulateur observe sans reposer.
+        #
+        # ⚠️ Ce n'est PAS un desserrage, et la difference est nette :
+        #   - le seuil de pause ne bouge pas d'un pouce ;
+        #   - une paire jamais reprise a la main n'est pas concernee ;
+        #   - la levee automatique a l'expiration n'ouvre AUCUN credit
+        #     (cf. `derniere_reprise_manuelle`), sinon la pause deviendrait
+        #     inapplicable apres chaque terme ;
+        #   - les rafales courtes restent couvertes par `stop_loss_alerts`,
+        #     le plafond journalier et le plafond de positions par paire.
+        #
+        # ⚠️ Ce que ca coute, assume : apres une reprise manuelle, la paire
+        # peut perdre jusqu'a `min_nouveaux_apres_reprise` trades avant que le
+        # regulateur reprenne la main. C'est le prix d'un arbitrage humain qui
+        # tient plus de 60 minutes.
+        reprise = derniere_reprise_manuelle(pair, destination)
+        if reprise:
+            n_neufs = n_trades_depuis(pair, reprise, destination)
+            mini = cfg["min_nouveaux_apres_reprise"]
+            if n_neufs < mini:
+                return {
+                    "action": "keep_active",
+                    "metrics": metrics,
+                    "reason": (
+                        f"pnl_pct {pnl_pct:.2f}% sous le seuil, mais reprise "
+                        f"manuelle le {reprise} et seulement {n_neufs}/{mini} "
+                        f"trade(s) cloture(s) depuis — pas de preuve nouvelle, "
+                        f"la pause n'est pas reposee sur la meme donnee"),
+                    "reprise_manuelle": reprise,
+                    "n_trades_depuis_reprise": n_neufs,
+                }
+
         apply_pause(pair, "ev_negative", pnl_pct, metrics["n"],
                     destination=destination)
         return {

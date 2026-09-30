@@ -546,6 +546,14 @@ PAIR_PNL_REGULATOR_WINDOW_TRADES = int(os.getenv("PAIR_PNL_REGULATOR_WINDOW_TRAD
 PAIR_PNL_REGULATOR_MIN_SAMPLE = int(os.getenv("PAIR_PNL_REGULATOR_MIN_SAMPLE", "10"))
 PAIR_PNL_REGULATOR_PAUSE_THRESHOLD_PCT = float(os.getenv("PAIR_PNL_REGULATOR_PAUSE_THRESHOLD_PCT", "-3.0"))
 PAIR_PNL_REGULATOR_PAUSE_DURATION_DAYS = int(os.getenv("PAIR_PNL_REGULATOR_PAUSE_DURATION_DAYS", "14"))
+# Nombre de trades CLOTURES apres une reprise MANUELLE avant que le regulateur
+# puisse reposer sa pause. Sans ce plancher, la fenetre est GELEE : elle ne se
+# renouvelle que par des trades que la pause empeche, donc le regulateur
+# repose la meme pause sur la meme donnee toutes les 60 min, indefiniment.
+# ⛔ Ce n'est PAS un desserrage : le seuil de pause ne bouge pas. On interdit
+# seulement de RE-JUGER une donnee qu'un humain vient d'arbitrer explicitement.
+PAIR_PNL_REGULATOR_MIN_NOUVEAUX_APRES_REPRISE = int(
+    os.getenv("PAIR_PNL_REGULATOR_MIN_NOUVEAUX_APRES_REPRISE", "5"))
 # ⛔ Plancher d'age de la fenetre (2026-08-29). `compute_window_metrics` n'en
 # avait AUCUN : il notait une paire sur ses N derniers trades, quelle que soit
 # leur anciennete. L'argent a ainsi ete tenu en pause sur le compte reel

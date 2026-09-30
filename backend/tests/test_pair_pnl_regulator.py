@@ -876,3 +876,159 @@ def test_une_pause_GLOBALE_existante_est_toujours_LEVEE_a_son_terme(
     d = pair_pnl_regulator.evaluate_pair("WTI/USD")
     assert d["action"] == "resume", d["reason"]
     assert pair_pnl_regulator.is_paused("WTI/USD") is False
+
+
+# ─── La FENETRE GELEE (2026-09-30) ──────────────────────────────────────
+#
+# Une pause levee a la main se reposait 60 min plus tard sur EXACTEMENT la
+# meme donnee, et repartait sur 14 jours pleins. L'or sur `admin_live` etait
+# ainsi verrouille jusqu'en decembre : la fenetre ne se renouvelle que par des
+# trades que la pause empeche.
+
+
+def _regulateur_configure(monkeypatch, mini_nouveaux="5"):
+    """Le regulateur avec la forme de la production : seuil, echantillon,
+    capital. Rend le module recharge."""
+    monkeypatch.setenv("PAIR_PNL_REGULATOR_MIN_SAMPLE", "10")
+    monkeypatch.setenv("PAIR_PNL_REGULATOR_PAUSE_THRESHOLD_PCT", "-3.0")
+    monkeypatch.setenv("PAIR_PNL_REGULATOR_MIN_NOUVEAUX_APRES_REPRISE",
+                       mini_nouveaux)
+    monkeypatch.setenv("TRADING_CAPITAL", "10000")
+    import importlib
+    from config import settings as _s
+    importlib.reload(_s)
+    from backend.services import pair_pnl_regulator as reg
+    importlib.reload(reg)
+    monkeypatch.setattr(reg, "_SCHEMA_ENSURED", False)
+    return reg
+
+
+def _fenetre_perdante(db, dest="admin_live", n=15, jours=6):
+    """n trades perdants assez anciens pour que les 'nouveaux' soient apres."""
+    base = datetime.now(timezone.utc) - timedelta(days=jours)
+    for i in range(n):
+        _insert_trade(db, "XAG/USD", pnl=-33.33,
+                      closed_at=(base + timedelta(minutes=i)).isoformat(),
+                      destination=dest)
+
+
+def test_sans_reprise_manuelle_la_pause_est_posee_comme_avant(
+        _isolated_db, monkeypatch):
+    """Temoin de non-regression : le comportement d'origine est intact."""
+    reg = _regulateur_configure(monkeypatch)
+    _fenetre_perdante(_isolated_db)
+    assert reg.evaluate_pair("XAG/USD", destination="admin_live")["action"] == "pause"
+
+
+def test_une_reprise_manuelle_empeche_la_re_pause_sur_la_MEME_donnee(
+        _isolated_db, monkeypatch):
+    """Le coeur du correctif."""
+    reg = _regulateur_configure(monkeypatch)
+    _fenetre_perdante(_isolated_db)
+
+    reg.apply_pause("XAG/USD", "ev_negative", -50.0, 15, destination="admin_live")
+    assert reg.apply_resume("XAG/USD", "decision de Xavier, risque assume",
+                            destination="admin_live") is True
+
+    d = reg.evaluate_pair("XAG/USD", destination="admin_live")
+    assert d["action"] == "keep_active", d
+    assert "pas de preuve nouvelle" in d["reason"]
+    assert d["n_trades_depuis_reprise"] == 0
+    assert reg.is_paused("XAG/USD", destination="admin_live") is False
+
+
+def test_la_pause_REVIENT_des_que_les_preuves_nouvelles_arrivent(
+        _isolated_db, monkeypatch):
+    """Le garde-fou ne neutralise pas la porte, il la retarde le temps d'avoir
+    de la donnee neuve."""
+    reg = _regulateur_configure(monkeypatch, mini_nouveaux="5")
+    _fenetre_perdante(_isolated_db)
+    reg.apply_pause("XAG/USD", "ev_negative", -50.0, 15, destination="admin_live")
+    reg.apply_resume("XAG/USD", "decision de Xavier", destination="admin_live")
+
+    # 4 nouveaux : encore insuffisant
+    for i in range(4):
+        _insert_trade(_isolated_db, "XAG/USD", pnl=-33.33, destination="admin_live")
+    assert reg.evaluate_pair("XAG/USD",
+                             destination="admin_live")["action"] == "keep_active"
+
+    # le 5e fait basculer
+    _insert_trade(_isolated_db, "XAG/USD", pnl=-33.33, destination="admin_live")
+    d = reg.evaluate_pair("XAG/USD", destination="admin_live")
+    assert d["action"] == "pause", d
+    assert reg.is_paused("XAG/USD", destination="admin_live") is True
+
+
+def test_la_levee_AUTOMATIQUE_a_l_expiration_n_ouvre_AUCUN_credit(
+        _isolated_db, monkeypatch):
+    """⛔ Le fail-open a ne pas ecrire.
+
+    Si `expired_re_evaluate` comptait comme un arbitrage humain, la pause
+    deviendrait inapplicable apres CHAQUE terme : il suffirait d'attendre
+    l'expiration pour obtenir 5 trades de credit, indefiniment.
+    """
+    reg = _regulateur_configure(monkeypatch)
+    _fenetre_perdante(_isolated_db)
+    reg.apply_pause("XAG/USD", "ev_negative", -50.0, 15, destination="admin_live")
+    reg.apply_resume("XAG/USD", reg.MOTIF_REPRISE_AUTO, destination="admin_live")
+
+    assert reg.derniere_reprise_manuelle("XAG/USD", "admin_live") is None
+    d = reg.evaluate_pair("XAG/USD", destination="admin_live")
+    assert d["action"] == "pause", (
+        "une levee automatique a ouvert un credit de preuves : fail-open")
+
+
+def test_les_trades_d_un_AUTRE_compte_ne_sont_pas_une_preuve_nouvelle(
+        _isolated_db, monkeypatch):
+    """La portee par destination est le defaut recurrent de ce projet : un
+    compte ne doit pas debloquer l'autre."""
+    reg = _regulateur_configure(monkeypatch, mini_nouveaux="3")
+    _fenetre_perdante(_isolated_db)
+    reg.apply_pause("XAG/USD", "ev_negative", -50.0, 15, destination="admin_live")
+    reg.apply_resume("XAG/USD", "decision de Xavier", destination="admin_live")
+
+    for _ in range(10):
+        _insert_trade(_isolated_db, "XAG/USD", pnl=-33.33,
+                      destination="admin_legacy")
+
+    d = reg.evaluate_pair("XAG/USD", destination="admin_live")
+    assert d["action"] == "keep_active", d
+    assert d["n_trades_depuis_reprise"] == 0, (
+        "des trades d'un autre compte ont ete comptes comme preuve nouvelle")
+
+
+def test_la_reprise_manuelle_retenue_est_la_PLUS_RECENTE(
+        _isolated_db, monkeypatch):
+    """Sinon le credit de preuves serait compte depuis un arbitrage PERIME :
+    la seconde decision de l'humain n'aurait pas sa propre fenetre.
+
+    ⚠️ On compare au MAXIMUM reel de la table, pas entre deux appels : deux
+    reprises peuvent tomber sur le meme horodatage, et un test qui se
+    contenterait de `seconde >= premiere` laisserait passer un tri inverse.
+    """
+    reg = _regulateur_configure(monkeypatch)
+    _fenetre_perdante(_isolated_db)
+
+    for motif in ("premiere reprise", "seconde reprise"):
+        reg.apply_pause("XAG/USD", "ev_negative", -50.0, 15,
+                        destination="admin_live")
+        reg.apply_resume("XAG/USD", motif, destination="admin_live")
+
+    with sqlite3.connect(_isolated_db) as c:
+        horodatages = [r[0] for r in c.execute(
+            "select resumed_at from auto_paused_pairs "
+            "where pair='XAG/USD' and resumed_at is not null")]
+    assert len(horodatages) == 2, horodatages
+    assert reg.derniere_reprise_manuelle("XAG/USD", "admin_live") == max(
+        horodatages), "ce n'est pas la reprise la plus recente qui est rendue"
+
+
+def test_le_seuil_de_pause_n_a_pas_bouge(_isolated_db, monkeypatch):
+    """⛔ Le correctif ne doit RIEN desserrer : une fenetre saine reste active,
+    et une fenetre malade sans reprise est toujours pausee."""
+    reg = _regulateur_configure(monkeypatch)
+    assert reg._config()["pause_threshold_pct"] == -3.0
+    for _ in range(15):
+        _insert_trade(_isolated_db, "XAG/USD", pnl=+5.0, destination="admin_live")
+    assert reg.evaluate_pair("XAG/USD",
+                             destination="admin_live")["action"] == "keep_active"
