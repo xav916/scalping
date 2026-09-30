@@ -1080,3 +1080,55 @@ résultat, pas un défaut. 18 des 163 stops réels sont **déjà** sous ce seuil
 le spread reste celui du courtier, `PLACEBO_PCT` et `MAX_BOUGIES_TENUE` sont
 inchangés. Chaque réglage neuf serait un degré de liberté, donc de l'edge
 fabriqué.
+
+### ⛔ RÉSULTAT du balayage de la largeur du stop — 2026-09-30, prédiction `47b5c6c`
+
+90 jours, 17 500 bougies M5, 38 cellules, 30 graines de contrôle, spread
+**épinglé à 0,20** (voir plus bas pourquoi).
+
+| k | n | stop % du prix | coût R | R moyen | t | contrôle | z |
+|---|---|---|---|---|---|---|---|
+| 0,50 | 10 134 | 0,148 % | 0,0316 | −0,0239 | −1,79 | −0,0974 | +6,88 |
+| 0,75 | 10 277 | 0,182 % | 0,0257 | −0,0420 | −3,19 | −0,0762 | +4,00 |
+| **1,00** | **8 386** | 0,220 % | **0,0213** | **−0,0451** | −3,10 | −0,0620 | +1,68 |
+| 1,50 | 5 426 | 0,312 % | 0,0150 | −0,0349 | −1,93 | −0,0305 | −0,52 |
+| 2,00 | 3 586 | 0,417 % | 0,0113 | −0,0257 | −1,16 | −0,0155 | −1,11 |
+| 3,00 | 1 988 | 0,641 % | 0,0074 | −0,0237 | −0,80 | −0,0125 | −0,91 |
+
+**P1 — l'appareil est validé.** Coût à k=1 : **0,0213** contre **0,0207**
+publié, soit 3 % d'écart. n = **8 386** contre **8 362**, soit 0,3 %. Le R moyen
+reste à −0,0451 contre −0,0306 : fenêtre de 90 jours décalée de 15 jours, sur
+une grandeur dont le `t` vaut −3.
+
+**P2 — FAUSSE.** La courbe n'est pas croissante mais en **U** : moins négative
+aux extrêmes (k=0,5 et k=3), pire au milieu (k=1). ⚠️ Non interprétable comme
+un effet de gestion : le nombre de trades passe de 10 134 à 1 988, donc la
+POPULATION change avec k. C'était nommé d'avance.
+
+**P3 — VRAIE, et c'est le verdict.** Aucun k ne franchit le plafond de 1,654.
+Le coût tombe bien de 0,0213 à **0,0074 R** entre k=1 et k=3 — conforme à
+`spread/risque` — mais **le R moyen reste négatif partout**. Le meilleur, k=3,
+vaut −0,0237 R avec t = −0,80 et **z = −0,91 contre son contrôle** : pas mieux
+que le hasard.
+
+⇒ **Ne pas toucher au stop en production.**
+
+#### 🔑 Ce que ce banc apprend EN PLUS, et qui durcit le verdict du 15/09
+
+Retirer **65 % du coût** (0,0213 → 0,0074 R) laisse la perte quasi intacte
+(−0,0451 → −0,0237 R). Avant coûts, l'entrée vaut donc **−0,016 à −0,024 R**
+selon k — et non « ≈ −0,008 R, rien » comme publié. ⚠️ À réconcilier : c'est
+une soustraction, pas une mesure directe, et la fenêtre diffère.
+
+#### ⛔ DÉFAUT DE MÉTHODE TROUVÉ, qui vaut pour TOUS les bancs du labo
+
+`reglage_or._bougies_et_spread` rend `ask - bid` du tick **VIVANT** : 90 jours
+de rejeu sont facturés au spread d'un **seul instant**. Mesuré le 30/09 à
+21h45 Paris : **0,50** — contre **0,20** au banc du 15/09, et **0,15-0,21**
+dans les 96 relevés de `spreads_hors_crypto.jsonl` (`mt5_spread_pct` 0,0036 à
+0,0051 % d'un or à 4 200).
+
+Lancé au spread vivant de 0,50, ce banc rendait un coût de 0,0531 R et un
+R moyen de −0,0792 : **deux bancs lancés à deux heures différentes ne sont pas
+comparables**. ⇒ Épingler le spread, ou prendre la médiane des relevés, mais
+jamais le tick de l'instant.
