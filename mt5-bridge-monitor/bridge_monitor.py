@@ -27,7 +27,7 @@ import subprocess
 import sys
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
@@ -45,6 +45,14 @@ BRIDGE_LOCAL_KEY = os.environ.get("BRIDGE_LOCAL_KEY", "").strip()
 BRIDGE_LOCAL_ENABLED = bool(BRIDGE_LOCAL_URL and BRIDGE_LOCAL_KEY)
 BRIDGE_VPS_URL = os.environ["BRIDGE_VPS_URL"]
 BRIDGE_VPS_KEY = os.environ["BRIDGE_VPS_KEY"]
+BRIDGE_LIVE_URL = os.environ.get("BRIDGE_LIVE_URL", "").strip()
+BRIDGE_LIVE_KEY = os.environ.get("BRIDGE_LIVE_KEY", "").strip()
+BRIDGE_LIVE_ENABLED = bool(BRIDGE_LIVE_URL and BRIDGE_LIVE_KEY)
+QUOTE_PAIR = os.environ.get("QUOTE_PAIR", "EUR/USD").strip()
+QUOTE_STALE_MAX_SEC = int(os.environ.get("QUOTE_STALE_MAX_SEC", "900"))
+BRIDGE_IBKR_URL = os.environ.get("BRIDGE_IBKR_URL", "").strip()
+BRIDGE_IBKR_KEY = os.environ.get("BRIDGE_IBKR_KEY", "").strip()
+BRIDGE_IBKR_ENABLED = bool(BRIDGE_IBKR_URL)
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
@@ -132,7 +140,10 @@ signal.signal(signal.SIGINT, _signal_handler)
 
 
 # ------- probes -------
-def probe_bridge(name: str, base_url: str, api_key: str) -> dict:
+def probe_bridge(
+    name: str, base_url: str, api_key: str, quote_pair: str | None = None,
+    key_header: str = "X-API-Key",
+) -> dict:
     out = {"name": name, "kind": "bridge", "url": base_url}
     t0 = time.perf_counter()
     try:
@@ -144,6 +155,12 @@ def probe_bridge(name: str, base_url: str, api_key: str) -> dict:
             out["health"] = h
             if not h.get("ok"):
                 out["health_error"] = f"health.ok=false (payload={h})"
+            # ⚠️ IBKR : `ok` peut etre vrai alors que la socket vers IB
+            # Gateway est morte. `connected` est le seul champ qui dit si
+            # le port 4001 repond — la panne du 12-19/08 est restee
+            # invisible sept jours faute de le regarder.
+            elif "connected" in h and not h.get("connected"):
+                out["health_error"] = "connected=false — Gateway injoignable"
         else:
             out["health_error"] = r.text[:200]
             return out
@@ -155,7 +172,7 @@ def probe_bridge(name: str, base_url: str, api_key: str) -> dict:
     try:
         r = requests.get(
             f"{base_url}/account",
-            headers={"X-API-Key": api_key},
+            headers={key_header: api_key},
             timeout=REQUEST_TIMEOUT_SEC,
         )
         out["account_ms"] = round((time.perf_counter() - t1) * 1000, 1)
@@ -179,6 +196,29 @@ def probe_bridge(name: str, base_url: str, api_key: str) -> dict:
             out["account_error"] = r.text[:200]
     except requests.RequestException as e:
         out["account_error"] = f"{type(e).__name__}: {e}"
+
+    # Horodatage de la derniere cotation. Un bridge peut repondre ok:true
+    # pendant des heures avec un terminal MT5 deconnecte du courtier : seul
+    # ce champ bouge (ou pas). Cf. panne du 2026-08-19.
+    if quote_pair:
+        t2 = time.perf_counter()
+        try:
+            r = requests.get(
+                f"{base_url}/tick/{quote_pair}",
+                headers={key_header: api_key},
+                timeout=REQUEST_TIMEOUT_SEC,
+            )
+            out["quote_ms"] = round((time.perf_counter() - t2) * 1000, 1)
+            out["quote_code"] = r.status_code
+            if r.ok:
+                t = r.json()
+                out["quote_pair"] = quote_pair
+                out["quote_ts"] = t.get("time")
+                out["quote_bid"] = t.get("bid")
+            else:
+                out["quote_fetch_error"] = r.text[:200]
+        except requests.RequestException as e:
+            out["quote_fetch_error"] = f"{type(e).__name__}: {e}"
     return out
 
 
@@ -208,6 +248,8 @@ def is_up(probe: dict) -> bool:
     if kind == "bridge":
         if probe.get("health_error") or probe.get("account_error"):
             return False
+        if probe.get("quote_error"):
+            return False
         return bool(probe.get("health", {}).get("ok"))
     if kind == "systemd":
         return bool(probe.get("ok"))
@@ -218,22 +260,48 @@ def is_up(probe: dict) -> bool:
 
 # ------- extended probes -------
 def probe_radar_cycle() -> dict:
-    """Confirm the radar is producing rows in signal_rejections recently.
+    """Confirm the radar is producing cycles recently.
 
-    The radar emits a row to signal_rejections each time a candidate is dropped
-    below the confidence/SL threshold — which happens dozens of times per cycle
-    in practice. If the most recent row is older than RADAR_CYCLE_MAX_AGE_SEC,
-    the radar is considered frozen even if scalping.service shows active.
+    Pre-2026-05-09: regardait MAX(signal_rejections.created_at) — proxy
+    bruyant qui causait des restart inutiles 1-4×/h sur sessions calmes.
+
+    Depuis 2026-05-09: regarde la table dédiée radar_cycle_heartbeat
+    (peuplée par radar_heartbeat_service.record_cycle() à chaque cycle
+    même quand 0 signal/0 rejection produit). Seuil resserré à 300s
+    parce que les cycles tournent toutes les ~3-5 min en prod.
+
+    Fallback : si la table heartbeat n'existe pas ou est vide (radar pas
+    encore mis à jour), retombe sur l'ancien proxy signal_rejections.
     """
     out = {"name": "radar_cycle", "kind": "data"}
+    last_iso = None
+    source = None
     try:
         con = sqlite3.connect(
             f"file:{TRADES_DB_PATH}?mode=ro", uri=True, timeout=2
         )
         try:
-            cur = con.execute("SELECT MAX(created_at) FROM signal_rejections")
-            row = cur.fetchone()
-            last_iso = row[0] if row else None
+            # Source primaire: heartbeat dédié.
+            try:
+                cur = con.execute(
+                    "SELECT MAX(cycle_completed_at) FROM radar_cycle_heartbeat"
+                )
+                row = cur.fetchone()
+                if row and row[0]:
+                    last_iso = row[0]
+                    source = "heartbeat"
+            except sqlite3.OperationalError:
+                # Table inexistante (vieux radar pas encore déployé).
+                pass
+
+            # Fallback: ancien proxy signal_rejections.
+            if not last_iso:
+                cur = con.execute(
+                    "SELECT MAX(created_at) FROM signal_rejections"
+                )
+                row = cur.fetchone()
+                last_iso = row[0] if row else None
+                source = "signal_rejections_fallback"
         finally:
             con.close()
     except Exception as e:
@@ -242,7 +310,7 @@ def probe_radar_cycle() -> dict:
         return out
 
     if not last_iso:
-        out["error"] = "no rows in signal_rejections"
+        out["error"] = "no rows in radar_cycle_heartbeat NOR signal_rejections"
         out["ok"] = False
         return out
 
@@ -257,11 +325,12 @@ def probe_radar_cycle() -> dict:
     age_sec = (now_dt - last_dt).total_seconds()
     out["last_event_iso"] = last_iso
     out["age_sec"] = round(age_sec)
+    out["source"] = source
     out["ok"] = age_sec <= RADAR_CYCLE_MAX_AGE_SEC
     if not out["ok"]:
         out["error"] = (
-            f"last cycle event {round(age_sec)}s ago, "
-            f"max={RADAR_CYCLE_MAX_AGE_SEC}s"
+            f"last cycle event {round(age_sec)}s ago "
+            f"(source={source}), max={RADAR_CYCLE_MAX_AGE_SEC}s"
         )
     return out
 
@@ -402,19 +471,19 @@ def attempt_recovery(name: str, probe: dict, st: dict) -> dict | None:
         max_in_window = 2
         window_sec = 3600
 
-    # disk: prune docker images
+    # disk: la recuperation est DELEGUEE a disk-reclaim.timer, qui tourne en
+    # root. Ce service-ci tourne en ec2-user avec NoNewPrivileges=yes : il ne
+    # peut ni ecrire dans /opt/scalping/data (root) ni vider le journal
+    # systemd. Son ancienne action `docker image prune -f` recuperait 0 B
+    # pendant que le disque montait a 97 % -- un placebo, qui armait en plus
+    # un verrou de 24 h meme quand il echouait.
+    # On ne fait donc qu'une chose ici : dire ce que le reclaimer a fait.
     elif kind == "disk":
-        chosen_action = "docker_prune"
-        if "docker_prune" not in RECOVERY_ACTIONS_ENABLED:
-            summary["action"] = chosen_action
-            summary["ok"] = False
-            summary["detail"] = "action 'docker_prune' disabled"
-            _recovery_log(summary)
-            return summary
-        cmd = ["docker", "image", "prune", "-f"]
-        cooldown_sec = 86400
-        max_in_window = 2
-        window_sec = 86400
+        summary["action"] = "disk_reclaim_delegue"
+        summary["ok"] = True
+        summary["detail"] = dernier_reclaim()
+        _recovery_log(summary)
+        return summary
 
     # bridge VPS DOWN: reboot via Lightsail (requires IAM)
     elif kind == "bridge" and name == "bridge_vps":
@@ -497,6 +566,37 @@ def attempt_recovery(name: str, probe: dict, st: dict) -> dict | None:
         return summary
 
 
+RECLAIM_LOG = Path(os.getenv("RECLAIM_LOG", "/var/log/scalping/disk_reclaim.log"))
+
+
+def dernier_reclaim() -> str:
+    """Derniere ligne du journal de disk_reclaim.py, rendue lisible.
+
+    Rend une phrase explicite quand le reclaimer ne s'est jamais exprime :
+    un detail vide se lirait comme « rien a signaler » alors qu'il voudrait
+    dire « je ne sais pas ».
+    """
+    try:
+        lignes = [
+            l for l in RECLAIM_LOG.read_text(errors="replace").splitlines() if l.strip()
+        ]
+    except OSError:
+        return "recuperation deleguee a disk-reclaim.timer (aucun journal lisible)"
+    if not lignes:
+        return "recuperation deleguee a disk-reclaim.timer (journal vide)"
+    try:
+        d = json.loads(lignes[-1])
+    except ValueError:
+        return "recuperation deleguee a disk-reclaim.timer (derniere ligne illisible)"
+    quand = str(d.get("ts", ""))[11:19]
+    if d.get("decision") == "sous_le_seuil_rien_a_faire":
+        return f"reclaimer {quand}Z : sous le seuil, rien a faire"
+    libere = d.get("libere_mo", 0)
+    av = (d.get("avant") or {}).get("used_pct")
+    ap = (d.get("apres") or {}).get("used_pct")
+    return f"reclaimer {quand}Z : {av}% -> {ap}%, {libere} Mo recuperes"
+
+
 # ------- Telegram helpers -------
 def tg_send(msg: str) -> None:
     if not TELEGRAM_ENABLED:
@@ -522,47 +622,96 @@ def tg_send(msg: str) -> None:
 def tg_format_alert(
     name: str, status: str, probe: dict, recovery: dict | None = None
 ) -> str:
+    """Format vulgarisé alerte infra (2026-06-13).
+    Tout le monde doit comprendre : qu'est-ce qui se passe, pourquoi, quel impact.
+    """
+    # Vulgarisation du nom de probe
+    _NAME_FR = {
+        "bridge_local": "Bridge Démo",
+        "bridge_demo": "Bridge Démo",
+        "bridge_vps": "Bridge Démo",
+        "bridge_live": "Bridge Live",
+        "bridge_ibkr": "Bridge IBKR",
+        "radar_cycle": "Cycle radar",
+        "disk": "Espace disque serveur",
+        "tailscale": "Réseau privé (Tailscale)",
+        "systemd_scalping": "Service Scalping (radar)",
+        "scalping": "Service Scalping (radar)",
+    }
+    name_fr = _NAME_FR.get(name, name)
+
     emoji = {"DOWN": "🚨", "UP": "✅", "STILL_DOWN": "⚠️"}.get(status, "ℹ️")
-    verb = {
-        "DOWN": "DOWN",
-        "UP": "RECOVERED",
-        "STILL_DOWN": "still DOWN",
+    verb_fr = {
+        "DOWN": "est tombé",
+        "UP": "récupéré",
+        "STILL_DOWN": "toujours hors service",
     }.get(status, status)
-    parts = [f"{emoji} *{name}* {verb}"]
+
+    # Impact selon le composant
+    _IMPACT = {
+        "bridge_local": "Sans ce tunnel, le radar ne peut plus envoyer d'ordres au broker Démo.",
+        "bridge_demo": "Sans ce tunnel, le radar ne peut plus envoyer d'ordres au broker Démo.",
+        "bridge_vps": "Sans ce tunnel, le radar ne peut plus envoyer d'ordres au broker Démo.",
+        "bridge_live": "Sans ce tunnel, aucun ordre Live ne part vers IC Markets — argent réel concerné.",
+        "bridge_ibkr": "IB Gateway ne répond plus : aucune lecture ni aucun ordre IBKR. Souvent une double authentification à revalider.",
+        "radar_cycle": "Le radar n'analyse plus le marché — aucun nouveau signal détecté.",
+        "disk": "Si le disque sature, le service peut planter — impact sur le trading auto.",
+        "tailscale": "Le réseau interne entre EC2 et le VPS bridge est en souci.",
+        "systemd_scalping": "Le service principal du radar est arrêté — aucune analyse en cours.",
+        "scalping": "Le service principal du radar est arrêté — aucune analyse en cours.",
+    }
+    impact_line = _IMPACT.get(name, "")
+
+    parts = [f"{emoji} *{name_fr}* {verb_fr}"]
+    parts.append("")
+
     kind = probe.get("kind")
     if kind == "bridge":
         err = probe.get("health_error") or probe.get("account_error")
         if err:
-            parts.append(f"detail: `{err[:150]}`")
+            parts.append(f"⚙️ Détail technique : `{err[:150]}`")
         acc = probe.get("account") or {}
         if acc and status == "UP":
             parts.append(
-                f"balance {acc.get('balance')} {acc.get('currency')}, "
-                f"{acc.get('positions_count')} pos"
+                f"💰 Compte : {acc.get('balance')} {acc.get('currency')} · "
+                f"{acc.get('positions_count')} position(s) ouverte(s)"
             )
     elif kind == "systemd":
-        parts.append(f"systemctl: `{probe.get('active')}`")
+        parts.append(f"⚙️ État systemd : `{probe.get('active')}`")
     elif kind == "data":
         if probe.get("error"):
-            parts.append(f"detail: `{probe['error'][:150]}`")
+            parts.append(f"⚙️ Détail : `{probe['error'][:150]}`")
         if probe.get("age_sec") is not None:
-            parts.append(f"age: {probe['age_sec']}s")
+            parts.append(f"⏱ Dernier signe de vie : il y a {probe['age_sec']} secondes")
     elif kind == "disk":
         if probe.get("used_pct") is not None:
             parts.append(
-                f"used: {probe['used_pct']}% · free: {probe.get('free_gb')} GB"
+                f"💾 Utilisé : {probe['used_pct']}% · libre : {probe.get('free_gb')} GB"
             )
     elif kind == "tailscale":
         if probe.get("error"):
-            parts.append(f"detail: `{probe['error'][:150]}`")
+            parts.append(f"⚙️ Détail : `{probe['error'][:150]}`")
+
+    if impact_line and status in ("DOWN", "STILL_DOWN"):
+        parts.append("")
+        parts.append(f"ℹ️ {impact_line}")
+    elif status == "UP" and impact_line:
+        parts.append("")
+        parts.append(f"ℹ️ Composant à nouveau fonctionnel — activité normale reprend.")
 
     if recovery:
         rec_emoji = "🔧" if recovery.get("ok") else "🛑"
+        rec_status = "réussie" if recovery.get("ok") else "échouée"
+        parts.append("")
         parts.append(
-            f"{rec_emoji} recovery `{recovery.get('action')}`: "
-            f"{recovery.get('detail', '')[:120]}"
+            f"{rec_emoji} Récupération auto {rec_status} : `{recovery.get('action')}` "
+            f"({recovery.get('detail', '')[:80]})"
         )
-    parts.append(f"_{datetime.now(timezone.utc).isoformat(timespec='seconds')}_")
+
+    # Footer : heure Paris au lieu d'ISO UTC technique
+    paris_time = (datetime.now(timezone.utc) + timedelta(hours=2)).strftime("%H:%M Paris")
+    parts.append("")
+    parts.append(f"_{paris_time}_")
     return "\n".join(parts)
 
 
@@ -625,6 +774,48 @@ def evaluate_and_alert(probe: dict) -> dict:
         return dict(st)
 
 
+_quote_state: dict[str, dict] = {}
+
+
+def _track_quote(probe: dict) -> float | None:
+    """Met a jour l'etat d'avancement du tick ; rend son age de gel en s."""
+    ts = probe.get("quote_ts")
+    if not ts:
+        return None
+    now = time.time()
+    st = _quote_state.setdefault(probe["name"], {"ts": None, "since": now})
+    if ts != st["ts"]:
+        st["ts"] = ts
+        st["since"] = now
+    return now - st["since"]
+
+
+def annotate_quote_staleness(probe: dict, witness: dict) -> None:
+    """Signale un bridge qui repond mais ne recoit plus de cotations.
+
+    La panne du 2026-08-19 etait invisible de /health : le bridge Live a
+    rendu ok:true pendant 7h30 alors que son terminal MT5 avait perdu le
+    lien avec IC Markets. Seul l'horodatage du tick avait cesse d'avancer.
+
+    Les horloges courtier ne sont pas UTC (IC Markets et Pepperstone sont
+    en UTC+3 et l'annoncent +00:00), donc un age absolu ne veut rien dire
+    ici : on regarde si le tick *avance*. Le bridge demo sert de temoin
+    d'ouverture de marche, sinon chaque week-end declencherait une alerte.
+    """
+    frozen = _track_quote(probe)
+    witness_frozen = _track_quote(witness)
+    if frozen is None or frozen < QUOTE_STALE_MAX_SEC:
+        return
+    if witness_frozen is None or witness_frozen >= QUOTE_STALE_MAX_SEC:
+        return  # temoin gele aussi -> marche ferme, pas une panne
+    probe["quote_frozen_sec"] = int(frozen)
+    probe["quote_error"] = (
+        f"cotations figees depuis {int(frozen)}s "
+        f"(dernier tick {probe.get('quote_ts')}) alors que "
+        f"{witness.get('name')} avance — terminal MT5 deconnecte ?"
+    )
+
+
 def do_cycle() -> dict:
     """One polling cycle: probe everything, update state, write log line."""
     global _last_cycle_ts
@@ -633,7 +824,22 @@ def do_cycle() -> dict:
     probes = []
     if BRIDGE_LOCAL_ENABLED:
         probes.append(probe_bridge("bridge_local", BRIDGE_LOCAL_URL, BRIDGE_LOCAL_KEY))
-    probes.append(probe_bridge("bridge_vps", BRIDGE_VPS_URL, BRIDGE_VPS_KEY))
+    demo_probe = probe_bridge(
+        "bridge_vps", BRIDGE_VPS_URL, BRIDGE_VPS_KEY, quote_pair=QUOTE_PAIR
+    )
+    probes.append(demo_probe)
+    if BRIDGE_LIVE_ENABLED:
+        live_probe = probe_bridge(
+            "bridge_live", BRIDGE_LIVE_URL, BRIDGE_LIVE_KEY,
+            quote_pair=QUOTE_PAIR,
+        )
+        annotate_quote_staleness(live_probe, demo_probe)
+        probes.append(live_probe)
+    if BRIDGE_IBKR_ENABLED:
+        probes.append(probe_bridge(
+            "bridge_ibkr", BRIDGE_IBKR_URL, BRIDGE_IBKR_KEY,
+            key_header="X-Bridge-Key",
+        ))
     for svc in SYSTEMD_SERVICES:
         probes.append(probe_systemd(svc))
     # Extended sondes
@@ -843,6 +1049,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
         with _state_lock:
             order = [
                 "bridge_vps",
+                "bridge_live",
+                "bridge_ibkr",
                 "bridge_local",
                 "radar_cycle",
                 "scalping.service",
@@ -891,10 +1099,24 @@ def dashboard_thread():
 
 # ------- Telegram command listener (/status) -------
 def tg_build_status_reply() -> str:
+    """Format vulgarisé (2026-06-13) : tout le monde doit comprendre l'état."""
+    _NAME_FR = {
+        "bridge_local": "Bridge Démo",
+        "bridge_demo": "Bridge Démo",
+        "bridge_vps": "Bridge Démo",
+        "bridge_live": "Bridge Live",
+        "bridge_ibkr": "Bridge IBKR",
+        "radar_cycle": "Cycle radar",
+        "disk": "Espace disque",
+        "tailscale": "Réseau privé",
+        "systemd_scalping": "Service Scalping",
+        "scalping": "Service Scalping",
+    }
+    _STATE_FR = {"UP": "OK", "DOWN": "en panne", "UNKNOWN": "inconnu"}
     with _state_lock:
         if not _state:
-            return "📡 monitor warming up, pas encore de données"
-        lines = ["*Scalping Infra Status*", ""]
+            return "📡 Surveillance en cours de démarrage, pas encore de données.\n\nℹ️ Réessaie dans une minute."
+        lines = ["*📡 État de l'infrastructure*", ""]
         for name in sorted(_state.keys()):
             st = _state[name]
             emoji = {"UP": "✅", "DOWN": "🚨", "UNKNOWN": "❓"}.get(
@@ -903,9 +1125,26 @@ def tg_build_status_reply() -> str:
             since = int(time.time() - st.get("last_change_ts", time.time()))
             h, m = since // 3600, (since % 3600) // 60
             since_str = f"{h}h{m:02d}m" if h else f"{m}m"
-            lines.append(f"{emoji} `{name}` · {st['confirmed']} · {since_str}")
+            name_fr = _NAME_FR.get(name, name)
+            state_fr = _STATE_FR.get(st["confirmed"], st["confirmed"])
+            if st["confirmed"] == "UP":
+                lines.append(f"{emoji} {name_fr} · OK depuis {since_str}")
+            elif st["confirmed"] == "DOWN":
+                lines.append(f"{emoji} {name_fr} · en panne depuis {since_str}")
+            else:
+                lines.append(f"{emoji} {name_fr} · {state_fr}")
         lines.append("")
-        lines.append(f"_updated {_last_cycle_ts[:19] if _last_cycle_ts else '?'}Z_")
+        lines.append("ℹ️ Le radar et ses canaux d'exécution sont opérationnels (sauf indication contraire).")
+        lines.append("")
+        if _last_cycle_ts:
+            try:
+                t = datetime.fromisoformat(_last_cycle_ts.replace("Z", "+00:00"))
+                paris = (t + timedelta(hours=2)).strftime("%H:%M Paris")
+                lines.append(f"_Dernière vérification : {paris}_")
+            except Exception:
+                lines.append(f"_Dernière vérification : {_last_cycle_ts[:19]}Z_")
+        else:
+            lines.append("_Pas encore de vérification effectuée_")
         return "\n".join(lines)
 
 
@@ -940,7 +1179,13 @@ def telegram_listener_thread():
                 if text.lower().startswith("/status"):
                     tg_send(tg_build_status_reply())
                 elif text.lower().startswith("/start"):
-                    tg_send("Bot infra actif. Envoie `/status` pour un snapshot.")
+                    tg_send(
+                        "👋 *Surveillance infra active*\n\n"
+                        "Envoie `/status` à tout moment pour voir l'état des composants "
+                        "(bridges, disque, réseau, radar).\n\n"
+                        "ℹ️ Tu reçois automatiquement une alerte ici dès qu'un composant tombe "
+                        "en panne ou se rétablit."
+                    )
         except requests.RequestException as e:
             log.warning("telegram poll error: %s", e)
             _stop_evt.wait(5)
@@ -961,15 +1206,19 @@ def main() -> int:
         WEB_BIND_PORT,
     )
     auto_label = (
-        "auto-recovery ON: "
+        "🤖 Récupération auto activée : "
         + ", ".join(sorted(RECOVERY_ACTIONS_ENABLED))
         if AUTO_RECOVERY_ENABLED
-        else "auto-recovery OFF (would-be actions logged)"
+        else "🤖 Récupération auto désactivée (actions juste loggées)"
     )
     tg_send(
-        f"🟢 *scalping infra monitor started* on `{os.uname().nodename}`\n"
-        f"dashboard: http://{WEB_BIND_HOST}:{WEB_BIND_PORT}/infra\n"
-        f"{auto_label}"
+        f"🟢 *Surveillance infra démarrée*\n\n"
+        f"📡 Le système qui surveille les bridges, le disque, le réseau et le radar est actif "
+        f"sur `{os.uname().nodename}`.\n"
+        f"🌐 Dashboard : http://{WEB_BIND_HOST}:{WEB_BIND_PORT}/infra\n"
+        f"{auto_label}\n\n"
+        f"ℹ️ Tu recevras une alerte ici dès qu'un composant tombe ou se rétablit. "
+        f"Envoie `/status` à tout moment pour un état complet."
     )
 
     threads = []

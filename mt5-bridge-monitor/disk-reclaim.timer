@@ -1,0 +1,11 @@
+[Unit]
+Description=Verifie le disque toutes les 5 min et recupere si au-dessus du seuil
+
+[Timer]
+OnBootSec=3min
+OnUnitInactiveSec=5min
+AccuracySec=30s
+Unit=disk-reclaim.service
+
+[Install]
+WantedBy=timers.target

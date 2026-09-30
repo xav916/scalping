@@ -1,0 +1,16 @@
+[Unit]
+Description=Recuperation auto d espace disque (declenchee par le meme seuil que la sonde disk_root)
+Documentation=https://github.com/xav916/scalping mt5-bridge-monitor/disk_reclaim.py
+After=docker.service
+
+[Service]
+Type=oneshot
+# root : /opt/scalping/data est a root, et journalctl --vacuum exige root.
+User=root
+ExecStart=/usr/bin/python3 /opt/scalping-bridge-monitor/disk_reclaim.py
+# Le script a son propre budget de 240 s ; on laisse de la marge pour un gzip.
+TimeoutStartSec=900
+Nice=19
+IOSchedulingClass=idle
+StandardOutput=journal
+StandardError=journal
