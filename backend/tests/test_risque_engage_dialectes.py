@@ -208,3 +208,40 @@ def test_zero_watcher_et_zero_position_est_un_VRAI_zero():
     assert e["lisible"] is True
     assert e["indecidable"] is False
     assert e["risque_total"] == 0.0
+
+
+# --------------------------------------------------------------------------
+# IBKR — le stop est l'ordre enfant d'un bracket
+# --------------------------------------------------------------------------
+
+def test_le_dialecte_ibkr_apparie_par_symbole():
+    from backend.services.risque_engage import evaluation_ibkr
+    positions = {"positions": [
+        {"symbol": "XLU", "position": 2.0, "avg_cost": 43.60, "currency": "USD"}]}
+    ordres = {"orders": [
+        {"symbol": "XLU", "orderType": "STP", "auxPrice": 41.00,
+         "totalQuantity": 2.0, "action": "SELL"}]}
+    e = evaluation_ibkr(positions, ordres)
+    assert e["risque_total"] == pytest.approx(5.20)     # |43,60−41,00| × 2
+    assert e["plafond"] is None
+
+
+def test_une_action_SANS_stop_est_indecidable():
+    from backend.services.risque_engage import evaluation_ibkr
+    positions = {"positions": [
+        {"symbol": "XLU", "position": 2.0, "avg_cost": 43.60}]}
+    e = evaluation_ibkr(positions, {"orders": []})
+    assert e["nues"] == 1
+    assert e["indecidable"] is True
+
+
+def test_un_ordre_d_ACHAT_ne_protege_rien():
+    """⛔ Seul un ordre qui RÉDUIT la position la protège."""
+    from backend.services.risque_engage import evaluation_ibkr
+    positions = {"positions": [
+        {"symbol": "XLU", "position": 2.0, "avg_cost": 43.60}]}
+    ordres = {"orders": [
+        {"symbol": "XLU", "orderType": "STP", "auxPrice": 41.00,
+         "totalQuantity": 2.0, "action": "BUY"}]}
+    e = evaluation_ibkr(positions, ordres)
+    assert e["nues"] == 1

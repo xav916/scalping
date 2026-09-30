@@ -196,8 +196,75 @@ def _dialecte_kraken_spot(dest) -> dict:
     return evaluation_spot(charge)
 
 
+def _stops_ibkr(charge: dict, sens_position: dict) -> dict:
+    """`{symbole: prix de déclenchement}` pour les ordres qui RÉDUISENT.
+
+    ⛔ Un ordre de même sens que la position l'agrandit, il ne la protège pas.
+    Une position longue est protégée par un stop `SELL`, et l'inverse.
+    """
+    stops = {}
+    for o in (charge or {}).get("orders") or []:
+        if not isinstance(o, dict):
+            continue
+        if (o.get("orderType") or "").upper() not in ("STP", "STP LMT"):
+            continue
+        sym = o.get("symbol")
+        if not sym or sym not in sens_position:
+            continue
+        reduit = ((o.get("action") or "").upper() == "SELL"
+                  if sens_position[sym] > 0
+                  else (o.get("action") or "").upper() == "BUY")
+        if not reduit:
+            continue
+        prix = o.get("auxPrice")
+        if prix is None:
+            continue
+        try:
+            stops[sym] = float(prix)
+        except (TypeError, ValueError):
+            continue
+    return stops
+
+
+def evaluation_ibkr(positions_charge: dict, ordres_charge: dict) -> dict:
+    """Risque engagé chez IBKR : le stop est un ordre ENFANT de bracket.
+
+    ⛔ `/positions` ne porte ni stop ni prix courant — le risque d'une
+    position n'y est donc pas dérivable. L'appariement se fait par symbole
+    ET par sens.
+    """
+    positions = (positions_charge or {}).get("positions") or []
+    sens = {}
+    for p in positions:
+        if not isinstance(p, dict):
+            continue
+        try:
+            sens[p.get("symbol")] = float(p.get("position") or 0.0)
+        except (TypeError, ValueError):
+            continue
+    stops = _stops_ibkr(ordres_charge, sens)
+    normalisees = []
+    for p in positions:
+        if not isinstance(p, dict):
+            normalisees.append(None)
+            continue
+        try:
+            taille = abs(float(p.get("position") or 0.0))
+        except (TypeError, ValueError):
+            taille = 0.0
+        normalisees.append({"symbol": p.get("symbol"),
+                            "price": p.get("avg_cost"), "size": taille})
+    return evaluer_positions_stop(normalisees, stops, devise="USD")
+
+
 def _dialecte_ibkr(dest) -> dict:
-    return evaluation_illisible("USD")      # Task 6
+    pos, ok = _appel(dest, "/positions")
+    if not ok or not isinstance(pos, dict):
+        return evaluation_illisible("USD")
+    oo, ok = _appel(dest, "/openorders")
+    if not ok or not isinstance(oo, dict):
+        return evaluation_illisible("USD")
+    return evaluation_ibkr(pos, oo)
 
 
 # Clés = `Destination.bridge_type`, relevées dans le registre le 2026-08-25 :

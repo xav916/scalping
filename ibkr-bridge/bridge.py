@@ -327,6 +327,51 @@ def positions():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+@app.route("/openorders", methods=["GET"])
+@require_bridge_key
+def openorders():
+    """Ordres vivants, dont les enfants de bracket qui portent les stops.
+
+    Ajouté le 2026-08-25 pour la mesure du risque engagé : ``/positions`` ne
+    porte ni stop ni prix courant, donc le risque d'une position n'y est pas
+    dérivable. Le stop d'un bracket IBKR est un ordre ENFANT, jamais un champ
+    de la position.
+
+    ``reqAllOpenOrdersAsync`` couvre les ordres de TOUS les clients ; on s'y
+    tient quand la version d'``ib_async`` l'expose. Le repli ``openTrades()``
+    ne voit que les ordres de cette session — il peut donc manquer un stop
+    posé ailleurs, ce qui fera compter la position comme NUE. C'est le sens
+    sûr de l'erreur : jamais une protection inventée.
+    """
+    try:
+        worker.ensure_connected()
+        if hasattr(worker.ib, "reqAllOpenOrdersAsync"):
+            trades = worker.call(lambda: worker.ib.reqAllOpenOrdersAsync())
+        else:
+            trades = worker.call_sync(lambda: worker.ib.openTrades())
+        cleaned = []
+        for t in trades or []:
+            o, c = t.order, t.contract
+            cleaned.append({
+                "order_id": o.orderId,
+                "symbol": c.symbol,
+                "conId": c.conId,
+                "sec_type": c.secType,
+                "action": o.action,
+                "orderType": o.orderType,
+                "totalQuantity": float(o.totalQuantity or 0.0),
+                "auxPrice": (float(o.auxPrice)
+                             if o.auxPrice not in (None, "") else None),
+                "lmtPrice": (float(o.lmtPrice)
+                             if o.lmtPrice not in (None, "") else None),
+                "parentId": o.parentId,
+            })
+        return jsonify({"ok": True, "count": len(cleaned), "orders": cleaned})
+    except Exception as e:
+        logger.warning(f"openorders error: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @app.route("/tick/<path:pair>", methods=["GET"])
 @require_bridge_key
 def tick(pair):
