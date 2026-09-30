@@ -347,3 +347,89 @@ def test_repondre_n_ecrit_RIEN(client, envois, mesure_bouchonnee, tmp_path,
     _poster(client, "risque")
 
     assert not instantane.exists(), "la réponse a écrit l'état de la sonde"
+
+
+# --------------------------------------------------------------------------
+# Destinations SANS plafond — des euros, jamais un pourcentage
+# --------------------------------------------------------------------------
+
+def _eval_sans_plafond(total=1.409, devise="USD", positions=2):
+    return {
+        "lisible": True, "indecidable": False,
+        "risque_total": total, "plafond": None, "pct": None, "restant": None,
+        "nues": 0, "non_mesurables": 0, "positions": positions,
+        "candidats": 0, "liberable": 0.0, "login": None,
+        "devise": devise, "sans_plafond": True,
+    }
+
+
+def _kraken(evaluation, verdict="sans_plafond"):
+    """⚠️ `sans_plafond` par défaut, et pas `ok` : c'est ce que
+    `verdict_destination` (Task 1) rend réellement pour ces destinations.
+    Fabriquer la mesure avec un verdict que la production ne produit jamais
+    donnerait un test vert sur un comportement inexistant."""
+    return {"id": "admin_kraken", "badge": "🐙 Kraken Futures",
+            "evaluation": evaluation, "verdict": verdict}
+
+
+def test_sans_plafond_on_montre_des_euros_et_AUCUN_pourcentage():
+    from backend.app import _formater_risque
+    texte = _formater_risque([_kraken(_eval_sans_plafond())], taux=1.08)
+    assert "1,30" in texte, texte          # 1,409 USD / 1,08
+    assert "%" not in texte, texte
+    assert "aucun plafond" in texte.lower(), texte
+
+
+def test_l_absence_de_plafond_est_DITE_pas_laissee_vide():
+    """⛔ Un tiret muet à la place du pourcentage se lirait « 0 % ».
+
+    ⚠️ L'en-tête du message porte légitimement un tiret cadratin
+    (« 📊 Risque engagé — 25/08 18:45 Paris ») ; il est écarté avant le
+    contrôle, qui ne porte que sur le bloc de la destination.
+    """
+    from backend.app import _formater_risque
+    texte = _formater_risque([_kraken(_eval_sans_plafond())], taux=1.08)
+    bloc = "\n".join(texte.split("\n")[1:])
+    assert "—" not in bloc.replace("Total", ""), texte
+
+
+def test_sans_TAUX_la_destination_USD_devient_non_convertible():
+    from backend.app import _formater_risque
+    texte = _formater_risque([_kraken(_eval_sans_plafond())], taux=None)
+    assert "convert" in texte.lower(), texte
+    assert "1,30" not in texte, texte
+
+
+def test_le_total_MELANGE_les_devises_seulement_apres_conversion():
+    from backend.app import _formater_risque
+    texte = _formater_risque([
+        _live(_eval_ok(total=28.75, plafond=33.54), "sature"),
+        _kraken(_eval_sans_plafond(total=1.08)),
+    ], taux=1.08)
+    assert "29,75" in texte, texte        # 28,75 EUR + 1,00 EUR
+
+
+def test_sans_taux_le_total_est_IMPOSSIBLE_meme_si_tout_est_lisible():
+    """⛔ Sommer des euros et des dollars donnerait un nombre, pas une mesure."""
+    from backend.app import _formater_risque
+    texte = _formater_risque([
+        _live(_eval_ok(total=28.75, plafond=33.54), "sature"),
+        _kraken(_eval_sans_plafond(total=1.08)),
+    ], taux=None)
+    assert "total tous comptes : impossible" in texte.lower(), texte
+
+
+def test_le_verdict_FABRIQUE_ici_est_bien_celui_que_la_PRODUCTION_rend():
+    """⛔ Le garde-fou contre le test vert sur un comportement inexistant.
+
+    Tous les tests ci-dessus fabriquent la mesure à la main. Si
+    `verdict_destination` rendait autre chose que `sans_plafond` pour cette
+    forme d'évaluation, ils resteraient verts pendant que la production
+    dirait autre chose — et personne ne le saurait.
+    """
+    from backend.services.risque_engage import verdict_destination
+    from scripts.notify_saturation_risque import SEUIL_PCT
+
+    fabrique = _kraken(_eval_sans_plafond())
+    assert verdict_destination(fabrique["evaluation"], SEUIL_PCT) == \
+        fabrique["verdict"]

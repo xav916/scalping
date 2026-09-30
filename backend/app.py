@@ -2878,13 +2878,17 @@ def _mesurer_risque_destinations() -> list[dict]:
     return mesurer()
 
 
-def _formater_risque(mesures: list[dict]) -> str:
+def _formater_risque(mesures: list[dict], taux: float | None = None) -> str:
     """Met en mots une liste de mesures. Fonction PURE, sans réseau.
 
     Le contrat tient en une phrase : **tout chiffre affiché a été mesuré.**
     Les quatre façons de ne pas savoir (bridge muet, position pile à
     l'entrée, position sans stop, plafond désarmé) rendent chacune une
     phrase distincte, jamais un zéro rassurant.
+
+    `taux` = combien d'USD pour 1 EUR. ⛔ `None` ⇒ aucune destination en
+    dollars n'est convertie, et le total tombe sur « impossible » : sommer
+    des euros et des dollars donnerait un nombre, pas une mesure.
     """
     import html as _html
 
@@ -2914,6 +2918,33 @@ def _formater_risque(mesures: list[dict]) -> str:
         if e.get("desarme"):
             lignes.append("⚪ Plafond de risque <b>désarmé</b> — il n'y a pas "
                           "de plafond à saturer.")
+            continue
+
+        if e.get("sans_plafond"):
+            from backend.services.risque_engage import en_euros
+            if e.get("nues"):
+                complet = False
+                lignes += [
+                    f"🚨 <b>{e['nues']} position(s) SANS STOP</b> — risque non "
+                    "borné.",
+                    "Aucune somme n'a de sens tant qu'elles sont là.",
+                ]
+                continue
+            montant = en_euros(e["risque_total"], e.get("devise", "USD"), taux)
+            if montant is None:
+                complet = False
+                lignes.append(
+                    f"❓ <b>Non convertible</b> — {_eur(e['risque_total'])} "
+                    f"{_html.escape(e.get('devise', '?'))} mesurés, mais le "
+                    "taux EUR/USD est illisible. On ne convertit pas au jugé.")
+                continue
+            total += montant
+            lignes += [
+                f"✅ <b>{_eur(montant)} €</b> engagés · {e['positions']} "
+                "position(s)",
+                "⚪ <b>Aucun plafond de risque</b> n'est armé sur cette "
+                "destination : il n'y a pas de pourcentage à en tirer.",
+            ]
             continue
 
         if v == "indecidable":
@@ -2973,8 +3004,10 @@ def _formater_risque(mesures: list[dict]) -> str:
 
 async def _build_risque_text() -> str:
     """Le message complet. Sort le calcul bloquant de la boucle d'événements."""
+    from backend.services.risque_engage import taux_eurusd
     mesures = await asyncio.to_thread(_mesurer_risque_destinations)
-    return _formater_risque(mesures)
+    taux = await asyncio.to_thread(taux_eurusd)
+    return _formater_risque(mesures, taux=taux)
 
 
 @app.post("/api/telegram/sales-webhook")
