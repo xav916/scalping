@@ -1132,3 +1132,66 @@ Lancé au spread vivant de 0,50, ce banc rendait un coût de 0,0531 R et un
 R moyen de −0,0792 : **deux bancs lancés à deux heures différentes ne sont pas
 comparables**. ⇒ Épingler le spread, ou prendre la médiane des relevés, mais
 jamais le tick de l'instant.
+
+---
+
+## 🔬 `fvg_up` sur l'or — TEST HORS ÉCHANTILLON, déclaré le 2026-09-30 AVANT le code
+
+`fvg_up` acheteur, or 5 min, est la **meilleure cellule de ~4 580** mesurées par
+le laboratoire. Dix nuits consécutives la donnent positive : R médian
+**+0,133**, `t_vs_hasard` médian **+2,47**, max +2,73, n ≈ 170.
+
+### ⛔ Pourquoi ces dix nuits ne prouvent rien
+
+Chaque nuit rejoue une fenêtre **glissante de 90 jours** : deux nuits
+consécutives partagent **89 jours sur 90**. « 10/10 positif » est donc **une**
+mesure regardée dix fois. C'est le piège nommé le 25/09 — « 11 nuits de
+fenêtres qui SE RECOUVRENT ≠ une fenêtre disjointe » — et il a fait passer la
+chaîne armée de t≈5 à **t=0,72** sur données neuves.
+
+### La règle du test
+
+- **Fenêtre DISJOINTE** : les jours **90 à 365** avant aujourd'hui. Aucun jour
+  commun avec les dix nuits. Bornes de dates imprimées à l'exécution, et le
+  test s'arrête si le recouvrement n'est pas nul.
+- Cellule unique : `fvg_up` / `buy` / `XAU/USD` / 5 min. Aucun balayage.
+- **Spread épinglé à 0,20** — le tick vivant valait 0,50 ce soir, et deux bancs
+  à deux heures différentes ne sont pas comparables (mesuré le 30/09).
+- Contrôle aléatoire **30 graines**, **sens respecté**.
+- Validation croisée sur les 20 instruments servis, plafond sur le **total**.
+
+### ⚠️ La barre, et l'honnêteté sur son niveau
+
+`plafond_hasard(1) = 0,798` pour **un** test spécifié d'avance.
+`plafond_hasard(20) = 2,167` pour la validation croisée.
+
+⛔ **0,798 est une barre BASSE**, et l'utiliser seule serait blanchir un
+candidat **sélectionné parmi 4 580** en candidat pré-spécifié. La sélection a eu
+lieu sur les 90 derniers jours ; la fenêtre disjointe est de la donnée neuve,
+ce qui rend le test licite — mais pas suffisant. ⇒ **Deux conditions
+cumulatives**, pas une.
+
+### Les prédictions falsifiables
+
+1. **Effondrement** : `t_vs_hasard` sur la fenêtre disjointe sera
+   **inférieur à +2,47**, la médiane des fenêtres glissantes. C'est la
+   prédiction qui teste le recouvrement, et c'est celle à laquelle je crois.
+2. **Concordance absente** : sur les 20 instruments, **moins de la moitié** des
+   cellules `fvg_up` acheteur seront positives, et **aucune** ne franchira
+   `plafond_hasard(20) = 2,167`. (Sur la dernière nuit : 12 positives sur 44.)
+3. ⚠️ **Ce que je ne prédis PAS** : je ne sais pas si l'or seul franchira
+   0,798. J'avais annoncé un échec avant de connaître cette valeur ; contre une
+   barre aussi basse, je retire cette assurance. Dire « je ne sais pas » ici
+   vaut mieux qu'une bravade que le résultat démentirait.
+
+### La règle de décision, écrite d'avance
+
+| résultat | décision |
+|---|---|
+| Recouvrement non nul | ⛔ **test invalide**, aucun verdict |
+| Or > 0,798 **ET** concordance > 2,167 | 🔬 premier candidat sérieux du projet — passer en `TELEGRAM`, jamais directement en `AUTO_EXEC` |
+| Or > 0,798 mais concordance absente | ⛔ **non retenu** — profil de la chaîne réfutée |
+| Or < 0,798 | ⛔ **réfuté**, à inscrire dans les verdicts |
+
+⛔ Aucun seuil neuf : `PLACEBO_PCT`, `FENETRE`, `MAX_BOUGIES_TENUE`, l'objectif
+du setup et `plafond_hasard` sont ceux du laboratoire.
