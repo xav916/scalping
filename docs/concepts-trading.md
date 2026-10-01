@@ -1759,3 +1759,76 @@ lisible. Je recommande la même : **arrêt au premier des trois**, 30 ordres,
 Les autres paires, les autres destinations, et la production du 1 h (il
 faudrait ajouter un facteur d'agrégation à `ECHELLES_AGREGEES`, ce qui change ce
 que le radar **fabrique** — un autre chantier, une autre déclaration).
+
+---
+
+## `pin_bar_down` OR 30 min — déclaration et test du 2026-10-01
+
+### Pourquoi celle-ci et pas une autre
+
+Sur les 232 cellules or du 01/10, c'est la meilleure : **+0,1556 R sur 84
+trades**, `INSUFFISANT` (t_vs 1,30 contre une barre de 3,67 pour 232 tests).
+Xavier demande de l'armer. Avant, deux étapes, dans cet ordre.
+
+### Étape 1 — l'appareil reproduit-il la cellule ?
+
+Premier essai : **NON**. n=87 et R +0,1868 au lieu de n=84 et +0,1556. Le banc
+s'est arrêté là de lui-même plutôt que de publier un hors-échantillon.
+
+🔑 Cause : le laboratoire rejoue `now − 90 j → now`, et je le lançais **15 h
+plus tard**. Fenêtre épinglée à `2026-10-01T03:51:14` → **n=84 exact, R
++0,1550 contre +0,1556, écart 0,0006. REPRODUIT.** Ce n'était pas un défaut
+d'appareil, c'était une autre fenêtre.
+
+⚠️ Trouvé en passant, et c'est une mise en garde durable : deux nuits
+**consécutives** du laboratoire, partageant 89 jours sur 90, rendent `n=84` les
+deux fois et R **+0,1885** (30/09) puis **+0,1556** (01/10). **La cellule bouge
+de 0,033 R par jour** sur une fenêtre quasi identique. Toute tolérance plus
+serrée que ce bruit exige de l'appareil une stabilité que la quantité n'a pas.
+
+### Étape 2 — les jours 90 à 365, jamais rejoués
+
+| | fenêtre VUE | **JAMAIS VUE** |
+|---|---|---|
+| bougies agrégées | 2 930 | 8 848 |
+| n | 84 | **230** |
+| R moyen | +0,1550 | **+0,0238** |
+| hasard (contrôle par cellule, 20 graines) | −0,0177 | −0,0542 |
+| delta | +0,1727 | **+0,0781** |
+| t_vs_hasard | +1,119 | **+0,854** |
+
+🔬 **CANDIDAT.** Le signe tient sur 2,7 fois plus de trades que l'échantillon
+de sélection, et le `t` franchit la barre d'**un seul** test (0,798).
+
+### ⚠️ Les trois réserves, à dire avant d'armer
+
+1. **Rétrécissement ÷6,5** : +0,155 → +0,024. C'est l'ampleur habituelle de ce
+   qu'on perd en sortant de la fenêtre de sélection. Ce qui reste est faible.
+2. **Quelle barre ?** La cellule a été choisie parmi 232, dont la barre est
+   3,67. Mais la sélection s'est faite sur une fenêtre **disjointe** de celle du
+   test : une hypothèse, une seule, éprouvée sur des données jamais vues ⇒ la
+   barre d'un test (0,798) est la bonne. Elle est franchie de **0,056** — d'un
+   cheveu, et il faut le dire ainsi.
+3. **La famille n'est pas bonne** : `pin_bar_up` **acheteur** en 5 min est
+   l'une des pires cellules de l'or (−0,1560 R sur 436 trades, delta −0,0803).
+   Ce qui est armé n'est pas « les pin bars » — c'est `pin_bar_down`, **vendeur**,
+   **en 30 min**, et le nom du motif porte déjà le sens.
+
+### Ce qui est ouvert, et la prédiction
+
+`MT5_BRIDGE_PATTERN_OVERRIDES`, entrée `XAU/USD` → `30min`, motif
+`pin_bar_down` ajouté. Rien d'autre : ni l'acheteur, ni une autre échelle, ni
+une autre paire.
+
+- **P1** — le R moyen des ordres réels de cette cellule est **positif** sur les
+  30 premiers, intervalle attendu [0 ; +0,15], centre ≈ +0,024 (la valeur hors
+  échantillon, pas celle de la sélection).
+- **P2** — la cadence est **faible** : 230 trades en 275 jours sur la fenêtre
+  OOS, soit ≈ **0,8 ordre par jour** au mieux, et moins en réalité car les
+  portes de coût, de spread horaire et le cap par paire s'appliquent ensuite.
+- **P3** — aucun ordre `pin_bar_up` sur l'or : le nom du motif porte le sens, et
+  seul le vendeur est déclaré.
+
+⚠️ Changement de **réglage** seulement, donc **pas de rebuild** : l'empreinte
+de déploiement ne bouge pas et l'armement REM-002 **survit**. Un simple
+`systemctl restart scalping` suffit.
