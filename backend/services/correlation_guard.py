@@ -264,18 +264,131 @@ def _db_path() -> str:
     return str(_DB_PATH)
 
 
-def positions_ouvertes(destination_id: str) -> list[tuple[str, str]]:
-    """``(paire, sens)`` des positions auto encore ouvertes sur ce compte.
+def _config_du_pont(destination_id: str):
+    """Le `BridgeConfig` de ce compte, ou `None` s'il n'a pas de pont HTTP.
 
-    ``personal_trades`` ne porte pas de ``destination_id`` : chaque position
-    est rattachée à son compte par son ticket, via la résolution déjà
-    utilisée par les notifications de clôture. Un rapprochement par
-    paire et sens serait ambigu — il retomberait sur n'importe quel push de
-    la même paire, quel qu'en soit le jour ou le compte.
+    ⚠️ `destinations_registry.get()` ne convient PAS : son `Destination` ne
+    porte ni `bridge_url` ni clé d'API. C'est la confusion de type déjà payée
+    le 08/09 — ici elle rendrait `None` et désarmerait la lecture du courtier.
 
-    Le nombre de positions ouvertes se compte sur les doigts : une résolution
-    par ticket reste largement moins coûteuse qu'un appel au bridge.
+    Les destinations `user:N` et `admin_binance` sont absentes de cette liste,
+    et c'est sans effet : elles déclarent `max_correlated_positions = 0`, donc
+    `limite()` rend 0 et cette fonction n'est jamais appelée pour elles.
     """
+    try:
+        from backend.services.bridge_destinations import admin_destinations
+        for d in admin_destinations():
+            if (str(getattr(d, "destination_id", "")) == str(destination_id)
+                    and getattr(d, "bridge_url", "")):
+                return d
+    except Exception as e:  # noqa: BLE001 — registre illisible : on ne sait pas
+        logger.debug("correlation_guard: registre des ponts illisible (%s)", e)
+    return None
+
+
+# Les deux formes du champ `type` d'une position. Le pont sert aujourd'hui des
+# chaînes ; MT5 code le sens en entier. Les deux sont acceptées, et rien
+# d'autre : un sens qu'on ne sait pas lire fait replier la lecture entière.
+_SENS_COURTIER = {"buy": "buy", "sell": "sell", "0": "buy", "1": "sell"}
+
+
+def _paires_connues() -> set[str]:
+    """Les paires pour lesquelles une corrélation est mesurée.
+
+    C'est exactement la population utile : une position sur une paire absente
+    de la table est de corrélation INCONNUE, et `_trier` la compte déjà comme
+    telle. Pas de seconde liste d'univers à tenir à jour.
+    """
+    _rafraichir_mesures()
+    connues: set[str] = set()
+    for a, b in CORRELATIONS_MESUREES:
+        connues.add(a)
+        connues.add(b)
+    return connues
+
+
+def _paire_pour(symbole: str, dest) -> str:
+    """La paire du radar derrière un symbole du courtier, ou le symbole brut.
+
+    ⛔ Rendre le symbole brut plutôt que de jeter la position : `XTIUSD` sans
+    correspondance doit remonter comme couple NON MESURÉ — tracé, non bloquant
+    — et non disparaître du carnet. Un carnet incomplet qui a l'air complet est
+    précisément le défaut du 01/10.
+    """
+    from backend.services.mt5_bridge import _symbole_courtier_pour
+    cible = (symbole or "").upper()
+    for p in sorted(_paires_connues()):
+        if _symbole_courtier_pour(p, dest).upper() == cible:
+            return p
+    return symbole
+
+
+def _positions_du_courtier(destination_id: str) -> list[tuple[str, str]] | None:
+    """``(paire, sens)`` lues CHEZ LE COURTIER, ou `None` si indécidable.
+
+    `None` couvre trois cas, et jamais « rien d'ouvert » : pas de pont pour ce
+    compte, `/positions` injoignable, ou une position dont le sens est
+    illisible. L'appelant replie alors sur `personal_trades`.
+    """
+    dest = _config_du_pont(destination_id)
+    if dest is None:
+        return None
+    from backend.services.mt5_bridge import _positions_courtier
+    # ⛔ `sans_cache` : le cap par paire a lu /positions quelques
+    # millisecondes plus tôt dans la même porte et l'a mis en cache pour dix
+    # secondes. Les trois ordres du 01/10 sont partis en 1,8 s — s'en servir
+    # relirait le carnet d'AVANT le premier, et ce correctif ne serait qu'un
+    # aller-retour HTTP de plus pour le même carnet vide.
+    positions = _positions_courtier(dest, sans_cache=True)
+    if positions is None:
+        return None
+    sortie: list[tuple[str, str]] = []
+    for p in positions:
+        brut = (p or {}).get("type")
+        sens = _SENS_COURTIER.get(str(brut).strip().lower())
+        symbole = str((p or {}).get("symbol") or "")
+        if sens is None or not symbole:
+            logger.warning(
+                "correlation_guard[%s]: position illisible (symbol=%r type=%r) "
+                "— repli sur personal_trades plutot qu'un carnet incomplet",
+                destination_id, symbole, brut)
+            return None
+        sortie.append((_paire_pour(symbole, dest), sens))
+    return sortie
+
+
+def positions_ouvertes(destination_id: str) -> list[tuple[str, str]]:
+    """``(paire, sens)`` des positions encore ouvertes sur ce compte.
+
+    ⛔ **LE COURTIER D'ABORD** (2026-10-01). Ce garde lisait `personal_trades`
+    — sa propre mémoire —, alimentée par `mt5_sync` toutes les **60 secondes**.
+    Aucun chemin de push n'y écrit. Le 01/10 à 01h06, trois ordres corrélés
+    sont donc partis dans le même cycle sur l'argent réel, dont deux fois le
+    même pari (short yen) : les lignes n'ont existé qu'à 01h07:06, et pendant
+    trente secondes le garde lisait un carnet vide.
+
+    > **Une porte qui compte dans sa propre mémoire ne compte pas le monde.**
+
+    C'est le titre sous lequel le cap par paire a été migré le 2026-08-28
+    (`_compter_positions_courtier`). Sa jumelle ne l'avait jamais été.
+
+    ⚠️ Le courtier rend AUSSI les positions ouvertes à la main : ce sont de
+    vraies positions simultanées, donc une vraie concentration. Même lecture
+    que le cap par paire, assumée pour la même raison.
+
+    ⚠️ **Le repli garde son rôle.** Si le pont est injoignable ou sa réponse
+    illisible, on relit `personal_trades` : c'est l'état d'avant, incomplet
+    mais réel. Répondre « carnet vide » à une panne réseau recréerait le
+    défaut qu'on corrige.
+
+    Repli : ``personal_trades`` ne porte pas de ``destination_id``, chaque
+    position est rattachée à son compte par son ticket, via la résolution déjà
+    utilisée par les notifications de clôture.
+    """
+    chez_le_courtier = _positions_du_courtier(destination_id)
+    if chez_le_courtier is not None:
+        return chez_le_courtier
+
     from backend.services.telegram_service import destination_for_ticket
 
     try:

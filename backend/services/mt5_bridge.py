@@ -286,19 +286,25 @@ def _symbole_courtier_pour(pair: str, dest) -> str:
     return (pair or "").replace("/", "")
 
 
-def _positions_courtier(dest) -> list | None:
+def _positions_courtier(dest, sans_cache: bool = False) -> list | None:
     """`GET /positions` de la destination. **`None` = lecture ratée**, pas zéro.
 
     ⛔ La distinction est tout l'objet de cette fonction. Une liste vide dit
     « le courtier ne tient rien » ; `None` dit « on ne sait pas ». Les
     confondre, c'est exactement le défaut qu'on répare ici : une porte qui
     compte 0 quand elle ne sait pas est une porte ouverte.
+
+    ⛔ `sans_cache` (2026-10-01). Le cache vaut dix secondes ; les trois ordres
+    du 01/10 sont partis en **1,8 s**. Un appelant qui doit voir les positions
+    que le cycle VIENT d'ouvrir ne peut donc pas s'en servir — il relirait le
+    carnet d'avant. La lecture fraîche **écrit** quand même le cache : le
+    prochain appelant profite de la valeur neuve au lieu de la périmée.
     """
     url = (getattr(dest, "bridge_url", "") or "").rstrip("/")
     if not url:
         return None
     cle = str(getattr(dest, "destination_id", "") or url)
-    en_cache = _positions_cache.get(cle)
+    en_cache = None if sans_cache else _positions_cache.get(cle)
     if en_cache and (time.time() - en_cache[0]) < _POSITIONS_CACHE_SEC:
         return en_cache[1]
     entetes = {}
