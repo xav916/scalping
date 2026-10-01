@@ -1571,3 +1571,71 @@ de l'écart se répète hors échantillon.
 Un seul manquement ⇒ **⛔ NON RETENU**, et `PATTERN_TP1_RR = 1,8` reste en place.
 Un résultat positif sur la seule fenêtre vue ne vaut rien : c'est exactement ce
 qui a fait paraître bonnes les 75 variantes précédentes.
+
+### Le résultat — mesuré le 2026-10-01, `afcd5c7`
+
+Or 5 min, 70 893 bougies, spread épinglé à 0,20, 38 cellules motif × sens,
+30 graines de contrôle. Deux fenêtres **disjointes**, recouvrement nul.
+
+**Fenêtre VUE — 03/07 → 01/10, 17 587 bougies**
+
+| variante | n | obj méd | R moyen | t brut | hasard | t_vs |
+|---|---|---|---|---|---|---|
+| A référence | 8 392 | 1,800 | **−0,0431** | −2,96 | −0,0607 | +1,13 |
+| B plafonnée | 7 564 | 1,800 | **−0,0634** | −4,29 | −0,0734 | +0,65 |
+| C niveau seul | 6 474 | 2,644 | **−0,0984** | −4,49 | −0,1017 | +0,14 |
+| D placebo | 7 408 | 1,800 | **−0,0636** | −4,12 | −0,0736 | +0,62 |
+
+**Fenêtre JAMAIS VUE — 01/10/2025 → 03/07/2026, 53 306 bougies**
+
+| variante | n | obj méd | R moyen | t brut | hasard | t_vs |
+|---|---|---|---|---|---|---|
+| A référence | 25 612 | 1,800 | **−0,0022** | −0,27 | −0,0791 | +8,60 |
+| B plafonnée | 23 059 | 1,800 | **−0,0211** | −2,47 | −0,0931 | +8,05 |
+| C niveau seul | 19 200 | 2,600 | **−0,0316** | −2,43 | −0,1277 | +7,09 |
+| D placebo | 22 608 | 1,800 | **−0,0159** | −1,77 | −0,0860 | +7,51 |
+
+**P1 VRAIE** · **P2 VRAIE** · **P3 VRAIE** · **P4 FAUSSE**
+
+⛔ **NON RETENU.** `PATTERN_TP1_RR = 1,8` reste en place.
+
+#### 🔑 Ce que P3 tranche, et c'est le cœur
+
+`|R(B) − R(D)| = 0,0002 R` — **deux dix-millièmes**. Le plafonnement ne se
+distingue pas d'un objectif fixe de même longueur posé **sans regarder le
+moindre niveau**. Ce que B fait s'explique entièrement par la longueur de la
+cible et par son filtre d'admission ; le niveau de liquidité n'y apporte
+**rien**. Sans D, l'écart B−A aurait pu passer pour un effet du niveau.
+
+#### ⚠️ Ma prédiction P4 était FAUSSE, et il faut le dire
+
+J'avais prédit que le signe de `R(B) − R(A)` ne tiendrait pas hors échantillon.
+**Il tient** : −0,0203 sur la fenêtre vue, −0,0189 sur 23 059 trades jamais
+rejoués. La dégradation n'est donc pas un accident de fenêtre, elle **se
+réplique**. Mon erreur renforce la conclusion négative au lieu de l'affaiblir —
+mais elle reste une prédiction ratée, et elle compte comme telle.
+
+#### Pourquoi le plafonnement ne mord presque jamais
+
+L'objectif médian de B vaut **1,800** — identique à A. Celui de C vaut **2,6** :
+sur une fenêtre de 50 bougies M5 (≈ 4 h d'or), le niveau de liquidité est le
+plus souvent **PLUS LOIN** que 1,8 R. Le plafond ne se déclenche donc que
+rarement ; B diffère surtout de A en **refusant** des trades (8 392 → 7 564), et
+ce refus coûte. Quant à viser le niveau quand il est plus loin (C), c'est la
+**pire** des quatre dans les deux fenêtres.
+
+#### ⛔ Ce que ce banc ne dit PAS
+
+Le niveau est lu dans les **50 bougies vues par le détecteur**, soit ≈ 4 h.
+Le trade qui a posé la question visait au-delà d'un plafond de **six semaines**.
+Allonger la fenêtre de lecture du niveau serait un **degré de liberté neuf**,
+ajouté après avoir vu un résultat — donc une nouvelle déclaration, pas une
+retouche de celle-ci.
+
+#### Observation annexe, hors prédictions
+
+Hors échantillon, A bat son contrôle aléatoire avec `t = +8,60` sur 25 612
+trades — mais son R reste **négatif** (−0,0022 contre −0,0791). Les motifs
+choisissent donc mieux que le hasard **et perdent quand même** une fois le
+spread payé. Cohérent avec « le spread est la perte » ; aucune décision n'en
+découle, et le contrôle aléatoire tire à des heures que les détecteurs évitent.
