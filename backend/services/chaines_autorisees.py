@@ -54,6 +54,24 @@ def _declarees() -> set[str]:
             for c in CHAINES}
 
 
+# ⛔ DEUX NOMS POUR LE MEME HORIZON (2026-10-02). `echelle_agregee` estampille
+# les setups avec `horizon_pour(12)` = "60min" ; le vocabulaire canonique dit
+# "1h". La porte d'horizon normalisait deja ; ce registre, lui, comparait la
+# chaine BRUTE a sa cle. Une chaine armee a "1h" ne se declenchait donc JAMAIS
+# sur un setup estampille "60min" — ouverte de nom, fermee en fait, et sans un
+# mot dans les journaux.
+#
+# 🔑 On normalise LES DEUX COTES : la cle du registre a la lecture, et
+# l'etiquette du setup a l'interrogation. Un seul des deux aurait laisse la
+# moitie du piege.
+#
+# ⚠️ Un horizon HORS vocabulaire garde sa forme brute plutot que de devenir
+# `None` : il ne doit pas se confondre avec un autre, et il ne doit pas ouvrir.
+def _horizon_canonique(h) -> str:
+    from backend.services.horizon import normalize
+    return normalize(h) or str(h)
+
+
 def tout() -> dict[str, dict[str, list[str]]]:
     """Le registre, lu une fois puis garde. `{}` si vide ou illisible."""
     global _cache
@@ -106,12 +124,14 @@ def tout() -> dict[str, dict[str, list[str]]]:
                     gardes = _garder(noms)
                     if gardes:
                         (propre.setdefault(str(dest), {})
-                               .setdefault(str(horizon), {})[str(paire)]) = gardes
+                               .setdefault(_horizon_canonique(horizon), {})
+                               [str(paire)]) = gardes
             elif isinstance(contenu, (list, tuple)):
                 gardes = _garder(contenu)
                 if gardes:
                     (propre.setdefault(str(dest), {})
-                           .setdefault(str(horizon), {})[TOUTES_PAIRES]) = gardes
+                           .setdefault(_horizon_canonique(horizon), {})
+                           [TOUTES_PAIRES]) = gardes
                     # ⚠️ Une portee large ne doit pas etre SILENCIEUSE. La
                     # forme en liste vaut TOUTES les paires de la portee du
                     # compte — 25 sur `admin_live` le 01/10, dont 11 cryptos.
@@ -149,7 +169,8 @@ def autorisee(nom: str, destination_id: str | None, horizon: str | None,
         return False
     if not destination_id or not horizon:
         return False
-    par_paire = tout().get(str(destination_id), {}).get(str(horizon), {})
+    par_paire = tout().get(str(destination_id), {}).get(
+        _horizon_canonique(horizon), {})
     if nom in par_paire.get(TOUTES_PAIRES, []):
         return True
     if not pair:

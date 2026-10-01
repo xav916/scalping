@@ -1983,3 +1983,59 @@ ouvrir ce qui ne peut pas s'ouvrir.
 - **P3** — aucun ordre de ces chaînes sur une autre paire que `XAU/USD`, ni sur
   `admin_legacy`, ni à un horizon non déclaré. C'est la portée, et elle est
   testable directement dans `signal_rejections`.
+
+### 1 h, 4 h et 1 j ouverts quand même — 2026-10-02
+
+Xavier, après lecture des raisons de les laisser fermés : « ouvre-les quand
+même ». Fait, et voici exactement ce que l'ouverture produit.
+
+#### ⛔ Deux verrous cachés derrière le 1 h
+
+**1. Le 1 h n'était pas PRODUIT.** `ECHELLES_AGREGEES=3,6` ne fabrique que
+15 et 30 min. Déclarer `1h` dans le registre n'aurait rien ouvert.
+
+**2. Et le produire était ARITHMÉTIQUEMENT impossible** au réglage en place :
+
+    facteur  3 ( 15 min) : besoin 123 bougies M5 · plafond 400 -> OK
+    facteur  6 ( 30 min) : besoin 246 bougies M5 · plafond 400 -> OK
+    facteur 12 ( 60 min) : besoin 492 bougies M5 · plafond 400 -> IMPOSSIBLE
+
+`MIN_BOUGIES × facteur + facteur` contre `ECHELLES_MEMOIRE_M5`. Le 1 h serait
+resté « en attente » pour toujours, sans erreur. Deux réglages levés :
+`ECHELLES_AGREGEES=3,6,12` et `ECHELLES_MEMOIRE_M5=520`.
+
+⚠️ Le 1 h est donc fabriqué pour **les 25 paires**, mais il ne peut passer
+l'ordre que sur l'or : la porte d'horizon refuse `1h` partout ailleurs
+(`MT5_BRIDGE_HORIZON_OVERRIDES` ne nomme que `XAU/USD`). Vérifié à chaud.
+
+#### ⛔ Et un défaut que l'ouverture a révélé : DEUX NOMS pour le même horizon
+
+`echelle_agregee.horizon_pour(12)` estampille **`"60min"`**. Le vocabulaire
+canonique dit **`"1h"`**. La porte d'horizon normalisait déjà ; le registre des
+chaînes, lui, comparait la chaîne **brute** à sa clé.
+
+> Une chaîne armée à `1h` ne se serait **jamais** déclenchée sur un setup
+> estampillé `60min`. Ouverte de nom, fermée en fait, et sans un mot dans les
+> journaux.
+
+Les **deux côtés** sont désormais normalisés — la clé du registre à la lecture,
+l'étiquette du setup à l'interrogation. N'en normaliser qu'un aurait laissé la
+moitié du piège. 4 tests, dont la non-confusion (`30min` n'est pas `1h`) et le
+refus d'un horizon hors vocabulaire.
+
+#### Ce que ça donnera, sans rien enjoliver
+
+| horizon | passe le registre | passe la porte de risque | ⇒ ordre possible ? |
+|---|---|---|---|
+| 5 / 15 / 30 min | ✅ | ✅ (8,77 à 23,53 €) | **oui** |
+| **1 h** | ✅ | ✅ (31,69 €, sous le plafond de 32,50 €) | **oui, désormais** |
+| **4 h · 1 j** | ✅ | ⛔ **non** (65,03 € = 10 % du capital) | **non** |
+
+Le 4 h et le 1 j sont donc ouverts **jusqu'à la porte de risque par trade**, qui
+les refusera. Je n'y touche pas : c'est la protection qui porte la charge depuis
+qu'il y a six places par horizon. Pour qu'un or 1 j passe, il faudrait ~1 300 €
+de capital — pas un desserrage de porte.
+
+⚠️ Le 1 h, lui, passe à **4,9 %** du capital contre un plafond de 5 %. Il tient
+par **0,8 point**. Une baisse d'equity ou un stop un peu plus large le fait
+basculer dans le refus — et ce sera normal, pas une panne.

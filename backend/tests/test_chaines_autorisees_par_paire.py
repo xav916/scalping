@@ -115,3 +115,44 @@ def test_un_json_casse_ferme(monkeypatch):
     _registre(monkeypatch, '{"admin_live": {"5min": {"XAU/USD": [')
     assert ca.autorisee(VRAIE, "admin_live", "5min", "XAU/USD") is False
     assert ca.tout() == {}
+
+
+# --- DEUX NOMS POUR LE MEME HORIZON -------------------------------------
+#
+# ⛔ Defaut trouve le 2026-10-02 en ouvrant le 1 h. `echelle_agregee` estampille
+# les setups avec `horizon_pour(12)` = **"60min"**, tandis que le vocabulaire
+# canonique dit **"1h"** (`horizon._ALIASES` fait le pont). La porte d'horizon
+# normalise ; ce registre, lui, comparait la chaine BRUTE a la cle.
+#
+# Consequence : une chaine armee a "1h" ne se declenchait JAMAIS sur un setup
+# estampille "60min" — ouverte de nom, fermee en fait, et sans un mot dans les
+# journaux. Le defaut exact des deux noms pour la meme chose, que ce depot paie
+# en boucle.
+
+def test_un_setup_en_60min_trouve_une_chaine_armee_en_1h(monkeypatch):
+    """⛔ Le cœur : les deux etiquettes designent le meme horizon."""
+    _registre(monkeypatch,
+              '{"admin_live": {"1h": {"XAU/USD": ["%s"]}}}' % VRAIE)
+    assert ca.autorisee(VRAIE, "admin_live", "60min", "XAU/USD") is True
+
+
+def test_un_registre_en_60min_repond_a_un_setup_en_1h(monkeypatch):
+    """La symetrie : la cle du registre est normalisee elle aussi."""
+    _registre(monkeypatch,
+              '{"admin_live": {"60min": {"XAU/USD": ["%s"]}}}' % VRAIE)
+    assert ca.autorisee(VRAIE, "admin_live", "1h", "XAU/USD") is True
+
+
+def test_les_alias_ne_confondent_PAS_deux_horizons_differents(monkeypatch):
+    """⛔ Normaliser ne doit pas tout rapprocher : 30 min n'est pas 1 h."""
+    _registre(monkeypatch,
+              '{"admin_live": {"1h": {"XAU/USD": ["%s"]}}}' % VRAIE)
+    assert ca.autorisee(VRAIE, "admin_live", "30min", "XAU/USD") is False
+    assert ca.autorisee(VRAIE, "admin_live", "4h", "XAU/USD") is False
+
+
+def test_un_horizon_hors_vocabulaire_reste_refuse(monkeypatch):
+    """`7min` n'est pas un horizon : il ne doit pas ouvrir par accident."""
+    _registre(monkeypatch,
+              '{"admin_live": {"1h": {"XAU/USD": ["%s"]}}}' % VRAIE)
+    assert ca.autorisee(VRAIE, "admin_live", "7min", "XAU/USD") is False
