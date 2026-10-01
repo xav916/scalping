@@ -1001,6 +1001,38 @@ try:
 except (ValueError, _json_min_sl.JSONDecodeError):
     MT5_BRIDGE_PATTERN_OVERRIDES = {}
 
+# Horizons ouverts PAIRE PAR PAIRE et DESTINATION PAR DESTINATION (2026-10-01).
+#
+#     {"XAU/USD": {"admin_live": ["5min","15min","30min","4h","1d"]}}
+#
+# ⛔ **Le seul dispositif de ce dépôt qui peut OUVRIR un horizon.** Tout le
+# reste de la cascade (`_mt5_horizons`, `_restreindre_horizons`) est
+# restriction seule, exprès : « déclarer un horizon que la route ne sert pas ne
+# l'ouvre PAS ». Cet override contourne cette règle, et c'est pour ça qu'il est
+# nommé : jamais de joker, ni sur la paire, ni sur la destination.
+#
+# 🔑 Pourquoi il existe plutôt qu'un simple élargissement de
+# `MT5_BRIDGE_LIVE_ALLOWED_HORIZONS` : cette variable est **par destination**.
+# L'élargir aurait ouvert 15 min et 30 min pour TOUTES les paires du compte
+# réel, où la liste blanche globale (`range_bounce_up/down`) les aurait
+# laissées passer. « Pour l'or » veut dire pour l'or.
+#
+# ⛔ Fail-closed à l'intérieur : un horizon absent de la liste reste refusé, et
+# une paire absente du dictionnaire garde le comportement d'avant. Vide par
+# défaut.
+#
+# ⚠️ Posé à la demande explicite de Xavier le 2026-10-01, CONTRE la mesure du
+# même jour : laboratoire or, 232 cellules sur quatre échelles, **0 retenue**,
+# R moyen négatif partout. La déclaration et sa prédiction falsifiable vivent
+# dans `docs/concepts-trading.md`.
+try:
+    _raw_hz = os.getenv("MT5_BRIDGE_HORIZON_OVERRIDES", "")
+    MT5_BRIDGE_HORIZON_OVERRIDES = _json_min_sl.loads(_raw_hz) if _raw_hz else {}
+    if not isinstance(MT5_BRIDGE_HORIZON_OVERRIDES, dict):
+        MT5_BRIDGE_HORIZON_OVERRIDES = {}
+except (ValueError, _json_min_sl.JSONDecodeError):
+    MT5_BRIDGE_HORIZON_OVERRIDES = {}
+
 # Filtres diagnostiques anti-saigne (ajoutés 2026-04-24 après diagnostic
 # des 124 trades CLOSED post-fix pipeline). Basés sur buckets qui
 # perdent systématiquement — override env si le dataset change.

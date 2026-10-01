@@ -1639,3 +1639,88 @@ trades — mais son R reste **négatif** (−0,0022 contre −0,0791). Les motif
 choisissent donc mieux que le hasard **et perdent quand même** une fois le
 spread payé. Cohérent avec « le spread est la perte » ; aucune décision n'en
 découle, et le contrôle aléatoire tire à des heures que les détecteurs évitent.
+
+---
+
+## TOUS LES HORIZONS SUR L'OR — déclaration du 2026-10-01
+
+### Qui décide, et contre quoi
+
+Demande explicite de Xavier : « tous les horizons ouverts pour l'or, et qu'on
+puisse capitaliser là-dessus ». Posée **après** lui avoir montré la mesure et
+**contre** ma recommandation de ne pas ouvrir. C'est sa décision, son argent,
+et elle est exécutée en entier.
+
+⚠️ Elle va aussi contre sa propre règle du 2026-08-11 — « si les trades sont
+mesurés perdants alors ne pas desserrer ». Le dire ici une fois suffit ; ça ne
+se redira pas à chaque ligne.
+
+### Ce que la mesure dit, le jour même
+
+Laboratoire or du **2026-10-01 03h51**, quatre échelles, 232 cellules,
+**0 retenue**, verdict `INSUFFISANT` partout :
+
+| horizon | cellules | retenues | R moyen | meilleur t | coût en R | trades |
+|---|---|---|---|---|---|---|
+| 5 min | 60 | 0 | −0,0688 | 2,21 | 0,0204 | 10 679 |
+| 15 min | 57 | 0 | **−0,0513** | 1,41 | 0,0119 | 4 148 |
+| 30 min | 58 | 0 | **−0,0381** | 2,15 | 0,0083 | 2 161 |
+| 60 min | 57 | 0 | −0,0651 | 1,63 | 0,0062 | 1 176 |
+
+🔑 Le mécanisme qui avait motivé l'ouverture sur la démo le 08/09 est
+**confirmé** — le coût en R tombe de 0,0204 à 0,0062, soit **÷3,3** — et il ne
+suffit pas : le signe de R ne bascule pas. Monter d'échelle allège les frais
+sans créer d'edge.
+
+### Le mécanisme posé, et pourquoi pas le `.env`
+
+`MT5_BRIDGE_HORIZON_OVERRIDES`, paire par paire ET destination par destination :
+
+    {"XAU/USD": {"admin_live": ["5min","15min","30min","1h","4h","1d"]}}
+
+⛔ C'est le **premier dispositif de ce dépôt qui peut OUVRIR un horizon**. Toute
+la cascade existante est restriction seule, exprès. Il est donc nommé, sans
+joker, et il tranche dans les deux sens : ce qu'il ne déclare pas reste refusé.
+
+🔑 Pourquoi pas élargir `MT5_BRIDGE_LIVE_ALLOWED_HORIZONS` : cette variable est
+**par destination**. L'élargir aurait ouvert 15 min et 30 min pour **toutes**
+les paires du compte réel, où la liste blanche globale (`range_bounce_up/down`)
+les aurait laissées passer. **« Pour l'or » veut dire pour l'or.**
+
+### La prédiction, déclarée AVANT le premier ordre
+
+**Au lot minimum, sur 650 € de capital déclaré :**
+
+| échelle | stop médian | risque | % capital | prédiction |
+|---|---|---|---|---|
+| 15 min | 0,428 % | 15,38 € | 2,4 % | **tradera** |
+| 30 min | 0,655 % | 23,53 € | 3,6 % | **tradera** |
+| 1 h | 0,882 % | 31,69 € | 4,9 % | **ne tradera pas — non produit** (échelles agrégées = 15/30 min) |
+| 4 h · 1 j | 1,810 % | 65,03 € | 10,0 % | **ne tradera pas** — `risque_par_trade_excessif` |
+
+- **P1** — l'or 15 min et 30 min produit des ordres sur `admin_live` dans les
+  72 h suivant l'ouverture.
+- **P2** — **aucun** ordre or en 1 h, 4 h ou 1 j n'est passé : les deux derniers
+  sont refusés par la porte de risque, le premier n'existe pas comme produit.
+- **P3** — le R moyen des ordres 15 min + 30 min est **négatif**, dans
+  l'intervalle [−0,15 ; 0]. Point central attendu ≈ −0,045, la moyenne
+  pondérée des deux cellules du laboratoire.
+- **P4** — le P&L net de ces ordres est **négatif** à 30 ordres.
+
+⚠️ Écart de mesure à nommer : la porte calcule sur **650 €** de capital déclaré
+quand le courtier rend **572,43 €** d'`equity`. Le plafond de 5 % vaut donc
+5,7 % du réel. Ça ne change aucun verdict ci-dessus, et ça doit être su.
+
+### Ce que je recommande, et qui n'est PAS imposé
+
+Aucun quota automatique n'a été posé : la demande était d'ouvrir, pas de borner,
+et je ne rétrécis pas une demande en silence. Mais la dérogation 4h des motifs
+forex avait, elle, une règle d'arrêt écrite d'avance — et c'est ce qui l'a rendue
+lisible. Je recommande la même : **arrêt au premier des trois**, 30 ordres,
+−40 € cumulés, ou 14 jours. Un mot de Xavier suffit pour que je la pose.
+
+### Ce qui n'est PAS ouvert
+
+Les autres paires, les autres destinations, et la production du 1 h (il
+faudrait ajouter un facteur d'agrégation à `ECHELLES_AGREGEES`, ce qui change ce
+que le radar **fabrique** — un autre chantier, une autre déclaration).

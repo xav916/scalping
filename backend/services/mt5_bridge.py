@@ -73,6 +73,7 @@ from backend.services.shadow_v2_core_long import SHADOW_PAIRS as _STAR_PAIRS
 from config.settings import (
     PAIR_TRADING_HOURS_UTC,
     MT5_BRIDGE_PATTERN_OVERRIDES,
+    MT5_BRIDGE_HORIZON_OVERRIDES,
     MT5_BRIDGE_ENABLED,
     MT5_BRIDGE_URL,
     MT5_BRIDGE_API_KEY,
@@ -600,14 +601,33 @@ def _horizon_rejection(setup, dest) -> str | None:
 
     `dest.allowed_horizons is None` ⇒ aucun filtre, comportement d'avant le
     2026-08-05. Sinon **fail-closed** : horizon absent ou inconnu = refus.
+
+    ⛔ **L'override par paire tranche AVANT, et dans les deux sens**
+    (2026-10-01). `MT5_BRIDGE_HORIZON_OVERRIDES` est le seul dispositif qui
+    peut OUVRIR un horizon ; le reste de la cascade est restriction seule. Il
+    décide donc entièrement pour les couples (paire, destination) qu'il nomme :
+    ce qu'il déclare passe, ce qu'il ne déclare pas est refusé. Le laisser
+    seulement « ajouter » à `allowed_horizons` serait plus doux et moins
+    lisible — on ne saurait plus, en lisant une ligne, ce qui est ouvert.
     """
     if dest is None:
         return None
+
+    from backend.services.horizon import normalize as _normalize_horizon
+
+    par_paire = (MT5_BRIDGE_HORIZON_OVERRIDES or {}).get(
+        getattr(setup, "pair", None) or "")
+    if isinstance(par_paire, dict):
+        declares = par_paire.get(getattr(dest, "destination_id", None) or "")
+        if declares:
+            h = _normalize_horizon(getattr(setup, "horizon", None))
+            if h is None or h not in frozenset(declares):
+                return "horizon_not_allowed"
+            return None
+
     admis = getattr(dest, "allowed_horizons", None)
     if not admis:
         return None
-
-    from backend.services.horizon import normalize as _normalize_horizon
 
     h = _normalize_horizon(getattr(setup, "horizon", None))
     if h is None or h not in admis:
