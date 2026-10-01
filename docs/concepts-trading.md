@@ -1832,3 +1832,84 @@ une autre paire.
 ⚠️ Changement de **réglage** seulement, donc **pas de rebuild** : l'empreinte
 de déploiement ne bouge pas et l'armement REM-002 **survit**. Un simple
 `systemctl restart scalping` suffit.
+
+---
+
+## UNE PLACE PAR HORIZON SUR L'OR — déclaration du 2026-10-01
+
+### Le constat qui la motive
+
+Les six horizons de l'or ouverts à 18h36, et à **18h42** un `engulfing_bearish`
+**15 min** franchit la porte d'horizon… pour se faire refuser en
+`max_positions_per_pair` par une position **5 min** ouverte 31 minutes plus tôt.
+
+> **Ouvrir six horizons pour les faire retomber dans une seule place, ce n'est
+> pas les ouvrir.**
+
+Xavier : « tous les horizons ouverts pour l'or, mais que ça ne rétrécisse pas,
+des trades PAR horizon et pas des trades sur tous les horizons réunis. »
+
+### Les trois rétrécisseurs recensés, et ce qu'il a fallu à chacun
+
+| rétrécisseur | portée | action |
+|---|---|---|
+| `max_positions_per_pair` | une place par **paire** | **place par (paire, horizon)** |
+| `cooldown_symbole` | délai par symbole | **rien** — `delai_requis(admin_live)` vaut **0 s**, il ne rétrécissait rien |
+| `correlated_exposure` | or/or même sens = **1,0**, limite **2** | **limite portée à 6** |
+
+🔑 Le cooldown a été vérifié avant d'être touché. Le corriger « par symétrie »
+aurait ajouté du code à un dispositif qui ne gênait pas.
+
+### Deux plafonds superposés, et pourquoi pas un
+
+⛔ **Le courtier ne dit pas l'horizon** : une position, c'est un symbole, un
+sens, un ticket. L'horizon vit dans `mt5_pushes`, notre propre mémoire.
+
+    plafond de PAIRE     compté CHEZ LE COURTIER, la main comprise — le monde,
+                         et le filet
+    plafond d'HORIZON    attribué par ticket depuis `mt5_pushes` — plus fin,
+                         mais seulement aussi bon que notre journal
+
+Si le journal se trompe, le plafond de paire rattrape. Raffiner **sans** filet
+aurait remplacé une porte qui compte le monde par une porte qui compte sa
+mémoire — le défaut des 47 ordres WTI du 31/07, et celui du garde de
+corrélation trouvé le matin même.
+
+⚠️ Une position ouverte **à la main** n'a pas d'horizon : elle ne consomme
+aucune place d'échelle et compte dans le plafond de paire.
+
+### ⚠️ LE CHIFFRE QUI COMPTE, et qui n'est pas confortable
+
+Six places, c'est la **somme** des risques. Au lot minimum, le 01/10 :
+
+| échelle | risque | cumul |
+|---|---|---|
+| 5 min | 8,77 € | 8,77 € |
+| 15 min | 15,38 € | 24,15 € |
+| 30 min | 23,53 € | 47,68 € |
+| 1 h | 31,69 € | **79,37 €** |
+| 4 h · 1 j | 65,03 € chacun | ⛔ refusés en amont par `porte_risque_par_trade` |
+
+**79,37 € = 12,2 % d'un capital de 650 €**, contre un **plafond journalier de
+3 % = 19,50 €**.
+
+⇒ **Le plafond journalier devient la protection qui tranche**, et il est
+franchi par le **premier** stop de 30 min à lui seul. Il n'est pas touché. Un
+test interdit désormais la combinaison « plus de 2 places » + « plafond
+journalier désarmé » — la borne a été déplacée, la contrepartie ajoutée.
+
+### Les prédictions
+
+- **P1** — on verra des ordres or sur **plusieurs horizons le même jour**, ce
+  qui était impossible avant : c'est le test direct de la demande.
+- **P2** — le nombre de positions or simultanées restera le plus souvent à
+  **1 ou 2**, pas 6 : il faut que plusieurs échelles produisent un signal
+  admissible dans la même fenêtre, et la cadence mesurée est faible.
+- **P3** — **le plafond journalier sera atteint plus souvent**. C'est la
+  conséquence arithmétique directe, pas un effet de bord.
+- **P4** — aucune 7ᵉ position or, et aucune autre paire au-delà d'**une** place.
+
+### Ce qui n'est PAS fait
+
+Toujours aucune règle d'arrêt automatique sur l'ouverture des horizons : non
+demandée, non posée. Recommandation inchangée — 30 ordres, −40 €, 14 jours.

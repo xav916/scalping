@@ -427,8 +427,32 @@ def positions_ouvertes(destination_id: str) -> list[tuple[str, str]]:
 # (`porte_risque_par_trade`) : sans lui, deux positions or simultanées
 # portaient le pire cas de 9,2 % à 18 % du capital, pour une limite de perte
 # journalière de 3 %. Les deux ont été posées ensemble, exprès.
+# ⛔ **PORTEE A 6 LE 2026-10-01**, demande explicite de Xavier : « tous les
+# horizons ouverts pour l'or, et que ça ne rétrécisse pas ».
+#
+# 🔑 Les six horizons de l'or ont été ouverts sur `admin_live`
+# (`MT5_BRIDGE_HORIZON_OVERRIDES`) et une place par échelle posée
+# (`MT5_BRIDGE_PLACES_PAR_HORIZON`). Sans ce relèvement, l'or contre l'or dans
+# le MÊME sens vaut une exposition de **1,0** et la troisième échelle se
+# faisait refuser en `correlated_exposure` quoi qu'on fasse au cap par paire.
+# Ouvrir six horizons pour en servir deux n'aurait pas été les ouvrir.
+#
+# ⚠️ **Ce que ça coûte, mesuré, et assumé.** Six positions or simultanées
+# engagent la somme de leurs risques. Au lot minimum, le 01/10 :
+#
+#     5 min 8,77 € + 15 min 15,38 € + 30 min 23,53 € + 1 h 31,69 € = 79,37 €
+#     soit 12,2 % d'un capital de 650 €, contre un PLAFOND JOURNALIER de
+#     3 % = 19,50 €.
+#
+# ⇒ Le plafond journalier devient la protection qui tranche : il est franchi
+# par le PREMIER stop de 30 min. Il n'est pas touché, et il ne doit pas l'être.
+# Les horizons 4 h et 1 j restent par ailleurs refusés en amont par
+# `porte_risque_par_trade` (65,03 €, 10 % du capital).
+#
+# ⛔ La borne n'est pas retirée, elle est déplacée : la 7e position or est
+# toujours refusée, et toute autre paire garde sa limite de 1.
 LIMITE_PAR_PAIRE: dict[tuple[str, str], int] = {
-    ("admin_live", "XAU/USD"): 2,
+    ("admin_live", "XAU/USD"): 6,
 }
 
 

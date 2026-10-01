@@ -131,8 +131,20 @@ def test_le_motif_de_refus_est_TRADUIT():
 
 # ── La dérogation de concurrence sur l'or ────────────────────────────
 
-def test_l_or_du_REEL_a_DEUX_places():
-    assert cg.limite(DestFictive(), "XAU/USD") == 2
+def test_l_or_du_REEL_a_SIX_places():
+    """⛔ Passe de 2 a 6 le 2026-10-01, sur demande explicite de Xavier.
+
+    Les six horizons de l'or ont ete ouverts sur `admin_live` et une place par
+    echelle posee. L'or contre l'or dans le MEME sens vaut une exposition de
+    1,0 : a 2 places, la troisieme echelle se faisait refuser quoi qu'on fasse
+    au cap par paire. Six places = une par horizon.
+
+    ⚠️ Ce n'est PAS justifie par un edge mesure — il n'y en a pas : le
+    laboratoire du 01/10 rend 0 cellule retenue sur 232 pour l'or. C'est une
+    decision assumee, dont le cout est chiffre dans `correlation_guard` et
+    dont la contrepartie est le plafond journalier, verifie ci-dessous.
+    """
+    assert cg.limite(DestFictive(), "XAU/USD") == 6
 
 
 def test_les_AUTRES_paires_du_reel_gardent_UNE_place():
@@ -178,8 +190,21 @@ def test_AUCUNE_derogation_de_concurrence_sans_plafond_par_trade():
     assert prt.PLAFOND_PCT > 0, (
         "des dérogations de concurrence existent alors que le plafond de "
         "risque par trade est désarmé — le pire cas double sans contrepartie")
+    # ⛔ BORNE DEPLACEE DE 2 A 6 le 2026-10-01 (une place par horizon de l'or),
+    # et ce n'est pas un desserrage silencieux : la protection qui porte
+    # desormais la charge est VERIFIEE juste apres. A 6 places, le pire cas
+    # cumule vaut 79,37 € au lot minimum (5min+15min+30min+1h), soit 12,2 %
+    # d'un capital de 650 € — quatre fois le plafond journalier. C'est donc LUI
+    # qui tranche, et un test doit interdire la combinaison 6 places + aucun
+    # plafond journalier.
     for (compte, paire), n in cg.LIMITE_PAR_PAIRE.items():
-        assert n <= 2, f"{compte}:{paire} à {n} places — non mesuré"
+        assert n <= 6, f"{compte}:{paire} à {n} places — non mesuré"
+
+    from config.settings import DAILY_LOSS_LIMIT_PCT
+    assert DAILY_LOSS_LIMIT_PCT > 0, (
+        "des dérogations de concurrence à plus de 2 places existent alors que "
+        "le plafond journalier est désarmé — à 6 places le pire cas cumulé "
+        "dépasse quatre fois ce plafond, qui est la seule borne restante")
 
 
 # ── Les 15 % réservés à l'OR SEUL (2026-09-08) ───────────────────────
@@ -302,7 +327,7 @@ def test_un_objet_du_REGISTRE_ne_desarme_plus_le_garde_fou():
 def test_la_derogation_marche_AUSSI_avec_l_objet_du_registre():
     """⚠️ Sans résolution de l'identifiant, la clé de dérogation était ('', …)
     et ne correspondait à rien : la dérogation était muette, elle aussi."""
-    assert cg.limite(DestRegistreFictive(), "XAU/USD") == 2
+    assert cg.limite(DestRegistreFictive(), "XAU/USD") == 6
 
 
 def test_une_destination_INCONNUE_ne_rend_JAMAIS_l_illimite():

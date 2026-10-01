@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "lastScanned": 1789073933009,
+  "lastScanned": 1790811425460,
   "projectRoot": "C:\\Users\\xav91\\Scalping\\scalping",
   "techStack": {
     "languages": [
@@ -19,7 +19,7 @@
   },
   "build": {
     "buildCommand": null,
-    "testCommand": "cd \"C:/Users/xav91/Scalping/scalping\" && (timeout 900 python -m pytest backend/tests -q -p no:randomly > /tmp/bat8.txt 2>&1; echo \"EXIT=$?\" >> /tmp/bat8.txt); tail -5 /tmp/bat8.txt",
+    "testCommand": "python -m pytest backend/tests/ -q -m \"not network\" 2>&1 | tail -4",
     "lintCommand": null,
     "devCommand": null,
     "scripts": {}
@@ -49,7 +49,7 @@
       "path": "backend",
       "purpose": null,
       "fileCount": 4,
-      "lastAccessed": 1789073932962,
+      "lastAccessed": 1790811425384,
       "keyFiles": [
         "app.py",
         "auth.py",
@@ -61,7 +61,7 @@
       "path": "binance-bridge",
       "purpose": null,
       "fileCount": 2,
-      "lastAccessed": 1789073932963,
+      "lastAccessed": 1790811425387,
       "keyFiles": [
         "bridge.py",
         "requirements.txt"
@@ -71,7 +71,7 @@
       "path": "Claude outputs",
       "purpose": null,
       "fileCount": 1,
-      "lastAccessed": 1789073932964,
+      "lastAccessed": 1790811425387,
       "keyFiles": [
         "contexte-marche-2026-09-04.md"
       ]
@@ -80,7 +80,7 @@
       "path": "config",
       "purpose": "Configuration files",
       "fileCount": 2,
-      "lastAccessed": 1789073932965,
+      "lastAccessed": 1790811425388,
       "keyFiles": [
         "settings.py",
         "__init__.py"
@@ -90,7 +90,7 @@
       "path": "data",
       "purpose": "Data files",
       "fileCount": 2,
-      "lastAccessed": 1789073932965,
+      "lastAccessed": 1790811425389,
       "keyFiles": [
         "macro.db",
         "scalping.db"
@@ -99,34 +99,34 @@
     "deploy": {
       "path": "deploy",
       "purpose": null,
-      "fileCount": 9,
-      "lastAccessed": 1789073932966,
+      "fileCount": 12,
+      "lastAccessed": 1790811425392,
       "keyFiles": [
         "backup-s3.sh",
+        "bridge-windows-ec2.md",
         "bucket-lifecycle.json",
-        "dlm-policy.json",
-        "nginx-app-scalping-online.conf",
-        "nginx.conf"
+        "diag-lecture-seule.sh",
+        "dlm-policy.json"
       ]
     },
     "docs": {
       "path": "docs",
       "purpose": "Documentation",
-      "fileCount": 10,
-      "lastAccessed": 1789073932967,
+      "fileCount": 12,
+      "lastAccessed": 1790811425393,
       "keyFiles": [
         "ajouter-un-motif.md",
         "architecture-current-state.md",
+        "audit-externe-2026-09-16.md",
         "concepts-trading.md",
-        "gate_s8_brief_2026-07-04.md",
-        "macro-rollout.md"
+        "gate_s8_brief_2026-07-04.md"
       ]
     },
     "frontend": {
       "path": "frontend",
       "purpose": null,
       "fileCount": 3,
-      "lastAccessed": 1789073932967,
+      "lastAccessed": 1790811425394,
       "keyFiles": [
         "manifest.json",
         "robots.txt",
@@ -137,7 +137,7 @@
       "path": "frontend-react",
       "purpose": null,
       "fileCount": 16,
-      "lastAccessed": 1789073932968,
+      "lastAccessed": 1790811425395,
       "keyFiles": [
         "index.html",
         "package-lock.json",
@@ -150,7 +150,7 @@
       "path": "ibkr-bridge",
       "purpose": null,
       "fileCount": 4,
-      "lastAccessed": 1789073932968,
+      "lastAccessed": 1790811425396,
       "keyFiles": [
         "bridge.py",
         "requirements.txt",
@@ -161,7 +161,7 @@
       "path": "kraken-bridge",
       "purpose": null,
       "fileCount": 2,
-      "lastAccessed": 1789073932969,
+      "lastAccessed": 1790811425397,
       "keyFiles": [
         "bridge.py",
         "requirements.txt"
@@ -171,7 +171,7 @@
       "path": "kraken-spot-bridge",
       "purpose": null,
       "fileCount": 2,
-      "lastAccessed": 1789073932970,
+      "lastAccessed": 1790811425398,
       "keyFiles": [
         "bridge.py",
         "requirements.txt"
@@ -181,7 +181,7 @@
       "path": "monitoring",
       "purpose": null,
       "fileCount": 2,
-      "lastAccessed": 1789073932971,
+      "lastAccessed": 1790811425398,
       "keyFiles": [
         "ea-health-check.sh",
         "mt5-bridges-monitor.sh"
@@ -191,7 +191,7 @@
       "path": "mt5-bridge",
       "purpose": null,
       "fileCount": 10,
-      "lastAccessed": 1789073932972,
+      "lastAccessed": 1790811425400,
       "keyFiles": [
         "bridge.log",
         "bridge.py",
@@ -203,45 +203,53 @@
     "mt5-bridge-monitor": {
       "path": "mt5-bridge-monitor",
       "purpose": null,
-      "fileCount": 2,
-      "lastAccessed": 1789073932973,
+      "fileCount": 5,
+      "lastAccessed": 1790811425400,
       "keyFiles": [
         "bridge_monitor.py",
+        "disk-reclaim.service",
+        "disk-reclaim.timer",
+        "disk_reclaim.py",
         "monitor.env.template"
       ]
     },
-    "Nouveau dossier": {
-      "path": "Nouveau dossier",
+    "relais-signaux": {
+      "path": "relais-signaux",
       "purpose": null,
-      "fileCount": 0,
-      "lastAccessed": 1789073932973,
-      "keyFiles": []
+      "fileCount": 4,
+      "lastAccessed": 1790811425401,
+      "keyFiles": [
+        "parseur.py",
+        "releve.py",
+        "sonde-mt5.ps1",
+        "sonde-mt5.sh"
+      ]
     },
     "scripts": {
       "path": "scripts",
       "purpose": "Build/utility scripts",
-      "fileCount": 103,
-      "lastAccessed": 1789073932975,
+      "fileCount": 121,
+      "lastAccessed": 1790811425403,
       "keyFiles": [
+        "alerte_or_ic_markets_bornee.py",
         "armer-garde-fou-kraken.sh",
         "backfill_close_reasons.py",
         "backfill_close_reason_depuis_mt5.py",
-        "backfill_rejections.py",
-        "backfill_rejections_user_id.py"
+        "backfill_rejections.py"
       ]
     },
     "tests": {
       "path": "tests",
       "purpose": "Test files",
       "fileCount": 0,
-      "lastAccessed": 1789073932976,
+      "lastAccessed": 1790811425404,
       "keyFiles": []
     },
     "venv": {
       "path": "venv",
       "purpose": null,
       "fileCount": 2,
-      "lastAccessed": 1789073932976,
+      "lastAccessed": 1790811425405,
       "keyFiles": [
         "pyvenv.cfg"
       ]
@@ -250,7 +258,7 @@
       "path": "_macro_veto_analysis",
       "purpose": null,
       "fileCount": 9,
-      "lastAccessed": 1789073932977,
+      "lastAccessed": 1790811425406,
       "keyFiles": [
         "analyse_veto.py",
         "backtest.db",
@@ -263,7 +271,7 @@
       "path": "_recovery",
       "purpose": null,
       "fileCount": 1,
-      "lastAccessed": 1789073932978,
+      "lastAccessed": 1790811425408,
       "keyFiles": [
         "trades-neuve-from-ec2.db"
       ]
@@ -272,7 +280,7 @@
       "path": "__pycache__",
       "purpose": null,
       "fileCount": 1,
-      "lastAccessed": 1789073932979,
+      "lastAccessed": 1790811425409,
       "keyFiles": [
         "_tmp_bridge_monitor.cpython-314.pyc"
       ]
@@ -281,7 +289,7 @@
       "path": "backend\\models",
       "purpose": "Data models",
       "fileCount": 3,
-      "lastAccessed": 1789073932980,
+      "lastAccessed": 1790811425411,
       "keyFiles": [
         "macro_schemas.py",
         "schemas.py",
@@ -291,8 +299,8 @@
     "backend\\services": {
       "path": "backend\\services",
       "purpose": "Business logic services",
-      "fileCount": 131,
-      "lastAccessed": 1789073932981,
+      "fileCount": 138,
+      "lastAccessed": 1790811425412,
       "keyFiles": [
         "analysis_engine.py",
         "analytics_service.py",
@@ -302,8 +310,8 @@
     "backend\\tests": {
       "path": "backend\\tests",
       "purpose": "Test files",
-      "fileCount": 285,
-      "lastAccessed": 1789073932983,
+      "fileCount": 317,
+      "lastAccessed": 1790811425414,
       "keyFiles": [
         "conftest.py",
         "test_abandons_avant_dispatch.py",
@@ -314,7 +322,7 @@
       "path": "frontend\\docs",
       "purpose": "Documentation",
       "fileCount": 6,
-      "lastAccessed": 1789073932987,
+      "lastAccessed": 1790811425417,
       "keyFiles": [
         "bridge-setup.html",
         "cgu.html",
@@ -325,7 +333,7 @@
       "path": "frontend-react\\dist",
       "purpose": "Distribution/build output",
       "fileCount": 3,
-      "lastAccessed": 1789073932988,
+      "lastAccessed": 1790811425419,
       "keyFiles": [
         "index.html",
         "manifest.json",
@@ -336,14 +344,14 @@
       "path": "frontend-react\\node_modules",
       "purpose": "Dependencies",
       "fileCount": 1,
-      "lastAccessed": 1789073932989,
+      "lastAccessed": 1790811425423,
       "keyFiles": []
     },
     "frontend-react\\public": {
       "path": "frontend-react\\public",
       "purpose": "Public files",
       "fileCount": 2,
-      "lastAccessed": 1789073932990,
+      "lastAccessed": 1790811425424,
       "keyFiles": [
         "manifest.json",
         "sw.js"
@@ -353,7 +361,7 @@
       "path": "frontend-react\\src",
       "purpose": "Source code",
       "fileCount": 3,
-      "lastAccessed": 1789073932991,
+      "lastAccessed": 1790811425424,
       "keyFiles": [
         "App.tsx",
         "main.tsx",
@@ -364,14 +372,14 @@
       "path": "venv\\Lib",
       "purpose": "Library code",
       "fileCount": 0,
-      "lastAccessed": 1789073932995,
+      "lastAccessed": 1790811425428,
       "keyFiles": []
     },
     "venv\\Scripts": {
       "path": "venv\\Scripts",
       "purpose": "Build/utility scripts",
       "fileCount": 22,
-      "lastAccessed": 1789073932996,
+      "lastAccessed": 1790811425429,
       "keyFiles": [
         "activate",
         "activate.bat",
@@ -381,303 +389,87 @@
   },
   "hotPaths": [
     {
-      "path": "backend\\services\\laboratoire_or.py",
-      "accessCount": 11,
-      "lastAccessed": 1789228014701,
+      "path": "backend\\services\\trade_ledger.py",
+      "accessCount": 7,
+      "lastAccessed": 1790812503889,
       "type": "file"
     },
     {
-      "path": "backend\\services\\reglage_or.py",
-      "accessCount": 10,
-      "lastAccessed": 1788908882283,
+      "path": "scripts\\construire_ledger.py",
+      "accessCount": 6,
+      "lastAccessed": 1790812566382,
       "type": "file"
     },
     {
-      "path": "backend\\services\\telegram_service.py",
-      "accessCount": 8,
-      "lastAccessed": 1788864966288,
+      "path": "backend\\tests\\test_trade_ledger.py",
+      "accessCount": 4,
+      "lastAccessed": 1790812516975,
       "type": "file"
     },
     {
       "path": "backend\\services\\mt5_bridge.py",
-      "accessCount": 7,
-      "lastAccessed": 1789221076704,
-      "type": "file"
-    },
-    {
-      "path": "backend\\services\\bloc_risque.py",
-      "accessCount": 6,
-      "lastAccessed": 1788865202508,
-      "type": "file"
-    },
-    {
-      "path": "scripts\\daily_recap.py",
-      "accessCount": 6,
-      "lastAccessed": 1788907193348,
-      "type": "file"
-    },
-    {
-      "path": "backend\\tests\\test_canaux_telegram.py",
-      "accessCount": 4,
-      "lastAccessed": 1788866582973,
-      "type": "file"
-    },
-    {
-      "path": "backend\\tests\\test_bloc_risque.py",
-      "accessCount": 4,
-      "lastAccessed": 1788883497841,
-      "type": "file"
-    },
-    {
-      "path": "backend\\services\\promotion_engine.py",
-      "accessCount": 4,
-      "lastAccessed": 1788908908117,
-      "type": "file"
-    },
-    {
-      "path": "mt5-bridge\\bridge.py",
-      "accessCount": 4,
-      "lastAccessed": 1789220755969,
-      "type": "file"
-    },
-    {
-      "path": "scripts\\sonde.sh",
       "accessCount": 3,
-      "lastAccessed": 1788724357966,
+      "lastAccessed": 1790885347327,
       "type": "file"
     },
     {
-      "path": "scripts\\essai_ouverture_bout_en_bout.py",
+      "path": "backend\\services\\correlation_guard.py",
       "accessCount": 3,
-      "lastAccessed": 1788865324667,
+      "lastAccessed": 1790885463596,
       "type": "file"
     },
     {
-      "path": "backend\\services\\pair_admission_controller.py",
-      "accessCount": 3,
-      "lastAccessed": 1788907142283,
-      "type": "file"
-    },
-    {
-      "path": "backend\\tests\\test_reglage_or.py",
-      "accessCount": 3,
-      "lastAccessed": 1788907759558,
-      "type": "file"
-    },
-    {
-      "path": "backend\\tests\\test_abandons_avant_dispatch.py",
-      "accessCount": 3,
-      "lastAccessed": 1788909296928,
-      "type": "file"
-    },
-    {
-      "path": "backend\\services\\journal_sondes.py",
+      "path": "scripts\\cron\\construire-ledger.sh",
       "accessCount": 2,
-      "lastAccessed": 1788721374703,
+      "lastAccessed": 1790812727379,
       "type": "file"
     },
     {
-      "path": "backend\\tests\\test_portes_or_2026_09_08.py",
+      "path": "backend\\tests\\test_correlation_guard_lit_le_courtier.py",
       "accessCount": 2,
-      "lastAccessed": 1788880216452,
+      "lastAccessed": 1790850084327,
       "type": "file"
     },
     {
-      "path": "backend\\tests\\test_suivi_objectif_or.py",
-      "accessCount": 2,
-      "lastAccessed": 1788895677504,
-      "type": "file"
-    },
-    {
-      "path": "backend\\tests\\test_demotion_en_R.py",
-      "accessCount": 2,
-      "lastAccessed": 1788898136750,
-      "type": "file"
-    },
-    {
-      "path": "backend\\services\\suivi_objectif_or.py",
-      "accessCount": 2,
-      "lastAccessed": 1788907132412,
-      "type": "file"
-    },
-    {
-      "path": "backend\\tests\\test_laboratoire_or.py",
-      "accessCount": 2,
-      "lastAccessed": 1788907601427,
-      "type": "file"
-    },
-    {
-      "path": "backend\\tests\\test_mt5_sync_ligne_action_pas_position.py",
-      "accessCount": 2,
-      "lastAccessed": 1788926528056,
-      "type": "file"
-    },
-    {
-      "path": "backend\\services\\mt5_sync.py",
-      "accessCount": 2,
-      "lastAccessed": 1788926555348,
-      "type": "file"
-    },
-    {
-      "path": "backend\\tests\\test_alerte_position_sans_stop.py",
-      "accessCount": 2,
-      "lastAccessed": 1788927319329,
-      "type": "file"
-    },
-    {
-      "path": "scripts\\notify-daily-health.sh",
+      "path": "scripts\\banc_cible_sur_liquidite.py",
       "accessCount": 1,
-      "lastAccessed": 1788722152910,
+      "lastAccessed": 1790848556728,
       "type": "file"
     },
     {
-      "path": "backend\\app.py",
+      "path": "scripts\\armer-execution.sh",
       "accessCount": 1,
-      "lastAccessed": 1788877650398,
+      "lastAccessed": 1790861432758,
       "type": "file"
     },
     {
-      "path": "backend\\services\\porte_risque_par_trade.py",
+      "path": "backend\\tests\\test_horizon_override_par_paire.py",
       "accessCount": 1,
-      "lastAccessed": 1788880079947,
-      "type": "file"
-    },
-    {
-      "path": "backend\\tests\\test_empreintes_bridges.py",
-      "accessCount": 1,
-      "lastAccessed": 1788884426427,
-      "type": "file"
-    },
-    {
-      "path": "backend\\tests\\test_fenetres_sqlite.py",
-      "accessCount": 1,
-      "lastAccessed": 1788891036905,
-      "type": "file"
-    },
-    {
-      "path": "scripts\\verifier-scripts-opt.sh",
-      "accessCount": 1,
-      "lastAccessed": 1788896619529,
-      "type": "file"
-    },
-    {
-      "path": "backend\\services\\echelle_agregee.py",
-      "accessCount": 1,
-      "lastAccessed": 1788900296327,
-      "type": "file"
-    },
-    {
-      "path": "backend\\tests\\test_echelle_agregee.py",
-      "accessCount": 1,
-      "lastAccessed": 1788900383415,
-      "type": "file"
-    },
-    {
-      "path": "backend\\services\\research_bench.py",
-      "accessCount": 1,
-      "lastAccessed": 1788907131716,
+      "lastAccessed": 1790872014234,
       "type": "file"
     },
     {
       "path": "config\\settings.py",
       "accessCount": 1,
-      "lastAccessed": 1788907147655,
+      "lastAccessed": 1790872047140,
       "type": "file"
     },
     {
-      "path": "backend\\services\\scheduler.py",
+      "path": "scripts\\verifier_incoherence_vs_hasard.py",
       "accessCount": 1,
-      "lastAccessed": 1788907857310,
+      "lastAccessed": 1790884148526,
       "type": "file"
     },
     {
-      "path": "backend\\services\\canaux_telegram.py",
+      "path": "scripts\\test_hors_echantillon_pin_bar_or_30min.py",
       "accessCount": 1,
-      "lastAccessed": 1788908868881,
+      "lastAccessed": 1790884793629,
       "type": "file"
     },
     {
-      "path": "backend\\tests\\test_notification_canal.py",
+      "path": "backend\\tests\\test_places_par_horizon.py",
       "accessCount": 1,
-      "lastAccessed": 1788908962686,
-      "type": "file"
-    },
-    {
-      "path": "backend\\tests\\test_bridge_attendre_la_position.py",
-      "accessCount": 1,
-      "lastAccessed": 1788927198492,
-      "type": "file"
-    },
-    {
-      "path": "scripts\\mesurer_echelles_or.py",
-      "accessCount": 1,
-      "lastAccessed": 1788936674840,
-      "type": "file"
-    },
-    {
-      "path": "scripts\\mesurer-echelles-or.sh",
-      "accessCount": 1,
-      "lastAccessed": 1788936682688,
-      "type": "file"
-    },
-    {
-      "path": "backend\\tests\\test_mesure_echelles_or.py",
-      "accessCount": 1,
-      "lastAccessed": 1788936713372,
-      "type": "file"
-    },
-    {
-      "path": "backend\\tests\\test_correlation_guard_identifiant.py",
-      "accessCount": 1,
-      "lastAccessed": 1788938150115,
-      "type": "file"
-    },
-    {
-      "path": "backend\\tests\\test_correlations_persistantes.py",
-      "accessCount": 1,
-      "lastAccessed": 1788939066371,
-      "type": "file"
-    },
-    {
-      "path": "scripts\\regenerer-correlations.sh",
-      "accessCount": 1,
-      "lastAccessed": 1788939172416,
-      "type": "file"
-    },
-    {
-      "path": "backend\\tests\\test_plafond_arbitrage_peremption.py",
-      "accessCount": 1,
-      "lastAccessed": 1788973226821,
-      "type": "file"
-    },
-    {
-      "path": "backend\\tests\\test_detecteur_fvg.py",
-      "accessCount": 1,
-      "lastAccessed": 1788974789716,
-      "type": "file"
-    },
-    {
-      "path": "scripts\\mesurer_face_a_face_gaps.py",
-      "accessCount": 1,
-      "lastAccessed": 1788975648873,
-      "type": "file"
-    },
-    {
-      "path": "backend\\tests\\test_arbitrage_plafond_courtier.py",
-      "accessCount": 1,
-      "lastAccessed": 1788976654416,
-      "type": "file"
-    },
-    {
-      "path": "backend\\tests\\test_frequence_des_motifs.py",
-      "accessCount": 1,
-      "lastAccessed": 1788979579493,
-      "type": "file"
-    },
-    {
-      "path": "docs\\ajouter-un-motif.md",
-      "accessCount": 1,
-      "lastAccessed": 1788979985107,
+      "lastAccessed": 1790885316130,
       "type": "file"
     }
   ],

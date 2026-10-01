@@ -258,6 +258,92 @@ def _max_positions_for_pair(pair: str) -> int:
     return 2  # défaut générique
 
 
+# Places PAR HORIZON (2026-10-01). `{"XAU/USD": 1}` = un ordre simultané par
+# échelle, donc jusqu'à six sur l'or. Absent ⇒ aucun découpage, le cap de paire
+# seul décide, comportement d'avant.
+#
+# ⛔ **Pourquoi deux plafonds et pas un.** Le courtier ne dit PAS l'horizon :
+# une position est un symbole, un sens, un ticket. L'horizon vit dans
+# `mt5_pushes`, notre propre mémoire. On superpose donc :
+#
+#     plafond de PAIRE    compté chez le COURTIER, la main comprise — le monde
+#     plafond d'HORIZON   attribué par ticket depuis `mt5_pushes` — plus fin,
+#                         mais seulement aussi bon que notre journal
+#
+# Si le journal se trompe, le plafond de paire rattrape. Raffiner SANS filet
+# remplacerait une porte qui compte le monde par une porte qui compte sa
+# mémoire — le défaut des 47 ordres WTI du 31/07, et celui du garde de
+# corrélation trouvé le matin même.
+try:
+    import json as _json_places
+    _raw_places = os.getenv("MT5_BRIDGE_PLACES_PAR_HORIZON", "")
+    MT5_BRIDGE_PLACES_PAR_HORIZON = (
+        _json_places.loads(_raw_places) if _raw_places else {})
+    if not isinstance(MT5_BRIDGE_PLACES_PAR_HORIZON, dict):
+        MT5_BRIDGE_PLACES_PAR_HORIZON = {}
+except Exception:  # noqa: BLE001 — réglage illisible = aucun découpage
+    MT5_BRIDGE_PLACES_PAR_HORIZON = {}
+
+
+def _horizon_du_ticket(ticket) -> str | None:
+    """L'horizon qui a ouvert ce ticket, ou `None` si on ne sait pas.
+
+    `None` couvre une position ouverte à la main, un ticket antérieur au
+    journal, ou une lecture ratée. Dans les trois cas elle ne consomme aucune
+    place d'ÉCHELLE — elle reste comptée dans le plafond de paire, qui lui
+    vient du courtier.
+    """
+    if not ticket:
+        return None
+    try:
+        import sqlite3
+        from backend.services.trade_log_service import _DB_PATH
+        with sqlite3.connect(f"file:{_DB_PATH}?mode=ro", uri=True,
+                             timeout=5) as c:
+            row = c.execute(
+                "SELECT horizon FROM mt5_pushes WHERE mt5_ticket = ? "
+                " AND horizon IS NOT NULL ORDER BY id DESC LIMIT 1",
+                (ticket,)).fetchone()
+        return str(row[0]) if row and row[0] else None
+    except Exception as e:  # noqa: BLE001
+        logger.debug("mt5_bridge: horizon du ticket %s illisible (%s)",
+                     ticket, e)
+        return None
+
+
+def _places_libres_pour(pair: str, horizon, dest) -> int | None:
+    """Places restantes pour ce couple (paire, horizon). `None` = indécidable.
+
+    Rend le MINIMUM des deux marges — celle de la paire et celle de l'horizon.
+    Zéro suffit à refuser ; la valeur exacte sert aux tests et aux logs.
+    """
+    positions = _positions_courtier(dest, sans_cache=True)
+    if positions is None:
+        return None
+    cible = _symbole_courtier_pour(pair, dest).upper()
+    if not cible:
+        return None
+    sur_la_paire = [p for p in positions
+                    if str((p or {}).get("symbol") or "").upper() == cible]
+
+    marge_paire = _max_positions_for_pair(pair) - len(sur_la_paire)
+
+    par_horizon = (MT5_BRIDGE_PLACES_PAR_HORIZON or {}).get(pair)
+    if not par_horizon:
+        return max(0, marge_paire)
+
+    from backend.services.horizon import normalize as _normalize_horizon
+    vise = _normalize_horizon(horizon)
+    if vise is None:
+        # Un horizon illisible ne peut pas revendiquer une place d'échelle ;
+        # le plafond de paire reste seul juge, comme avant ce découpage.
+        return max(0, marge_paire)
+    deja = sum(1 for p in sur_la_paire
+               if _horizon_du_ticket((p or {}).get("ticket")) == vise)
+    marge_horizon = int(par_horizon) - deja
+    return max(0, min(marge_paire, marge_horizon))
+
+
 # Le cap par paire est consulté une fois par setup et par destination : sans
 # cache, une vague de signaux ferait autant d'aller-retours HTTP.
 _POSITIONS_CACHE_SEC = float(os.getenv("MT5_POSITIONS_CACHE_SEC", "10"))
@@ -1212,16 +1298,22 @@ def _check_rejection(setup, dest=None) -> str | None:
     if (dest is not None and getattr(dest, "bridge_url", "")
             and getattr(dest, "bridge_type", "mt5") == "mt5"
             and getattr(dest, "user_id", -1) is None):
-        open_count = _compter_positions_courtier(setup.pair, dest)
-        if open_count is None:
+        # ⛔ `_places_libres_pour` superpose DEUX plafonds : celui de la paire,
+        # compté chez le courtier, et celui de l'HORIZON, attribué par ticket
+        # depuis `mt5_pushes`. Sans réglage `MT5_BRIDGE_PLACES_PAR_HORIZON`,
+        # il rend exactement la marge de paire — comportement d'avant.
+        places = _places_libres_pour(
+            setup.pair, getattr(setup, "horizon", None), dest)
+        if places is None:
             # ⛔ « On ne sait pas » n'est pas « il reste de la place ». Un
             # bridge muet ne laissera de toute façon pas passer l'ordre.
             return "max_positions_per_pair_indecidable"
+        if places <= 0:
+            return "max_positions_per_pair"
     else:
         open_count = _count_open_trades_for_pair(setup.pair)
-    max_allowed = _max_positions_for_pair(setup.pair)
-    if open_count >= max_allowed:
-        return "max_positions_per_pair"
+        if open_count >= _max_positions_for_pair(setup.pair):
+            return "max_positions_per_pair"
     # Délai minimum entre deux ordres sur un même symbole. Le cap ci-dessus
     # borne les positions SIMULTANÉES ; il ne dit rien du rythme quand elles
     # se ferment vite. Le 2026-08-04, six ordres ETH en vingt-sept minutes,
