@@ -1496,3 +1496,78 @@ cellules.
 ⚠️ Et quoi qu'il arrive : ces ordres seront marqués pour être **exclus des
 verdicts de stratégie**. Le P&L d'une dérogation n'est pas une mesure d'edge —
 c'est la leçon des 9 ordres du fail-open de septembre.
+
+---
+
+## La CIBLE SUR LA LIQUIDITÉ — déclaration du 2026-10-01
+
+### D'où vient la question
+
+Le 01/10 à 03h06, un `momentum_up` 4h sur USD/JPY est sorti avec un objectif à
+**160,445**. Mesuré le même jour sur les 4h du courtier : le plus haut des
+**42 derniers jours** vaut 160,405, celui des 10 derniers 159,029. L'objectif
+était donc posé **au-dessus de tout plafond atteint depuis six semaines**, sans
+que rien ne l'ait regardé — `calculate_trade_setup` pose `TP₁ = risque × 1,8`,
+point final.
+
+Or une brique qui fait exactement ce qu'il faudrait existe déjà :
+`_niveaux_poc` pose sa cible sur `market_profile.niveaux_liquidite()`, c'est-à-dire
+le plus haut sommet fractal de la fenêtre — un plafond **déjà atteint**. Elle est
+réservée à `poc_return_up/down`, qui n'a le droit de trader nulle part.
+
+### La règle mise à l'épreuve
+
+Quatre variantes de l'objectif, le stop et l'entrée inchangés :
+
+| | variante | objectif |
+|---|---|---|
+| **A** | référence | `1,8 × risque` — la règle en place |
+| **B** | **plafonnée** | `min(1,8 R, niveau de liquidité)`, refus si < `POC_RR_MIN` |
+| **C** | niveau seul | le niveau de liquidité, même s'il est **plus loin** que 1,8 R |
+| **D** | **placebo de longueur** | objectif FIXE = médiane des objectifs de B, **mêmes trades admis que B** |
+
+**D est le contrôle qui décide.** Plafonner raccourcit mécaniquement l'objectif,
+et raccourcir a déjà été mesuré comme coûteux sur l'or (banc du 08/09 : R moyen
+croissant de 1,0 R à 2,5 R). Sans D, un écart entre A et B serait illisible : on
+ne saurait pas s'il vient du **niveau** ou de la **longueur**. D porte la même
+longueur que B sans regarder le moindre niveau.
+
+### Aucun réglage neuf — ce qui est repris, et d'où
+
+- **La cible** : `niveaux_liquidite()["au_dessus"/"en_dessous"]`, **sans marge**,
+  exactement comme `_niveaux_poc` la pose aujourd'hui.
+- **Le plancher** : `POC_RR_MIN = 1,0`, déjà mesuré sur 414 setups réels.
+- **La fenêtre** : `bougies[i-FENETRE:i]` — ce que le détecteur a vu, pas une
+  bougie de plus. La bougie d'entrée ne sert jamais à calculer le niveau.
+- **Le rejeu** : `_issue`, `detections`, `controle_aleatoire`, `_stat`, `_welch`,
+  `plafond_hasard`, `PLACEBO_PCT`, `_bougies_et_spread`. Rien de réécrit.
+
+### Ce que ce banc NE mesure PAS
+
+⛔ Il rejoue du **5 min**. La question est née d'un trade **4h** sur une paire
+forex. `_bougies_et_spread` est câblé en M5 et le recâbler fabriquerait un
+second banc incomparable au premier. **Le cas 4h n'est pas couvert**, et aucun
+verdict d'ici ne doit lui être appliqué.
+
+### La prédiction, déclarée AVANT de produire un chiffre
+
+**Je prédis que le plafonnement dégrade.**
+
+- **P1** — `R(B) < R(A)` sur la fenêtre de 90 jours. Raccourcir coûte, et le
+  filtre de refus ne compensera pas.
+- **P2** — aucune des 4 variantes ne franchit `plafond_hasard(4)` avec un R positif.
+- **P3** — **B ne se distingue pas de D** : `|R(B) − R(D)|` reste sous l'écart-type
+  du contrôle aléatoire. Autrement dit, ce que fait B s'explique par la
+  **longueur** de l'objectif, pas par le niveau visé.
+- **P4** — hors échantillon (jours 90 → 365, jamais rejoués par les nuits du
+  laboratoire), le signe de `R(B) − R(A)` **ne tient pas**.
+
+### La règle de décision, écrite d'avance
+
+**RETENU** seulement si les quatre conditions tiennent **ensemble** :
+B bat A, **et** B bat D, **et** B franchit `plafond_hasard(4)`, **et** le signe
+de l'écart se répète hors échantillon.
+
+Un seul manquement ⇒ **⛔ NON RETENU**, et `PATTERN_TP1_RR = 1,8` reste en place.
+Un résultat positif sur la seule fenêtre vue ne vaut rien : c'est exactement ce
+qui a fait paraître bonnes les 75 variantes précédentes.
