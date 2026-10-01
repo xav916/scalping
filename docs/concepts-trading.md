@@ -1632,13 +1632,48 @@ Allonger la fenêtre de lecture du niveau serait un **degré de liberté neuf**,
 ajouté après avoir vu un résultat — donc une nouvelle déclaration, pas une
 retouche de celle-ci.
 
-#### Observation annexe, hors prédictions
+#### ⛔ Observation annexe RETIREE le 2026-10-01 — c'etait un artefact
 
-Hors échantillon, A bat son contrôle aléatoire avec `t = +8,60` sur 25 612
-trades — mais son R reste **négatif** (−0,0022 contre −0,0791). Les motifs
-choisissent donc mieux que le hasard **et perdent quand même** une fois le
-spread payé. Cohérent avec « le spread est la perte » ; aucune décision n'en
-découle, et le contrôle aléatoire tire à des heures que les détecteurs évitent.
+J'avais ecrit : « hors echantillon, A bat son controle aleatoire avec
+`t = +8,60` sur 25 612 trades ». **C'est faux, et la faute est dans mon banc.**
+
+Ce banc tirait **UN SEUL controle**, au risque et a l'objectif medians
+**globaux**, puis le comparait a des cellules dont les stops varient fortement.
+Or le cout vaut `spread / risque` : un controle au stop median ne paie pas les
+memes frais qu'une cellule a stop serre. L'ecart mesure etait donc une
+difference de **cout**, pas de direction.
+
+Verifie le 2026-10-01 (`scripts/verifier_incoherence_vs_hasard.py`), meme paire,
+meme fenetre de 90 jours, 38 cellules, 8 394 trades, controle tire **par
+cellule** au risque de cette cellule :
+
+    deltas par cellule, poids egal      -0,0342     <- ce que publie le labo
+    deltas ponderes par n               -0,0099
+    tous les trades en commun           -0,0097     <- mon banc, controle CORRIGE
+
+Les trois sont **negatifs**. Le `+0,0176` que mon banc rendait sur cette meme
+fenetre, et le `+8,60` hors echantillon, venaient de l'appariement manquant.
+
+⚠️ **Ce que cela ne change pas** : le verdict NON RETENU ci-dessus tient. Ses
+quatre predictions comparent des VARIANTES entre elles (A, B, C, D), toutes
+mesurees de la meme facon, et la condition qui tranchait etait `R < 0` — pas un
+franchissement de barre. Seule l'observation annexe tombe.
+
+#### 🔑 Ce que la verification apprend en plus, et qui est vrai
+
+Les cellules **frequentes** battent leur controle (`delta +0,0072` sur 19
+cellules et 6 314 trades) ; les cellules **rares** le manquent largement
+(`-0,0757` sur 19 cellules et 2 080 trades). D'ou l'ecart entre le `-0,0342` du
+labo et le `-0,0099` pondere : le labo donne le meme poids a une cellule de 3
+trades et a une de 500.
+
+Les deux lectures sont exactes et repondent a deux questions differentes :
+
+    poids egal  ->  << une cellule TYPE bat-elle son hasard ? >>        NON
+    ponderee    ->  << le FLUX que le systeme prendrait le bat-il ? >>  NON aussi,
+                    mais 3,5 fois moins mal
+
+Il faut donc dire laquelle on pose. Aucune des deux ne rend l'or positif.
 
 ---
 
