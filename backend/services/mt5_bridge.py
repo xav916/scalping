@@ -562,7 +562,9 @@ def _cost_rejection(setup, dest) -> str | None:
         try:
             from backend.services.chaines_autorisees import autorisee
             _dest_id = getattr(dest, "destination_id", None)
-            _levee = autorisee(_chaine_c, _dest_id, getattr(setup, "horizon", None))
+            _levee = autorisee(_chaine_c, _dest_id,
+                               getattr(setup, "horizon", None),
+                               getattr(setup, "pair", None))
         except Exception as e:  # noqa: BLE001
             # ⛔ Fail-CLOSED, comme `_patterns_autorises`. Un registre en
             # erreur qui ouvrirait la porte transformerait une panne de
@@ -902,7 +904,9 @@ def _patterns_autorises(setup, dest):
         try:
             from backend.services.chaines_autorisees import autorisee
             _dest_c = getattr(dest, "destination_id", None) if dest else None
-            _armee = autorisee(_chaine, _dest_c, getattr(setup, "horizon", None))
+            _armee = autorisee(_chaine, _dest_c,
+                               getattr(setup, "horizon", None),
+                               getattr(setup, "pair", None))
         except Exception as e:  # noqa: BLE001
             logger.warning("registre des chaines illisible : %s", e)
             _armee = False          # ⛔ fail-CLOSED

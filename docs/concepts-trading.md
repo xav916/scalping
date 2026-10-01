@@ -1913,3 +1913,73 @@ journalier désarmé » — la borne a été déplacée, la contrepartie ajouté
 
 Toujours aucune règle d'arrêt automatique sur l'ouverture des horizons : non
 demandée, non posée. Recommandation inchangée — 30 ordres, −40 €, 14 jours.
+
+---
+
+## `sur_niveau_majeur` ARMÉ SUR L'OR — déclaration du 2026-10-01
+
+### Ce que la mesure dit, et pourquoi c'est particulier
+
+Deux chaînes déclarées : `liquidity_sweep_up` + `sur_niveau_majeur_bas`
+(haussier), et le miroir baissier. Le prédicat prend l'extrême **max/min sur
+400 bougies**, tolérance 0,5 × ATR, bougie courante exclue, et exige que le
+niveau **ne soit pas dépassé** — c'est la formalisation la plus aboutie du
+« plafond/plancher déjà atteint » dans ce dépôt.
+
+Les deux cellules **reproduites au millième** (écart 0,0014 et 0,0013) puis
+mesurées sur les jours 90 → 365 jamais rejoués :
+
+| chaîne | n vue | R vue | n OOS | **R OOS** | t_vs OOS | barre 1 test |
+|---|---|---|---|---|---|---|
+| `sweep_sur_niveau_majeur_haussier` buy | 13 | **−0,1662** | 27 | **+0,4297** | +1,693 | 0,798 |
+| `sweep_sur_niveau_majeur_baissier` sell | 8 | **−0,3244** | 30 | **+0,2788** | +1,409 | 0,798 |
+
+⛔ **Le signe S'INVERSE sur les deux.** Lecture : **INSTABLE** — ni preuve ni
+réfutation. À n = 8 à 30, l'estimation ne porte pas d'information.
+
+🔑 **Et c'est précisément ce qui rend cet armement défendable**, contrairement
+aux horizons ouverts plus tôt le même jour. Là, la mesure disait « négatif, de
+façon répétée ». Ici elle dit « **je ne sais pas** ». Seule une mesure
+prospective peut trancher, et le coût de la poser est borné :
+
+    cadence mesurée : 13+8 trades / 90 j  et  27+30 / 275 j  ≈ 0,2 ordre / jour
+    risque par ordre : ≈ 8,77 € au lot minimum sur l'or 5 min
+    ⇒ ≈ 2 € par semaine d'exposition si le vrai R vaut −0,2
+
+### ⛔ Ce qu'il a fallu construire avant de pouvoir armer
+
+`autorisee(nom, destination, horizon)` **n'avait aucune dimension de paire**.
+L'armer à 5 min sur `admin_live` l'aurait armé sur les **25 paires** de la
+portée du compte — 11 cryptos, l'argent, le WTI. Et ce registre **contourne la
+liste blanche des motifs** : il aurait ouvert un chemin vers l'argent réel sur
+25 instruments dont la plupart n'ont jamais été mesurés pour cette chaîne.
+
+> **« Sur niveau majeur » dans une conversation sur l'or veut dire sur l'or.**
+
+La dimension de paire est donc posée, fail-closed : registre scopé par paire +
+aucune paire transmise ⇒ **refus**. La forme en liste reste acceptée pour
+compatibilité, mais elle **le dit dans les journaux** — une portée large ne doit
+jamais être silencieuse.
+
+### Ce qui est armé, exactement
+
+    CHAINES_AUTORISEES={"admin_live": {"5min":  {"XAU/USD": [les deux chaînes]},
+                                       "15min": {"XAU/USD": [les deux chaînes]},
+                                       "30min": {"XAU/USD": [les deux chaînes]}}}
+
+⚠️ **1 h, 4 h et 1 j sont volontairement ABSENTS** : le 1 h n'est pas produit
+(échelles agrégées = 15 et 30 min) et le 4 h comme le 1 j sont refusés en amont
+par `porte_risque_par_trade` à 10 % du capital. Les déclarer aurait prétendu
+ouvrir ce qui ne peut pas s'ouvrir.
+
+### Les prédictions
+
+- **P1** — moins de **1 ordre tous les 4 jours** sur ces deux chaînes réunies.
+  Si la cadence dépasse 1/jour, quelque chose ne correspond pas à la mesure et
+  il faut s'arrêter avant d'interpréter le R.
+- **P2** — le R réel sera **indécidable avant des mois** : à 0,2 ordre/jour, il
+  faut ~150 jours pour atteindre n=30. Personne ne doit lire un verdict dans
+  les dix premiers ordres.
+- **P3** — aucun ordre de ces chaînes sur une autre paire que `XAU/USD`, ni sur
+  `admin_legacy`, ni à un horizon non déclaré. C'est la portée, et elle est
+  testable directement dans `signal_rejections`.

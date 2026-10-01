@@ -87,7 +87,7 @@ def dest():
 def test_1_chaine_armee_et_motif_lisible_donne_allow(monkeypatch, dest):
     monkeypatch.setattr(
         "backend.services.chaines_autorisees.autorisee",
-        lambda nom, destination_id, horizon: True,
+        lambda nom, destination_id, horizon, pair=None: True,
     )
     d = chain_execution_gate(
         _Setup(chaine="chaine:sweep_avec_biais_haussier"), dest)
@@ -102,7 +102,7 @@ def test_1_chaine_armee_et_motif_lisible_donne_allow(monkeypatch, dest):
 def test_2_chaine_non_armee_donne_deny(monkeypatch, dest):
     monkeypatch.setattr(
         "backend.services.chaines_autorisees.autorisee",
-        lambda nom, destination_id, horizon: False,
+        lambda nom, destination_id, horizon, pair=None: False,
     )
     d = chain_execution_gate(
         _Setup(chaine="chaine:choch_puis_fvg_baissier"), dest)
@@ -120,7 +120,7 @@ def test_3_registre_vide_donne_deny(monkeypatch, dest):
         "backend.services.chaines_autorisees.armees", lambda: [])
     monkeypatch.setattr(
         "backend.services.chaines_autorisees.autorisee",
-        lambda nom, destination_id, horizon: False,
+        lambda nom, destination_id, horizon, pair=None: False,
     )
     d = chain_execution_gate(_Setup(chaine="chaine:quelconque"), dest)
     assert d.decision == DENY
@@ -160,7 +160,7 @@ def test_5_exception_interne_donne_deny(monkeypatch, dest):
 def test_6_motif_inconnu_avec_chaine_non_armee_est_refuse(monkeypatch, dest):
     monkeypatch.setattr(
         "backend.services.chaines_autorisees.autorisee",
-        lambda nom, destination_id, horizon: False,
+        lambda nom, destination_id, horizon, pair=None: False,
     )
     d = chain_execution_gate(
         _Setup(motif="motif_totalement_inconnu",
@@ -174,7 +174,7 @@ def test_6b_motif_indeterminable_sur_chaine_armee_est_refuse(
     """Armee mais motif illisible : on ne sait pas ce qu'on ouvrirait."""
     monkeypatch.setattr(
         "backend.services.chaines_autorisees.autorisee",
-        lambda nom, destination_id, horizon: True,
+        lambda nom, destination_id, horizon, pair=None: True,
     )
     d = chain_execution_gate(_Setup(motif=None, chaine="chaine:armee"), dest)
     assert d.decision == DENY
@@ -243,7 +243,7 @@ def test_une_chaine_non_armee_ne_supprime_plus_la_liste_blanche(monkeypatch):
 
     monkeypatch.setattr(
         "backend.services.chaines_autorisees.autorisee",
-        lambda nom, destination_id, horizon: False,
+        lambda nom, destination_id, horizon, pair=None: False,
     )
     monkeypatch.setattr(
         mt5_bridge, "MT5_BRIDGE_ALLOWED_PATTERNS",
@@ -271,7 +271,7 @@ def test_integration_le_dispatch_refuse_une_chaine_non_armee(monkeypatch):
 
     monkeypatch.setattr(
         "backend.services.chaines_autorisees.autorisee",
-        lambda nom, destination_id, horizon: False,
+        lambda nom, destination_id, horizon, pair=None: False,
     )
     setup = _Setup(motif="fvg_down", chaine="chaine:non_armee")
     raison = mt5_bridge._check_rejection(setup, _Dest("admin_live"))
@@ -294,7 +294,7 @@ def test_integration_la_porte_passe_avant_les_autres(monkeypatch):
 
     monkeypatch.setattr(
         "backend.services.chaines_autorisees.autorisee",
-        lambda nom, destination_id, horizon: False,
+        lambda nom, destination_id, horizon, pair=None: False,
     )
     setup = _Setup(motif="motif_inconnu", chaine="chaine:non_armee",
                    pair="PAIRE/INEXISTANTE")

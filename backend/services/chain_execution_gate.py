@@ -136,10 +136,15 @@ def chain_execution_gate(setup, dest=None) -> ChainDecision:
         try:
             from backend.services.chaines_autorisees import autorisee
 
-            # ⚠️ Ordre des arguments PIEGEUX : (nom, destination_id, horizon).
-            # Une inversion rend False « a raison » et ne prouve rien — piege
-            # tombe le 2026-09-25 en verifiant la fermeture.
-            armee = bool(autorisee(chain_id, destination_id, horizon))
+            # ⚠️ Ordre des arguments PIEGEUX : (nom, destination_id, horizon,
+            # pair). Une inversion rend False « a raison » et ne prouve rien —
+            # piege tombe le 2026-09-25 en verifiant la fermeture.
+            #
+            # ⛔ `pair` ajoute le 2026-10-01 : sans elle, un registre scope par
+            # paire refuse TOUT ici — fail-closed, donc sans danger, mais
+            # l'armement serait silencieusement inoperant sur ce chemin.
+            armee = bool(autorisee(chain_id, destination_id, horizon,
+                                   getattr(setup, "pair", None)))
         except Exception as e:  # noqa: BLE001
             logger.warning(
                 "REM-001 porte de chaine : registre illisible (%s) -> DENY", e
