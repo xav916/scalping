@@ -53,3 +53,5 @@ deployment_manifest.json
 # travail de l'EC2 SALE en permanence — donc `generer_manifest_deploiement.py
 # --exiger-propre` aurait bloque tous les deploiements (trouve le 2026-09-28).
 docs/changelog.json
+.omc/sessions/
+.omc/project-memory.json
