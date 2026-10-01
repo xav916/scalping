@@ -110,7 +110,30 @@ sudo docker build -t scalping-radar:latest .
 # declare. Une divergence ferme l'execution (REM-002), elle ne la signale pas.
 echo "=== REM-003 EXPECTED_GIT_COMMIT dans /opt/scalping/.env ==="
 sudo sed -i '/^EXPECTED_GIT_COMMIT=/d' /opt/scalping/.env
+# ⛔ GARANTIR LE SAUT DE LIGNE FINAL AVANT D'AJOUTER (2026-10-02). Le `.env`
+# edite a la main peut ne pas finir par un 
+ ; ce `tee -a` collait alors sa
+# variable derriere la precedente. Constate le 01/10 a 22h21 :
+#
+#     ECHELLES_MEMOIRE_M5=520EXPECTED_GIT_COMMIT=1e6688af4265...
+#
+# `int()` levait, `_horizons_agreges` repliait sur <<aucun ouvert>>, et les
+# echelles 15/30/60 min ont ete FERMEES pendant dix minutes — sans erreur
+# visible ailleurs qu'une ligne de warning. Deux variables perdues d'un coup :
+# la mienne tronquee, la sienne jamais lue.
+#
+# 🔑 `tail -c 1` plutot qu'un test de taille : un fichier vide n'a pas besoin
+# du saut, un fichier non vide sans 
+ final en a besoin.
+sudo sh -c '[ -s /opt/scalping/.env ] && [ "$(tail -c 1 /opt/scalping/.env)" != "" ] && printf "
+" >> /opt/scalping/.env' || true
 echo "EXPECTED_GIT_COMMIT=${EXPECTED_COMMIT}" | sudo tee -a /opt/scalping/.env >/dev/null
+# ⛔ Et on VERIFIE que la variable est lisible seule, plutot que de supposer.
+if ! sudo grep -qE '^EXPECTED_GIT_COMMIT=[0-9a-f]{40}$' /opt/scalping/.env; then
+    echo "ABORT: EXPECTED_GIT_COMMIT n'est pas sur sa propre ligne" >&2
+    sudo grep -n 'EXPECTED_GIT_COMMIT' /opt/scalping/.env >&2
+    exit 1
+fi
 # IMPORTANT : pas de `prune -a -f` ici (entre build et restart), sinon la
 # nouvelle image scalping-radar:latest qu'on vient de tagger n'est référencée
 # par AUCUN container running (le container actuel est sur l'ancienne image)
