@@ -35,6 +35,7 @@ from config.settings import (
 from backend.services import (
     backtest_service,
     indicators,
+    ml_predictor,
     trade_log_service,
     twelvedata_ws,
     users_service,
@@ -2672,6 +2673,116 @@ async def api_signal_externe(request: Request, payload: dict):
     codes = {"auth": 401, "forme": 400}
     statut = codes.get(verdict.get("cause"), 200)
     return JSONResponse(status_code=statut, content=verdict)
+
+
+@app.post("/api/ml/generate-signals")
+@limiter.limit("30/minute")
+async def api_ml_generate_signals(
+    request: Request,
+    pairs: list[str] | None = None,
+    _=Depends(verify_credentials),
+):
+    """Génère et envoie des signaux ML aux bridges (démo + live).
+
+    Déclenche manuellement la génération de candidats de trade basés sur
+    le modèle ML. Récupère les bougies actuelles pour chaque paire,
+    génère les setups ML, puis les envoie par send_setup() qui les fait
+    passer par toutes les portes (admission, whitelist, confiance, MT5 bridge).
+
+    Query params:
+    - `pairs`: liste de paires à analyser (défaut = WATCHED_PAIRS)
+      Exemple : ?pairs=EUR/USD&pairs=BTC/USD
+
+    Response: `{count: N, setups: [...], errors: {...}}`
+    """
+    import asyncio
+    from backend.services.ml_trading import generate_ml_signals_for_pair
+    from backend.services.mt5_bridge import send_setup
+    from backend.services.scheduler import (
+        fetch_candles,
+        univers_a_analyser,
+    )
+    from config.settings import CANDLE_INTERVAL, CANDLE_COUNT
+
+    # Déterminer les paires à analyser
+    if not pairs:
+        pairs = univers_a_analyser()
+    pairs = [p.upper() for p in (pairs or [])]
+
+    logger.info(f"ML signal generation triggered for {len(pairs)} pair(s)")
+    all_setups = []
+    errors: dict[str, str] = {}
+
+    # Récupérer les bougies pour chaque paire (parallèle)
+    fetch_tasks = [
+        fetch_candles(pair, interval=CANDLE_INTERVAL, outputsize=CANDLE_COUNT)
+        for pair in pairs
+    ]
+    fetch_tasks += [
+        fetch_candles(pair, interval="1h", outputsize=50)
+        for pair in pairs
+    ]
+
+    try:
+        results = await asyncio.gather(*fetch_tasks, return_exceptions=True)
+        candles_5min = {}
+        candles_1h = {}
+
+        # Parse résultats 5min
+        for i, pair in enumerate(pairs):
+            if isinstance(results[i], Exception):
+                errors[pair] = f"candles_5min fetch failed: {results[i]}"
+                candles_5min[pair] = []
+            else:
+                candles_5min[pair] = results[i][0]  # (candles, is_simulated)
+
+        # Parse résultats 1h
+        for i, pair in enumerate(pairs):
+            if isinstance(results[len(pairs) + i], Exception):
+                errors[pair] = f"candles_1h fetch failed: {results[len(pairs) + i]}"
+                candles_1h[pair] = []
+            else:
+                candles_1h[pair] = results[len(pairs) + i][0]
+
+        # Générer les setups ML
+        for pair in pairs:
+            try:
+                setups = generate_ml_signals_for_pair(
+                    pair,
+                    candles_5min.get(pair, []),
+                    candles_1h.get(pair, []),
+                )
+                all_setups.extend(setups)
+            except Exception as e:
+                errors[pair] = str(e)
+                logger.warning(f"ml_trading[{pair}]: generation failed: {e}")
+
+        # Envoyer les setups via send_setup()
+        send_count = 0
+        for setup in all_setups:
+            try:
+                await send_setup(setup)
+                send_count += 1
+            except Exception as e:
+                logger.warning(f"ml_trading: send_setup({setup.pair}) failed: {e}")
+                errors[f"send_{setup.pair}"] = str(e)
+
+        logger.info(
+            f"ML signal generation done: {len(all_setups)} setups, "
+            f"{send_count} sent, {len(errors)} errors"
+        )
+
+        return {
+            "count": len(all_setups),
+            "sent": send_count,
+            "setups": [s.model_dump() for s in all_setups],
+            "errors": errors if errors else None,
+            "ml_info": ml_predictor.model_meta() if hasattr(ml_predictor, "model_meta") else {},
+        }
+
+    except Exception as e:
+        logger.error(f"ml signal generation failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/admin/notify-infra-telegram")

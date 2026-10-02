@@ -672,6 +672,68 @@ async def cache_warmup_cycle() -> None:
             logger.warning(f"cache_warmup: {name} failed -- {e}")
 
 
+async def ml_trading_cycle() -> None:
+    """Cycle de trading basé sur ML — génère et envoie des signaux indépendants.
+
+    Cycle OPTIONNEL et PARALLÈLE au cycle heuristique :
+    1. Récupère les bougies pour toutes les paires
+    2. Génère les setups ML via ml_trading.generate_ml_signals_for_pair()
+    3. Les envoie par send_setup() qui les filtre via les portes existantes
+
+    Fréquence : configurable (défaut toutes les 5 min).
+    À activer via ML_TRADING_CYCLE_ENABLED=true + ML_TRADING_INTERVAL_SEC
+    """
+    from backend.services.ml_trading import generate_ml_signals_for_pair
+
+    ML_TRADING_ENABLED = os.getenv("ML_TRADING_CYCLE_ENABLED", "false").lower() == "true"
+    if not ML_TRADING_ENABLED:
+        return
+
+    try:
+        univers = univers_a_analyser()
+        logger.info(f"ML trading cycle: analyzing {len(univers)} pair(s)")
+
+        # Récupérer les bougies pour toutes les paires
+        fetch_tasks = [
+            fetch_candles(pair, interval=CANDLE_INTERVAL, outputsize=CANDLE_COUNT)
+            for pair in univers
+        ]
+        fetch_tasks += [
+            fetch_candles(pair, interval="1h", outputsize=50)
+            for pair in univers
+        ]
+
+        results = await asyncio.gather(*fetch_tasks)
+        candles_5min = {}
+        candles_1h = {}
+
+        for i, pair in enumerate(univers):
+            candles_5min[pair], _ = results[i]
+
+        for i, pair in enumerate(univers):
+            candles_1h[pair], _ = results[len(univers) + i]
+
+        # Générer et envoyer les setups
+        total_setups = 0
+        for pair in univers:
+            try:
+                setups = generate_ml_signals_for_pair(
+                    pair,
+                    candles_5min.get(pair, []),
+                    candles_1h.get(pair, []),
+                )
+                for setup in setups:
+                    await mt5_bridge_send_setups([setup])
+                total_setups += len(setups)
+            except Exception as e:
+                logger.warning(f"ml_trading_cycle[{pair}]: {e}")
+
+        logger.info(f"ML trading cycle: {total_setups} setup(s) generated and sent")
+
+    except Exception as e:
+        logger.error(f"ML trading cycle failed: {e}", exc_info=True)
+
+
 def start_scheduler() -> AsyncIOScheduler:
     """Démarre le scheduler périodique."""
     global _scheduler
@@ -1253,6 +1315,20 @@ def start_scheduler() -> AsyncIOScheduler:
         replace_existing=True,
         next_run_time=datetime.now(),
     )
+
+    # ML trading cycle (optionnel, désactivé par défaut)
+    ml_trading_enabled = os.getenv("ML_TRADING_CYCLE_ENABLED", "false").lower() == "true"
+    if ml_trading_enabled:
+        ml_trading_interval = int(os.getenv("ML_TRADING_INTERVAL_SEC", "300"))
+        _scheduler.add_job(
+            ml_trading_cycle,
+            "interval",
+            seconds=ml_trading_interval,
+            id="ml_trading_cycle",
+            name="ML Trading Cycle",
+            replace_existing=True,
+        )
+        logger.info(f"ML trading cycle enabled (interval={ml_trading_interval}s)")
 
     _scheduler.start()
     logger.info(
