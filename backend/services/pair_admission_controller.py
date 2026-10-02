@@ -1916,9 +1916,10 @@ def backfill_initial_states() -> dict[str, Any]:
 
     star_set = frozenset(_STAR_PAIRS)
     transitions: list[dict[str, Any]] = []
+    refusees: list[str] = []
     universe = set(WATCHED_PAIRS) | star_set
 
-    for pair in sorted(universe):
+    def _une_paire(pair: str) -> None:
         # Phase 1 : Backfill pair-level legacy si jamais aucune row
         with sqlite3.connect(_db_path()) as c:
             has_any = c.execute(
@@ -1976,10 +1977,42 @@ def backfill_initial_states() -> dict[str, Any]:
             if inserted and inserted > 0:
                 transitions.append({"pair": pair, "direction": direction, "to_state": dir_target, "reason": dir_reason})
 
+    # ⛔ UN REFUS DU BANC NE DOIT PAS EMPORTER LES AUTRES PAIRES (2026-10-02).
+    #
+    # Constate en production : `AVAX/USD` est une *star* non mise en pause, donc
+    # visee en AUTO_EXEC avec `destination=None` — toutes les destinations,
+    # l'argent reel inclus. Aucun essai ne la couvre, le banc refuse, et il a
+    # RAISON. Mais la boucle n'avait aucun `try` : le refus de la 6e paire sur
+    # 48 abandonnait le backfill des **42 suivantes**, pour une seule ligne
+    # d'ERROR au demarrage. Six paires se sont ainsi retrouvees sans aucune
+    # ligne d'admission — AVAX, DASH, INJ, SUI, TAO, ZEC, toutes derriere AVAX
+    # dans l'ordre alphabetique.
+    #
+    # > Un refus BRUYANT ne doit pas produire une panne SILENCIEUSE ailleurs.
+    #
+    # ⛔ On SAUTE, on ne blanchit pas : la paire refusee ne recoit aucune ligne
+    # et garde son `OBSERVED` par defaut. Le banc tient entier.
+    #
+    # ⚠️ `PermissionError` SEULE est rattrapee. Elargir a `Exception` ferait de
+    # ce bloc un tapis sous lequel une panne de base disparaitrait, en rendant
+    # un backfill qui a l'air d'avoir reussi.
+    for pair in sorted(universe):
+        try:
+            _une_paire(pair)
+        except PermissionError as refus:
+            refusees.append(pair)
+            logger.warning(
+                "pair_admission: backfill SAUTE %s — %s. La paire garde son "
+                "etat par defaut (OBSERVED) et les suivantes continuent.",
+                pair, refus)
+
     logger.info(
-        f"pair_admission: backfill_initial_states applied {len(transitions)} transitions"
+        f"pair_admission: backfill_initial_states applied {len(transitions)} "
+        f"transitions, {len(refusees)} paire(s) refusee(s) par le banc"
+        + (f" : {', '.join(refusees)}" if refusees else "")
     )
-    return {"applied": len(transitions), "transitions": transitions}
+    return {"applied": len(transitions), "transitions": transitions,
+            "refuses": len(refusees), "paires_refusees": refusees}
 
 
 def get_recent_transitions(pair: str, limit: int = 10) -> list[dict[str, Any]]:
