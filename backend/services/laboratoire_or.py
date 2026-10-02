@@ -666,6 +666,37 @@ CHAINES: tuple[dict, ...] = (
     #
     # ⚠️ Balayer les HAUTS fait VENDRE : la chaine baissiere porte le predicat
     # du cote `haut`. L'inverser mesurerait la chaine sans sa condition.
+    # ⛔ LE REGIME DE MARCHE (declare le 2026-10-02 dans docs/concepts-trading.md,
+    # avant le code). L'appariement N'EST PAS arbitraire — c'est lui qui rend la
+    # prediction falsifiable : un regime PERSISTANT devrait favoriser les motifs
+    # de CONTINUATION, un regime de RETOUR A LA MOYENNE ceux de REVERSION. Si
+    # Hurst ne porte rien, les deux appariements echouent ensemble.
+    #
+    # 🔑 Un seul motif par chaine : sous-ensemble STRICT du declencheur, donc
+    # comparaison APPARIEE. Le test declare est << la chaine bat son propre
+    # declencheur seul >>, pas << elle bat le hasard >> : une condition qui
+    # n'ameliore pas ce qu'elle filtre est decorative, meme si sa cellule
+    # parait bonne.
+    #
+    # ⚠️ QUATRE, pas trente-huit. Deux predicats accroches a tous nos motifs
+    # feraient des dizaines de cellules neuves, et le plafond du hasard monte
+    # pour tout le monde. On borne d'avance.
+    {"nom": "momentum_en_regime_persistant_haussier",
+     "motifs": ("momentum_up",),
+     "declencheur": "momentum_up",
+     "predicats": ("regime_persistant",), "fenetre": 0},
+    {"nom": "momentum_en_regime_persistant_baissier",
+     "motifs": ("momentum_down",),
+     "declencheur": "momentum_down",
+     "predicats": ("regime_persistant",), "fenetre": 0},
+    {"nom": "rebond_en_regime_retour_moyenne_haussier",
+     "motifs": ("range_bounce_up",),
+     "declencheur": "range_bounce_up",
+     "predicats": ("regime_retour_moyenne",), "fenetre": 0},
+    {"nom": "rebond_en_regime_retour_moyenne_baissier",
+     "motifs": ("range_bounce_down",),
+     "declencheur": "range_bounce_down",
+     "predicats": ("regime_retour_moyenne",), "fenetre": 0},
     {"nom": "sweep_sur_niveau_majeur_haussier",
      "motifs": ("liquidity_sweep_up",),
      "declencheur": "liquidity_sweep_up",
@@ -962,6 +993,118 @@ def _cote_de_l_equilibre(veut_discount: bool):
 NIVEAU_TOLERANCE_ATR = 0.5
 
 
+# ─── LE REGIME DE MARCHE (2026-10-02) ────────────────────────────────
+#
+# Declare dans `docs/concepts-trading.md` (`06ba706`) AVANT ce code. Releve
+# dans le canal MQL5 @mql5fr : sur 35 messages lus, le seul concept qui ne
+# demande pas d'inventer sa propre regle.
+#
+# 🔑 Il ARRIVE AVEC SON SEUIL. `H = 0,5` est la marche aleatoire **par
+# construction** — ce n'est pas un reglage choisi au doigt, contrairement aux
+# seuils qu'il faudrait inventer pour transformer un oscillateur en motif.
+#
+#     H > 0,5   le marche PROLONGE ses mouvements
+#     H < 0,5   le marche REVIENT sur lui-meme
+#
+# ⛔ AUCUN AUTRE REGLAGE. La fenetre est `BIAIS_FENETRE`, reutilisee telle
+# quelle comme `_sur_niveau_majeur` le fait depuis le 20/09. Les tailles de
+# sous-fenetres se deduisent par division par deux : c'est la construction
+# standard du R/S, pas une liste choisie.
+#
+# ⚠️ REUTILISATION, pas derivation : rien ne prouve que la bonne fenetre pour
+# un regime soit celle d'un biais de structure. Posee une fois, jamais ajustee.
+HURST_NEUTRE = 0.5
+
+
+def _exposant_hurst(closes) -> float | None:
+    """Exposant de Hurst par l'etendue redimensionnee. `None` si indecidable.
+
+    ⛔ `None` plutot qu'une valeur par defaut : une serie plate n'a pas un
+    regime neutre, elle n'a **pas de regime mesurable**. Rendre 0,5 ferait lire
+    << marche aleatoire >> la ou il n'y a rien a lire.
+    """
+    try:
+        series = [float(c) for c in closes]
+    except (TypeError, ValueError):
+        return None
+    # Rendements logarithmiques : c'est sur eux que le R/S se mesure.
+    rendements = []
+    for i in range(1, len(series)):
+        a, b = series[i - 1], series[i]
+        if a <= 0 or b <= 0:
+            return None
+        rendements.append(math.log(b / a))
+    if len(rendements) < 16:
+        return None            # fail-closed : trop court pour deux echelles
+
+    def _rs(bloc) -> float | None:
+        """`R/S` d'un bloc : amplitude du cumul des ecarts / ecart-type."""
+        n = len(bloc)
+        moyenne = sum(bloc) / n
+        ecarts, cumul = [], 0.0
+        for x in bloc:
+            cumul += x - moyenne
+            ecarts.append(cumul)
+        etendue = max(ecarts) - min(ecarts)
+        variance = sum((x - moyenne) ** 2 for x in bloc) / n
+        s = math.sqrt(variance)
+        if s <= 0 or etendue <= 0:
+            return None
+        return etendue / s
+
+    # Tailles obtenues en divisant par deux, jusqu'a 8 points minimum.
+    points: list[tuple[float, float]] = []
+    taille = len(rendements)
+    while taille >= 8:
+        valeurs = []
+        for debut in range(0, len(rendements) - taille + 1, taille):
+            r = _rs(rendements[debut:debut + taille])
+            if r is not None:
+                valeurs.append(r)
+        if valeurs:
+            points.append((math.log(taille),
+                           math.log(sum(valeurs) / len(valeurs))))
+        taille //= 2
+    if len(points) < 2:
+        return None
+
+    # H est la pente de log(R/S) contre log(taille) — moindres carres.
+    n = len(points)
+    mx = sum(x for x, _ in points) / n
+    my = sum(y for _, y in points) / n
+    num = sum((x - mx) * (y - my) for x, y in points)
+    den = sum((x - mx) ** 2 for x, _ in points)
+    if den <= 0:
+        return None
+    return num / den
+
+
+def _regime(persistant: bool):
+    """Fabrique le predicat « le regime est persistant / de retour a la moyenne ».
+
+    ⛔ Les deux s'EXCLUENT : un `None` rend NON des deux cotes, et un exposant
+    exactement neutre aussi. Sans cette exclusion, les quatre chaines declarees
+    se declencheraient ensemble et la comparaison appariee ne voudrait rien.
+    """
+
+    def _predicat(bougies, i: int) -> bool:
+        # ⚠️ `bougies[:i]` — ce que le detecteur a vu, pas une bougie de plus.
+        vues = bougies[:i]
+        if len(vues) < BIAIS_FENETRE:
+            return False        # fail-closed : pas d'histoire, pas de regime
+        fen = vues[-BIAIS_FENETRE:]
+        try:
+            closes = [float(x["c"]) for x in fen]
+        except (TypeError, ValueError, KeyError):
+            return False        # bougie malformee : on ne valide pas
+        h = _exposant_hurst(closes)
+        if h is None:
+            return False
+        return h > HURST_NEUTRE if persistant else h < HURST_NEUTRE
+
+    return _predicat
+
+
 def _sur_niveau_majeur(cote: str):
     """Fabrique le predicat « l'extreme atteint est a portee du niveau de 400 ».
 
@@ -1088,6 +1231,8 @@ _PREDICATS = {"volume_fort": _volume_fort,
               "en_premium": _cote_de_l_equilibre(False),
               "sur_niveau_majeur_haut": _sur_niveau_majeur("haut"),
               "sur_niveau_majeur_bas": _sur_niveau_majeur("bas"),
+              "regime_persistant": _regime(True),
+              "regime_retour_moyenne": _regime(False),
               "structure_m15_haussiere": _structure_agregee("haussiere"),
               "structure_m15_baissiere": _structure_agregee("baissiere")}
 _PREDICATS.update({nom: _dans_session(nom) for nom in _SESSIONS})

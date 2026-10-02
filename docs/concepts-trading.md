@@ -2127,3 +2127,42 @@ cellule paraît bonne.
 
 Rien n'est armé. Le laboratoire mesure la nuit, le registre des chaînes reste
 fermé pour ces quatre noms, et aucune porte n'est touchée.
+
+### ⚠️ Le zéro de l'estimateur — mesuré avant le verdict (2026-10-02)
+
+L'exposant est codé (`_exposant_hurst`, étendue redimensionnée). En le validant
+contre des séries dont la réponse est connue :
+
+| série | H médian |
+|---|---|
+| marche aléatoire — **attendu 0,5** | **0,5898** (0,441 à 0,721) |
+| AR(1) φ = 0,7 | 0,6674 |
+| AR(1) φ = 0,9 | 0,8357 |
+
+✅ L'estimateur **discrimine**, et de façon monotone en φ.
+
+⛔ **Mais son zéro n'est pas 0,5, il est à 0,59** — le biais connu du R/S sur
+échantillon court. Conséquence directe : `regime_persistant` se déclenchera sur
+une bonne part de bruit pur, et `regime_retour_moyenne` sera rare.
+
+🔑 **Je ne déplace pas le seuil.** Le recalibrer à 0,59 reviendrait à inventer
+le réglage que Hurst était précisément censé épargner — c'était le seul argument
+qui le distinguait des oscillateurs du canal. Le seuil reste `0,5`, et la
+faiblesse est inscrite ici **avant** que le laboratoire ne tranche.
+
+⇒ **P4 est révisée** : je prédis désormais que
+`rebond_en_regime_retour_moyenne_*` sera **MUET ou presque** (moins de 10
+déclenchements sur 90 jours d'or), et que `momentum_en_regime_persistant_*` se
+déclenchera sur la majorité des cas — donc que les deux chaînes de continuation
+ressembleront à leur déclencheur seul. Si c'est le cas, le verdict ne sera pas
+« Hurst ne marche pas » mais « **cet estimateur ne discrimine pas à cette
+fenêtre** », et la suite serait un zéro mesuré par rebattage plutôt que supposé.
+
+#### Deux montages de test faux, gardés comme avertissement
+
+1. Une **rampe linéaire bruitée** rend H = 0,37, donc anti-persistante. Hurst
+   mesure la mémoire des **rendements**, pas la direction du prix : les
+   rendements d'une rampe oscillent autour d'une constante.
+2. Un bruit « déterministe » en sinusoïde est **périodique**, donc lu comme un
+   retour à la moyenne : le même AR(1) à φ = 0,9 tombait à H = 0,31. Un montage
+   qui se croit neutre et ne l'est pas mesure autre chose que ce qu'il annonce.

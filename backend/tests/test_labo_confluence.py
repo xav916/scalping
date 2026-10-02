@@ -141,7 +141,27 @@ class _Setup:
 # La courbe est logarithmique et plate ; l'emphase mise auparavant sur ce cout
 # etait exageree. Ce qui reste vrai : chaque chaine se declare et se mesure
 # avant d'exister, et le recouvrement passe avant la performance.
-CHAINES_ATTENDUES = 22
+# 22 -> 26 le 2026-10-02 : les QUATRE chaines du regime de marche par
+# l'exposant de Hurst, declarees dans `docs/concepts-trading.md` (`06ba706`)
+# AVANT le code, et releve dans le canal MQL5 @mql5fr.
+#
+#     momentum_en_regime_persistant_haussier / _baissier
+#     rebond_en_regime_retour_moyenne_haussier / _baissier
+#
+# 🔑 L'appariement EST la prediction : persistance -> continuation, retour a la
+# moyenne -> reversion. Quatre, et pas deux predicats accroches aux 38 motifs —
+# qui auraient fait des dizaines de cellules neuves.
+#
+# ⚠️ Cout chiffre par la formule ci-dessus : ~0,011 de plafond pour deux
+# chaines, donc ~0,022 pour ces quatre. La courbe est plate ; ce qui compte
+# n'est pas le cout mais que chacune se declare avant d'exister.
+#
+# ⛔ Et une faiblesse DEJA mesuree avant le verdict : le zero de l'estimateur
+# R/S sur cette fenetre vaut 0,59, pas 0,5 (12 marches aleatoires). Les deux
+# chaines de retour a la moyenne risquent donc d'etre MUETTES. C'est inscrit
+# dans la declaration, et le seuil n'a pas ete deplace pour autant : le
+# recalibrer reviendrait a inventer le reglage que Hurst etait cense epargner.
+CHAINES_ATTENDUES = 26
 
 
 
