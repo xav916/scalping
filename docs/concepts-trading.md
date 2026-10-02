@@ -2039,3 +2039,91 @@ de capital — pas un desserrage de porte.
 ⚠️ Le 1 h, lui, passe à **4,9 %** du capital contre un plafond de 5 %. Il tient
 par **0,8 point**. Une baisse d'equity ou un stop un peu plus large le fait
 basculer dans le refus — et ce sera normal, pas une panne.
+
+---
+
+## LE RÉGIME DE MARCHÉ PAR L'EXPOSANT DE HURST — déclaration du 2026-10-02
+
+### D'où vient le concept, et pourquoi celui-là
+
+Relevé dans le canal MQL5 « Trading Algorithmique » (@mql5fr) le 2026-10-02 :
+« Régime de marché via exposant de Hurst ». Sur **35 messages** lus de ce canal,
+c'est l'un des quatre qui survivent au filtre, et le seul vraiment propre.
+
+🔑 **Pourquoi lui et pas un autre.** Les deux tiers de ce canal sont des
+oscillateurs et des dérivés de moyennes — RSI/DeMarker, RAVI, Yaanna, Demand
+Index, ZigZag/PSAR, Stochastic RVI, EMV, TSI. Un oscillateur est une **valeur
+continue**, pas un déclencheur : en faire un motif exigerait d'inventer le seuil
+et la règle, c'est-à-dire fabriquer NOTRE règle sous SON nom. Et aucun message
+du canal ne nomme d'instrument ni d'échelle, alors que `echelle` est l'un des
+six champs obligatoires d'une notion.
+
+Hurst échappe à ces deux pièges :
+
+1. C'est un **prédicat**, pas un motif. Il conditionne les motifs qu'on a déjà
+   au lieu d'ajouter un pari indépendant.
+2. Il **arrive avec son seuil**. `H = 0,5` n'est pas choisi au doigt : c'est par
+   construction la marche aléatoire. Au-dessus le marché persiste, en dessous
+   il revient à la moyenne. **Aucun réglage neuf à inventer.**
+
+### Ce qui est codé, exactement
+
+Exposant de Hurst par l'**étendue redimensionnée** (R/S) sur les rendements
+logarithmiques, calculé sur `bougies[:i]` — ce que le détecteur a vu, jamais
+une bougie de plus.
+
+    regime_persistant        H > 0,5   le marché prolonge ses mouvements
+    regime_retour_moyenne    H < 0,5   le marché revient sur lui-même
+
+⛔ **AUCUN RÉGLAGE NEUF.** La fenêtre est celle du BIAIS (`BIAIS_FENETRE`),
+réutilisée telle quelle — comme `_sur_niveau_majeur` le fait depuis le 20/09.
+⚠️ C'est une **réutilisation, pas une dérivation** : rien ne prouve que la bonne
+fenêtre pour un régime soit celle d'un biais de structure. Posée une fois,
+jamais ajustée, et dite ici pour qu'on s'en souvienne.
+
+⛔ **Fail-closed** : sans assez d'histoire, le prédicat répond **NON**. Répondre
+OUI ferait déclencher la chaîne partout en prétendant avoir mesuré un régime.
+
+### Les quatre chaînes déclarées, et pourquoi exactement celles-là
+
+L'appariement n'est pas arbitraire — c'est ce qui rend la prédiction
+falsifiable. Un régime **persistant** devrait favoriser les motifs de
+**continuation** ; un régime de **retour à la moyenne**, les motifs de
+**réversion**. Si Hurst ne porte rien, les deux appariements échouent ensemble.
+
+| chaîne | déclencheur | prédicat |
+|---|---|---|
+| `momentum_en_regime_persistant_haussier` | `momentum_up` | `regime_persistant` |
+| `momentum_en_regime_persistant_baissier` | `momentum_down` | `regime_persistant` |
+| `rebond_en_regime_retour_moyenne_haussier` | `range_bounce_up` | `regime_retour_moyenne` |
+| `rebond_en_regime_retour_moyenne_baissier` | `range_bounce_down` | `regime_retour_moyenne` |
+
+⚠️ **Quatre, pas trente-huit.** Deux prédicats accrochés à tous nos motifs
+feraient des dizaines de cellules neuves, et **le plafond du hasard monte pour
+tout le monde**. On borne d'avance.
+
+### La prédiction, déclarée AVANT le code
+
+🔑 **Le test n'est pas « la chaîne bat le hasard » — c'est « la chaîne bat son
+propre déclencheur seul ».** Chaque chaîne est un sous-ensemble STRICT de son
+motif, donc la comparaison est appariée. C'est la leçon du maillon décoratif :
+une condition qui n'améliore pas ce qu'elle filtre ne sert à rien, même si la
+cellule paraît bonne.
+
+- **P1** — `momentum_* + regime_persistant` ne bat **pas** `momentum_*` seul :
+  l'écart de R moyen reste sous l'écart-type du contrôle aléatoire.
+- **P2** — `range_bounce_* + regime_retour_moyenne` ne bat **pas**
+  `range_bounce_*` seul.
+- **P3** — aucune des quatre chaînes ne franchit `plafond_hasard(n)` avec un R
+  positif, `n` étant le nombre total de cellules de la nuit.
+- **P4** — le prédicat n'est **pas** muet : chaque chaîne se déclenche au moins
+  10 fois sur 90 jours d'or. ⚠️ Une chaîne jamais déclenchée n'est pas « sans
+  résultat », c'est une mesure qui n'a pas eu lieu — et il faut pouvoir le lire.
+
+**Je prédis donc que Hurst n'apporte rien.** Si P1 ou P2 tombent, c'est un fait
+à répliquer hors échantillon avant toute autre conclusion.
+
+### Ce qui n'est PAS fait
+
+Rien n'est armé. Le laboratoire mesure la nuit, le registre des chaînes reste
+fermé pour ces quatre noms, et aucune porte n'est touchée.
