@@ -134,8 +134,8 @@ def generate_ml_signals_for_pair(
     # ─ Candidat 1 : Breakout haut (achat)
     buy_entry = recent_high + atr * 0.1
     if is_xau:
-        buy_sl = buy_entry - 10.0   # SL fixe à 10 dollars pour XAU
-        buy_tp = buy_entry + 20.0   # TP à 2x le risk
+        buy_sl = buy_entry - 10.85   # SL fixe à 10 euros (~10.85 dollars) pour XAU
+        buy_tp = buy_entry + 21.7   # TP à 2x le risk
     else:
         buy_sl = recent_low - atr * 0.2  # ATR-based pour autres
         buy_tp = buy_entry + atr * 0.5
@@ -157,8 +157,8 @@ def generate_ml_signals_for_pair(
     # ─ Candidat 2 : Breakout bas (vente)
     sell_entry = recent_low - atr * 0.1
     if is_xau:
-        sell_sl = sell_entry + 10.0   # SL fixe à 10 dollars pour XAU
-        sell_tp = sell_entry - 20.0   # TP à 2x le risk
+        sell_sl = sell_entry + 10.85   # SL fixe à 10 euros (~10.85 dollars) pour XAU
+        sell_tp = sell_entry - 21.7   # TP à 2x le risk
     else:
         sell_sl = recent_high + atr * 0.2  # ATR-based pour autres
         sell_tp = sell_entry - atr * 0.5
