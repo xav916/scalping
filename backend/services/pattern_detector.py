@@ -1030,8 +1030,8 @@ def calculate_trade_setup(
     is_xau = "XAU" in upper
 
     if is_xau:
-        # XAU/USD : SL fixe à 10 pips (0.1)
-        pip_distance = 0.1
+        # XAU/USD : SL fixe à 10 dollars
+        pip_distance = 10.0
         if direction == TradeDirection.BUY:
             stop_loss = round(entry - pip_distance, decimals)
             risk = entry - stop_loss
