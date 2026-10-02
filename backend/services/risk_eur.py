@@ -112,17 +112,31 @@ def taille_contrat(pair: str, bridge_type: str) -> int:
 
 def calculer(
     pair: str, entry: float, sl: float, tp: float, volume: float,
-    bridge_type: str = "mt5", eur_usd: float = EUR_USD_PAR_DEFAUT,
+    bridge_type: str = "mt5", eur_usd: float | None = None,
 ) -> dict[str, float] | None:
     """Risque, gain visé et R:R en euros. ``None`` si indéterminable.
 
     Retourne ``None`` plutôt que des zéros : un montant faux est pire qu'un
     montant absent, puisqu'il sera lu comme vrai.
+
+    ⛔ **`eur_usd=None` ⇒ le taux est LU** (2026-10-02). Le défaut était le
+    littéral `EUR_USD_PAR_DEFAUT`, et `taux_eur_usd()` — qui lit la série
+    `eurusd` — existait déjà juste à côté. Le correctif qui l'a posée n'avait
+    atteint que les notifications ; ce chemin-ci, celui qui calcule le RISQUE,
+    gardait la constante.
+
+    Mesuré le jour même : courtier `1,1250`, série `eurusd` `1,12499`, littéral
+    `1,155`. **Tous les montants en euros du système étaient surévalués de
+    2,7 %** — dont ceux que lit `porte_risque_par_trade`, la porte qui borne
+    l'engagement par trade.
+
+    ⚠️ Un taux passé EXPLICITEMENT reste prioritaire : les rejeux et les bancs
+    épinglent le leur pour rester comparables, et ne doivent pas être écrasés.
     """
     try:
         entry, sl, volume = float(entry or 0), float(sl or 0), float(volume or 0)
         tp = float(tp or 0)
-        eur_usd = float(eur_usd or EUR_USD_PAR_DEFAUT)
+        eur_usd = float(eur_usd) if eur_usd else taux_eur_usd()
     except (TypeError, ValueError):
         return None
     if entry <= 0 or sl <= 0 or volume <= 0 or eur_usd <= 0:
