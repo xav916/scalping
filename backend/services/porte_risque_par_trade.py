@@ -58,8 +58,90 @@ PLAFOND_PCT = float(os.environ.get("PLAFOND_RISQUE_PAR_TRADE_PCT", "5.0"))
 MOTIF = "risque_par_trade_excessif"
 
 
-def _lot_minimum(dest) -> float | None:
-    return LOT_MINIMUM.get(getattr(dest, "bridge_type", "") or "")
+# ⛔ LE PLANCHER SE LIT CHEZ LE COURTIER (2026-10-02). `LOT_MINIMUM` etait un
+# litteral jamais confronte au pont. Verifie ce jour-la sur `/symbol_specs` :
+# `volume_min 0.01`, `volume_step 0.01` sur XAUUSD, reel ET demo — le litteral
+# etait juste. Mais juste PAR CHANCE, et tout le calcul du risque en depend :
+# le risque vaut `lot x distance au stop`, le lot est bloque au plancher, donc
+# un plancher faux rend un risque faux sans qu'aucune erreur ne soit levee.
+#
+# ⚠️ ASYMETRIE DU REPLI, assumee. Pont muet => litteral `0.01`, soit le
+# comportement d'avant, donc aucune regression ; mais si le vrai plancher etait
+# PLUS GRAND, ce repli sous-estime le risque. L'alternative — refuser de trader
+# quand `/symbol_specs` est injoignable — couperait tout le flux pour une panne
+# qui n'est pas celle de cette porte. Une lecture REUSSIE, elle, ne peut que
+# rendre la porte plus stricte.
+_SPECS_TTL_S = float(os.environ.get("SYMBOL_SPECS_CACHE_S", "900"))
+_specs_cache: dict[tuple[str, str], tuple[float, dict | None]] = {}
+
+
+def _lire_specs(dest, symbole: str) -> dict | None:
+    """`GET /symbol_specs/<symbole>`, ou `None` si la lecture rate."""
+    import time
+
+    url = (getattr(dest, "bridge_url", "") or "").rstrip("/")
+    if not url or not symbole:
+        return None
+    cle = (str(getattr(dest, "destination_id", "") or url), symbole)
+    en_cache = _specs_cache.get(cle)
+    if en_cache and (time.time() - en_cache[0]) < _SPECS_TTL_S:
+        return en_cache[1]
+    entetes = {}
+    if getattr(dest, "bridge_api_key", None):
+        entetes["X-API-Key"] = dest.bridge_api_key
+    specs = None
+    try:
+        import httpx
+        with httpx.Client(timeout=5.0) as c:
+            r = c.get(f"{url}/symbol_specs/{symbole}", headers=entetes)
+        if r.status_code == 200:
+            lu = r.json()
+            specs = lu if isinstance(lu, dict) else None
+    except Exception as e:  # noqa: BLE001 — toute panne = on ne sait pas
+        logger.info("porte_risque_par_trade: /symbol_specs/%s illisible (%s)",
+                    symbole, e)
+    _specs_cache[cle] = (time.time(), specs)
+    return specs
+
+
+def _plancher_declare(specs: dict | None) -> float | None:
+    """Le plus petit ordre REELLEMENT acceptable, ou `None` si indecidable.
+
+    ⛔ Le PAS fait loi quand il depasse le minimum : un `volume_min` de 0,01
+    avec un `volume_step` de 0,05 ne permet pas 0,01 — le plus petit ordre
+    vaut 0,05. Prendre le minimum seul sous-estimerait le risque.
+    """
+    if not isinstance(specs, dict):
+        return None
+    valeurs = []
+    for cle in ("volume_min", "volume_step"):
+        try:
+            v = float(specs.get(cle))
+        except (TypeError, ValueError):
+            continue
+        if v > 0:
+            valeurs.append(v)
+    return max(valeurs) if valeurs else None
+
+
+def _lot_minimum(dest, pair: str | None = None) -> float | None:
+    """Le plus petit ordre acceptable : celui du COURTIER, sinon le litteral.
+
+    `None` quand la question ne se pose pas — une route dont le `bridge_type`
+    n'a pas de plancher declare.
+    """
+    litteral = LOT_MINIMUM.get(getattr(dest, "bridge_type", "") or "")
+    if litteral is None:
+        return None
+    if not pair or not (getattr(dest, "bridge_url", "") or ""):
+        return litteral
+    try:
+        from backend.services.mt5_bridge import _symbole_courtier_pour
+        symbole = _symbole_courtier_pour(pair, dest)
+    except Exception:  # noqa: BLE001
+        return litteral
+    declare = _plancher_declare(_lire_specs(dest, symbole))
+    return declare if declare is not None else litteral
 
 
 def risque_au_lot_minimum(setup, dest) -> float | None:
@@ -69,7 +151,7 @@ def risque_au_lot_minimum(setup, dest) -> float | None:
     est indécidable. ⛔ Indécidable ne vaut jamais zéro : l'appelant ne doit
     pas lire « pas de risque » là où on n'a pas su le calculer.
     """
-    lot = _lot_minimum(dest)
+    lot = _lot_minimum(dest, getattr(setup, "pair", None))
     if lot is None:
         return None
     try:
@@ -120,5 +202,6 @@ def refus(setup, dest) -> str | None:
         "porte_risque_par_trade[%s] %s : %.2f EUR au lot minimum (%.2f) "
         "> plafond %.2f EUR (%.1f %% de %.2f) — indimensionnable, refusé",
         getattr(dest, "destination_id", "?"), getattr(setup, "pair", "?"),
-        risque, _lot_minimum(dest) or 0, plafond, PLAFOND_PCT, float(capital))
+        risque, _lot_minimum(dest, getattr(setup, "pair", None)) or 0,
+        plafond, PLAFOND_PCT, float(capital))
     return MOTIF
