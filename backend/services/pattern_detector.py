@@ -939,6 +939,61 @@ def _est_un_achat(motif) -> bool:
         f"{_SUFFIXES_ACHAT + _SUFFIXES_VENTE}")
 
 
+# ─── LE STOP FIXE DE L'OR (2026-10-02, decision de Xavier) ──────────────
+#
+# << tous les trades OR ont desormais un SL a 10 euros de l'entree >>.
+#
+# ⛔ LE REGLAGE EST EN EUROS, PAS EN DOLLARS. La premiere version posait un
+# litteral `pip_distance = 10.85`, commente << ~10 euros >>. Mesure le jour meme
+# avec `risk_eur.calculer` au lot minimum :
+#
+#     stop 10,85 $  ->   9,39 EUR      <- ce que le litteral livrait
+#     stop 11,55 $  ->  10,00 EUR      <- ce qui etait demande
+#
+# 6,1 % de moins que demande, et l'ecart grandit a chaque mouvement de l'EUR/USD
+# sans que rien ne le dise. C'est le piege d'unite deja paye deux fois ici : un
+# montant en EUROS ecrit en devise de cotation.
+#
+# 🔑 La conversion est EXACTE sur l'or, et seulement parce que deux faits ont ete
+# verifies chez le courtier le meme jour : `volume_min = 0,01` avec
+# `contract_size = 100` (donc 0,01 lot = UNE once) et `max_lot_per_class`
+# plafonne le metal a 0,01 lot. La distance de prix en dollars vaut donc
+# exactement `euros x EUR/USD`. Si l'un de ces deux faits change, ce calcul est
+# faux — et c'est pour ca qu'ils sont ecrits ici.
+XAU_SL_FIXE_EUR = float(os.getenv("XAU_SL_FIXE_EUR", "10"))
+
+
+def _eur_usd_courant() -> float | None:
+    """Le taux EUR/USD du jour, ou `None` si on ne sait pas le lire."""
+    try:
+        from backend.services.risk_eur import _close_macro
+        taux = _close_macro("eurusd")
+        return float(taux) if taux and float(taux) > 0 else None
+    except Exception as e:  # noqa: BLE001
+        logger.debug("stop fixe or : taux EUR/USD illisible (%s)", e)
+        return None
+
+
+def _distance_sl_or() -> float | None:
+    """La distance de PRIX qui vaut `XAU_SL_FIXE_EUR` au lot minimum.
+
+    ⚠️ `None` quand le taux est illisible — et l'appelant RETOMBE alors sur le
+    stop ATR. Poser un stop de taille inconnue sur l'argent reel serait pire
+    que de garder l'ancien ; refuser tout setup couperait le flux pour une
+    panne qui n'est pas celle de la strategie. On ne devine pas un taux.
+    """
+    if XAU_SL_FIXE_EUR <= 0:
+        return None
+    taux = _eur_usd_courant()
+    if not taux or taux <= 0:
+        return None
+    return XAU_SL_FIXE_EUR * taux
+
+
+def _est_de_l_or(pair: str) -> bool:
+    return "XAU" in (pair or "").upper()
+
+
 def calculate_trade_setup(
     pair: str,
     pattern: PatternDetection,
@@ -998,18 +1053,21 @@ def calculate_trade_setup(
             return None
         stop_loss, take_profit_1, take_profit_2 = niveaux_profil
 
-        # XAU/USD : forcer SL fixe à 10 euros même pour POC patterns
-        upper = (pair or "").upper()
-        if "XAU" in upper:
-            pip_distance = 10.85
-            if direction == TradeDirection.BUY:
-                stop_loss = round(entry - pip_distance, decimals)
-                take_profit_1 = round(entry + pip_distance * PATTERN_TP1_RR, decimals)
-                take_profit_2 = round(entry + pip_distance * PATTERN_TP2_RR, decimals)
-            else:
-                stop_loss = round(entry + pip_distance, decimals)
-                take_profit_1 = round(entry - pip_distance * PATTERN_TP1_RR, decimals)
-                take_profit_2 = round(entry - pip_distance * PATTERN_TP2_RR, decimals)
+        # ⛔ L'or passe au stop fixe MEME ICI — << tous les trades OR >>.
+        #
+        # ⚠️ Ce que cela coute, et qui doit etre su : `_niveaux_poc` est le SEUL
+        # chemin du depot dont le stop vient d'une zone de valeur et la cible
+        # d'un niveau de liquidite reel. Le forcer en vaut la peine seulement si
+        # la decision porte sur l'or ENTIER ; sinon on obtient ce que le
+        # commentaire de ce motif interdit lui-meme — << un poc_return construit
+        # ainsi n'est plus la strategie, juste un trade qui en porte le nom >>.
+        # C'est la decision de Xavier du 02/10, prise en connaissance de cause.
+        distance = _distance_sl_or() if _est_de_l_or(pair) else None
+        if distance is not None:
+            signe = 1 if direction == TradeDirection.BUY else -1
+            stop_loss = round(entry - signe * distance, decimals)
+            take_profit_1 = round(entry + signe * distance * PATTERN_TP1_RR, decimals)
+            take_profit_2 = round(entry + signe * distance * PATTERN_TP2_RR, decimals)
 
         risk = abs(entry - stop_loss)
         if risk <= 0:
@@ -1039,21 +1097,15 @@ def calculate_trade_setup(
             pair, pattern, entry, stop_loss, take_profit_1, take_profit_2,
             risk, reward_1, reward_2, direction, decimals, is_simulated, now)
 
-    # SL fixe à 10 pips pour XAU/USD seulement, ATR pour les autres
-    upper = (pair or "").upper()
-    is_xau = "XAU" in upper
-
-    if is_xau:
-        # XAU/USD : SL fixe à 10 euros (~10.85 dollars au taux EUR/USD)
-        pip_distance = 10.85
-        if direction == TradeDirection.BUY:
-            stop_loss = round(entry - pip_distance, decimals)
-            risk = entry - stop_loss
-        else:
-            stop_loss = round(entry + pip_distance, decimals)
-            risk = stop_loss - entry
+    # Stop fixe en EUROS pour l'or ; ATR pour tout le reste.
+    # ⚠️ `None` = taux illisible ⇒ on RETOMBE sur l'ATR, le comportement
+    # d'avant. Un stop de taille inconnue serait pire que l'ancien.
+    distance = _distance_sl_or() if _est_de_l_or(pair) else None
+    if distance is not None:
+        signe = 1 if direction == TradeDirection.BUY else -1
+        stop_loss = round(entry - signe * distance, decimals)
+        risk = abs(entry - stop_loss)
     else:
-        # Autres paires : SL basé sur ATR (logique originale)
         atr_k = _atr_buffer_mult(atr, entry)
         if direction == TradeDirection.BUY:
             recent_low = min(c.low for c in candles[-5:])
