@@ -220,6 +220,103 @@ def evaluate_relevance(msg: AlgoTradingMessage) -> dict[str, Any]:
     return score
 
 
+def generate_implementation_prompt(msg: AlgoTradingMessage, eval: dict) -> str:
+    """Génère un prompt prêt-à-coller pour Claude Code.
+
+    Format Markdown que l'utilisateur peut copier/coller directement dans Claude Code
+    pour implémenter le module.
+    """
+    title = msg.title or "Unknown Module"
+    pairs = ", ".join(sorted(msg.pairs_detected)) if msg.pairs_detected else "N/A"
+    patterns = ", ".join(sorted(msg.patterns_detected)) if msg.patterns_detected else "N/A"
+    indicators = ", ".join(sorted(msg.indicators_detected)) if msg.indicators_detected else "N/A"
+
+    # Stats summary
+    stats_parts = []
+    if msg.stats.get("win_rate_pct"):
+        stats_parts.append(f"Win Rate: {msg.stats['win_rate_pct']:.1f}%")
+    if msg.stats.get("max_drawdown_pct"):
+        stats_parts.append(f"Max Drawdown: {msg.stats['max_drawdown_pct']:.1f}%")
+    if msg.stats.get("sharpe_ratio"):
+        stats_parts.append(f"Sharpe Ratio: {msg.stats['sharpe_ratio']:.2f}")
+    if msg.stats.get("profit_factor"):
+        stats_parts.append(f"Profit Factor: {msg.stats['profit_factor']:.2f}")
+    stats_summary = " | ".join(stats_parts) if stats_parts else "No stats available"
+
+    prompt = f"""# Implémentation: {title}
+
+## Contexte
+Source: MQL5 Trading Algorithmique (@mql5fr)
+Relevance Score: {eval['relevance']}/100
+Recommendation: {eval['recommendation'].upper()}
+
+## Spécifications du module
+
+### Pairs à supporter
+{pairs}
+
+### Patterns/Stratégies
+{patterns}
+
+### Indicateurs/Signaux
+{indicators}
+
+### Performances observées
+{stats_summary}
+
+## Description détaillée
+{msg.raw_text[:500]}...
+
+## Implémentation requise
+
+### Architecture
+- Intégrer dans le pipeline d'analyse existant (scheduler.py)
+- Créer un service dédié dans backend/services/
+- Passer par les portes de filtrage existantes (admission, whitelist, confiance, etc.)
+- Envoyer via send_setup() vers les bridges MT5
+
+### Features à implémenter
+1. Détecteur de pattern/signal pour {patterns or 'ce pattern'}
+2. Calculateur de score de confiance basé sur les statistiques observées
+3. Intégration avec ml_predictor (si applicable)
+4. Tests unitaires pour les cas nominaux et limites
+5. Logging et monitoring
+
+### Considérations de sécurité
+- ✅ Tous les setups passent par les portes existantes (admission, whitelist, confiance)
+- ✅ Demo-only au démarrage (mode paper)
+- ✅ Validation des données entrantes
+- ✅ Fail-safe si données manquantes
+
+### Documentation requise
+- Docstring complet du service
+- Exemple d'utilisation dans les commentaires
+- Notes sur les limitations et hypothèses
+
+## Validation avant production
+- [ ] Tests passent (100% coverage pour la logique de détection)
+- [ ] Fonctionne sur 50+ candles historiques
+- [ ] Score de confiance cohérent avec les stats observées
+- [ ] Logging adéquat pour le troubleshooting
+- [ ] Code review complétée
+
+## Prochaines étapes
+1. Implémenter le service
+2. Écrire les tests
+3. Intégrer au scheduler
+4. Valider en démo
+5. Monitoring sur 100+ trades avant production
+
+---
+
+### Notes additionnelles
+- Relevance Score breakdown: {', '.join(eval['reason'])}
+- Seuil de confiance recommandé: 60-70% pour démo, 95% pour live
+- Horizon de trade: 5min (scalp) sauf indication contraire"""
+
+    return prompt
+
+
 async def format_telegram_alert(msg: AlgoTradingMessage, eval: dict) -> str:
     """Formate une alerte Telegram pour remontée.
 

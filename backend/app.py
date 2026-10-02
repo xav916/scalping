@@ -2739,23 +2739,38 @@ async def api_telegram_algo_trading_listener(request: Request, payload: dict):
         # Évaluation de la pertinence
         eval_result = evaluate_relevance(msg)
 
-        # Format et envoi de l'alerte si pertinent
-        if eval_result["recommendation"] in ("implement", "evaluate"):
-            alert = await format_telegram_alert(msg, eval_result)
-            if alert:
-                await send_text(
-                    ALGO_TRADING_MODULES_CHANNEL,
-                    alert,
-                    parse_mode="Markdown",
-                )
-                logger.info(
-                    f"algo_trading_listener: alerte envoyée "
-                    f"({eval_result['recommendation']}, relevance={eval_result['relevance']}/100)"
-                )
+        # Si pertinent (>= 50), générer le prompt d'implémentation
+        response = {"ok": True, "analysis": eval_result}
+
+        if eval_result["relevance"] >= 50:
+            # Générer le prompt prêt-à-coller
+            from backend.services.algo_trading_listener import generate_implementation_prompt
+            prompt = generate_implementation_prompt(msg, eval_result)
+
+            logger.info(
+                f"algo_trading_listener: prompt généré "
+                f"({eval_result['recommendation']}, relevance={eval_result['relevance']}/100)"
+            )
+
+            # Retourner le prompt et le résumé
+            response["recommendation"] = eval_result["recommendation"]
+            response["relevance"] = eval_result["relevance"]
+            response["summary"] = {
+                "title": msg.title,
+                "pairs": list(msg.pairs_detected),
+                "patterns": list(msg.patterns_detected),
+                "indicators": list(msg.indicators_detected),
+                "stats": msg.stats,
+            }
+            response["prompt"] = prompt
+
+            # Log le prompt pour accès via endpoint
+            logger.info(f"\n\n{'='*80}\nPROMPT PRÊT-À-COLLER:\n{'='*80}\n{prompt}\n{'='*80}\n")
+
         else:
             logger.debug(f"algo_trading_listener: message non pertinent (score {eval_result['relevance']}/100)")
 
-        return {"ok": True}
+        return response
 
     except Exception as e:
         logger.error(f"algo_trading_listener: error {e}", exc_info=True)
