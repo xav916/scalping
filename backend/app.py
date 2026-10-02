@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import logging
+import os
 import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -2673,6 +2674,92 @@ async def api_signal_externe(request: Request, payload: dict):
     codes = {"auth": 401, "forme": 400}
     statut = codes.get(verdict.get("cause"), 200)
     return JSONResponse(status_code=statut, content=verdict)
+
+
+@app.post("/api/telegram/algo-trading-listener")
+async def api_telegram_algo_trading_listener(request: Request, payload: dict):
+    """Webhook Telegram pour le canal Algo Trading.
+
+    Reçoit les messages forwarded du canal @MQL5_EN (ou autre),
+    analyse la stratégie/indicator, évalue l'utilité pour nos trades,
+    et remonte via Telegram si module à implémenter recommandé.
+
+    Activation : BotFather → /setwebhook https://app.scalping-radar.online/api/telegram/algo-trading-listener-webhook
+    (via bot xav_mql5_bot)
+
+    Body depuis Telegram :
+    {
+      "update_id": ...,
+      "message": {
+        "message_id": ...,
+        "from": {...},
+        "chat": {"id": ..., "type": "private|group|channel"},
+        "forward_from_chat": {"id": ..., "title": "..."},
+        "text": "...",
+        ...
+      }
+    }
+    """
+    import asyncio
+    from backend.services.algo_trading_listener import (
+        analyze_algo_trading_message,
+        evaluate_relevance,
+        format_telegram_alert,
+    )
+    from backend.services.canaux_telegram import send_text
+
+    ALGO_TRADING_MODULES_CHANNEL = os.getenv("ALGO_TRADING_MODULES_CHANNEL", "")
+    if not ALGO_TRADING_MODULES_CHANNEL:
+        logger.warning("ALGO_TRADING_MODULES_CHANNEL not set, ignoring message")
+        return {"ok": True}
+
+    try:
+        # Parse Telegram update
+        message = (payload or {}).get("message", {})
+        if not message:
+            return {"ok": True}
+
+        # Extraire le texte (forward ou direct)
+        text = message.get("text", "")
+        if not text:
+            return {"ok": True}
+
+        # URL source (si disponible)
+        forward_from = message.get("forward_from_chat", {})
+        source_url = ""
+        if forward_from:
+            source_title = forward_from.get("title", "Algo Trading")
+            source_url = f"[{source_title}](https://t.me/{forward_from.get('username', '')})" if forward_from.get("username") else source_title
+
+        logger.info(f"algo_trading_listener: message reçu ({len(text)} chars)")
+
+        # Analyse du message
+        msg = analyze_algo_trading_message(text, source_url)
+
+        # Évaluation de la pertinence
+        eval_result = evaluate_relevance(msg)
+
+        # Format et envoi de l'alerte si pertinent
+        if eval_result["recommendation"] in ("implement", "evaluate"):
+            alert = await format_telegram_alert(msg, eval_result)
+            if alert:
+                await send_text(
+                    ALGO_TRADING_MODULES_CHANNEL,
+                    alert,
+                    parse_mode="Markdown",
+                )
+                logger.info(
+                    f"algo_trading_listener: alerte envoyée "
+                    f"({eval_result['recommendation']}, relevance={eval_result['relevance']}/100)"
+                )
+        else:
+            logger.debug(f"algo_trading_listener: message non pertinent (score {eval_result['relevance']}/100)")
+
+        return {"ok": True}
+
+    except Exception as e:
+        logger.error(f"algo_trading_listener: error {e}", exc_info=True)
+        return {"ok": False, "error": str(e)}
 
 
 @app.post("/api/ml/generate-signals")
