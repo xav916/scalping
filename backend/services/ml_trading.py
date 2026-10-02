@@ -127,19 +127,30 @@ def generate_ml_signals_for_pair(
     if atr == 0:
         return []
 
+    # SL fixe à 10 pips (adapté à la paire)
+    upper = (pair or "").upper()
+    if "JPY" in upper or "XAG" in upper:
+        pip_distance = 0.01
+    elif "XAU" in upper:
+        pip_distance = 0.1
+    elif "BTC" in upper or "ETH" in upper:
+        pip_distance = 0.1
+    else:
+        pip_distance = 0.001  # Forex majeurs
+
     # ─ Candidat 1 : Breakout haut (achat)
     buy_entry = recent_high + atr * 0.1
-    buy_sl = recent_low - atr * 0.2
-    buy_tp = buy_entry + atr * 0.5
+    buy_sl = buy_entry - pip_distance
+    buy_tp = buy_entry + (pip_distance * 2)  # TP à 2x le risk
 
-    if buy_entry < current_close * 1.01:  # Pas trop far from market
+    if buy_entry < current_close * 1.01:
         setup_buy = MLTradeSetup(
             pair=pair,
             direction="buy",
             entry_price=buy_entry,
             stop_loss=buy_sl,
             take_profit_1=buy_tp,
-            ml_score=0.5,  # On va scorer via ML
+            ml_score=0.5,
             pattern="ml_breakout_up",
         )
         _score_setup(setup_buy, feature_candles)
@@ -148,10 +159,10 @@ def generate_ml_signals_for_pair(
 
     # ─ Candidat 2 : Breakout bas (vente)
     sell_entry = recent_low - atr * 0.1
-    sell_sl = recent_high + atr * 0.2
-    sell_tp = sell_entry - atr * 0.5
+    sell_sl = sell_entry + pip_distance
+    sell_tp = sell_entry - (pip_distance * 2)  # TP à 2x le risk
 
-    if sell_entry > current_close * 0.99:  # Pas trop far from market
+    if sell_entry > current_close * 0.99:
         setup_sell = MLTradeSetup(
             pair=pair,
             direction="sell",
