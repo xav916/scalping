@@ -1025,27 +1025,35 @@ def calculate_trade_setup(
             pair, pattern, entry, stop_loss, take_profit_1, take_profit_2,
             risk, reward_1, reward_2, direction, decimals, is_simulated, now)
 
-    # SL fixe à 10 pips (adapté à la paire)
+    # SL fixe à 10 pips pour XAU/USD seulement, ATR pour les autres
     upper = (pair or "").upper()
-    if "JPY" in upper or "XAG" in upper:
-        pip_distance = 0.01   # 10 pips pour JPY et XAG
-    elif "XAU" in upper:
-        pip_distance = 0.1    # 10 pips pour XAU
-    elif "BTC" in upper or "ETH" in upper:
-        pip_distance = 0.1    # 10 pips pour cryptos
+    is_xau = "XAU" in upper
+
+    if is_xau:
+        # XAU/USD : SL fixe à 10 pips (0.1)
+        pip_distance = 0.1
+        if direction == TradeDirection.BUY:
+            stop_loss = round(entry - pip_distance, decimals)
+            risk = entry - stop_loss
+        else:
+            stop_loss = round(entry + pip_distance, decimals)
+            risk = stop_loss - entry
     else:
-        pip_distance = 0.001  # 10 pips pour forex majeurs
+        # Autres paires : SL basé sur ATR (logique originale)
+        atr_k = _atr_buffer_mult(atr, entry)
+        if direction == TradeDirection.BUY:
+            recent_low = min(c.low for c in candles[-5:])
+            stop_loss = round(recent_low - atr * atr_k, decimals)
+            risk = entry - stop_loss
+        else:
+            recent_high = max(c.high for c in candles[-5:])
+            stop_loss = round(recent_high + atr * atr_k, decimals)
+            risk = stop_loss - entry
 
     if direction == TradeDirection.BUY:
-        # Achat : SL à 10 pips sous l'entrée
-        stop_loss = round(entry - pip_distance, decimals)
-        risk = entry - stop_loss
         take_profit_1 = round(entry + risk * PATTERN_TP1_RR, decimals)
         take_profit_2 = round(entry + risk * PATTERN_TP2_RR, decimals)
     else:
-        # Vente : SL à 10 pips au-dessus de l'entrée
-        stop_loss = round(entry + pip_distance, decimals)
-        risk = stop_loss - entry
         take_profit_1 = round(entry - risk * PATTERN_TP1_RR, decimals)
         take_profit_2 = round(entry - risk * PATTERN_TP2_RR, decimals)
 

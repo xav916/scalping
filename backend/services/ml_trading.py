@@ -127,21 +127,18 @@ def generate_ml_signals_for_pair(
     if atr == 0:
         return []
 
-    # SL fixe à 10 pips (adapté à la paire)
+    # SL fixe pour XAU/USD, ATR pour les autres
     upper = (pair or "").upper()
-    if "JPY" in upper or "XAG" in upper:
-        pip_distance = 0.01
-    elif "XAU" in upper:
-        pip_distance = 0.1
-    elif "BTC" in upper or "ETH" in upper:
-        pip_distance = 0.1
-    else:
-        pip_distance = 0.001  # Forex majeurs
+    is_xau = "XAU" in upper
 
     # ─ Candidat 1 : Breakout haut (achat)
     buy_entry = recent_high + atr * 0.1
-    buy_sl = buy_entry - pip_distance
-    buy_tp = buy_entry + (pip_distance * 2)  # TP à 2x le risk
+    if is_xau:
+        buy_sl = buy_entry - 0.1   # SL fixe à 10 pips pour XAU
+        buy_tp = buy_entry + 0.2   # TP à 2x le risk
+    else:
+        buy_sl = recent_low - atr * 0.2  # ATR-based pour autres
+        buy_tp = buy_entry + atr * 0.5
 
     if buy_entry < current_close * 1.01:
         setup_buy = MLTradeSetup(
@@ -159,8 +156,12 @@ def generate_ml_signals_for_pair(
 
     # ─ Candidat 2 : Breakout bas (vente)
     sell_entry = recent_low - atr * 0.1
-    sell_sl = sell_entry + pip_distance
-    sell_tp = sell_entry - (pip_distance * 2)  # TP à 2x le risk
+    if is_xau:
+        sell_sl = sell_entry + 0.1   # SL fixe à 10 pips pour XAU
+        sell_tp = sell_entry - 0.2   # TP à 2x le risk
+    else:
+        sell_sl = recent_high + atr * 0.2  # ATR-based pour autres
+        sell_tp = sell_entry - atr * 0.5
 
     if sell_entry > current_close * 0.99:
         setup_sell = MLTradeSetup(
