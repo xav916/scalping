@@ -997,6 +997,20 @@ def calculate_trade_setup(
         if not niveaux_profil:
             return None
         stop_loss, take_profit_1, take_profit_2 = niveaux_profil
+
+        # XAU/USD : forcer SL fixe à 10 euros même pour POC patterns
+        upper = (pair or "").upper()
+        if "XAU" in upper:
+            pip_distance = 10.85
+            if direction == TradeDirection.BUY:
+                stop_loss = round(entry - pip_distance, decimals)
+                take_profit_1 = round(entry + pip_distance * PATTERN_TP1_RR, decimals)
+                take_profit_2 = round(entry + pip_distance * PATTERN_TP2_RR, decimals)
+            else:
+                stop_loss = round(entry + pip_distance, decimals)
+                take_profit_1 = round(entry - pip_distance * PATTERN_TP1_RR, decimals)
+                take_profit_2 = round(entry - pip_distance * PATTERN_TP2_RR, decimals)
+
         risk = abs(entry - stop_loss)
         if risk <= 0:
             return None
