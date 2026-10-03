@@ -2512,3 +2512,56 @@ ensuite. Elle alternera selon l'heure.
 
 ⛔ **Aucune règle d'arrêt.** Le régulateur de P&L par paire (−10 %) reste le seul
 garde automatique, et il ne juge qu'à partir de 10 trades réels par paire.
+
+### ASSURANCE — les 11 cryptos de IC Markets, et ce qui tradera vraiment
+
+Xavier : « assurer que toutes les cryptos sont sur MT5 réel ». ✅ **Fait : les
+11 cryptos que IC Markets cote sont en `AUTO_EXEC` sur `admin_live`**, achat et
+vente. `MT5_BRIDGE_BLOCKED_PAIRS` est désormais **vide**, la liste blanche passe
+à **23 paires**.
+
+⚠️ **Mon inventaire précédent en avait manqué deux.** Il portait sur
+`WATCHED_PAIRS` (25 paires) ; en testant l'univers Kraken complet contre le
+courtier, **BCH/USD et XLM/USD** existent aussi chez IC Markets. Et **19 autres
+cryptos n'y existent pas** (404) : AAVE, ALGO, ARB, AVAX, CRV, DASH, DOGE, ENS,
+ETHFI, HBAR, INJ, LDO, LINK, MANA, PAXG, SEI, SUI, TAO, ZEC.
+
+#### Le compte, lu chez le courtier
+
+    serveur    ICMarketsEU-MT5-5        ⇒ « Market » = IC Markets, entité EU
+    compte     …475   paper_mode False  ⇒ argent REEL
+    solde      606,74 EUR               levier 30
+
+⛔ **Correction d'un chiffre répété toute la session** : le capital est de
+**606,74 €**, pas ~1 300 €. Je citais une valeur de mémoire sans l'avoir lue.
+
+#### Ce qui tradera réellement : DEUX paires
+
+    BTC/USD  0,0141 %  ✅ passe tout                        ⇒ tradera
+    ETH/USD  0,1179 %  ✅ passe tout                        ⇒ tradera
+    SOL/USD  0,0418 %  ✅ passe les 27 portes MAIS lot min 1
+                          contre un plafond de pont a 0,01  ⇒ echouera au volume
+    ADA · XRP · LTC · DOT · BNB · UNI · BCH · XLM            ⇒ spread_too_wide
+
+#### 🔑 Le huitième verrou : le lot minimum contre le plafond du pont
+
+`/health` du pont annonce `max_lot_per_class: crypto = 0,01`. Or le lot minimum
+de IC Markets vaut **1** pour SOL, **0,05** pour LTC et **100** pour ADA, XRP,
+DOT, UNI, XLM. Il n'existe donc **aucune taille** à la fois ≥ au minimum du
+courtier et ≤ au plafond du pont : 7 des 11 sont **inplaçables**, indépendamment
+du spread.
+
+    placables du tout : 4/11 — BTC, ETH, BNB, BCH
+
+⚠️ Et la porte du risque par trade en refuse trois de plus : BNB, UNI, XLM →
+`risque_par_trade_excessif`.
+
+#### Ce qui n'a PAS été touché, et c'est volontaire
+
+⛔ La porte du **spread** (0,20 % crypto), le **plafond de lot** du pont, et la
+liste blanche de **motifs** (`range_bounce_up/down` seulement au global — les
+autres motifs ne sont ouverts que pour l'or). Desserrer l'un des trois ferait
+trader les paires à 2, 3 et 5 % de spread.
+
+⛔ **Aucune règle d'arrêt.** Le régulateur de P&L (−10 %) ne juge qu'à partir de
+10 trades réels par paire.
