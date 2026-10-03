@@ -2698,3 +2698,55 @@ coût mange l'avantage.
 
 ⚠️ Et l'absence d'ordres aujourd'hui sur le forex et les métaux n'a rien à voir :
 **le marché est fermé** (samedi). Le dernier ordre réel date du 02/10 à 19h50.
+
+### EXEMPTION DE LA PORTE DES FRAIS SUR BTC ET ETH — 2026-10-04
+
+Xavier : « donc ajouter admin_live BTC/USD et admin_live ETH/USD ». Appliqué.
+
+    COST_GATE_EXEMPT_PAIRS=admin_live:BTC/USD,admin_live:ETH/USD
+
+Vérifié : **228/228 combinaisons** passent sur chaque paire (38 motifs ×
+6 horizons). Témoins **intacts** — l'or, le WTI et l'EUR/USD restent refusés
+sous 0,5 % de stop : l'exemption est **nommée**, jamais globale.
+
+#### ⛔ CE QUE C'EST, dans les mots du code lui-même
+
+> ⚠️ Une exemption ne rend pas un trade rentable : elle décide de l'**envoyer
+> SANS que la question soit tranchée**.
+
+C'est une **ouverture assumée**, pas une mesure. Les chiffres qu'elle enjambe,
+relevés le jour même :
+
+    route : edge brut SUPPOSE 0,10 R · frais tolérés 30 % · soit 0,030 R max
+
+    paire      spread    stop 0,30 %   coût en R   stop qu'il aurait fallu
+    BTC/USD   12,00 $      254,11 $      0,0472           0,472 %
+    ETH/USD    3,16 $        8,06 $      0,3921           3,921 %   ⛔ 13x le plafond
+
+#### 🔑 Les trois appareils disent la même chose, indépendamment
+
+1. **Le banc** : 0 cellule retenue sur 4 580 (or) et 493 (WTI).
+2. **Le laboratoire** : 0/4 580 cellules, motifs Vivien pires que le hasard.
+3. **La porte des frais** : les frais dépassent 30 % de l'avantage, sur
+   **toutes** les paires — EUR/JPY 489 refus, EUR/GBP 410, USD/JPY 338… et
+   BTC 82 le premier jour.
+
+⚠️ Et l'avantage de **0,10 R** que la porte accorde est lui-même **supposé** :
+le banc ne l'a pas trouvé. Si l'avantage réel est nul, aucun coût n'est
+acceptable — la porte était donc déjà généreuse.
+
+#### ⛔ La sortie « propre » est une impasse déjà mesurée
+
+> ⚠️ Élargir le stop pour franchir la porte a été testé et ne marche pas :
+> toutes les variantes qui passent sont **NÉGATIVES**. Le coût se mesure en R,
+> et R est défini par le stop — l'élargir divise le coût **et** le gain par le
+> même facteur. Faille **auto-référentielle**.
+
+#### Ce qui reste comme garde
+
+⛔ **Aucune règle d'arrêt.** Le régulateur de P&L par paire (−10 %) ne juge
+qu'à partir de **10 trades réels** par paire, et BTC comme ETH en sont à zéro.
+Le compte vaut **606,74 €**. Le marché crypto est ouvert : des ordres réels
+peuvent partir dans les minutes qui suivent.
+
+Une seule ligne d'`.env` referme tout : `COST_GATE_EXEMPT_PAIRS=`.
