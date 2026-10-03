@@ -2242,3 +2242,75 @@ positif ici serait une condition nécessaire, jamais suffisante.
 
 ⛔ **Aucune chaîne, aucun motif WTI ne sera armé sur l'argent réel sur la seule
 foi de ce relevé.** Il sert à savoir s'il y a quelque chose à chercher.
+
+### VERDICT DANS L'ÉCHANTILLON — 2026-10-03, déclaré dans `13400af`
+
+Fenêtre `2025-05-15 → 2026-06-30`, **79 474 bougies M5 du courtier**, spread
+mesuré **2 points = 0,0200 $** (p90 2, max 3 — stable sur 412 jours).
+**250 cellules**, plafond du hasard **3,035**.
+
+    RETENUES : 1    double_sweep_down / sell / 15 min
+                    n=68  R=+0,4798  t_vs_hasard=+3,573
+
+⛔ **P1 est RÉFUTÉE** par mon propre critère : je prédisais zéro cellule
+retenue, il y en a une.
+
+#### Mais elle ne survit pas au déplacement de la frontière
+
+Une bougie de 15 minutes peut être bâtie sur **trois phases** des bougies de
+5 minutes, et aucune n'est plus légitime que les autres. Mesure sur les mêmes
+79 474 bougies, figées :
+
+    phase      n        R      t_vs    verdict
+      0 s     68  +0,4798   +3,573    RETENU
+    300 s     75  -0,1530   -0,442    insuffisant
+    600 s     83  -0,0100   +0,736    insuffisant
+
+🔑 Le R **change de signe** quand on décale la frontière de cinq minutes, et
+deux des trois phases sont négatives. Un avantage réel ne dépend pas de l'endroit
+où l'on coupe les bougies. **C'est du bruit.**
+
+⚠️ Honnêteté de méthode : ce test de phase n'était **pas** pré-enregistré. Il
+est recevable ici parce qu'il ne peut que **tuer** un candidat, jamais en sauver
+un — l'utiliser pour sauver une cellule serait de la pêche au résultat. P1 reste
+donc réfutée dans la lettre, et tenue dans le fond : **aucune cellule robuste**.
+
+#### Les autres prédictions
+
+**P2 — TENUE, et plus durement que prévu.** Coût médian par trade, en R :
+
+    5 min   0,0800 R      <- quatre fois le seuil que j'avais prédit (0,02 R)
+    15 min  0,0460 R
+    30 min  0,0345 R
+    60 min  0,0237 R
+
+Il décroît bien avec l'horizon. Mais à 5 minutes, le spread mange **8 % du
+risque à chaque trade** : il faut gagner 0,08 R avant le premier centime.
+
+**P4 — tenue, pour une raison que je n'avais pas prévue.** Je prédisais ~5 % de
+cellules à `t > 2`, soit ce que produit le hasard. Mesuré : **0,4 %** (1 sur
+250) — très en dessous. Et la distribution dit pourquoi : `t` médian **−0,829**,
+**38 cellules sur 250** seulement à R positif, 39 cellules sous `t < −2`. Les
+cellules ne sont pas distribuées autour de zéro : elles sont tirées vers le
+**bas**. Ce n'est pas du bruit symétrique, c'est **le coût**.
+
+#### Ce que ce verdict a coûté à trouver
+
+Trois défauts ont dû être corrigés avant que la mesure veuille dire quelque
+chose, et aucun n'était visible dans un résultat :
+
+1. ⛔ Les étiquettes du pont **dérivent d'une seconde par appel** et ne sont pas
+   sur la grille — `_decalage_serveur_sec()` se mesure sur le dernier tick, qui
+   vieillit marché fermé. Corrigé dans `de466ac`. **En production aussi** : les
+   échelles 15/30/60 min des paires routées étaient bâties sur les mauvais
+   triplets de bougies.
+2. ⛔ Un résidu **médian global** ne suffit pas : la fenêtre contient plusieurs
+   régimes de décalage, un par page. Corrigé par bougie.
+3. ⛔ Trois passages du banc ont rendu **0, puis 1, puis 0** cellule retenue.
+   L'expérience qui tranche : bougies **figées sur disque**, mesure relancée
+   dans trois processus séparés → identique au bit. `mesurer` est parfaitement
+   pure ; toute l'instabilité venait du chargement. **Un banc dont les données
+   sont refetchées à chaque passage n'est pas un banc.**
+
+⏳ Reste P3, le hors échantillon `2026-07-01 → 2026-10-02`, maintenant que ce
+verdict est écrit et commité.
