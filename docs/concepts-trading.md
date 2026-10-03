@@ -2565,3 +2565,44 @@ trader les paires à 2, 3 et 5 % de spread.
 
 ⛔ **Aucune règle d'arrêt.** Le régulateur de P&L (−10 %) ne juge qu'à partir de
 10 trades réels par paire.
+
+### BTC ET ETH SUR LES SIX HORIZONS — 2026-10-03
+
+Xavier : « vas-y, ouvre BTC et ETH ». Fait, par `MT5_BRIDGE_HORIZON_OVERRIDES`,
+même dispositif que l'or. Vérifié : les **12 combinaisons** (2 paires × 6
+échelles) passent la cascade complète au prix réel.
+
+    avant : seuls 5min et 4h — la route n'ouvre que ces deux-là
+    après : 5min, 15min, 30min, 1h, 4h, 1d sur BTC/USD et ETH/USD
+
+Mesure qui a motivé le choix : sur 35 minutes, `horizon_not_allowed` était le
+**premier** refus crypto — **624 refus sur 7 paires**, devant `spread_too_wide`
+(261) et `pattern_not_allowed` (88). Ce n'était donc pas le spread le frein
+principal.
+
+#### ⛔ CE QUE J'AI TROUVÉ EN VÉRIFIANT, ET QUI CONCERNE L'OR
+
+`_max_positions_for_pair()` résout le cap **par CLASSE D'ACTIF**, pas par paire :
+
+    MT5_BRIDGE_MAX_POSITIONS_PER_PAIR = {"forex":1,"metal":1,"crypto":1,…}
+    ⇒ XAU/USD · BTC/USD · ETH/USD · EUR/USD · WTI/USD → 1 position MAXIMUM
+
+Or `_places_libres_pour` rend `min(marge_paire, marge_horizon)`. Donc
+`MT5_BRIDGE_PLACES_PAR_HORIZON = {"XAU/USD": 1}`, posé le 2026-10-01 pour
+donner « une place par horizon » à l'or, est **neutralisé** : dès qu'une
+position or est ouverte sur une échelle, `marge_paire` tombe à zéro et les
+**cinq autres échelles sont refusées**.
+
+🔑 **L'or ne peut donc tenir qu'UNE position à la fois, tous horizons
+confondus** — contrairement à ce que la fiche du 01/10 laissait croire (« une
+place par horizon », « risque cumulé 79,37 € »). Le découpage par horizon ne
+peut agir que si le cap de classe est relevé.
+
+⚠️ Je n'ai **pas** relevé ce cap, et c'est volontaire : le porter de 1 à 6
+multiplierait l'exposition par six sur un compte de **606,74 €**. BTC et ETH
+gagnent donc **six occasions** au lieu de deux, à exposition maximale
+inchangée — une position à la fois par paire.
+
+Rien n'a été ajouté à `PLACES_PAR_HORIZON` pour BTC et ETH : ce serait un
+réglage inerte tant que le cap de classe vaut 1, et un réglage inerte qui a
+l'air actif est pire que pas de réglage.
