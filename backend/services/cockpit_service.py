@@ -51,9 +51,20 @@ _bridge_health_cached_at: datetime | None = None
 
 
 def _current_price(pair: str) -> float | None:
-    """Dernier prix connu pour `pair` : tick temps réel > close bougie."""
+    """Dernier prix connu pour `pair` : tick temps réel > close bougie.
+
+    ⛔ SAUF pour les paires routees vers le pont (2026-10-03). Le flux
+    WebSocket est celui de Twelve Data, qui cote un AUTRE contrat pour ces
+    paires : pour une position WTI reelle entree a 93,48 chez le courtier, le
+    P&L latent et la distance au stop etaient calcules contre 90,31 — une
+    perte fictive de 3,4 % et un `near_sl` allume a tort, affiches a Xavier.
+    🔑 Les bougies viennent deja du scheduler, donc du courtier : ecarter le
+    tick suffit, et evite un appel reseau sur un chemin rafraichi toutes les
+    5 secondes.
+    """
+    from backend.services import bougies_du_pont
     ticks = get_latest_ticks()
-    if pair in ticks:
+    if pair in ticks and not bougies_du_pont.paire_du_pont(pair):
         return ticks[pair].price
     candles = get_candles_for_pair(pair)
     if candles:

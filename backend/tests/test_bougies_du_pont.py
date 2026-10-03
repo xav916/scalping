@@ -342,3 +342,132 @@ async def test_une_paire_NON_declaree_garde_la_cascade_d_avant(monkeypatch):
     monkeypatch.setattr(ps, "PRICE_SOURCE", "mt5")
     await ps._fetch_depuis_source("EUR/USD", "5min", 50)
     assert vu["appel"] == "EUR/USD"
+
+
+# --- Les echelles telles que le RADAR les nomme --------------------------
+#
+# ⛔ Releve en production le 2026-10-03, 40 s apres le deploiement :
+#     bougies_du_pont: echelle '1day' inconnue du pont — rien
+# Ma table disait `1d`, le radar dit `1day`. Les bougies journalieres du WTI
+# rendaient donc une liste vide, en silence. Les noms viennent du code appelant,
+# pas de ce que je trouve lisible.
+
+@pytest.mark.parametrize("radar,mt5", [
+    ("1min", "M1"), ("5min", "M5"), ("15min", "M15"), ("30min", "M30"),
+    ("1h", "H1"), ("60min", "H1"), ("4h", "H4"),
+    ("1day", "D1"), ("1d", "D1"),
+])
+def test_toutes_les_echelles_du_radar_sont_traduites(radar, mt5):
+    assert bp._ECHELLES.get(radar) == mt5
+
+
+def test_l_hebdomadaire_est_ABSENT_a_dessein():
+    """⛔ Le pont ne connait que M1,M5,M15,M30,H1,H4,D1 — pas de W1. Le
+    declarer enverrait un timeframe que le pont refuse par un 400, et la paire
+    serait muette sans qu'on sache pourquoi. L'absence est le bon comportement :
+    `fetch_candles` dit `echelle inconnue du pont` et rend une liste vide.
+    ⚠️ Sans consequence ici : `1week` n'apparait que dans la table Binance
+    (crypto) et n'est jamais demande pour les paires du pont."""
+    assert "1week" not in bp._ECHELLES
+
+
+# --- Le PRIX COURANT, l'autre chemin ------------------------------------
+#
+# ⛔ `fetch_current_price` est un chemin SEPARE de `fetch_candles`, reste sur
+# Twelve Data apres mon premier correctif. Consequence mesurable : les trades
+# fantomes OPEN sont juges par `backtest_service` avec ce prix. L'entree venant
+# des bougies du courtier (93,47) et le juge de Twelve Data (90,31), un ecart de
+# 3,4 % ECRASE n'importe quel stop — chaque trade WTI aurait ete declare touche
+# a tort, et le journal fantome empoisonne en silence.
+# 🔑 Une paire a moitie routee est PIRE qu'une paire non routee.
+
+def test_le_prix_courant_vient_du_pont(monkeypatch):
+    from types import SimpleNamespace as NS
+    etat = {}
+    monkeypatch.setattr(bp.urllib.request, "urlopen", _urlopen_double(etat))
+    monkeypatch.setattr(bp, "_destination",
+                        lambda: NS(bridge_url="http://x", bridge_api_key="k"))
+    monkeypatch.setattr(bp, "_lire_tick", bp._lire_tick)
+    assert bp.prix_courant("WTI/USD") is None   # la reponse doublee n'a pas de bid
+
+
+def test_le_prix_courant_est_le_MILIEU_du_tick(monkeypatch):
+    from types import SimpleNamespace as NS
+    monkeypatch.setattr(bp, "_destination",
+                        lambda: NS(bridge_url="http://x", bridge_api_key="k"))
+    monkeypatch.setattr(bp, "_lire_tick",
+                        lambda d, s: {"bid": 93.46, "ask": 93.50})
+    assert bp.prix_courant("WTI/USD") == pytest.approx(93.48)
+
+
+def test_un_tick_sans_bid_ou_ask_rend_None(monkeypatch):
+    from types import SimpleNamespace as NS
+    monkeypatch.setattr(bp, "_destination",
+                        lambda: NS(bridge_url="http://x", bridge_api_key="k"))
+    for t in ({}, {"bid": 0, "ask": 93.5}, {"bid": 93.4}, None):
+        monkeypatch.setattr(bp, "_lire_tick", lambda d, s, _t=t: _t)
+        assert bp.prix_courant("WTI/USD") is None, t
+
+
+@pytest.mark.asyncio
+async def test_price_service_prend_le_prix_du_pont_et_PAS_twelve_data(
+        monkeypatch):
+    from backend.services import price_service as ps
+    monkeypatch.setattr(bp, "paire_du_pont", lambda p: p == "WTI/USD")
+    monkeypatch.setattr(bp, "prix_courant", lambda p: 93.48)
+    monkeypatch.setattr(ps, "_cache_get_price", lambda p: None)
+    monkeypatch.setattr(ps, "_cache_store_price", lambda *a: None)
+    monkeypatch.setattr(ps, "TWELVEDATA_API_KEY", "")   # Twelve Data = None
+    assert await ps.fetch_current_price("WTI/USD") == pytest.approx(93.48)
+
+
+@pytest.mark.asyncio
+async def test_un_pont_muet_ne_RETOMBE_PAS_sur_twelve_data_pour_le_prix(
+        monkeypatch):
+    """⛔ Mieux vaut AUCUN prix qu'un prix d'un autre contrat : le juge des
+    trades fantomes prefere ne rien conclure (`current is None: continue`)."""
+    from backend.services import price_service as ps
+    monkeypatch.setattr(bp, "paire_du_pont", lambda p: True)
+    monkeypatch.setattr(bp, "prix_courant", lambda p: None)
+    monkeypatch.setattr(ps, "_cache_get_price", lambda p: None)
+
+    def _interdit(*a, **k):
+        raise AssertionError("Twelve Data appele — la divergence revient")
+
+    monkeypatch.setattr(ps.httpx, "AsyncClient", _interdit)
+    assert await ps.fetch_current_price("WTI/USD") is None
+
+
+# --- LE COCKPIT, troisieme chemin ---------------------------------------
+#
+# ⛔ `cockpit_service._current_price` prefere le tick du flux WebSocket Twelve
+# Data, et ne retombe sur la bougie qu'a defaut. Pour une position WTI reelle
+# entree a 93,48 chez le courtier, il calculait donc le P&L latent et la
+# distance au stop contre 90,31 : une perte fictive de 3,4 % et un `near_sl`
+# allume a tort, sous les yeux de Xavier.
+# 🔑 Ses bougies viennent deja du scheduler, donc du courtier : il suffit
+# d'ECARTER le tick Twelve Data pour ces paires.
+
+def test_le_cockpit_ignore_le_tick_twelve_data_pour_une_paire_du_pont(
+        monkeypatch):
+    from types import SimpleNamespace as NS
+    from backend.services import cockpit_service as cs
+    monkeypatch.setattr(bp, "paire_du_pont", lambda p: p == "WTI/USD")
+    monkeypatch.setattr(cs, "get_latest_ticks",
+                        lambda: {"WTI/USD": NS(price=90.31)})
+    monkeypatch.setattr(cs, "get_candles_for_pair",
+                        lambda p: [_bougie(93.47)])
+    assert cs._current_price("WTI/USD") == pytest.approx(93.47), \
+        "le tick Twelve Data cote un AUTRE contrat"
+
+
+def test_le_cockpit_garde_le_tick_pour_les_autres_paires(monkeypatch):
+    """⚠️ Le temps reel reste prefere partout ailleurs — c'est son interet."""
+    from types import SimpleNamespace as NS
+    from backend.services import cockpit_service as cs
+    monkeypatch.setattr(bp, "paire_du_pont", lambda p: False)
+    monkeypatch.setattr(cs, "get_latest_ticks",
+                        lambda: {"XAU/USD": NS(price=4139.72)})
+    monkeypatch.setattr(cs, "get_candles_for_pair",
+                        lambda p: [_bougie(4137.62)])
+    assert cs._current_price("XAU/USD") == pytest.approx(4139.72)

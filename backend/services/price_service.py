@@ -305,6 +305,24 @@ async def fetch_current_price(pair: str) -> float | None:
     if cached is not None:
         return cached
 
+    # ⛔ MEME ROUTAGE QUE LES BOUGIES, et pour une raison mesurable. Ce chemin
+    # est SEPARE de `fetch_candles` : apres avoir route les bougies du WTI vers
+    # le courtier, le prix courant restait sur Twelve Data. Or
+    # `backtest_service` juge les trades fantomes OPEN avec ce prix. Entree a
+    # 93,47 (courtier) jugee contre 90,31 (Twelve Data) : un ecart de 3,4 %
+    # ECRASE n'importe quel stop, donc chaque trade fantome WTI aurait ete
+    # declare touche a tort, et le journal fantome empoisonne en silence.
+    # 🔑 Une paire a moitie routee est PIRE qu'une paire non routee.
+    from backend.services import bougies_du_pont
+    if bougies_du_pont.paire_du_pont(pair):
+        prix = bougies_du_pont.prix_courant(pair)
+        if prix is not None:
+            _cache_store_price(pair, prix)
+        # ⛔ Pas de repli : mieux vaut AUCUN prix qu'un prix d'un autre
+        # contrat. Le juge des trades fantomes sait ne rien conclure
+        # (`if current is None: continue`).
+        return prix
+
     if PRICE_SOURCE == "mt5":
         price = await mt5_service.fetch_current_price(pair)
         if price is not None:

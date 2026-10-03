@@ -60,8 +60,16 @@ DESTINATION = os.getenv("BOUGIES_PONT_DESTINATION", "admin_live")
 
 # ⛔ Le radar dit `5min`, MT5 dit `M5`. Une traduction ratee rendrait des bougies
 # d'une AUTRE echelle sans lever la moindre erreur.
-_ECHELLES = {"5min": "M5", "15min": "M15", "30min": "M30",
-             "1h": "H1", "60min": "H1", "4h": "H4", "1d": "D1"}
+# ⛔ Les noms viennent du CODE APPELANT, pas de ce qui me parait lisible. Releve
+# en production 40 s apres le 1er deploiement : << echelle '1day' inconnue du
+# pont — rien >>. Ma table disait `1d`, le radar dit `1day` : les bougies
+# journalieres rendaient une liste vide, en silence.
+# ⚠️ Pas de `1week` : le pont ne connait que M1,M5,M15,M30,H1,H4,D1. Le
+# declarer enverrait un timeframe refuse par un 400. Sans consequence — `1week`
+# n'existe que dans la table Binance (crypto).
+_ECHELLES = {"1min": "M1", "5min": "M5", "15min": "M15", "30min": "M30",
+             "1h": "H1", "60min": "H1", "4h": "H4",
+             "1day": "D1", "1d": "D1"}
 
 
 def paire_du_pont(pair: str) -> bool:
@@ -83,7 +91,8 @@ def _destination():
 
 
 # Duree d'une bougie, par echelle du pont. Sert a calculer la fenetre.
-_MINUTES = {"M5": 5, "M15": 15, "M30": 30, "H1": 60, "H4": 240, "D1": 1440}
+_MINUTES = {"M1": 1, "M5": 5, "M15": 15, "M30": 30,
+            "H1": 60, "H4": 240, "D1": 1440}
 
 # ⚠️ On demande TROIS fois la duree theorique, et au moins deux jours. Le
 # marche ferme la nuit et le week-end : 50 bougies de 5 min couvrent 250
@@ -191,3 +200,50 @@ async def fetch_candles(pair: str, interval: str, outputsize: int) -> list:
         logger.info("bougies_du_pont: %s %s — aucune bougie exploitable",
                     pair, timeframe)
     return bougies[-outputsize:] if outputsize else bougies
+
+
+def _lire_tick(dest, pair: str) -> dict | None:
+    """`GET /tick/{pair}`, ou `None`. ⚠️ Le pont resout le symbole lui-meme."""
+    base = (getattr(dest, "bridge_url", "") or "").rstrip("/")
+    if not base:
+        return None
+    entetes = {}
+    if getattr(dest, "bridge_api_key", None):
+        entetes["X-API-Key"] = dest.bridge_api_key
+    url = f"{base}/tick/{urllib.parse.quote(str(pair), safe='')}"
+    try:
+        with urllib.request.urlopen(
+                urllib.request.Request(url, headers=entetes), timeout=10) as r:
+            return json.load(r)
+    except Exception as e:  # noqa: BLE001
+        logger.info("bougies_du_pont: /tick %s illisible (%s)", pair, e)
+        return None
+
+
+def prix_courant(pair: str) -> float | None:
+    """Le prix courant CHEZ LE COURTIER — le milieu du tick. `None` si inconnu.
+
+    ⛔ `fetch_current_price` est un chemin SEPARE de `fetch_candles`, et il est
+    reste sur Twelve Data apres le premier correctif. Consequence mesurable :
+    `backtest_service` juge les trades fantomes OPEN avec ce prix. L'entree
+    venant des bougies du courtier (93,47) et le juge de Twelve Data (90,31),
+    un ecart de 3,4 % ECRASE n'importe quel stop — chaque trade fantome WTI
+    aurait ete declare touche a tort, et le journal fantome empoisonne en
+    silence.
+
+    🔑 Une paire a moitie routee est PIRE qu'une paire non routee : les deux
+    chemins se contredisent, et rien ne le dit.
+    """
+    dest = _destination()
+    if dest is None:
+        return None
+    t = _lire_tick(dest, pair)
+    if not isinstance(t, dict):
+        return None
+    try:
+        bid, ask = float(t.get("bid") or 0), float(t.get("ask") or 0)
+    except (TypeError, ValueError):
+        return None
+    if bid <= 0 or ask <= 0:
+        return None
+    return (bid + ask) / 2.0
