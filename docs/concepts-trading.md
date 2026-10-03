@@ -2166,3 +2166,79 @@ fenêtre** », et la suite serait un zéro mesuré par rebattage plutôt que sup
 2. Un bruit « déterministe » en sinusoïde est **périodique**, donc lu comme un
    retour à la moyenne : le même AR(1) à φ = 0,9 tombait à H = 0,31. Un montage
    qui se croit neutre et ne l'est pas mesure autre chose que ce qu'il annonce.
+
+## LE WTI REMESURÉ SUR LES BOUGIES DU COURTIER — déclaration du 2026-10-03
+
+### Pourquoi tout est à refaire
+
+Le 2026-10-03 on a découvert que Twelve Data ne cotait **pas le même contrat**
+que le courtier pour le WTI : 3,394 % d'écart constant, quand la deuxième pire
+paire de l'univers est à 0,146 %. Conséquence : 13 078 refus
+`price_divergence` en 7 jours, et plus un seul trade WTI depuis le 4 août.
+
+🔑 **La conséquence qui compte pour la recherche** : les **9 261** lignes
+fantômes WTI accumulées depuis le 18 mai 2026 ont toutes été mesurées sur le
+mauvais instrument, de même que le backtest WTI déjà invalidé en août. On ne
+sait **rien** du WTI. Ce n'est pas une réévaluation, c'est une première mesure.
+
+### Ce qui est mesuré, exactement
+
+La même fonction que pour l'or : `laboratoire_or.mesurer(bougies_m5, spread,
+pair="WTI/USD")`. Elle est **pure** — elle ne décide rien, elle mesure toutes
+les cellules (échelle × motif × sens), applique un contrôle aléatoire **apparié
+par sens** et le plafond du hasard `plafond_hasard(nb_cellules)`.
+
+Trois différences avec le relevé de l'or, toutes dans le sens de la rigueur :
+
+1. **Les bougies viennent du courtier**, pas de Twelve Data — donc de
+   l'instrument qui sera réellement exécuté.
+2. **Le spread est mesuré dans les bougies**, pas supposé. MT5 stocke un spread
+   par bougie ; relevé sur 2 760 bougies M5 du 19/09 au 02/10 : médiane
+   2 points = **0,0200 $ = 0,0216 % du prix**, et médiane = p90 = max, donc
+   stable. ⛔ C'est la faiblesse connue du banc de l'or (« le spread du labo est
+   celui d'un INSTANT ») qui disparaît ici.
+3. **Les fenêtres sont déclarées MAINTENANT**, avant la première mesure, et
+   strictement disjointes — pas de recouvrement à 89/90 comme les nuits du labo.
+
+### Les fenêtres, déclarées avant de regarder
+
+L'historique M5 du courtier commence le **2025-05-07** (en deçà, le pont rend
+une unique bougie hors plage — piège à écarter).
+
+    DANS L'ÉCHANTILLON    2025-05-15 → 2026-06-30   (412 jours)
+    HORS ÉCHANTILLON      2026-07-01 → 2026-10-02   ( 94 jours)
+
+⛔ La fenêtre hors échantillon n'est pas lue avant que le verdict dans
+l'échantillon soit écrit et commité.
+
+### Prédictions falsifiables
+
+**P1 — ZÉRO cellule retenue.** Comme pour l'or, où 4 580 cellules n'en ont
+laissé passer aucune. Même structure de marché, même régime de coût.
+*Réfutée si* au moins une cellule franchit le plafond du hasard **et** son
+contrôle apparié **et** la réplication hors échantillon.
+
+**P2 — le coût domine, et il est PIRE que sur l'or.** Le spread relatif du WTI
+(0,0216 % du prix) vaut environ **1,8 ×** celui de l'or mesuré le 30/09
+(0,50 $ sur 4 137 = 0,0121 %). *Prédiction chiffrée* : le coût médian par trade
+dépassera **0,02 R** à l'échelle 5 min, et décroîtra à peu près comme l'inverse
+de l'horizon. *Réfutée si* le coût médian à 5 min est sous 0,02 R, ou s'il ne
+décroît pas avec l'horizon.
+
+**P3 — ce qui paraîtra positif dans l'échantillon ne se répliquera pas.**
+Précédents : `fvg_up` (t passé de +2,47 à +0,101, R changeant de signe) et
+`sur_niveau_majeur` (signe inversé hors échantillon). *Réfutée si* une cellule
+candidate garde son signe **et** un t hors échantillon au-dessus de sa barre.
+
+**P4 — la multiplicité expliquera tout.** La proportion de cellules à `t > 2`
+dans l'échantillon sera de l'ordre de **5 %** — c'est-à-dire exactement ce que
+le hasard produit — et aucune ne franchira `plafond_hasard`. *Réfutée si* cette
+proportion dépasse nettement 5 %, ce qui indiquerait un signal réel diffus
+plutôt que du bruit de test multiple.
+
+⚠️ **Ce que cette mesure ne peut pas dire.** Elle ne dit rien de l'exécution
+réelle : glissement, rejets du courtier, heures creuses de l'énergie. Un verdict
+positif ici serait une condition nécessaire, jamais suffisante.
+
+⛔ **Aucune chaîne, aucun motif WTI ne sera armé sur l'argent réel sur la seule
+foi de ce relevé.** Il sert à savoir s'il y a quelque chose à chercher.
