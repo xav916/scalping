@@ -2462,3 +2462,53 @@ pas geler rétroactivement les paires qui traitaient déjà avant la porte.
    `horizon_not_allowed` aux **six** échelles, et j'ai failli l'imputer à la
    production. Une sonde qui ne porte pas la forme réelle d'un setup mesure sa
    propre lacune.
+
+### TOUTES LES CRYPTOS AU RÉEL — décision du 2026-10-03
+
+Xavier : « me remettre toutes les crypto-monnaies sur MetaTrader 5 ». Appliqué,
+**contre la mesure du jour**, et voici ce que ça produit réellement.
+
+#### Les spreads, mesurés et RECOUPÉS
+
+Médiane du spread stocké sur 14 jours de bougies M5, **recoupée avec le tick
+vivant** — les deux concordent à moins de 2 % près, donc ces spreads sont
+**structurels**, pas un effet de week-end.
+
+    BTC/USD  0,0141 %   ETH/USD  0,1179 %   SOL/USD  0,0418 %
+    XRP/USD  0,1947 %   BNB/USD  0,4945 %   UNI/USD  0,7303 %
+    ADA/USD  1,7970 %   LTC/USD  3,0530 %   DOT/USD  5,4591 %
+    ---- pour référence : XAU 0,0121 %  ·  WTI 0,0214 %  ·  plafond crypto 0,20 %
+
+⚠️ **Le spread stocké par bougie n'est PAS fiable pour toutes les paires** : le
+courtier stocke **zéro** pour EUR/USD et **sous-estime l'or de 10×**. Mon premier
+relevé annonçait « EUR/USD : 0,0000 % » — faux. Le tick est l'arbitre, et il
+faut recouper **par paire**.
+
+#### Ce qui a été changé
+
+    MT5_BRIDGE_LIVE_WHITELIST_PAIRS   12 → 21 paires
+    MT5_BRIDGE_BLOCKED_PAIRS          6 → 1 (seul BCH/USD reste bloqué)
+    admission admin_live              9 cryptos → AUTO_EXEC, achat ET vente
+
+⛔ **Cinq dérogations explicites au banc d'essai** (`admin_override`, journalisées
+par `research_bench` lui-même) : BTC, SOL, XRP, LTC, DOT — aucun essai passé ne
+les couvre. ETH, ADA, BNB et UNI passent par antériorité.
+
+⚠️ **La porte du spread n'a PAS été desserrée**, conformément à la règle de
+Xavier de ne jamais desserrer les portes.
+
+#### Ce que ça produit, vérifié au PIPELINE marché ouvert
+
+    BTC/USD  ✅ PASSE   ETH/USD  ✅ PASSE   SOL/USD  ✅ PASSE   XRP/USD  ✅ PASSE
+    ADA · LTC · DOT · BNB · UNI   ⛔ spread_too_wide — INERTES
+
+🔑 **Et seulement sur `range_bounce_up` / `range_bounce_down`.** La liste blanche
+de motifs globale ne contient que ces deux-là ; les autres motifs ne sont ouverts
+que pour `XAU/USD` via `MT5_BRIDGE_PATTERN_OVERRIDES`. C'est un **septième
+verrou** que je n'avais pas inventorié avant de mesurer.
+
+⚠️ **XRP est à la limite** : refusée à 0,2015 % quinze minutes plus tôt, passée
+ensuite. Elle alternera selon l'heure.
+
+⛔ **Aucune règle d'arrêt.** Le régulateur de P&L par paire (−10 %) reste le seul
+garde automatique, et il ne juge qu'à partir de 10 trades réels par paire.
