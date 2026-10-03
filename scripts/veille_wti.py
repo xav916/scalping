@@ -30,7 +30,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ETAT = Path(os.getenv("VEILLE_WTI_ETAT", "/app/data/veille_wti_etat.json"))
-PAIRE = "WTI/USD"
+# ⚠️ PLUSIEURS paires depuis le 2026-10-04, a la demande de Xavier apres
+# l'ouverture de BTC et ETH au reel. Le defaut garde le WTI : si le reglage
+# disparait, la veille deja armee ne cesse pas de surveiller.
+PAIRES: tuple[str, ...] = tuple(
+    x.strip() for x in os.getenv(
+        "VEILLE_PAIRES", "WTI/USD,BTC/USD,ETH/USD").split(",") if x.strip())
 DEST = "admin_live"
 # L'ouverture du marche WTI pour admin_live, mesuree : dimanche 23:00 UTC.
 OUVERTURE = datetime(2026, 10, 4, 23, 0, tzinfo=timezone.utc)
@@ -58,13 +63,13 @@ def _execution() -> dict:
             "arme": v.fingerprint_armed, "tourne": v.fingerprint_running}
 
 
-def _admission() -> dict:
+def _admission(PAIRE: str) -> dict:
     from backend.services.pair_admission_controller import get_current_state
     return {s: get_current_state(PAIRE, direction=s, destination=DEST)
             for s in ("buy", "sell")}
 
 
-def _regulateur() -> dict:
+def _regulateur(PAIRE: str) -> dict:
     from backend.services.pair_pnl_regulator import evaluate_pair
     r = evaluate_pair(PAIRE, DEST)
     m = r.get("metrics") or {}
@@ -79,7 +84,7 @@ def _db() -> str:
     return _db_path()
 
 
-def _ordres() -> list[dict]:
+def _ordres(PAIRE: str) -> list[dict]:
     """Les ordres WTI pousses depuis l'ouverture."""
     with sqlite3.connect(_db()) as c:
         c.row_factory = sqlite3.Row
@@ -91,7 +96,7 @@ def _ordres() -> list[dict]:
             "ORDER BY id", (PAIRE, OUVERTURE.isoformat()))]
 
 
-def _refus() -> list[tuple[str, int]]:
+def _refus(PAIRE: str) -> list[tuple[str, int]]:
     """Les motifs de refus WTI depuis l'ouverture, les plus frequents d'abord."""
     with sqlite3.connect(_db()) as c:
         return [(r[0], r[1]) for r in c.execute(
@@ -101,7 +106,7 @@ def _refus() -> list[tuple[str, int]]:
             (PAIRE, OUVERTURE.isoformat()))]
 
 
-def _tick() -> dict | None:
+def _tick(PAIRE: str) -> dict | None:
     """Le spread et la divergence VIVANTS, si le marche est ouvert."""
     try:
         import urllib.parse
@@ -125,7 +130,7 @@ def _tick() -> dict | None:
         return {"erreur": f"{type(e).__name__}"}
 
 
-def _marche_ouvert() -> bool:
+def _marche_ouvert(PAIRE: str) -> bool:
     try:
         from backend.services.market_hours import is_market_open_for_destination
         return bool(is_market_open_for_destination(PAIRE, DEST))
@@ -133,51 +138,84 @@ def _marche_ouvert() -> bool:
         return False
 
 
-def releve() -> dict:
-    ordres = _ordres()
+def releve_paire(pair: str) -> dict:
+    """Le releve d'UNE paire. ⚠️ Un echec sur une paire ne doit pas emporter
+    les autres : c'est la lecon du backfill d'admission du 02/10."""
+    ordres = _ordres(pair)
     return {
-        "a": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "marche_ouvert": _marche_ouvert(),
-        "execution": _execution(),
-        "admission": _admission(),
-        "regulateur": _regulateur(),
+        "marche_ouvert": _marche_ouvert(pair),
+        "admission": _admission(pair),
+        "regulateur": _regulateur(pair),
         "ordres": ordres,
         "dernier_ordre_id": max((o["id"] for o in ordres), default=0),
-        "refus": _refus(),
-        "tick": _tick(),
+        "refus": _refus(pair),
+        "tick": _tick(pair),
     }
 
 
-def evenements(avant: dict, apres: dict) -> list[str]:
-    """Ce qui a CHANGE et qui vaut un message. Vide = on se taît."""
-    ev: list[str] = []
-    if not avant:
-        return ["veille armée"]
+def releve() -> dict:
+    """L'etat complet : l'execution une fois, puis une entree PAR PAIRE."""
+    paires = {}
+    for pair in PAIRES:
+        try:
+            paires[pair] = releve_paire(pair)
+        except Exception as e:  # noqa: BLE001
+            paires[pair] = {"erreur": f"{type(e).__name__}: {e}"[:120]}
+    return {
+        "a": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "execution": _execution(),
+        "paires": paires,
+    }
 
-    a, b = avant.get("dernier_ordre_id", 0), apres["dernier_ordre_id"]
+
+def evenements_paire(pair: str, avant: dict, apres: dict) -> list[str]:
+    """Ce qui a change POUR UNE PAIRE et vaut un message."""
+    ev: list[str] = []
+    if "erreur" in apres:
+        return [f"{pair} : ⛔ releve illisible ({_e(apres['erreur'])})"]
+
+    a = (avant or {}).get("dernier_ordre_id", 0)
+    b = apres.get("dernier_ordre_id", 0)
     if b > a:
         neufs = [o for o in apres["ordres"] if o["id"] > a]
-        ev.append(f"{len(neufs)} ordre(s) WTI poussé(s)")
+        ok = sum(1 for o in neufs if o.get("ok"))
+        ev.append(f"<b>{pair} : {len(neufs)} ordre(s)</b> ({ok} OK)")
 
-    ra = (avant.get("regulateur") or {}).get("action")
-    rb = apres["regulateur"]["action"]
-    if ra != rb:
-        ev.append(f"régulateur : {_e(ra)} → <b>{_e(rb)}</b>")
+    ra = ((avant or {}).get("regulateur") or {}).get("action")
+    rb = (apres.get("regulateur") or {}).get("action")
+    if avant and ra != rb:
+        ev.append(f"{pair} régulateur : {_e(ra)} → <b>{_e(rb)}</b>")
 
     for sens in ("buy", "sell"):
-        xa = (avant.get("admission") or {}).get(sens)
-        xb = apres["admission"][sens]
-        if xa != xb:
-            ev.append(f"admission {sens} : {_e(xa)} → <b>{_e(xb)}</b>")
+        xa = ((avant or {}).get("admission") or {}).get(sens)
+        xb = (apres.get("admission") or {}).get(sens)
+        if avant and xa != xb:
+            ev.append(f"{pair} admission {sens} : {_e(xa)} → <b>{_e(xb)}</b>")
 
+    if avant and not (avant or {}).get("marche_ouvert")             and apres.get("marche_ouvert"):
+        ev.append(f"{pair} : marché OUVERT")
+    return ev
+
+
+def evenements(avant: dict, apres: dict) -> list[str]:
+    """Ce qui a CHANGE, toutes paires. Vide = on se taît."""
+    if not avant:
+        return ["veille armée sur " + ", ".join(sorted(apres.get("paires", {})))]
+
+    ev: list[str] = []
     ea = (avant.get("execution") or {}).get("autorisee")
-    eb = apres["execution"]["autorisee"]
+    eb = (apres.get("execution") or {}).get("autorisee")
     if ea != eb:
-        ev.append("exécution " + ("RÉOUVERTE" if eb
-                                  else f"<b>FERMÉE</b> ({_e(apres['execution']['motif'])})"))
+        ev.append("exécution " + ("RÉOUVERTE" if eb else
+                  f"<b>FERMÉE</b> ({_e((apres.get('execution') or {}).get('motif'))})"))
 
-    if not avant.get("marche_ouvert") and apres["marche_ouvert"]:
-        ev.append("marché WTI OUVERT")
+    av, ap = avant.get("paires") or {}, apres.get("paires") or {}
+    # ⚠️ Une paire AJOUTEE au reglage doit se signaler, sinon on croirait
+    # qu'elle est surveillee depuis toujours.
+    for pair in sorted(set(ap) - set(av)):
+        ev.append(f"{pair} : <b>ajoutée à la veille</b>")
+    for pair in sorted(ap):
+        ev += evenements_paire(pair, av.get(pair) or {}, ap[pair])
     return ev
 
 
@@ -198,51 +236,59 @@ def _e(x) -> str:
 
 
 def message(r: dict, ev: list[str]) -> str:
-    L = ["<b>VEILLE WTI — argent réel IC Markets</b>"]
+    L = ["<b>VEILLE — argent réel IC Markets</b>"]
     if ev:
         L.append("⚡ " + " · ".join(ev))
     L.append("")
 
-    e = r["execution"]
-    L.append(f"exécution : {'ALLOW' if e['autorisee'] else '⛔ ' + _e(e['motif'])}"
-             f"  (armé {_e(e['arme'])}, tourne {_e(e['tourne'])})")
-    L.append(f"admission : achat {_e(r['admission']['buy'])} · "
-             f"vente {_e(r['admission']['sell'])}")
-    L.append(f"marché : {'ouvert' if r['marche_ouvert'] else 'fermé'}")
+    e = r.get("execution") or {}
+    L.append(f"exécution : {'ALLOW' if e.get('autorisee') else '⛔ ' + _e(e.get('motif'))}"
+             f"  (armé {_e(e.get('arme'))}, tourne {_e(e.get('tourne'))})")
 
-    g = r["regulateur"]
-    L.append("")
-    L.append("<b>régulateur de P&amp;L</b> — pause à -10 %")
-    L.append(f"  {_e(g['action'])} · {_e(g['motif'])}")
-    L.append(f"  n={_e(g['n'])} · {_e(g['euros'])} € · {_e(g['pct_r'])} % en R "
-             f"· wr {_e(g['wr'])} %")
-
-    t = r.get("tick") or {}
-    if "spread_pct" in t:
+    for pair in sorted(r.get("paires") or {}):
+        p = r["paires"][pair]
         L.append("")
-        L.append(f"<b>tick vivant</b> — prix {_e(t['mid'])} · spread "
-                 f"{_e(t['spread_pct'])} % (plafond {_e(t['spread_max_pct'])} %)")
+        if "erreur" in p:
+            L.append(f"<b>{_e(pair)}</b> — ⛔ relevé illisible : {_e(p['erreur'])}")
+            continue
+        adm = p.get("admission") or {}
+        L.append(f"<b>{_e(pair)}</b> — marché "
+                 f"{'ouvert' if p.get('marche_ouvert') else 'fermé'} · "
+                 f"achat {_e(adm.get('buy'))} · vente {_e(adm.get('sell'))}")
+
+        g = p.get("regulateur") or {}
+        L.append(f"  régulateur (pause à -10 %) : {_e(g.get('action'))} · "
+                 f"{_e(g.get('motif'))}")
+        L.append(f"  n={_e(g.get('n'))} · {_e(g.get('euros'))} € · "
+                 f"{_e(g.get('pct_r'))} % en R · wr {_e(g.get('wr'))} %")
+
+        t = p.get("tick") or {}
+        if "spread_pct" in t:
+            L.append(f"  prix {_e(t['mid'])} · spread {_e(t['spread_pct'])} % "
+                     f"(plafond {_e(t['spread_max_pct'])} %)")
+
+        ordres = p.get("ordres") or []
+        if ordres:
+            L.append(f"  <b>{len(ordres)} ordre(s)</b> depuis l'ouverture :")
+            for o in ordres[-4:]:
+                L.append(f"    {_e(str(o['pushed_at'])[:16])} "
+                         f"{_e(o['direction'])} {_e(o['horizon'])} "
+                         f"{_e(o['pattern'])} · "
+                         f"{'OK' if o['ok'] else 'ÉCHEC'} "
+                         f"ticket {_e(o['mt5_ticket'])}")
+        else:
+            L.append("  aucun ordre depuis l'ouverture")
+
+        refus = p.get("refus") or []
+        if refus:
+            L.append("  refus : " + " · ".join(
+                f"{_e(m)} {_e(n)}" for m, n in refus[:4]))
 
     L.append("")
-    if r["ordres"]:
-        L.append(f"<b>{len(r['ordres'])} ordre(s) WTI depuis l'ouverture</b>")
-        for o in r["ordres"][-5:]:
-            L.append(f"  {_e(str(o['pushed_at'])[:16])} {_e(o['direction'])} "
-                     f"{_e(o['horizon'])} {_e(o['pattern'])} · "
-                     f"{'OK' if o['ok'] else 'ÉCHEC'} ticket {_e(o['mt5_ticket'])}")
-    else:
-        L.append("<b>aucun ordre WTI</b> depuis l'ouverture")
-
-    if r["refus"]:
-        L.append("")
-        L.append("<b>motifs de refus WTI</b> (depuis l'ouverture)")
-        for motif, n in r["refus"]:
-            L.append(f"  {_e(motif)} : {_e(n)}")
-
-    L.append("")
-    L.append("⛔ Rappel : le banc n'a retenu aucune cellule sur 493, et aucune "
-             "règle d'arrêt n'est posée. Le régulateur à -10 % est le seul "
-             "garde automatique.")
+    L.append("⛔ Rappel : aucune règle d'arrêt. Le banc n'a retenu aucune "
+             "cellule sur 4 580 (or) ni 493 (WTI), et la porte des frais est "
+             "EXEMPTÉE sur BTC et ETH. Le régulateur à -10 % est le seul garde "
+             "automatique, et il ne juge qu'à partir de 10 trades par paire.")
     return "\n".join(L)
 
 

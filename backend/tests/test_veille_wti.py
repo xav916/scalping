@@ -1,14 +1,19 @@
-"""La veille WTI — elle doit PARLER quand quelque chose arrive, et se taire sinon.
+"""La veille multi-paires — elle doit PARLER quand il se passe quelque chose.
 
 ⛔ Le risque de cette veille n'est pas de se tromper : c'est de rester MUETTE.
 Un moniteur silencieux est indistinguable d'un marche calme — c'est deja arrive
-ici (`project_moniteur_muet_jeton_mort_2026_08_20`). Ces tests verrouillent donc
-chaque evenement qui doit declencher un message.
+ici (`project_moniteur_muet_jeton_mort_2026_08_20`), et le tout premier envoi du
+2026-10-03 a ete refuse par un HTTP 400 sans que rien ne le signale ailleurs que
+dans un log. Ces tests verrouillent donc chaque evenement qui doit declencher.
 
-Elle est armee le 2026-10-03 parce que le WTI a ete rouvert en AUTO_EXEC sur
-l'argent reel CONTRE la mesure du jour (banc : 0 cellule retenue sur 493), sans
-regle d'arret. Les deux fermetures possibles sans intervention humaine sont le
-regulateur de P&L (-10 %) et REM-002 (tout redeploiement).
+Elle surveille `VEILLE_PAIRES` sur `admin_live` — le WTI depuis le 2026-10-03,
+puis BTC et ETH depuis le 2026-10-04, apres que Xavier ait fait EXEMPTER ces
+deux paires de la porte des frais. Ce qui est surveille n'est donc justifie par
+aucune mesure : c'est precisement pour ca qu'on regarde.
+
+Trois choses peuvent fermer une paire sans intervention humaine, et ce sont
+elles qu'on guette : le regulateur de P&L (-10 %), une retrogradation
+d'admission, et REM-002 que tout redeploiement referme.
 """
 from __future__ import annotations
 
@@ -23,14 +28,12 @@ veille = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(veille)
 
 
-def _releve(**kw):
+def _pair(**kw):
     base = {
-        "a": "2026-10-05T01:00:00+00:00",
         "marche_ouvert": True,
-        "execution": {"autorisee": True, "motif": "ARMED",
-                      "arme": "abc123", "tourne": "abc123"},
         "admission": {"buy": "AUTO_EXEC", "sell": "AUTO_EXEC"},
-        "regulateur": {"action": "keep_active", "motif": "healthy", "n": 5,
+        "regulateur": {"action": "keep_active",
+                       "motif": "sample too small (n=5 < 10)", "n": 5,
                        "euros": -20.32, "pct_r": -4.96, "pct_euros": -3.13,
                        "wr": 20.0},
         "ordres": [], "dernier_ordre_id": 0, "refus": [], "tick": None,
@@ -39,211 +42,237 @@ def _releve(**kw):
     return base
 
 
-# --- Elle doit PARLER ----------------------------------------------------
+def _releve(paires=None, autorisee=True, motif="ARMED"):
+    return {
+        "a": "2026-10-05T01:00:00+00:00",
+        "execution": {"autorisee": autorisee, "motif": motif,
+                      "arme": "abc123", "tourne": "abc123"},
+        "paires": paires if paires is not None else {
+            "BTC/USD": _pair(), "ETH/USD": _pair(), "WTI/USD": _pair()},
+    }
 
-def test_le_premier_passage_annonce_l_armement():
-    assert veille.evenements({}, _releve()) == ["veille armée"]
+
+def _ordre(i, ok=1):
+    return {"id": i, "pushed_at": "2026-10-05T01:05:00+00:00",
+            "direction": "buy", "horizon": "5min", "pattern": "fvg_up",
+            "ok": ok, "mt5_ticket": 1360099000 + i,
+            "entry_price_5dp": 84704.89, "destination_id": "admin_live",
+            "reponse": ""}
 
 
-def test_un_ordre_POUSSE_declenche_un_message():
-    avant = _releve()
-    apres = _releve(dernier_ordre_id=7, ordres=[
-        {"id": 7, "pushed_at": "2026-10-05T01:05:00+00:00", "direction": "buy",
-         "horizon": "5min", "pattern": "momentum_up", "ok": 1,
-         "mt5_ticket": 1360099001, "entry_price_5dp": 93.48,
-         "destination_id": "admin_live", "reponse": ""}])
+# ─── Elle doit PARLER ────────────────────────────────────────────────────
+
+def test_le_premier_passage_annonce_les_paires_surveillees():
+    ev = veille.evenements({}, _releve())
+    assert len(ev) == 1
+    for p in ("BTC/USD", "ETH/USD", "WTI/USD"):
+        assert p in ev[0], ev
+
+
+def test_un_ordre_sur_BTC_declenche_un_message():
+    apres = _releve({"BTC/USD": _pair(dernier_ordre_id=7, ordres=[_ordre(7)]),
+                     "ETH/USD": _pair(), "WTI/USD": _pair()})
+    ev = veille.evenements(_releve(), apres)
+    assert any("BTC/USD" in e and "1 ordre" in e for e in ev), ev
+
+
+def test_un_ordre_sur_ETH_declenche_aussi():
+    """⚠️ Chaque paire est suivie SEPAREMENT : une veille qui ne regarderait
+    que la premiere serait muette sur les autres."""
+    apres = _releve({"BTC/USD": _pair(),
+                     "ETH/USD": _pair(dernier_ordre_id=3, ordres=[_ordre(3)]),
+                     "WTI/USD": _pair()})
+    ev = veille.evenements(_releve(), apres)
+    assert any("ETH/USD" in e for e in ev), ev
+    assert not any("BTC/USD" in e for e in ev), ev
+
+
+def test_les_ordres_EN_ECHEC_sont_comptes_a_part():
+    """Un ordre refuse par le courtier n'est pas un trade — il faut le voir."""
+    avant = _releve({"BTC/USD": _pair(), "ETH/USD": _pair()})
+    apres = _releve({"BTC/USD": _pair(dernier_ordre_id=9,
+                                      ordres=[_ordre(8, ok=1), _ordre(9, ok=0)]),
+                     "ETH/USD": _pair()})
     ev = veille.evenements(avant, apres)
-    assert any("ordre" in e for e in ev), ev
-
-
-def test_PLUSIEURS_ordres_neufs_sont_comptes(monkeypatch):
-    avant = _releve(dernier_ordre_id=7)
-    ordres = [{"id": i, "pushed_at": "x", "direction": "buy", "horizon": "5min",
-               "pattern": "p", "ok": 1, "mt5_ticket": i, "entry_price_5dp": 1,
-               "destination_id": "admin_live", "reponse": ""}
-              for i in (7, 8, 9, 10)]
-    ev = veille.evenements(avant, _releve(dernier_ordre_id=10, ordres=ordres))
-    assert any("3 ordre" in e for e in ev), ev
+    assert any("2 ordre(s)" in e and "1 OK" in e for e in ev), ev
 
 
 def test_la_MISE_EN_PAUSE_par_le_regulateur_declenche_un_message():
-    """⛔ C'est l'evenement le plus important : le regulateur referme la paire
-    a -10 %, et le WTI entre dans la semaine a -4,96 % avec 5 trades."""
-    avant = _releve()
-    apres = _releve(regulateur={**_releve()["regulateur"],
-                                "action": "pause", "motif": "pnl_pct -10.4 < -10"})
-    ev = veille.evenements(avant, apres)
-    assert any("pause" in e for e in ev), ev
+    """⛔ L'evenement le plus important : le regulateur referme la paire a
+    -10 %, et c'est le SEUL garde automatique qui reste."""
+    apres = _releve({"BTC/USD": _pair(regulateur={
+        **_pair()["regulateur"], "action": "pause",
+        "motif": "pnl_pct -10.4 < -10"}), "ETH/USD": _pair()})
+    ev = veille.evenements(_releve({"BTC/USD": _pair(), "ETH/USD": _pair()}),
+                           apres)
+    assert any("pause" in e and "BTC/USD" in e for e in ev), ev
 
 
 def test_une_RETROGRADATION_d_admission_declenche_un_message():
-    avant = _releve()
-    apres = _releve(admission={"buy": "OBSERVED", "sell": "AUTO_EXEC"})
-    ev = veille.evenements(avant, apres)
-    assert any("admission buy" in e for e in ev), ev
+    apres = _releve({"ETH/USD": _pair(
+        admission={"buy": "OBSERVED", "sell": "AUTO_EXEC"})})
+    ev = veille.evenements(_releve({"ETH/USD": _pair()}), apres)
+    assert any("ETH/USD" in e and "admission buy" in e for e in ev), ev
 
 
 def test_l_EXECUTION_FERMEE_declenche_un_message():
     """⚠️ Tout redeploiement ferme REM-002. Sans rearmement, rien ne trade —
     et sans ce message, personne ne le saurait."""
-    avant = _releve()
-    apres = _releve(execution={"autorisee": False, "motif": "NEW_DEPLOYMENT",
-                               "arme": "abc123", "tourne": "def456"})
-    ev = veille.evenements(avant, apres)
+    ev = veille.evenements(_releve(),
+                           _releve(autorisee=False, motif="NEW_DEPLOYMENT"))
     assert any("FERMÉE" in e for e in ev), ev
     assert any("NEW_DEPLOYMENT" in e for e in ev), ev
 
 
+def test_une_paire_AJOUTEE_au_reglage_se_signale():
+    """⚠️ Sinon on croirait qu'elle est surveillee depuis toujours."""
+    avant = _releve({"WTI/USD": _pair()})
+    apres = _releve({"WTI/USD": _pair(), "BTC/USD": _pair()})
+    ev = veille.evenements(avant, apres)
+    assert any("BTC/USD" in e and "ajoutée" in e for e in ev), ev
+
+
+def test_un_releve_ILLISIBLE_sur_une_paire_se_signale():
+    """⛔ Une paire dont le releve echoue ne doit pas disparaitre en silence."""
+    apres = _releve({"BTC/USD": {"erreur": "TimeoutError: pont muet"},
+                     "ETH/USD": _pair()})
+    ev = veille.evenements(_releve({"BTC/USD": _pair(), "ETH/USD": _pair()}),
+                           apres)
+    assert any("BTC/USD" in e and "illisible" in e for e in ev), ev
+
+
 def test_l_OUVERTURE_du_marche_declenche_un_message():
-    ev = veille.evenements(_releve(marche_ouvert=False), _releve(marche_ouvert=True))
-    assert any("OUVERT" in e for e in ev), ev
+    avant = _releve({"WTI/USD": _pair(marche_ouvert=False)})
+    apres = _releve({"WTI/USD": _pair(marche_ouvert=True)})
+    assert any("OUVERT" in e for e in veille.evenements(avant, apres))
 
 
-# --- Elle doit se TAIRE --------------------------------------------------
+# ─── Elle doit se TAIRE ──────────────────────────────────────────────────
 
 def test_rien_de_neuf_ne_dit_RIEN():
-    """⚠️ Une veille qui parle a chaque passage est ignoree au bout d'un jour."""
+    """⚠️ Une veille qui parle a chaque passage est ignoree en un jour."""
     assert veille.evenements(_releve(), _releve()) == []
 
 
 def test_un_refus_de_PLUS_ne_declenche_rien():
-    """Les refus se comptent par milliers : ils figurent dans le resume, ils ne
-    declenchent pas d'alerte."""
-    ev = veille.evenements(_releve(refus=[("stale_tick", 10)]),
-                           _releve(refus=[("stale_tick", 9000)]))
-    assert ev == []
+    """Les refus se comptent par centaines : ils figurent dans le resume, ils
+    ne declenchent pas d'alerte."""
+    avant = _releve({"BTC/USD": _pair(refus=[("fees_exceed_edge", 10)])})
+    apres = _releve({"BTC/USD": _pair(refus=[("fees_exceed_edge", 900)])})
+    assert veille.evenements(avant, apres) == []
 
 
 def test_la_fermeture_du_marche_le_soir_ne_declenche_rien():
-    ev = veille.evenements(_releve(marche_ouvert=True), _releve(marche_ouvert=False))
-    assert ev == []
+    avant = _releve({"WTI/USD": _pair(marche_ouvert=True)})
+    apres = _releve({"WTI/USD": _pair(marche_ouvert=False)})
+    assert veille.evenements(avant, apres) == []
 
 
-# --- Le message ----------------------------------------------------------
+# ─── Le message ──────────────────────────────────────────────────────────
 
-def test_le_message_porte_les_chiffres_qui_decident():
-    r = _releve(dernier_ordre_id=1, ordres=[
-        {"id": 1, "pushed_at": "2026-10-05T01:05:00+00:00", "direction": "buy",
-         "horizon": "5min", "pattern": "momentum_up", "ok": 1,
-         "mt5_ticket": 1360099001, "entry_price_5dp": 93.48,
-         "destination_id": "admin_live", "reponse": ""}],
-        refus=[("stale_tick", 42)],
-        tick={"mid": 93.48, "spread_pct": 0.0216, "spread_max_pct": 0.3})
-    m = veille.message(r, ["1 ordre(s) WTI poussé(s)"])
-    for attendu in ("1360099001", "-20.32", "-4.96", "0.0216", "0.3",
-                    "stale_tick", "aucune cellule", "-10 %"):
+def test_le_message_porte_CHAQUE_paire_et_ses_chiffres():
+    r = _releve({
+        "BTC/USD": _pair(dernier_ordre_id=1, ordres=[_ordre(1)],
+                         refus=[("below_confidence", 42)],
+                         tick={"mid": 84704.89, "spread_pct": 0.0141,
+                               "spread_max_pct": 0.2}),
+        "ETH/USD": _pair()})
+    m = veille.message(r, ["BTC/USD : 1 ordre(s)"])
+    for attendu in ("BTC/USD", "ETH/USD", "1360099001", "-20.32", "-4.96",
+                    "0.0141", "below_confidence", "aucun ordre",
+                    "aucune règle d'arrêt", "EXEMPTÉE"):
         assert attendu in m, attendu
 
 
-def test_le_message_dit_quand_il_n_y_a_AUCUN_ordre():
-    m = veille.message(_releve(), [])
-    assert "aucun ordre WTI" in m
-
-
-def test_le_message_n_a_pas_de_balise_cassee():
-    """⚠️ Un seul chevron mal ferme et Telegram rejette tout le message."""
-    m = veille.message(_releve(), ["veille armée"])
-    assert m.count("<b>") == m.count("</b>")
-    # L'esperluette doit etre echappee, sinon HTML la refuse.
-    assert "P&amp;L" in m and "P&L" not in m.replace("P&amp;L", "")
-
-
-# --- L'ECHAPPEMENT du texte venu de la BASE -----------------------------
-#
-# ⛔ DEFAUT REEL, attrape au 1er envoi du 2026-10-03 :
-#     send_infra_text: HTTP 400 "can't parse entities: Unsupported start tag
-#     \"\" at byte offset 280"
-# Le motif du regulateur vaut litteralement << sample too small (n=5 < 10) >>.
-# Telegram lit le `<` comme un debut de balise et REFUSE tout le message.
-#
-# 🔑 La veille aurait ete MUETTE toute la semaine, l echec ne vivant que dans
-# un fichier de log que personne ne lit. Mes tests verifiaient l equilibre des
-# <b> et l esperluette — pas le texte venu de la BASE.
-
 def test_le_motif_du_regulateur_est_ECHAPPE():
-    """Le vrai motif en production contient un `<`."""
-    r = _releve(regulateur={**_releve()["regulateur"],
-                            "motif": "sample too small (n=5 < 10)"})
-    m = veille.message(r, [])
-    assert "n=5 &lt; 10" in m, m
+    """⛔ DEFAUT REEL du 2026-10-03 : le motif vaut litteralement
+    << sample too small (n=5 < 10) >> et Telegram lit le `<` comme une balise.
+    Le message ENTIER etait refuse en HTTP 400."""
+    m = veille.message(_releve(), [])
+    assert "n=5 &lt; 10" in m
     assert "n=5 < 10" not in m
 
 
 def test_tout_texte_venu_de_la_base_est_echappe():
-    """⚠️ Motif, pattern, reponse du pont : tout peut porter < > &."""
-    r = _releve(
-        dernier_ordre_id=1,
-        ordres=[{"id": 1, "pushed_at": "2026-10-05T01:05", "direction": "buy",
-                 "horizon": "5min", "pattern": "a<b>&c", "ok": 0,
-                 "mt5_ticket": 1, "entry_price_5dp": 93.48,
-                 "destination_id": "admin_live", "reponse": "<erreur>"}],
+    r = _releve({"BTC/USD": _pair(
+        admission={"buy": "OBS<ERVED", "sell": "AUTO>EXEC"},
         refus=[("motif<bizarre>", 3)],
-        execution={"autorisee": False, "motif": "DENY<x>", "arme": "a<b",
-                   "tourne": "c>d"},
-        admission={"buy": "OBS<ERVED", "sell": "AUTO>EXEC"})
+        dernier_ordre_id=1,
+        ordres=[{**_ordre(1), "pattern": "a<b>&c"}])},
+        autorisee=False, motif="DENY<x>")
     m = veille.message(r, [])
-    # Les SEULES balises doivent etre les miennes.
-    import re
-    balises = set(re.findall(r"</?([a-zA-Z]*)>", m))
-    assert balises <= {"b"}, balises
-    assert "a&lt;b&gt;&amp;c" in m
-    assert "motif&lt;bizarre&gt;" in m
-
-
-def test_les_evenements_aussi_sont_echappes():
-    """Un evenement porte l etat venu de la base (<b>pause</b> est a MOI, mais
-    le nom d etat vient du systeme)."""
-    ev = veille.evenements(_releve(),
-                           _releve(admission={"buy": "OB<SERVED", "sell": "AUTO_EXEC"}))
-    m = veille.message(_releve(), ev)
     import re
     assert set(re.findall(r"</?([a-zA-Z]*)>", m)) <= {"b"}
+    assert "a&lt;b&gt;&amp;c" in m
 
 
-# --- LE REPLI quand Telegram refuse -------------------------------------
-#
-# ⛔ Le tout premier envoi du 2026-10-03 a ete refuse par un HTTP 400 (un `<`
-# venu de la base). La cause est corrigee, mais le principe reste : un moniteur
-# qui echoue en silence est PIRE que pas de moniteur, parce qu il rassure. Une
-# balise mal formee ne doit plus jamais couter le message ENTIER.
+def test_le_message_n_a_pas_de_balise_cassee():
+    m = veille.message(_releve(), ["veille armée"])
+    assert m.count("<b>") == m.count("</b>")
 
-def test_un_refus_HTML_declenche_un_repli_en_texte_brut(monkeypatch, tmp_path):
+
+def test_une_paire_illisible_est_DITE_dans_le_message():
+    m = veille.message(_releve({"BTC/USD": {"erreur": "TimeoutError"}}), [])
+    assert "BTC/USD" in m and "illisible" in m
+
+
+# ─── LE REPLI quand Telegram refuse ──────────────────────────────────────
+
+def _faux_telegram(monkeypatch, tmp_path, echoue_en_html):
     envois = []
 
-    async def _faux_envoi(texte, parse_mode="HTML"):
+    async def _envoi(texte, parse_mode="HTML"):
         envois.append((parse_mode, texte))
-        return parse_mode != "HTML"          # l'HTML echoue, le brut passe
+        return (parse_mode != "HTML") if echoue_en_html else True
 
     import sys as _sys
     faux = type(_sys)("backend.services.telegram_service")
-    faux.send_infra_text = _faux_envoi
+    faux.send_infra_text = _envoi
     monkeypatch.setitem(_sys.modules, "backend.services.telegram_service", faux)
     monkeypatch.setattr(veille, "ETAT", tmp_path / "etat.json")
     monkeypatch.setattr(veille, "releve", lambda: _releve())
     monkeypatch.setattr(_sys, "argv", ["veille_wti.py"])
+    return envois
 
-    assert veille.main() == 0, "le repli doit rendre un succes"
-    assert len(envois) == 2, envois
-    assert envois[0][0] == "HTML"
-    assert envois[1][0] != "HTML"
+
+def test_un_refus_HTML_declenche_un_repli_en_texte_brut(monkeypatch, tmp_path):
+    """⛔ Le 1er envoi reel a ete refuse par un HTTP 400. Un moniteur qui
+    echoue en silence est PIRE que pas de moniteur : il rassure."""
+    envois = _faux_telegram(monkeypatch, tmp_path, echoue_en_html=True)
+    assert veille.main() == 0
+    assert len(envois) == 2 and envois[0][0] == "HTML"
     assert "repli texte brut" in envois[1][1]
-    assert "<b>" not in envois[1][1], "les balises doivent etre retirees"
+    assert "<b>" not in envois[1][1]
 
 
 def test_sans_refus_il_n_y_a_qu_UN_envoi(monkeypatch, tmp_path):
-    envois = []
-
-    async def _faux_envoi(texte, parse_mode="HTML"):
-        envois.append(parse_mode)
-        return True
-
-    import sys as _sys
-    faux = type(_sys)("backend.services.telegram_service")
-    faux.send_infra_text = _faux_envoi
-    monkeypatch.setitem(_sys.modules, "backend.services.telegram_service", faux)
-    monkeypatch.setattr(veille, "ETAT", tmp_path / "etat.json")
-    monkeypatch.setattr(veille, "releve", lambda: _releve())
-    monkeypatch.setattr(_sys, "argv", ["veille_wti.py"])
-
+    envois = _faux_telegram(monkeypatch, tmp_path, echoue_en_html=False)
     assert veille.main() == 0
-    assert envois == ["HTML"]
+    assert [p for p, _ in envois] == ["HTML"]
+
+
+# ─── Le reglage ──────────────────────────────────────────────────────────
+
+def test_le_WTI_reste_surveille_par_defaut():
+    """⚠️ Le defaut garde le WTI : si le reglage disparait, la veille deja
+    armee ne cesse pas de surveiller."""
+    assert "WTI/USD" in veille.PAIRES
+
+
+def test_un_echec_sur_une_paire_n_emporte_pas_les_autres(monkeypatch):
+    """⚠️ La lecon du backfill d'admission du 02/10 : un refus sur la 6e paire
+    abandonnait les 42 suivantes."""
+    monkeypatch.setattr(veille, "PAIRES", ("BONNE", "CASSEE", "AUTRE"))
+
+    def _rp(pair):
+        if pair == "CASSEE":
+            raise RuntimeError("pont muet")
+        return _pair()
+
+    monkeypatch.setattr(veille, "releve_paire", _rp)
+    monkeypatch.setattr(veille, "_execution", lambda: {
+        "autorisee": True, "motif": "ARMED", "arme": "x", "tourne": "x"})
+    r = veille.releve()
+    assert "erreur" in r["paires"]["CASSEE"]
+    assert r["paires"]["BONNE"]["admission"]["buy"] == "AUTO_EXEC"
+    assert r["paires"]["AUTRE"]["admission"]["buy"] == "AUTO_EXEC"
