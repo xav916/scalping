@@ -2376,3 +2376,36 @@ jusqu'à ce qu'un avantage soit démontré. Trois mesures le disent ensemble :
 refermer celle qu'un bug avait ouverte.
 
 Décision à Xavier : c'est lui qui a posé l'`AUTO_EXEC` à la main, trois fois.
+
+### DÉCISION — le WTI ne rouvre PAS sur l'argent réel (2026-10-03)
+
+Xavier : « **non recouvrir au réel** ». Appliqué le jour même.
+
+    WTI/USD  buy   @ admin_live   AUTO_EXEC → OBSERVED   (row 381)
+    WTI/USD  sell  @ admin_live   AUTO_EXEC → OBSERVED   (row 382)
+
+⚠️ **Les lignes écrites sont les plus spécifiques**, `(paire, sens,
+destination)`. La résolution de `get_current_state` est une cascade —
+`(paire, sens, destination)` → `(paire, sens, destination NULL)` →
+`(paire, sens NULL, destination NULL)` → défaut. Écrire une ligne
+destination-agnostique n'aurait **rien masqué** pour `admin_live`, et une ligne
+`(sens NULL, destination='admin_live')` n'est **jamais lue** par la cascade.
+Avant : les neuf combinaisons résolvaient en `AUTO_EXEC`.
+
+#### Vérifié au niveau du PIPELINE, pas seulement dans la table
+
+    WTI/USD  buy   @ admin_live     -> _not_admitted
+    WTI/USD  sell  @ admin_live     -> _not_admitted
+    WTI/USD  buy   @ admin_legacy   -> market_closed      (démo, papier)
+    XAU/USD  buy   @ admin_live     -> market_closed      (témoin, inchangé)
+
+🔑 `_not_admitted` est rendu **avant** `market_closed` dans l'ordre des portes :
+le refus tient donc à la réouverture de l'énergie, il n'est pas un artefact du
+week-end. ⚠️ Et comme ce code commence par `_`, il est privé — il ne sera pas
+journalisé dans `signal_rejections`. Le refus est réel, mais **invisible dans
+les compteurs** : ne pas conclure d'un « 0 refus WTI » qu'il n'y a pas eu de
+tentative.
+
+La démo (`admin_legacy`) reste en `AUTO_EXEC` : du papier, et de toute façon
+refusée par la porte de divergence, puisque son courtier cote à 0,75 % de la
+source. Cela continue d'alimenter la mesure sans risque.
