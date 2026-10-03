@@ -471,3 +471,94 @@ def test_le_cockpit_garde_le_tick_pour_les_autres_paires(monkeypatch):
     monkeypatch.setattr(cs, "get_candles_for_pair",
                         lambda p: [_bougie(4137.62)])
     assert cs._current_price("XAU/USD") == pytest.approx(4139.72)
+
+
+# --- LE JUGE DES TRADES FANTOMES ----------------------------------------
+#
+# ⛔ DEGAT CONSTATE LE 2026-10-03, cause par le changement de source lui-meme.
+# Mesure en base, 20 min apres le basculement :
+#
+#     LOSS      n=26  entry 88,34-90,55  exit TOUTES a 93,48  R moyen -1,00
+#     WIN_TP1   n= 7  entry 88,99-89,79  exit TOUTES a 93,48  R moyen +1,80
+#     WIN_TP2   n=11  entry 88,62-90,64  exit TOUTES a 93,48  R moyen +3,00
+#     ... 82 lignes au total
+#
+# 🔑 AUCUNE n'a ete fermee par le marche : toutes par l'ecart de 3,4 % entre
+# les deux instruments. Une ligne nee avec une entree Twelve Data (88-92) ne
+# PEUT PAS etre jugee sur un prix courtier (93,48) — l'ecart ECRASE tous les
+# stops, et le verdict est un artefact qui ressemble a un resultat.
+#
+# ⚠️ Et le danger se repete a CHAQUE futur changement de source pour n'importe
+# quelle paire. Le garde ne porte donc pas sur le WTI : il porte sur la date.
+
+def test_une_ligne_nee_AVANT_le_basculement_n_est_PAS_jugee(monkeypatch):
+    from backend.services import backtest_service as bs
+    monkeypatch.setattr(bp, "paire_du_pont", lambda p: p == "WTI/USD")
+    monkeypatch.setattr(bs, "BASCULEMENT_SOURCE", "2026-10-03T00:00:00+00:00")
+    assert bs._jugeable("WTI/USD", "2026-10-02T18:16:48+00:00") is False
+    assert bs._jugeable("WTI/USD", "2026-10-03T07:00:00+00:00") is True
+
+
+def test_les_autres_paires_ne_sont_PAS_touchees_par_le_garde(monkeypatch):
+    """⚠️ Le garde ne doit pas geler les 24 autres paires."""
+    from backend.services import backtest_service as bs
+    monkeypatch.setattr(bp, "paire_du_pont", lambda p: p == "WTI/USD")
+    monkeypatch.setattr(bs, "BASCULEMENT_SOURCE", "2026-10-03T00:00:00+00:00")
+    assert bs._jugeable("XAU/USD", "2026-09-01T10:00:00+00:00") is True
+
+
+def test_sans_date_de_basculement_RIEN_ne_change(monkeypatch):
+    from backend.services import backtest_service as bs
+    monkeypatch.setattr(bp, "paire_du_pont", lambda p: True)
+    monkeypatch.setattr(bs, "BASCULEMENT_SOURCE", "")
+    assert bs._jugeable("WTI/USD", "2026-01-01T00:00:00+00:00") is True
+
+
+def test_une_date_illisible_ne_bloque_PAS_le_juge(monkeypatch):
+    """⚠️ Un garde qui explose sur une date abimee gelerait TOUT le juge."""
+    from backend.services import backtest_service as bs
+    monkeypatch.setattr(bp, "paire_du_pont", lambda p: True)
+    monkeypatch.setattr(bs, "BASCULEMENT_SOURCE", "2026-10-03T00:00:00+00:00")
+    for d in (None, "", "hier", 42):
+        assert bs._jugeable("WTI/USD", d) is True, d
+
+
+# Le garde cable DANS `check_open_trades`, pas seulement la fonction.
+# ⛔ Deux fois aujourd'hui le module etait juste et le cablage faux. Ici le prix
+# est bien au-dela du TP : sans le garde, la ligne se ferme.
+
+@pytest.mark.asyncio
+async def test_check_open_trades_HONORE_le_garde(tmp_path, monkeypatch):
+    import sqlite3
+    from backend.services import backtest_service as bs
+
+    monkeypatch.setattr(bs, "_DB_PATH", tmp_path / "backtest.db")
+    bs._init_schema()
+    c = sqlite3.connect(str(tmp_path / "backtest.db"), isolation_level=None)
+    for pair, ne_le in (("WTI/USD", "2026-10-02T18:00:00Z"),   # AVANT
+                        ("WTI/USD", "2026-10-03T09:00:00Z"),   # APRES
+                        ("XAU/USD", "2026-10-02T18:00:00Z")):  # non routee
+        c.execute(
+            "INSERT INTO trades (pair, direction, entry_price, stop_loss, "
+            "take_profit_1, take_profit_2, emitted_at, outcome) "
+            "VALUES (?, 'buy', 90.0, 89.0, 93.0, 94.0, ?, 'OPEN')",
+            (pair, ne_le))
+    c.close()
+
+    async def _prix(pair):
+        return 93.48          # ⬆ bien au-dela de TP1=93 : ferme sans le garde
+
+    monkeypatch.setattr(bs, "fetch_current_price", _prix)
+    monkeypatch.setattr(bs, "BASCULEMENT_SOURCE", "2026-10-03T00:00:00+00:00")
+    monkeypatch.setattr(bp, "paire_du_pont", lambda p: p == "WTI/USD")
+
+    await bs.check_open_trades()
+
+    c = sqlite3.connect(str(tmp_path / "backtest.db"))
+    etats = {(r[0], r[1]): r[2] for r in c.execute(
+        "SELECT pair, emitted_at, outcome FROM trades")}
+    assert etats[("WTI/USD", "2026-10-02T18:00:00Z")] == "OPEN", \
+        "une ligne nee sur l'autre instrument ne doit PAS etre jugee"
+    assert etats[("WTI/USD", "2026-10-03T09:00:00Z")] != "OPEN"
+    assert etats[("XAU/USD", "2026-10-02T18:00:00Z")] != "OPEN", \
+        "le garde ne doit pas geler les paires non routees"

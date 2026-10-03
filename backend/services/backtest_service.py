@@ -25,6 +25,7 @@ Statistiques exposees : taux de reussite, R:R moyen, PnL cumule.
 import asyncio
 import json
 import logging
+import os
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -301,6 +302,49 @@ def _col(row, nom: str):
         return None
 
 
+# Instant du basculement de source de prix, en ISO 8601. ⚠️ VIDE par defaut :
+# sans reglage, le garde ci-dessous ne refuse rien.
+BASCULEMENT_SOURCE = os.getenv("BOUGIES_PONT_DEPUIS", "")
+
+
+def _jugeable(pair: str, emitted_at) -> bool:
+    """Cette ligne peut-elle etre jugee sur le prix d aujourd hui ?
+
+    ⛔ DEGAT CONSTATE LE 2026-10-03. En basculant la source de prix du WTI de
+    Twelve Data vers le courtier, le juge a tranche 82 lignes fantomes en
+    20 minutes. Mesure en base :
+
+        LOSS      n=26  entry 88,34-90,55  exit TOUTES a 93,48  R moyen -1,00
+        WIN_TP1   n= 7  entry 88,99-89,79  exit TOUTES a 93,48  R moyen +1,80
+        WIN_TP2   n=11  entry 88,62-90,64  exit TOUTES a 93,48  R moyen +3,00
+
+    🔑 AUCUNE n a ete fermee par le marche : toutes par l ecart de 3,4 % entre
+    les deux instruments. Une ligne nee avec une entree Twelve Data (88-92) ne
+    PEUT PAS etre jugee sur un prix courtier (93,48) — l ecart ECRASE tous les
+    stops, et le verdict est un artefact qui RESSEMBLE a un resultat.
+
+    ⚠️ Le garde porte sur la DATE, pas sur le WTI : le meme degat se
+    reproduirait a chaque futur changement de source, pour n importe quelle
+    paire. Et il est permissif en cas de doute — un garde qui explose sur une
+    date abimee gelerait tout le juge.
+    """
+    if not BASCULEMENT_SOURCE:
+        return True
+    from backend.services import bougies_du_pont
+    if not bougies_du_pont.paire_du_pont(pair):
+        return True
+    try:
+        bascule = datetime.fromisoformat(BASCULEMENT_SOURCE.replace("Z", "+00:00"))
+        ne_le = datetime.fromisoformat(str(emitted_at).replace("Z", "+00:00"))
+    except (TypeError, ValueError, AttributeError):
+        return True
+    if ne_le.tzinfo is None:
+        ne_le = ne_le.replace(tzinfo=timezone.utc)
+    if bascule.tzinfo is None:
+        bascule = bascule.replace(tzinfo=timezone.utc)
+    return ne_le >= bascule
+
+
 async def check_open_trades() -> None:
     """Pour chaque trade OPEN, verifie si SL ou TP a ete touche. MAJ en base."""
     _init_schema()
@@ -321,6 +365,10 @@ async def check_open_trades() -> None:
         prix_par_paire[pair] = await fetch_current_price(pair)
 
     for row in open_trades:
+        # ⛔ Une ligne nee sur un AUTRE instrument n est pas jugeable. Voir
+        # `_jugeable` : 82 verdicts artefactuels en 20 minutes sans ce garde.
+        if not _jugeable(row["pair"], _col(row, "emitted_at")):
+            continue
         current = prix_par_paire.get(row["pair"])
         if current is None:
             continue
