@@ -41,3 +41,10 @@ slowapi==0.1.9
 # crasher si absent (best-effort). Dépendances transitives : pandas, numpy,
 # requests (déjà présents via scikit-learn/httpx).
 yfinance>=0.2.40
+
+# Veille des canaux Telegram (2026-10-03). ⛔ Un bot ne peut PAS lire un canal
+# dont il n' est pas admin, et Telegram ne transfere pas automatiquement entre
+# deux canaux quelconques : lire plusieurs fils exige un client MTProto agissant
+# comme le COMPTE de Xavier. Lecture seule, impose par un test qui fournit un
+# client levant sur toute autre methode.
+telethon>=1.36
