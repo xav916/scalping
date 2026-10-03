@@ -239,6 +239,29 @@ async def _fetch_depuis_source(
 ) -> tuple[list[Candle], bool]:
     """La cascade de sources, sans la couche de cache. Extraite le 2026-09-08
     pour que `fetch_candles_sans_cache` la partage au lieu de la recopier."""
+    # ⛔ BOUGIES DU COURTIER pour les paires ou Twelve Data cote un AUTRE
+    # instrument (2026-10-03). Mesure du jour sur les 25 paires du reel : le
+    # WTI diverge de 3,394 % quand la deuxieme pire paire est a 0,146 % et le
+    # reste sous 0,07 %. Le seuil de `price_divergence` etant a 0,5 %, chaque
+    # signal WTI etait refuse — 13 078 fois en 7 jours, et plus un seul trade
+    # WTI depuis le 4 aout.
+    #
+    # 🔑 Place EN TETE de la cascade, avant meme le repli MT5 : la question
+    # n'est pas << quelle source est disponible >> mais << quelle source cote
+    # l'instrument qu'on va reellement trader >>. Pour ces paires-la, Twelve
+    # Data ne cote pas le bon contrat, et aucune disponibilite ne repare ca.
+    #
+    # ⚠️ Liste VIDE par defaut : sans `PAIRES_BOUGIES_PONT`, rien ne change.
+    from backend.services import bougies_du_pont
+    if bougies_du_pont.paire_du_pont(pair):
+        candles = await bougies_du_pont.fetch_candles(pair, interval, outputsize)
+        if candles:
+            _cache_store_candles(pair, interval, candles)
+        # ⛔ Pas de repli sur Twelve Data meme a vide : il reintroduirait en
+        # silence la divergence qu'on corrige, et la porte refuserait quand
+        # meme. Mieux vaut la paire absente du cycle qu'un prix qui ment.
+        return candles, False
+
     # Source MT5 (temps réel)
     if PRICE_SOURCE == "mt5":
         candles, is_sim = await mt5_service.fetch_candles(pair, interval, outputsize)
