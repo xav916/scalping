@@ -2314,3 +2314,65 @@ chose, et aucun n'était visible dans un résultat :
 
 ⏳ Reste P3, le hors échantillon `2026-07-01 → 2026-10-02`, maintenant que ce
 verdict est écrit et commité.
+
+### VERDICT HORS ÉCHANTILLON — P3, et la conclusion
+
+Fenêtre `2026-07-01 → 2026-10-02`, **18 412 bougies M5**, jamais lues avant que
+le verdict dans l'échantillon soit commité (`cf15d13`). Spread mesuré **2 points
+= 0,0200 $**, p90 2, **max 2** — encore plus stable que sur la grande fenêtre.
+
+    phase   cellules  plafond  RETENUES  t_vs_max   double_sweep_down 15 min
+      0 s        243    3,027         0    +2,250   n=15  R=-0,4923  t_vs=-1,179
+    300 s        243    3,027         0    +2,454   n=17  R=-0,5631  t_vs=-1,607
+    600 s        247    3,032         0    +2,547   n=14  R=-0,2543  t_vs=-0,228
+
+✅ **P3 est TENUE.** Le candidat de l'échantillon ne se réplique pas : son R
+passe de **+0,4798 à −0,4923**, il change de signe, et il est négatif aux
+**trois** phases. Aucune cellule retenue nulle part, et le meilleur `t_vs`
+(+2,547) reste sous le plafond du hasard (3,03).
+
+#### Le coût, sur la fenêtre récente
+
+    5 min   0,0506 R     (0,0800 R dans l'échantillon)
+    15 min  0,0292 R
+    30 min  0,0190 R
+    60 min  0,0135 R
+
+Plus bas que sur la grande fenêtre — la volatilité récente est plus forte, donc
+les stops sont plus larges et le spread pèse relativement moins. Il reste que
+**5 % du risque est payé d'avance à chaque trade de 5 minutes**.
+
+#### Conclusion — le WTI, mesuré sur le bon instrument, ne montre aucun avantage
+
+    493 cellules mesurées en tout (250 + 243), sur 97 886 bougies M5 du courtier
+    0 cellule retenue de façon robuste
+    1 candidat dans l'échantillon, tué deux fois : par la phase, puis par le
+      hors échantillon (changement de signe)
+    coût 1,4 % à 8 % du risque par trade selon l'horizon
+
+🔑 Ce n'est pas « le WTI est mauvais » : c'est **« rien dans notre arsenal de
+motifs ne bat le hasard sur le WTI »**, mesuré sur l'instrument réellement
+exécuté, avec le coût réel du courtier. Le même résultat que l'or
+(0 retenu sur 4 580 cellules), obtenu de façon indépendante.
+
+#### ⚠️ Conséquence opérationnelle, qui demande une décision
+
+`WTI/USD` **buy** est en **AUTO_EXEC sur `admin_live`** — l'argent réel —
+depuis le 2026-08-06 (`manual:xavier`). Historique dans la même table :
+
+    pnl -20,61 %  wr 30,00 %  pf 0,72  max_dd -38,64 %   (30 trades)
+    pnl -28,05 %  wr 26,67 %  pf 0,63  max_dd -51,75 %   (30 trades)
+    rétrogradé sur 3_consec_sl : n=6, wr 16,7 %, ev -5,86
+
+`energy` est dans `MT5_BRIDGE_ALLOWED_ASSET_CLASSES`. En réparant la source de
+prix, on a donc **rouvert le chemin d'exécution** d'un instrument qui était
+muet depuis le 4 août — non pas par décision, mais par un défaut. Le marché de
+l'énergie rouvre dimanche soir.
+
+⛔ **Recommandation : rétrograder `WTI/USD` à `OBSERVED` sur `admin_live`**
+jusqu'à ce qu'un avantage soit démontré. Trois mesures le disent ensemble :
+0 cellule sur 493, un coût de 5 à 8 % du risque, et un historique réel à
+−20 % / −28 % sur 30 trades. ⚠️ Ce n'est pas desserrer une porte, c'est
+refermer celle qu'un bug avait ouverte.
+
+Décision à Xavier : c'est lui qui a posé l'`AUTO_EXEC` à la main, trois fois.
