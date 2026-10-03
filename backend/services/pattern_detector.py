@@ -974,6 +974,68 @@ def _eur_usd_courant() -> float | None:
         return None
 
 
+# ─── Stop a un POURCENTAGE DU PRIX, avec plancher au spread ──────────────
+#
+# Demande de Xavier le 2026-10-03 : « une regle de SL a 10 points de l'entree »,
+# puis, apres mesure, « un % du prix, uniforme ».
+#
+# ⛔ POURQUOI PAS << 10 POINTS >>. Le `point` de MT5 n'est pas une unite
+# commune : 0,01 sur l'or et le BTC, 0,00001 sur l'EUR/USD. Mesure sur le compte
+# reel, 10 points tombe SOUS le spread sur 9 paires sur 10 :
+#
+#     BTC/USD  0,10 $ contre 12,50 $ de spread   ⛔ 125x trop petit
+#     ETH/USD  0,10 $ contre  4,31 $             ⛔  43x
+#     XAU/USD  0,10 $ contre  0,50 $             ⛔   5x
+#     WTI/USD  0,10 $ contre  0,02 $             seule plausible
+#
+# 🔑 Un stop sous le spread n'est pas un stop serre : c'est une PERTE CERTAINE,
+# touchee a la seconde ou l'ordre passe.
+#
+# ⛔ ET POURQUOI UN POURCENTAGE SEUL NE SUFFIT PAS. Il ne donne pas un cout
+# uniforme, le spread allant de 0,0121 % du prix (or) a 0,1176 % (ETH). Cout du
+# spread en fraction du RISQUE, pour un stop a 0,30 % :
+#
+#     XAU 4,0 %   BTC 4,7 %   EUR/USD 4,4 %   WTI 7,1 %
+#     AUD 14,4 %  XAG 23,7 %  ETH 39,2 %  ⛔
+#
+# D'ou `max(pct, N x spread)` : une seule regle partout, le plancher ne mordant
+# que la ou le spread est large, et bornant le cout a `1/N` du risque.
+SL_PCT_PRIX = float(os.getenv("SL_PCT_PRIX", "0.30"))
+SL_PLANCHER_SPREADS = int(os.getenv("SL_PLANCHER_SPREADS", "8"))
+
+
+def distance_sl_pourcentage(prix, spread=None, pct: float | None = None,
+                            planchers: int | None = None) -> float | None:
+    """La distance de stop : `max(pct % du prix, planchers x spread)`.
+
+    ⚠️ Rend `None` quand la regle ne s'applique pas — pourcentage a zero, prix
+    illisible. L'appelant retombe alors sur l'ATR, le comportement d'avant : un
+    stop de taille inconnue serait pire que l'ancien.
+
+    ⚠️ Un spread illisible n'empeche PAS le pourcentage de s'appliquer : un stop
+    a 0,30 % reste bien meilleur que pas de regle. Mais le plancher ne peut
+    alors plus etre garanti, et c'est le role de l'appelant de le savoir.
+    """
+    p = SL_PCT_PRIX if pct is None else float(pct)
+    n = SL_PLANCHER_SPREADS if planchers is None else int(planchers)
+    if p <= 0:
+        return None
+    try:
+        prix = float(prix)
+    except (TypeError, ValueError):
+        return None
+    if prix <= 0:
+        return None
+    distance = prix * p / 100.0
+    try:
+        s = float(spread) if spread else 0.0
+    except (TypeError, ValueError):
+        s = 0.0
+    if s > 0 and n > 0:
+        distance = max(distance, n * s)
+    return distance
+
+
 def _distance_sl_or() -> float | None:
     """La distance de PRIX qui vaut `XAU_SL_FIXE_EUR` au lot minimum.
 
@@ -1097,9 +1159,16 @@ def calculate_trade_setup(
             pair, pattern, entry, stop_loss, take_profit_1, take_profit_2,
             risk, reward_1, reward_2, direction, decimals, is_simulated, now)
 
-    # Stop fixe en EUROS pour l'or ; ATR pour tout le reste.
-    # ⚠️ `None` = taux illisible ⇒ on RETOMBE sur l'ATR, le comportement
-    # d'avant. Un stop de taille inconnue serait pire que l'ancien.
+    # Stop fixe en EUROS pour l'or ; POURCENTAGE DU PRIX pour tout le reste ;
+    # ATR en dernier recours.
+    #
+    # ⛔ L'or garde sa regle en euros : c'est une decision explicite de Xavier
+    # du 2026-10-02, et je ne la revoque pas en silence. Les deux regles sont
+    # de toute facon a 10 % l'une de l'autre — 10 EUR valent 0,272 % du prix de
+    # l'or, contre 0,30 % pour la regle generale.
+    #
+    # ⚠️ `None` = la regle ne s'applique pas ⇒ on RETOMBE sur l'ATR, le
+    # comportement d'avant. Un stop de taille inconnue serait pire que l'ancien.
     distance = _distance_sl_or() if _est_de_l_or(pair) else None
     if distance is not None:
         signe = 1 if direction == TradeDirection.BUY else -1
