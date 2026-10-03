@@ -2409,3 +2409,56 @@ tentative.
 La démo (`admin_legacy`) reste en `AUTO_EXEC` : du papier, et de toute façon
 refusée par la porte de divergence, puisque son courtier cote à 0,75 % de la
 source. Cela continue d'alimenter la mesure sans risque.
+
+### RÉOUVERTURE — le WTI revient sur l'argent réel (2026-10-03, même jour)
+
+Xavier, deux heures après avoir dit l'inverse : « **ba si, je veux le wti au
+réel** ». C'est sa décision, et elle est appliquée.
+
+    WTI/USD  buy   @ admin_live   OBSERVED → AUTO_EXEC   (row 383)
+    WTI/USD  sell  @ admin_live   OBSERVED → AUTO_EXEC   (row 384)
+
+#### Où il peut trader, vérifié porte par porte
+
+    horizon   frais    horizon
+    5 min     passe    passe                  <- ouvert
+    15 min    passe    horizon_not_allowed
+    30 min    passe    horizon_not_allowed
+    1 h       passe    horizon_not_allowed
+    4 h       passe    passe                  <- ouvert
+    1 j       passe    horizon_not_allowed
+
+`admin_live.allowed_horizons = {5min, 4h}`, et `MT5_BRIDGE_HORIZON_OVERRIDES`
+ne nomme que `XAU/USD` : le WTI prend donc le défaut de la route. La porte des
+frais passe à toutes les largeurs de stop testées (0,50 / 1,00 / 2,00 $). Seul
+`market_closed` le retient aujourd'hui, comme l'or.
+
+⚠️ **L'échelle ouverte est la plus chère** : le banc mesure le coût à **8 % du
+risque par trade à 5 minutes**, contre 2,4 % à 60 minutes.
+
+#### Ce que la porte du banc a fait, exactement
+
+    WTI/USD    -> accepte  | anteriorite=True   essai_passe=False
+    AVAX/USD   -> REFUSE   | anteriorite=False  essai_passe=False
+    XAU/USD    -> accepte  | anteriorite=True   essai_passe=False
+
+🔑 Elle n'a pas **validé** le WTI, elle l'a **dispensé** par la clause
+d'antériorité — et elle refuse AVAX/USD dans la même seconde. Son acceptation
+n'est donc pas une preuve, et ce n'est pas un défaut : la clause est là pour ne
+pas geler rétroactivement les paires qui traitaient déjà avant la porte.
+
+⛔ **Aucune règle d'arrêt n'est posée.** Le banc n'a retenu aucune cellule sur
+493, et l'historique réel de la paire est de −20,61 % puis −28,05 % sur
+30 trades. Cela figure dans le motif des rows 383/384.
+
+#### ⚠️ Deux pièges rencontrés en vérifiant, à retenir
+
+1. **`set_state` est idempotent** : repasser `AUTO_EXEC` sur un état déjà
+   `AUTO_EXEC` rend `-1` et **n'écrit rien**. Mon motif complet n'a donc pas
+   été enregistré au premier essai, et le motif bâclé serait resté la trace.
+   Complété ensuite en place — décision, instant et acteur inchangés.
+2. **`_horizon_rejection` lit `setup.horizon`**, pas `timeframe` ni `interval`.
+   Ma première sonde n'exposait pas cet attribut : la porte rendait
+   `horizon_not_allowed` aux **six** échelles, et j'ai failli l'imputer à la
+   production. Une sonde qui ne porte pas la forme réelle d'un setup mesure sa
+   propre lacune.
