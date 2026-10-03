@@ -562,3 +562,143 @@ async def test_check_open_trades_HONORE_le_garde(tmp_path, monkeypatch):
     assert etats[("WTI/USD", "2026-10-03T09:00:00Z")] != "OPEN"
     assert etats[("XAU/USD", "2026-10-02T18:00:00Z")] != "OPEN", \
         "le garde ne doit pas geler les paires non routees"
+
+
+# --- LES ETIQUETTES DU PONT NE SONT PAS SUR LA GRILLE -------------------
+#
+# ⛔ MESURE DU 2026-10-03, sur le pont reel, deux appels identiques d'affilee :
+#
+#     page 1 : decalage_serveur_sec = -26905   1re bougie 2026-06-01T08:28:25
+#     page 2 : decalage_serveur_sec = -26906   1re bougie 2026-06-01T08:28:26
+#
+# Les OHLC sont IDENTIQUES ; seules les etiquettes bougent, d'une seconde par
+# appel, parce que `_decalage_serveur_sec()` du pont se mesure sur le DERNIER
+# TICK et que le marche est ferme — le tick vieillit, le decalage derive.
+#
+# 🔑 Deux degats, et le second touche la PRODUCTION :
+#   1. la mesure n'est pas reproductible : le banc a rendu une cellule RETENUE
+#      a R=+0,4798 au 1er passage et la MEME cellule a R=-0,1530 au second ;
+#   2. `echelle_agregee` range les tranches par `minute // pas * pas`. Avec des
+#      etiquettes a :28, :33, :38 au lieu de :30, :35, :40, une bougie de
+#      15 min est batie sur les MAUVAISES trois, et sa composition change
+#      quand le decalage franchit une borne.
+#
+# Calibration qui tranche : regrouper les M5 en triplets consecutifs depuis le
+# debut de la serie reproduit **246/246** des M15 NATIVES du courtier (100 %),
+# et aucun autre depart n'en reproduit une seule. Les prix et leur ordre sont
+# donc justes — il n'y a que l'etiquette a remettre sur la grille.
+
+def test_les_etiquettes_sont_remises_sur_la_grille(monkeypatch):
+    from datetime import timedelta
+    t0 = datetime(2026, 6, 1, 8, 28, 25, tzinfo=timezone.utc)
+    brut = [{"t": (t0 + timedelta(minutes=5 * i)).isoformat(),
+             "o": 93.0, "h": 93.1, "l": 92.9, "c": 93.05, "tv": 1}
+            for i in range(12)]
+    cal = bp._sur_la_grille([bp._en_candle(x) for x in brut], 5)
+    for c in cal:
+        assert c.timestamp.second == 0 and c.timestamp.microsecond == 0
+        assert c.timestamp.minute % 5 == 0, c.timestamp
+
+
+def test_la_correction_est_UNIFORME_donc_l_ordre_est_garde(monkeypatch):
+    from datetime import timedelta
+    t0 = datetime(2026, 6, 1, 8, 28, 25, tzinfo=timezone.utc)
+    brut = [{"t": (t0 + timedelta(minutes=5 * i)).isoformat(),
+             "o": 90.0 + i, "h": 90.0 + i, "l": 90.0 + i, "c": 90.0 + i, "tv": 1}
+            for i in range(12)]
+    cal = bp._sur_la_grille([bp._en_candle(x) for x in brut], 5)
+    assert [c.close for c in cal] == [90.0 + i for i in range(12)], \
+        "la correction ne doit JAMAIS reordonner ni reaffecter les prix"
+    ecarts = {(b.timestamp - a.timestamp).total_seconds()
+              for a, b in zip(cal, cal[1:])}
+    assert ecarts == {300.0}, "les bougies restent espacees de 5 minutes"
+
+
+def test_deux_decalages_differents_donnent_la_MEME_grille():
+    """⛔ C'est la reproductibilite : une derive d'une seconde ne doit plus
+    changer le resultat de la mesure."""
+    from datetime import timedelta
+    grilles = []
+    for seconde in (25, 26, 44):          # les trois decalages observes
+        t0 = datetime(2026, 6, 1, 8, 28, seconde, tzinfo=timezone.utc)
+        brut = [{"t": (t0 + timedelta(minutes=5 * i)).isoformat(),
+                 "o": 93.0, "h": 93.1, "l": 92.9, "c": 93.05, "tv": 1}
+                for i in range(12)]
+        cal = bp._sur_la_grille([bp._en_candle(x) for x in brut], 5)
+        grilles.append([c.timestamp for c in cal])
+    assert grilles[0] == grilles[1] == grilles[2]
+
+
+def test_une_serie_DEJA_sur_la_grille_n_est_pas_touchee():
+    """⚠️ Le correctif ne doit rien faire quand il n'y a rien a corriger."""
+    from datetime import timedelta
+    t0 = datetime(2026, 6, 1, 8, 30, tzinfo=timezone.utc)
+    brut = [{"t": (t0 + timedelta(minutes=5 * i)).isoformat(),
+             "o": 93.0, "h": 93.1, "l": 92.9, "c": 93.05, "tv": 1}
+            for i in range(12)]
+    bougies = [bp._en_candle(x) for x in brut]
+    cal = bp._sur_la_grille(bougies, 5)
+    assert [c.timestamp for c in cal] == [b.timestamp for b in bougies]
+
+
+def test_une_serie_trop_courte_n_est_pas_corrigee():
+    """⚠️ Une mediane sur une bougie n'est pas une calibration."""
+    b = [bp._en_candle({"t": "2026-06-01T08:28:25+00:00", "o": 93.0,
+                        "h": 93.1, "l": 92.9, "c": 93.05, "tv": 1})]
+    assert bp._sur_la_grille(b, 5) == b
+
+
+@pytest.mark.asyncio
+async def test_fetch_candles_rend_des_bougies_SUR_LA_GRILLE(pont):
+    """Le câblage : `fetch_candles` doit appliquer la correction."""
+    from datetime import timedelta
+    t0 = datetime(2026, 6, 1, 8, 28, 25, tzinfo=timezone.utc)
+    pont["reponse"] = {"bougies": [
+        {"t": (t0 + timedelta(minutes=5 * i)).isoformat(), "o": 93.0,
+         "h": 93.1, "l": 92.9, "c": 93.05, "tv": 1} for i in range(20)]}
+    bougies = await bp.fetch_candles("WTI/USD", "5min", 20)
+    assert bougies, "la reponse doublee doit produire des bougies"
+    for c in bougies:
+        assert c.timestamp.second == 0 and c.timestamp.minute % 5 == 0, c.timestamp
+
+
+def test_un_CHANGEMENT_D_HEURE_au_milieu_de_la_serie(monkeypatch):
+    """⛔ POURQUOI UN RESIDU MEDIAN UNIQUE NE SUFFIT PAS. La fenetre du banc
+    couvre 412 jours : elle traverse des changements d'heure, donc le decalage
+    serveur CHANGE au milieu. Un residu global est alors faux pour une moitie
+    de la serie, et lequel est median peut basculer d'un appel a l'autre —
+    c'est ce qui laissait les chargements instables malgre la 1re correction.
+    """
+    from datetime import timedelta
+    moitie1 = [datetime(2026, 6, 1, 8, 28, 25, tzinfo=timezone.utc)
+               + timedelta(minutes=5 * i) for i in range(20)]
+    # +1 h de decalage : les etiquettes passent a :28:25 de l'autre regime
+    # ⚠️ +240 s, le second regime MESURE en vrai. Une heure n'aurait rien
+    # prouve : 3 600 est un multiple de 300, donc le residu serait identique.
+    moitie2 = [datetime(2026, 11, 1, 8, 32, 25, tzinfo=timezone.utc)
+               + timedelta(minutes=5 * i) for i in range(20)]
+    brut = [{"t": t.isoformat(), "o": 93.0, "h": 93.1, "l": 92.9,
+             "c": 93.05, "tv": 1} for t in moitie1 + moitie2]
+    cal = bp._sur_la_grille([bp._en_candle(x) for x in brut], 5)
+    for c in cal:
+        assert c.timestamp.second == 0 and c.timestamp.minute % 5 == 0, \
+            f"{c.timestamp} — les DEUX regimes doivent etre sur la grille"
+    ecarts = {(b.timestamp - a.timestamp).total_seconds()
+              for a, b in zip(cal[:20], cal[1:20])}
+    assert ecarts == {300.0}
+
+
+def test_une_derive_d_une_seconde_ne_change_RIEN_meme_avec_deux_regimes():
+    """La reproductibilite, dans le cas qui l'avait cassee en vrai."""
+    from datetime import timedelta
+    grilles = []
+    for d in (0, 1, 2):
+        m1 = [datetime(2026, 6, 1, 8, 28, 25 + d, tzinfo=timezone.utc)
+              + timedelta(minutes=5 * i) for i in range(20)]
+        m2 = [datetime(2026, 11, 1, 8, 32, 25 + d, tzinfo=timezone.utc)
+              + timedelta(minutes=5 * i) for i in range(20)]
+        brut = [{"t": t.isoformat(), "o": 93.0, "h": 93.1, "l": 92.9,
+                 "c": 93.05, "tv": 1} for t in m1 + m2]
+        cal = bp._sur_la_grille([bp._en_candle(x) for x in brut], 5)
+        grilles.append([c.timestamp for c in cal])
+    assert grilles[0] == grilles[1] == grilles[2]

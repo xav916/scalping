@@ -160,6 +160,102 @@ def _en_candle(x):
                   volume=float(x.get("tv") or 0.0))
 
 
+def sur_la_grille_instant(t, minutes: int):
+    """Un instant ramene au point de grille le PLUS PROCHE.
+
+    ⛔ POURQUOI PAR BOUGIE, et non par un residu median sur la serie. Mesure
+    du 2026-10-03 sur la fenetre de 412 jours du banc : apres correction par
+    une mediane globale, il restait DEUX regimes de residu — 0 s sur 41 026
+    bougies et 240 s sur 38 448. Chaque page de 14 jours est lue avec le
+    decalage de SON instant, et ce decalage derive ; une mediane globale est
+    donc le mauvais outil. Exactement 2 760 horodatages changeaient d'un
+    chargement a l'autre : la taille d'une page, pas du bruit.
+
+    🔑 L'arrondi par bougie est local : il ne depend d'aucune autre bougie, ne
+    peut pas basculer quand la mediane bouge de 3 secondes, et traite les deux
+    regimes correctement d'un coup.
+
+    ⚠️ Il reste une limite, mesuree et bornee : les etiquettes valent
+    `vrai - delta` ou `vrai` est un multiple de l'echelle, donc le residu ne
+    rend `delta` que modulo l'echelle. Un residu au-dela de la demi-periode
+    (ici 150 s) decale toute la serie d'un cran entier par rapport aux bougies
+    natives du courtier. La STRUCTURE est intacte — c'est ce dont l'agregation
+    a besoin — mais la position absolue peut etre decalee de 5 minutes.
+    """
+    from datetime import timedelta
+    periode = minutes * 60
+    if periode <= 0:
+        return t
+    secondes = t.minute * 60 + t.second + t.microsecond / 1e6
+    residu = secondes % periode
+    delta = -residu if residu * 2 < periode else (periode - residu)
+    return (t + timedelta(seconds=delta)).replace(microsecond=0)
+
+
+def residu_de_grille(instants: list, minutes: int) -> float:
+    """De combien de secondes toute la serie est-elle decalee de sa grille ?
+
+    ⚠️ Partagee avec `scripts/banc_wti_bougies_courtier.py`, qui travaille sur
+    les dicts bruts du pont. Recopier cette regle la ferait deriver du banc, et
+    le banc mesurerait alors un instrument que la production ne trade pas.
+
+    ⛔ La MEDIANE, pas la moyenne : une etiquette abimee ne doit pas tirer la
+    correction de toute la serie.
+    """
+    if len(instants) < 3 or minutes <= 0:
+        return 0.0
+    periode = minutes * 60
+    residus = sorted(
+        (t.minute * 60 + t.second + t.microsecond / 1e6) % periode
+        for t in instants)
+    return residus[len(residus) // 2]
+
+
+def _sur_la_grille(bougies: list, minutes: int) -> list:
+    """Remet les etiquettes du pont sur la grille de l'echelle.
+
+    ⛔ MESURE DU 2026-10-03, deux appels identiques d'affilee au pont reel :
+
+        page 1 : decalage_serveur_sec = -26905   1re bougie 08:28:25
+        page 2 : decalage_serveur_sec = -26906   1re bougie 08:28:26
+
+    Les OHLC sont IDENTIQUES ; seules les etiquettes bougent, d'une seconde par
+    appel. `_decalage_serveur_sec()` du pont se mesure sur le DERNIER TICK, et
+    marche ferme, le tick vieillit : le decalage derive sans fin.
+
+    🔑 Deux degats, et le second est en production :
+      1. la mesure n'est pas reproductible — le banc WTI a rendu une cellule
+         RETENUE a R=+0,4798 au 1er passage et la MEME a R=-0,1530 au second ;
+      2. `echelle_agregee` range ses tranches par `minute // pas * pas`. Avec
+         des etiquettes a :28, :33, :38 au lieu de :30, :35, :40, une bougie de
+         15 min est batie sur les MAUVAISES trois, et sa composition change
+         quand le decalage franchit une borne.
+
+    Calibration qui tranche : regrouper les M5 en triplets consecutifs depuis
+    le debut de la serie reproduit **246/246** des M15 NATIVES du courtier
+    (100 %) ; aucun autre depart n'en reproduit une seule. Les prix et leur
+    ordre sont donc justes — il n'y a que l'etiquette a remettre en place.
+
+    ⚠️ La correction est UNIFORME : toutes les bougies partagent le meme
+    decalage, donc on retire le meme residu a toutes. Rien n'est reordonne,
+    aucun prix ne change de bougie.
+
+    ⚠️ Ce qu'elle ne peut PAS faire : retrouver la phase absolue dans l'heure.
+    Les etiquettes valent `vrai - delta` et `vrai` est un multiple de l'echelle,
+    donc le residu ne rend `delta` que modulo l'echelle. La serie peut donc
+    rester decalee d'un cran entier par rapport aux bougies natives du
+    courtier. C'est mesure, borne, et stable — contrairement a avant.
+    """
+    if len(bougies) < 3 or minutes <= 0:
+        return bougies
+    corrige = []
+    for c in bougies:
+        t = sur_la_grille_instant(c.timestamp, minutes)
+        corrige.append(c.model_copy(update={"timestamp": t})
+                       if hasattr(c, "model_copy") else c)
+    return corrige
+
+
 async def fetch_candles(pair: str, interval: str, outputsize: int) -> list:
     """Les bougies du courtier pour cette paire. Liste VIDE si indecidable.
 
@@ -196,6 +292,10 @@ async def fetch_candles(pair: str, interval: str, outputsize: int) -> list:
             # ⚠️ Une bougie abimee est ECARTEE, elle n'emporte pas le cycle.
             continue
     bougies.sort(key=lambda c: c.timestamp)
+    # ⛔ Les etiquettes du pont derivent d'une seconde par appel et ne sont pas
+    # sur la grille. Voir `_sur_la_grille` : sans ca, ni la production ni le
+    # banc ne sont reproductibles.
+    bougies = _sur_la_grille(bougies, _MINUTES.get(timeframe, 0))
     if not bougies:
         logger.info("bougies_du_pont: %s %s — aucune bougie exploitable",
                     pair, timeframe)
