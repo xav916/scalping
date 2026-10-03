@@ -464,6 +464,33 @@ def _en_texte(html: str) -> str:
     return t.strip()
 
 
+# Une ligne de prose fait plus de mots qu'un element de menu.
+_MOTS_MINIMUM = 6
+
+
+def densifier(texte: str, mots_minimum: int = _MOTS_MINIMUM) -> str:
+    """Retire le chrome de navigation et garde la prose.
+
+    ⛔ MESURE DU 2026-10-03 sur une vraie page `mql5.com/en/articles` : 24 365
+    caracteres lus, dont le debut est integralement du menu — « Forum / Market
+    / Signals / Freelance / VPS / Quotes / MetaTrader… ». Envoyer cela au
+    modele, c'est payer des jetons pour de la navigation ET diluer le signal
+    dans du bruit repete sur chaque page du site.
+
+    🔑 Heuristique volontairement simple et sans dictionnaire de domaine : une
+    ligne de PROSE fait plusieurs mots, un element de menu en fait un ou deux.
+    On garde donc les lignes assez longues, et les titres courts suivis de
+    prose sont de toute facon repris dans le corps de l'article.
+
+    ⚠️ Elle ne devine aucune structure de site. Un site dont le contenu
+    tiendrait en lignes de trois mots serait vide apres passage — et c'est
+    `caracteres_densifies` qui le dira, au lieu de le cacher.
+    """
+    gardees = [l.strip() for l in (texte or "").splitlines()
+               if len(l.split()) >= mots_minimum]
+    return "\n".join(gardees).strip()
+
+
 def lire_page(url: str) -> dict:
     """Le texte d'une page, ou le motif du refus. ⚠️ Contenu NON FIABLE.
 
@@ -493,8 +520,10 @@ def lire_page(url: str) -> dict:
                 brut = r.read(_TAILLE_MAX + 1)
             tronque = len(brut) > _TAILLE_MAX
             texte = _en_texte(brut[:_TAILLE_MAX].decode("utf-8", "replace"))
-            return {"url": courant, "texte": texte, "tronque": tronque,
-                    "caracteres": len(texte)}
+            dense = densifier(texte)
+            return {"url": courant, "texte": dense, "texte_brut": texte,
+                    "tronque": tronque, "caracteres": len(texte),
+                    "caracteres_densifies": len(dense)}
         except _Redirige as r:
             courant = urllib.parse.urljoin(courant, str(r))
             sauts += 1

@@ -248,3 +248,66 @@ def test_manques_ne_liste_que_ce_qui_est_VIDE():
     assert "declencheur" not in vc.manques(n)
     assert "echelle" not in vc.manques(n)
     assert "stop" in vc.manques(n)
+
+
+# ─── LE CHROME de navigation ─────────────────────────────────────────────
+#
+# ⛔ MESURE DU 2026-10-03 sur une vraie page mql5.com/en/articles : 24 365
+# caracteres, dont le debut est integralement du menu — « Forum / Market /
+# Signals / Freelance / VPS / Quotes / MetaTrader / Articles / CodeBase… ».
+# Envoyer cela au modele, c est payer des jetons pour de la navigation et
+# diluer le signal dans du bruit repete sur chaque page du site.
+
+def test_le_menu_de_navigation_est_RETIRE():
+    page = ("Forum\nMarket\nSignals\nFreelance\nVPS\nQuotes\nMetaTrader\n"
+            "L exposant de Hurst mesure la persistance des rendements, et son "
+            "seuil de 0,5 correspond a la marche aleatoire.\n"
+            "About\nTools\n")
+    d = vc.densifier(page)
+    assert "Hurst" in d
+    for chrome in ("Forum", "Market", "Signals", "Freelance", "VPS", "Quotes"):
+        assert chrome not in d, chrome
+
+
+def test_densifier_ne_vide_PAS_une_page_de_prose():
+    prose = ("Cette methode consiste a attendre la cassure puis le retour sur "
+             "le niveau avant d entrer dans le sens du mouvement.\n"
+             "Le stop se place sous le plus bas de la bougie de rejet.\n")
+    assert len(vc.densifier(prose).splitlines()) == 2
+
+
+def test_une_page_SANS_prose_rend_un_texte_vide_et_le_DIT():
+    """⚠️ Elle ne devine aucune structure de site. Une page dont le contenu
+    tiendrait en lignes de trois mots serait vide apres passage — et c est
+    `caracteres_densifies` qui doit le dire, au lieu de le cacher."""
+    assert vc.densifier("A\nB\nC\nun deux trois\n") == ""
+
+
+def test_lire_page_rend_les_DEUX_tailles(monkeypatch):
+    """Le brut ET le densifie : on doit pouvoir constater ce qui a ete retire."""
+    monkeypatch.setattr(vc.socket, "getaddrinfo",
+                        lambda h, p: [(2, 1, 6, "", ("93.184.216.34", 0))])
+
+    html = (b"<html><body><p>Forum</p><p>Market</p>"
+            b"<p>Le regime de marche se mesure par l exposant de Hurst, "
+            b"dont le seuil de 0,5 est la marche aleatoire.</p></body></html>")
+
+    class _Rep:
+        headers = {"Content-Type": "text/html; charset=utf-8"}
+
+        def read(self, n=None):
+            return html
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(vc.urllib.request, "build_opener",
+                        lambda *a, **k: type("O", (), {
+                            "open": lambda s, req, timeout=None: _Rep()})())
+    r = vc.lire_page("https://exemple.com/a")
+    assert "Hurst" in r["texte"]
+    assert "Forum" in r["texte_brut"] and "Forum" not in r["texte"]
+    assert r["caracteres_densifies"] < r["caracteres"]
