@@ -2606,3 +2606,43 @@ inchangée — une position à la fois par paire.
 Rien n'a été ajouté à `PLACES_PAR_HORIZON` pour BTC et ETH : ce serait un
 réglage inerte tant que le cap de classe vaut 1, et un réglage inerte qui a
 l'air actif est pire que pas de réglage.
+
+### LES MOTIFS OUVERTS SUR BTC ET ETH — 2026-10-03
+
+Xavier : « oui, je veux plus de signaux, donc lève-moi ce frein ». Fait.
+`MT5_BRIDGE_PATTERN_OVERRIDES` reçoit BTC/USD et ETH/USD avec les **8 motifs
+déjà vivants sur l'or au réel**, sur les **6 horizons**. Rien n'a été inventé.
+
+    breakout_up · breakout_down · engulfing_bullish · engulfing_bearish
+    momentum_up · momentum_down · range_bounce_up · range_bounce_down
+
+Vérifié : **96/96 combinaisons** (2 paires × 6 horizons × 8 motifs) passent la
+cascade complète au prix réel. Témoins inchangés — l'or rend `market_closed`,
+SOL rend toujours `horizon_not_allowed`.
+
+#### ⛔ CE QUE CE FREIN VALAIT, ET QUI DOIT ÊTRE ÉCRIT
+
+Le commentaire de `_check_rejection` porte la mesure qui a justifié cette
+liste blanche le 2026-08-04 :
+
+> Sur **100 657 trades suivis**, `range_bounce_up/down` fait **+0,129 R/trade**
+> là où le seuil de confidence seul fait **+0,030** pour 64 % du flux écarté.
+
+🔑 C'est le **seul filtre de ce système dont l'effet positif soit mesuré**, et
+sur un échantillon dix fois plus grand que tous nos bancs. Le lever sur BTC et
+ETH, c'est accepter d'y trader sept motifs que cette mesure n'a pas retenus.
+
+⚠️ Et la portée dépasse le compte réel : `MT5_BRIDGE_PATTERN_OVERRIDES` est
+**global aux destinations** — le commentaire du code le dit — donc ces motifs
+s'ouvrent aussi sur la démo. C'est voulu ici, mais il faut le savoir.
+
+#### Deux incohérences trouvées en lisant la configuration
+
+1. **L'or n'a pas de motifs déclarés pour `1h`** : ses 5 entrées couvrent 5min,
+   15min, 30min, 4h et 1d. Son horizon 1 h retombe donc sur la règle globale,
+   `range_bounce` seul — alors qu'il a été « ouvert aux six horizons ».
+2. Le cap de positions se résout **par classe d'actif** (`{"crypto":1}`), donc
+   BTC et ETH gardent **une position à la fois**. Six horizons et huit motifs
+   donnent plus d'**occasions**, pas plus d'exposition simultanée.
+
+⛔ Toujours aucune règle d'arrêt, sur un compte de **606,74 €**.
