@@ -2646,3 +2646,55 @@ s'ouvrent aussi sur la démo. C'est voulu ici, mais il faut le savoir.
    donnent plus d'**occasions**, pas plus d'exposition simultanée.
 
 ⛔ Toujours aucune règle d'arrêt, sur un compte de **606,74 €**.
+
+### LES 38 MOTIFS SUR BTC ET ETH, ET LE MUR DES FRAIS — 2026-10-03
+
+Xavier : « et donc désormais tu as tous les motifs dans la liste ». Les **38
+motifs définis** par `PatternType` sont désormais ouverts sur BTC/USD et ETH/USD,
+sur les **6 horizons**.
+
+#### ✅ `pattern_not_allowed` a disparu — et c'était bien la cause immédiate
+
+Les 210 refus mesurés avant portaient sur **26 motifs distincts**, dont **aucun**
+n'était dans les 8 que j'avais ouverts : `fvg_down` 28, `fvg_up` 37,
+`gap_retrace` 56, `order_block` 18, `opening_range` 16, `pin_bar` 16,
+`gap_breakaway` 17, `liquidity_sweep` 6… ⛔ **Mon erreur** : j'avais recopié la
+liste de l'or, alors que le détecteur produit sur la crypto une famille
+entièrement différente.
+
+⚠️ La couche **soustractive du laboratoire** s'applique **en dernier**
+(`base = base - _fermes`) : ce que le labo a fermé n'est **pas** réouvert par ce
+geste. Vérifié dans le code avant d'agir.
+
+#### ⛔ MAIS 0/456 PASSE — LA PORTE DES FRAIS REFUSE TOUT
+
+    BTC/USD   0/228 combinaisons passent   →  fees_exceed_edge  228
+    ETH/USD   0/228                        →  fees_exceed_edge  228
+
+🔑 **Ma prédiction de la veille était juste** : ouvrir les motifs a déplacé le
+refus d'un cran, il ne l'a pas fait disparaître.
+
+#### Le seuil de cette porte, mesuré par balayage
+
+    largeur du stop   0,1 %   0,3 %   0,5 %   1 %   2 %   …
+    BTC · ETH · XAU · WTI · EUR/USD   ⛔ ⛔  ✅ ✅ ✅
+
+⚠️ **La porte refuse tout stop sous ~0,5 % du prix, sur TOUTES les paires.** Et
+cela vaut aussi pour la règle que Xavier a posée sur l'or : **10 € = 0,2720 %**,
+donc sous le seuil. L'or trade malgré tout — 24 ordres du 22/09 au 02/10 — donc
+le seuil n'est pas absolu : il dépend de l'avantage attendu du motif, pas
+seulement de la largeur.
+
+#### 🔑 Et ce n'est pas un problème de crypto
+
+`fees_exceed_edge` est le **premier refus de tout le système**, sur 7 jours :
+
+    EUR/JPY 489 · EUR/GBP 410 · USD/JPY 338 · GBP/JPY 294 · USD/CHF 267
+    GBP/USD 234 · XAG 163 · USD/CAD 138 · AUD 109 · BTC 82 · XAU 75
+
+La porte des frais dit, instrument par instrument et indépendamment du banc,
+exactement ce que le banc a conclu sur l'or (0/4 580) et le WTI (0/493) : le
+coût mange l'avantage.
+
+⚠️ Et l'absence d'ordres aujourd'hui sur le forex et les métaux n'a rien à voir :
+**le marché est fermé** (samedi). Le dernier ordre réel date du 02/10 à 19h50.
