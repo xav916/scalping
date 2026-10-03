@@ -226,3 +226,15 @@ def test_le_gel_conserve_la_fenetre_ET_le_releve(tmp_path, monkeypatch, pont):
     assert d["info"]["spread_points_median"] == 2
     assert d["info"]["point"] == 0.01
     assert len(d["bougies"]) == 12
+
+
+def test_le_gel_n_est_PAS_dans_un_repertoire_volatile(monkeypatch, tmp_path):
+    """⛔ Le 2026-10-03 le gel etait dans /tmp du conteneur : un deploiement
+    l'a efface entre la mesure dans l'echantillon et celle hors echantillon.
+    Un artefact de banc doit survivre a un redeploiement."""
+    assert "/tmp" not in str(banc.REPERTOIRE_GEL), \
+        f"{banc.REPERTOIRE_GEL} ne survivrait pas a un deploiement"
+    monkeypatch.setattr(banc, "REPERTOIRE_GEL", tmp_path / "bancs")
+    chemin = banc._fige("dans")
+    assert chemin.parent.exists(), "le repertoire doit etre cree"
+    assert chemin.name == "banc_wti_dans.json"

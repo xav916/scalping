@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import statistics as st
 import sys
 import urllib.parse
@@ -185,8 +186,16 @@ def charger(dest, debut: str, fin: str) -> tuple[list[dict], dict]:
 #
 # ⚠️ Un banc dont les donnees sont refetchees a chaque passage n'est donc pas
 # un banc. Elles sont figees ici une fois, archivees, et relues ensuite.
+# ⛔ PAS dans /tmp : un deploiement recree le conteneur et le gel disparait
+# avec lui — ce qui m'est arrive le 2026-10-03, entre la mesure dans
+# l'echantillon et celle hors echantillon. Un artefact de banc doit etre
+# ARCHIVE, dans le volume monte, et survivre aux redeploiements.
+REPERTOIRE_GEL = Path(os.getenv("BANC_GEL_DIR", "/app/data/bancs"))
+
+
 def _fige(cle: str) -> Path:
-    return Path("/tmp") / f"banc_wti_{cle}.json"
+    REPERTOIRE_GEL.mkdir(parents=True, exist_ok=True)
+    return REPERTOIRE_GEL / f"banc_wti_{cle}.json"
 
 
 def charger_ou_figer(dest, cle: str) -> tuple[list[dict], dict]:
