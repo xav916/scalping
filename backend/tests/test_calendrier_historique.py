@@ -22,7 +22,11 @@ il y a 3 semaines, comment on fait ? >>
 
     220 lignes = 45 056 octets, soit 205 octets par ligne
     4 000 evenements par an = 800 Ko/an
-    la base entiere pese 88 Ko
+    `scalping.db`, qui ne contient QUE cette table : 88 Ko
+
+⚠️ Et pour l'echelle : sur le meme volume, `backtest.db` pese 5,96 Go et
+grossit de 0,6 Go par jour, `trades.db` 947 Mo. 800 Ko/an, c'est un
+sept-millieme de ce que `backtest.db` occupe DEJA.
 
 On detruisait un historique irremplacable pour economiser moins qu une photo.
 Le motif << garder la table legere >> etait sincere — le projet a connu un

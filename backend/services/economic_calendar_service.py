@@ -186,7 +186,12 @@ def refresh_calendar() -> int:
             #
             #     220 lignes = 45 056 octets, soit 205 octets par ligne
             #     4 000 événements par an = 800 Ko/an
-            #     la base entière pesait 88 Ko
+            #     `scalping.db`, qui ne contient QUE cette table : 88 Ko
+            #
+            # ⚠️ Et pour l'échelle : sur le même volume, `backtest.db`
+            # pèse 5,96 Go et grossit de 0,6 Go par jour, `trades.db`
+            # 947 Mo. 800 Ko/an, c'est un sept-millième de ce que
+            # `backtest.db` occupe DÉJÀ. Le disque est à 29 %.
             #
             # On détruisait un historique irremplaçable pour économiser moins
             # qu'une photo. Le motif « garder la table légère » était sincère —
