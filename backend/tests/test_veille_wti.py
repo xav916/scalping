@@ -302,3 +302,129 @@ def test_les_refus_sont_filtres_par_DESTINATION(monkeypatch, tmp_path):
     assert motifs == {"sl_too_close": 3}, motifs
     assert "pair_not_whitelisted" not in motifs
     assert "horizon_not_allowed" not in motifs
+
+
+# ─── LA SONDE DE FRAICHEUR DU CALENDRIER ────────────────────────────────
+#
+# ⛔ MESURE DU 2026-10-04. Le blackout evenementiel bloque massivement — 3 638
+# refus depuis le 24/09, dont 121 sur BTC et 106 sur ETH. Mais :
+#
+#     cache : High 10 · Medium 21 · Low 114, du 29/09 au 02/10 — rien apres
+#     refus : tous s arretent le 02/10 a 12:43
+#
+# Le cache est PERIME depuis deux jours, et les refus se sont arretes au meme
+# instant. Le garde ne bloque plus parce qu il ne SAIT plus rien — pas parce
+# qu il n y a plus d evenements.
+#
+# 🔑 C est le meme mode de panne que celui corrige le 2026-09-20, ou il etait
+# reste muet des mois pour une erreur de format d heure : il se tait, et son
+# silence ressemble a un calme de marche. Cette sonde existe pour que le
+# silence devienne bruyant.
+
+def _cal(heures=2.0, n=145, haut=10, erreur=None):
+    if erreur:
+        return {"erreur": erreur}
+    return {"evenements": n, "high": haut, "age_heures": heures,
+            "perime": heures > veille.CAL_AGE_MAX_H}
+
+
+def test_un_calendrier_FRAIS_ne_dit_rien():
+    avant = _releve(); avant["calendrier"] = _cal(heures=2)
+    apres = _releve(); apres["calendrier"] = _cal(heures=3)
+    assert veille.evenements(avant, apres) == []
+
+
+def test_un_calendrier_qui_SE_PERIME_declenche_une_alerte():
+    """⛔ L evenement qui compte : la transition frais → perime."""
+    avant = _releve(); avant["calendrier"] = _cal(heures=40)
+    apres = _releve(); apres["calendrier"] = _cal(heures=50)
+    ev = veille.evenements(avant, apres)
+    assert any("calendrier" in e.lower() and "PÉRIMÉ" in e for e in ev), ev
+
+
+def test_un_calendrier_DEJA_perime_ne_re_alerte_pas():
+    """⚠️ Sinon l alerte se repete toutes les 15 min et on l ignore."""
+    avant = _releve(); avant["calendrier"] = _cal(heures=50)
+    apres = _releve(); apres["calendrier"] = _cal(heures=60)
+    assert veille.evenements(avant, apres) == []
+
+
+def test_un_calendrier_qui_REDEVIENT_frais_le_dit():
+    """La synchro hebdomadaire a repris : c est une bonne nouvelle a dire."""
+    avant = _releve(); avant["calendrier"] = _cal(heures=50)
+    apres = _releve(); apres["calendrier"] = _cal(heures=1)
+    ev = veille.evenements(avant, apres)
+    assert any("calendrier" in e.lower() and "à jour" in e for e in ev), ev
+
+
+def test_un_calendrier_perime_DES_L_ARMEMENT_est_annonce():
+    """⛔ Au premier passage il n y a pas de << avant >> : un cache deja
+    perime doit quand meme se signaler, sinon on part aveugle."""
+    apres = _releve(); apres["calendrier"] = _cal(heures=72)
+    ev = veille.evenements({}, apres)
+    assert any("PÉRIMÉ" in e for e in ev), ev
+
+
+def test_un_calendrier_ILLISIBLE_se_signale():
+    avant = _releve(); avant["calendrier"] = _cal(heures=2)
+    apres = _releve(); apres["calendrier"] = _cal(erreur="OperationalError")
+    ev = veille.evenements(avant, apres)
+    assert any("calendrier" in e.lower() and "illisible" in e for e in ev), ev
+
+
+def test_le_seuil_est_de_48_HEURES():
+    """La synchro est HEBDOMADAIRE (dimanche 20h UTC) : 48 h laisse passer un
+    retard normal, et attrape un cache mort."""
+    assert veille.CAL_AGE_MAX_H == 48
+
+
+def test_le_message_porte_l_age_du_calendrier():
+    r = _releve(); r["calendrier"] = _cal(heures=52.5)
+    m = veille.message(r, [])
+    assert "52.5" in m or "52,5" in m
+    assert "calendrier" in m.lower()
+
+
+def test_la_fraicheur_se_mesure_sur_les_HIGH_pas_sur_tout(monkeypatch, tmp_path):
+    """⛔ DEFAUT DE MA PREMIERE SONDE, attrape le 2026-10-04. Elle mesurait
+    l age du dernier evenement TOUS NIVEAUX, et rendait 18,2 h — frais — alors
+    que les HIGH avaient 45,7 h et les Medium 49,2 h. Les 114 lignes Low
+    masquaient la donnee protectrice.
+
+    🔑 Le blackout ne consomme QUE les HIGH : c est leur age qui compte. Une
+    sonde qui mesure autre chose rassure exactement quand il faut alerter.
+    """
+    import sqlite3
+    from datetime import datetime, timedelta, timezone
+    base = tmp_path / "cal.db"
+    maintenant = datetime.now(timezone.utc)
+    with sqlite3.connect(base) as c:
+        c.execute("CREATE TABLE economic_events (ts_utc TEXT, impact TEXT)")
+        # Des Low tres frais, et des High vieux de 60 h : le cas reel.
+        for h in (1, 2, 3):
+            c.execute("INSERT INTO economic_events VALUES (?,?)",
+                      ((maintenant - timedelta(hours=h)).isoformat(), "Low"))
+        c.execute("INSERT INTO economic_events VALUES (?,?)",
+                  ((maintenant - timedelta(hours=60)).isoformat(), "High"))
+    monkeypatch.setattr(veille, "CAL_DB", str(base))
+    r = veille._calendrier()
+    assert r["perime"] is True, r
+    assert 59 <= r["age_heures"] <= 61, r
+    # ⚠️ L age TOUS NIVEAUX reste rendu, pour qu on voie le masquage.
+    assert 0 <= r["age_tous_heures"] <= 4, r
+
+
+def test_un_calendrier_SANS_AUCUN_high_est_perime(monkeypatch, tmp_path):
+    """⛔ Zero evenement HIGH n est pas << pas de risque >> : c est
+    << je ne sais rien >>."""
+    import sqlite3
+    from datetime import datetime, timezone
+    base = tmp_path / "cal2.db"
+    with sqlite3.connect(base) as c:
+        c.execute("CREATE TABLE economic_events (ts_utc TEXT, impact TEXT)")
+        c.execute("INSERT INTO economic_events VALUES (?,?)",
+                  (datetime.now(timezone.utc).isoformat(), "Low"))
+    monkeypatch.setattr(veille, "CAL_DB", str(base))
+    r = veille._calendrier()
+    assert r["perime"] is True
+    assert r["high"] == 0

@@ -54,6 +54,66 @@ def _depuis() -> str:
             - timedelta(hours=HEURES_FENETRE)).isoformat()
 
 
+# ⛔ SONDE DE FRAICHEUR DU CALENDRIER (2026-10-04). Le blackout evenementiel
+# bloque massivement — 3 638 refus depuis le 24/09, dont 121 sur BTC et 106 sur
+# ETH. Mais son cache s est arrete le 02/10 et les refus avec lui, a la minute :
+# il ne bloquait plus parce qu il ne SAVAIT plus rien.
+#
+# 🔑 Meme mode de panne que celui corrige le 2026-09-20, ou il etait reste muet
+# des mois pour une erreur de format d heure. Il se tait, et son silence
+# ressemble a un calme de marche. Cette sonde rend le silence bruyant.
+#
+# 48 h : la synchro est HEBDOMADAIRE (dimanche 20h UTC), donc un retard normal
+# passe, et un cache mort est attrape.
+CAL_AGE_MAX_H = int(os.getenv("VEILLE_CAL_AGE_MAX_H", "48"))
+CAL_DB = os.getenv("VEILLE_CAL_DB", "/app/data/scalping.db")
+
+
+def _age_heures(brut) -> float | None:
+    if not brut:
+        return None
+    d = datetime.fromisoformat(str(brut).replace("Z", "+00:00"))
+    if d.tzinfo is None:
+        d = d.replace(tzinfo=timezone.utc)
+    return round((datetime.now(timezone.utc) - d).total_seconds() / 3600, 1)
+
+
+def _calendrier() -> dict:
+    """L age du calendrier economique, mesure sur les evenements HIGH.
+
+    ⛔ DEFAUT DE MA PREMIERE VERSION, attrape le 2026-10-04 : elle mesurait
+    l age du dernier evenement TOUS NIVEAUX et rendait 18,2 h — frais — alors
+    que les HIGH avaient 45,7 h et les Medium 49,2 h. Les 114 lignes Low
+    masquaient la donnee protectrice.
+
+    🔑 `event_blackout` ne consomme QUE les HIGH : c est leur age qui compte.
+    Une sonde qui mesure autre chose rassure exactement quand il faut alerter.
+
+    ⚠️ ZERO evenement HIGH n est pas << pas de risque >>, c est << je ne sais
+    rien >> : donc perime.
+
+    ⚠️ L age tous niveaux reste rendu, pour qu on VOIE le masquage au lieu de
+    le deviner.
+    """
+    try:
+        with sqlite3.connect(CAL_DB) as c:
+            n, tous = c.execute(
+                "SELECT COUNT(*), MAX(ts_utc) FROM economic_events").fetchone()
+            haut, dernier_haut = c.execute(
+                "SELECT COUNT(*), MAX(ts_utc) FROM economic_events "
+                "WHERE impact = 'High'").fetchone()
+        age_haut = _age_heures(dernier_haut)
+        return {
+            "evenements": int(n or 0),
+            "high": int(haut or 0),
+            "age_heures": age_haut,
+            "age_tous_heures": _age_heures(tous),
+            "perime": age_haut is None or age_haut > CAL_AGE_MAX_H,
+        }
+    except Exception as e:  # noqa: BLE001
+        return {"erreur": f"{type(e).__name__}: {e}"[:100]}
+
+
 def _etat_lu() -> dict:
     try:
         return json.loads(ETAT.read_text())
@@ -184,6 +244,7 @@ def releve() -> dict:
     return {
         "a": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "execution": _execution(),
+        "calendrier": _calendrier(),
         "paires": paires,
     }
 
@@ -217,12 +278,50 @@ def evenements_paire(pair: str, avant: dict, apres: dict) -> list[str]:
     return ev
 
 
+def evenements_calendrier(avant: dict, apres: dict) -> list[str]:
+    """Le calendrier economique s est-il perime, ou remis a jour ?
+
+    ⚠️ On n alerte que sur la TRANSITION. Un cache deja perime qui vieillit ne
+    doit pas re-alerter toutes les 15 minutes, sinon l alerte est ignoree —
+    et c est alors exactement comme si elle n existait pas.
+    """
+    av, ap = avant or {}, apres or {}
+    if "erreur" in ap:
+        if "erreur" not in av:
+            return [f"calendrier ⛔ <b>illisible</b> ({_e(ap['erreur'])})"]
+        return []
+    if "erreur" in av:
+        return ["calendrier relu"]
+
+    pa, pb = bool(av.get("perime")), bool(ap.get("perime"))
+    if pb and not pa:
+        age = ap.get("age_heures")
+        return [f"calendrier économique <b>PÉRIMÉ</b> — dernier événement il y "
+                f"a {_e(age)} h (seuil {CAL_AGE_MAX_H} h) ⇒ le blackout "
+                f"événementiel ne protège plus"]
+    if pa and not pb:
+        return ["calendrier économique de nouveau <b>à jour</b>"]
+    return []
+
+
 def evenements(avant: dict, apres: dict) -> list[str]:
     """Ce qui a CHANGE, toutes paires. Vide = on se taît."""
     if not avant:
-        return ["veille armée sur " + ", ".join(sorted(apres.get("paires", {})))]
+        ev = ["veille armée sur " + ", ".join(sorted(apres.get("paires", {})))]
+        # ⛔ Un cache DEJA perime doit se signaler des l armement : sinon on
+        # part aveugle en croyant etre protege.
+        cal = apres.get("calendrier") or {}
+        if cal.get("perime"):
+            ev.append(f"⛔ calendrier économique <b>PÉRIMÉ</b> dès "
+                      f"l'armement — {_e(cal.get('age_heures'))} h")
+        elif "erreur" in cal:
+            ev.append(f"⛔ calendrier <b>illisible</b> ({_e(cal['erreur'])})")
+        return ev
 
-    ev: list[str] = []
+    ev_cal = evenements_calendrier(avant.get("calendrier"),
+                                   apres.get("calendrier"))
+
+    ev: list[str] = list(ev_cal)
     ea = (avant.get("execution") or {}).get("autorisee")
     eb = (apres.get("execution") or {}).get("autorisee")
     if ea != eb:
@@ -264,6 +363,15 @@ def message(r: dict, ev: list[str]) -> str:
     e = r.get("execution") or {}
     L.append(f"exécution : {'ALLOW' if e.get('autorisee') else '⛔ ' + _e(e.get('motif'))}"
              f"  (armé {_e(e.get('arme'))}, tourne {_e(e.get('tourne'))})")
+
+    cal = r.get("calendrier") or {}
+    if "erreur" in cal:
+        L.append(f"calendrier : ⛔ illisible ({_e(cal['erreur'])})")
+    elif cal:
+        etat = "⛔ PÉRIMÉ" if cal.get("perime") else "à jour"
+        L.append(f"calendrier : {etat} — {_e(cal.get('evenements'))} "
+                 f"événements ({_e(cal.get('high'))} HIGH), dernier il y a "
+                 f"{_e(cal.get('age_heures'))} h")
 
     for pair in sorted(r.get("paires") or {}):
         p = r["paires"][pair]
