@@ -2750,3 +2750,124 @@ Le compte vaut **606,74 €**. Le marché crypto est ouvert : des ordres réels
 peuvent partir dans les minutes qui suivent.
 
 Une seule ligne d'`.env` referme tout : `COST_GATE_EXEMPT_PAIRS=`.
+
+---
+
+## LA DÉRIVE APRÈS SURPRISE ÉCONOMIQUE — déclaration du 2026-10-05, AVANT le code
+
+### Ce qui rend cette hypothèse possible aujourd'hui, et pas hier
+
+Jusqu'au 2026-10-05, `economic_events` ne contenait **aucun** chiffre publié :
+0 sur 220. ForexFactory ne sert que la semaine en cours et les événements en
+sortent une fois publiés. La **surprise** — l'écart entre le chiffre réel et le
+consensus — était donc incalculable, rétroactivement comme en direct.
+
+L'export MQL5 (`ee36e7d`) a ramené **83 584 événements de 2021 à 2026**, dont
+**75 452 avec le chiffre publié**. La surprise devient calculable sur **51 666**
+événements, dont **3 277 de haute importance**.
+
+🔑 Et la prévision seule ne prédit rien : c'est le consensus public, connu des
+jours à l'avance, donc **déjà dans le prix**. Seul l'écart peut bouger un cours.
+
+### La règle, déclarée
+
+Pour un événement `E` de haute importance sur la devise `D`, publié à
+l'instant `t`, portant `actual` et `forecast` :
+
+```
+b   = actual − forecast                      surprise brute
+σ_E = écart-type des |b| passés du MÊME event_code,
+      calculé STRICTEMENT sur les événements antérieurs à t
+s   = b / σ_E                                surprise normalisée
+S   = p_E × s                                surprise signée
+```
+
+`p_E` est la **polarité**, déclarée ci-dessous et jamais ajustée.
+
+Si `|S| ≥ 1,5` : sens = **achat de D** si `S > 0`, **vente de D** si `S < 0`.
+Pour une paire `D/X` le sens s'applique tel quel ; pour `X/D` il s'inverse.
+Pour l'or, l'argent et le WTI — cotés en dollar — une surprise USD s'applique
+**inversée** (dollar fort ⇒ or en baisse).
+
+### La polarité, déclarée d'avance et non ajustée
+
+| `event_code` commence par | `p_E` | pourquoi |
+|---|---|---|
+| `nonfarm-payrolls`, `employment-change` | **+1** | plus d'emplois ⇒ devise plus forte |
+| `gdp` | **+1** | croissance ⇒ devise plus forte |
+| `retail-sales` | **+1** | demande ⇒ devise plus forte |
+| `cpi`, `core-cpi` | **+1** | inflation ⇒ anticipation de hausse des taux |
+| `unemployment-rate` | **−1** | plus de chômage ⇒ devise plus faible |
+| `unemployment-claims` | **−1** | plus d'inscriptions ⇒ devise plus faible |
+
+⛔ **Rien d'autre.** Tout `event_code` absent de cette table est écarté. Six
+familles, choisies parce que leur polarité est **incontestée** dans les
+manuels — pas parce qu'elles marchent, puisque personne ne l'a encore mesuré.
+
+### Les mesures, déclarées
+
+- **bougies** : `H1` **du courtier**, par `bougies_du_pont`. Mesuré le
+  2026-10-05 : H1 et H4 remontent au **2021-01-04**, M5 seulement à **mai
+  2025**. Le H1 est donc la seule échelle qui couvre l'historique du calendrier.
+- **entrée** : ouverture de la **première bougie H1 strictement postérieure**
+  à `t`. ⛔ Jamais la bougie qui contient l'événement — ce serait lire l'avenir.
+  ⚠️ L'entrée arrive donc jusqu'à 60 min après la publication. C'est voulu et
+  conservateur : notre chaîne tourne toutes les **180 s**, la course à
+  l'instant est perdue d'avance contre des acteurs colocalisés.
+- **sortie** : clôture de la bougie à `entrée + H`, pour
+  `H ∈ {1 h, 2 h, 4 h, 8 h}`.
+- **unité de risque R** : `ATR(14)` en H1 à l'entrée.
+- **coût** : le spread est **facturé**, comme sur tous les bancs.
+
+### Les fenêtres, disjointes et déclarées maintenant
+
+| | période | rôle |
+|---|---|---|
+| sélection | `2021-01-04` → `2024-12-31` | on y regarde |
+| **hors échantillon** | `2025-01-01` → `2026-09-27` | **jamais vue** |
+
+La borne haute est la frontière ForexFactory : au-delà, les lignes MQL5 n'ont
+pas été importées.
+
+### Les prédictions, falsifiables
+
+- **P1** — sur la fenêtre hors échantillon, le R moyen est **positif** et
+  `t_vs_hasard` franchit la barre d'**un seul test** (0,798).
+- **P2** — le **signe tient sur au moins 3 des 4 horizons**. Un effet réel ne
+  change pas de sens entre 2 h et 4 h.
+- **P3** — il bat un **contrôle aléatoire APPARIÉ** : mêmes instants, même
+  nombre de trades, sens tiré au hasard. ⛔ Pas un contrôle au risque médian
+  global, qui mesurerait le coût et non la direction
+  (cf. le `+8,60` retiré le 2026-10-01).
+- **P4** — `n ≥ 200` hors échantillon. En dessous, le verdict est
+  **INDÉCIDABLE**, jamais « positif ».
+
+⛔ **Une seule qui tombe, l'hypothèse est morte.** Pas de balayage de `k`, pas
+de choix d'horizon après coup, pas de sous-ensemble de devises retenu parce
+qu'il marche.
+
+### Les pièges connus, et leur garde
+
+1. ⛔ **Les données aberrantes de MetaQuotes.** Vérifié le 2026-10-05 : l'ADP du
+   2021-11-03 porte `forecast = -663` quand le consensus réel était ≈ +400. Le
+   mapping des colonnes est pourtant juste — `previous = 568` pour cet ADP, et
+   `previous = -41,7` pour l'emploi canadien du 09/10, que ForexFactory confirme
+   au dixième. **Trier par écart décroissant fait donc émerger les fautes avant
+   les vrais chocs.**
+   ⇒ **garde** : toute ligne avec `|s| > 10` est **écartée**, seuil déclaré ici.
+2. ⛔ **Le regard vers l'avenir.** `σ_E` n'utilise que les occurrences
+   antérieures à `t`, et exige **au moins 12** d'entre elles. Un événement sans
+   historique suffisant est écarté, pas estimé.
+3. ⚠️ **Deux fournisseurs de consensus.** MQL5 et ForexFactory divergent
+   (emploi canadien : −0,7 contre 9,0K). Le banc n'utilise **que** les
+   `forecast` MQL5, pour que `σ_E` et `b` viennent de la même source.
+4. ⚠️ **La porte `event_blackout` bloque ±30 min** autour d'un HIGH — soit le
+   début de la fenêtre étudiée. Si l'hypothèse survit, l'armer exigera de
+   **desserrer une protection**, ce qui est l'arbitrage de Xavier et de personne
+   d'autre.
+
+### Ce que cette déclaration ne dit pas
+
+Elle ne prédit **pas** que ça marche. Le laboratoire a rendu **0 retenu sur
+4 580 cellules** pour l'or et **0 sur 493** pour le WTI. Le passif est lourd et
+la seule chose acquise ce soir, c'est de pouvoir **poser la question**.
