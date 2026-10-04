@@ -321,11 +321,13 @@ def test_les_refus_sont_filtres_par_DESTINATION(monkeypatch, tmp_path):
 # silence ressemble a un calme de marche. Cette sonde existe pour que le
 # silence devienne bruyant.
 
-def _cal(heures=2.0, n=145, haut=10, erreur=None):
+def _cal(heures=2.0, n=145, haut=10, erreur=None, futurs=4):
     if erreur:
         return {"erreur": erreur}
-    return {"evenements": n, "high": haut, "age_heures": heures,
-            "perime": heures > veille.CAL_AGE_MAX_H}
+    return {"evenements": n, "high": haut, "high_a_venir": futurs,
+            "prochain_high": "2026-10-06T06:35:00+00:00",
+            "age_fetch_h": heures,
+            "perime": heures > veille.CAL_AGE_MAX_H or not futurs}
 
 
 def test_un_calendrier_FRAIS_ne_dit_rien():
@@ -381,50 +383,153 @@ def test_le_seuil_est_de_48_HEURES():
 def test_le_message_porte_l_age_du_calendrier():
     r = _releve(); r["calendrier"] = _cal(heures=52.5)
     m = veille.message(r, [])
-    assert "52.5" in m or "52,5" in m
+    assert "52.5" in m
     assert "calendrier" in m.lower()
 
 
-def test_la_fraicheur_se_mesure_sur_les_HIGH_pas_sur_tout(monkeypatch, tmp_path):
-    """⛔ DEFAUT DE MA PREMIERE SONDE, attrape le 2026-10-04. Elle mesurait
-    l age du dernier evenement TOUS NIVEAUX, et rendait 18,2 h — frais — alors
-    que les HIGH avaient 45,7 h et les Medium 49,2 h. Les 114 lignes Low
-    masquaient la donnee protectrice.
+def test_des_LOW_frais_ne_masquent_PAS_l_absence_de_high(monkeypatch,
+                                                         tmp_path):
+    """⛔ DEFAUT DE MA PREMIERE SONDE, attrape le 2026-10-04 : elle mesurait
+    l age du dernier evenement TOUS NIVEAUX et rendait 18,2 h — frais — alors
+    que les HIGH avaient 45,7 h. Les 114 lignes Low masquaient la donnee
+    protectrice.
 
-    🔑 Le blackout ne consomme QUE les HIGH : c est leur age qui compte. Une
-    sonde qui mesure autre chose rassure exactement quand il faut alerter.
+    🔑 La nouvelle mecanique rend ce masquage structurellement impossible : la
+    fraicheur vient de `fetched_at`, la couverture du compte de HIGH A VENIR.
+    Un cache plein de Low sans HIGH devant est donc perime, quoi qu il arrive.
     """
     import sqlite3
     from datetime import datetime, timedelta, timezone
-    base = tmp_path / "cal.db"
-    maintenant = datetime.now(timezone.utc)
+    base = tmp_path / "masque.db"
+    now = datetime.now(timezone.utc)
     with sqlite3.connect(base) as c:
-        c.execute("CREATE TABLE economic_events (ts_utc TEXT, impact TEXT)")
-        # Des Low tres frais, et des High vieux de 60 h : le cas reel.
-        for h in (1, 2, 3):
-            c.execute("INSERT INTO economic_events VALUES (?,?)",
-                      ((maintenant - timedelta(hours=h)).isoformat(), "Low"))
-        c.execute("INSERT INTO economic_events VALUES (?,?)",
-                  ((maintenant - timedelta(hours=60)).isoformat(), "High"))
+        c.execute("CREATE TABLE economic_events (ts_utc TEXT, impact TEXT, "
+                  "fetched_at TEXT)")
+        frais = (now - timedelta(minutes=10)).isoformat()
+        for h in range(1, 20):      # beaucoup de Low tres frais
+            c.execute("INSERT INTO economic_events VALUES (?,?,?)",
+                      ((now - timedelta(hours=h)).isoformat(), "Low", frais))
+        c.execute("INSERT INTO economic_events VALUES (?,?,?)",
+                  ((now - timedelta(hours=46)).isoformat(), "High", frais))
     monkeypatch.setattr(veille, "CAL_DB", str(base))
     r = veille._calendrier()
     assert r["perime"] is True, r
-    assert 59 <= r["age_heures"] <= 61, r
-    # ⚠️ L age TOUS NIVEAUX reste rendu, pour qu on voie le masquage.
-    assert 0 <= r["age_tous_heures"] <= 4, r
+    assert r["high_a_venir"] == 0, r
 
 
-def test_un_calendrier_SANS_AUCUN_high_est_perime(monkeypatch, tmp_path):
-    """⛔ Zero evenement HIGH n est pas << pas de risque >> : c est
-    << je ne sais rien >>."""
-    import sqlite3
-    from datetime import datetime, timezone
-    base = tmp_path / "cal2.db"
-    with sqlite3.connect(base) as c:
-        c.execute("CREATE TABLE economic_events (ts_utc TEXT, impact TEXT)")
-        c.execute("INSERT INTO economic_events VALUES (?,?)",
-                  (datetime.now(timezone.utc).isoformat(), "Low"))
-    monkeypatch.setattr(veille, "CAL_DB", str(base))
+def test_un_calendrier_FRAIS_ne_dit_rien():
+    avant = _releve(); avant["calendrier"] = _cal(heures=2)
+    apres = _releve(); apres["calendrier"] = _cal(heures=3)
+    assert veille.evenements(avant, apres) == []
+
+
+def test_un_calendrier_qui_SE_PERIME_declenche_une_alerte():
+    """⛔ L evenement qui compte : la transition frais → perime."""
+    avant = _releve(); avant["calendrier"] = _cal(heures=40)
+    apres = _releve(); apres["calendrier"] = _cal(heures=50)
+    ev = veille.evenements(avant, apres)
+    assert any("calendrier" in e.lower() and "PÉRIMÉ" in e for e in ev), ev
+
+
+def test_un_calendrier_DEJA_perime_ne_re_alerte_pas():
+    """⚠️ Sinon l alerte se repete toutes les 15 min et on l ignore."""
+    avant = _releve(); avant["calendrier"] = _cal(heures=50)
+    apres = _releve(); apres["calendrier"] = _cal(heures=60)
+    assert veille.evenements(avant, apres) == []
+
+
+def test_un_calendrier_qui_REDEVIENT_frais_le_dit():
+    """La synchro hebdomadaire a repris : c est une bonne nouvelle a dire."""
+    avant = _releve(); avant["calendrier"] = _cal(heures=50)
+    apres = _releve(); apres["calendrier"] = _cal(heures=1)
+    ev = veille.evenements(avant, apres)
+    assert any("calendrier" in e.lower() and "à jour" in e for e in ev), ev
+
+
+def test_un_calendrier_perime_DES_L_ARMEMENT_est_annonce():
+    """⛔ Au premier passage il n y a pas de << avant >> : un cache deja
+    perime doit quand meme se signaler, sinon on part aveugle."""
+    apres = _releve(); apres["calendrier"] = _cal(heures=72)
+    ev = veille.evenements({}, apres)
+    assert any("PÉRIMÉ" in e for e in ev), ev
+
+
+def test_un_calendrier_ILLISIBLE_se_signale():
+    avant = _releve(); avant["calendrier"] = _cal(heures=2)
+    apres = _releve(); apres["calendrier"] = _cal(erreur="OperationalError")
+    ev = veille.evenements(avant, apres)
+    assert any("calendrier" in e.lower() and "illisible" in e for e in ev), ev
+
+
+def test_le_seuil_est_de_48_HEURES():
+    """La synchro est HEBDOMADAIRE (dimanche 20h UTC) : 48 h laisse passer un
+    retard normal, et attrape un cache mort."""
+    assert veille.CAL_AGE_MAX_H == 48
+
+
+def test_le_message_porte_l_age_du_calendrier():
+    r = _releve(); r["calendrier"] = _cal(heures=52.5)
+    m = veille.message(r, [])
+    assert "52.5" in m
+    assert "calendrier" in m.lower()
+
+
+def test_la_FRAICHEUR_se_mesure_sur_fetched_at_pas_sur_l_evenement(
+        monkeypatch, tmp_path):
+    """⛔ TROISIEME DEFAUT de ma sonde, attrape le 2026-10-04 juste apres avoir
+    force la synchro. Je mesurais `MAX(ts_utc)` — l horodatage de l EVENEMENT.
+    Des que le cache contient le futur, ca rend un age NEGATIF : -121,9 h.
+
+    🔑 Un age negatif n est pas une fraicheur. La fraicheur, c est quand la
+    DONNEE a ete recuperee : `fetched_at`. Ma sonde avait juste par accident,
+    parce que -121 > 48 est faux.
+    """
+    monkeypatch.setattr(veille, "CAL_DB",
+                        _cal_db(tmp_path, fetch_h=2, high_futurs=4))
     r = veille._calendrier()
-    assert r["perime"] is True
-    assert r["high"] == 0
+    assert r["perime"] is False, r
+    assert 1 <= r["age_fetch_h"] <= 3, r
+    assert r["high_a_venir"] == 4, r
+    assert r["age_fetch_h"] > 0, "un age de fraicheur ne peut pas etre negatif"
+
+
+def test_une_RECUPERATION_trop_vieille_est_perimee(monkeypatch, tmp_path):
+    monkeypatch.setattr(veille, "CAL_DB",
+                        _cal_db(tmp_path, fetch_h=72, high_futurs=4))
+    r = veille._calendrier()
+    assert r["perime"] is True, r
+
+
+def test_un_cache_frais_SANS_AUCUN_high_a_venir_est_perime(
+        monkeypatch, tmp_path):
+    """⛔ Recupere il y a 10 minutes, mais plus rien devant : le blackout ne
+    peut rien bloquer. << Aucun evenement a venir >> n est pas << pas de
+    risque >>, c est << je ne vois plus loin >>."""
+    monkeypatch.setattr(veille, "CAL_DB",
+                        _cal_db(tmp_path, fetch_h=0.2, high_futurs=0))
+    r = veille._calendrier()
+    assert r["perime"] is True, r
+    assert r["high_a_venir"] == 0, r
+
+
+def _cal_db(tmp_path, fetch_h, high_futurs, high_passes=3):
+    """Un cache de calendrier : age de la RECUPERATION et HIGH a venir.
+
+    ⚠️ Le schema porte `fetched_at` : c'est LUI qui dit la fraicheur, pas
+    l'horodatage des evenements, qui peut etre dans le futur.
+    """
+    import sqlite3
+    from datetime import datetime, timedelta, timezone
+    base = tmp_path / f"cal_{fetch_h}_{high_futurs}.db"
+    now = datetime.now(timezone.utc)
+    with sqlite3.connect(base) as c:
+        c.execute("CREATE TABLE economic_events (ts_utc TEXT, impact TEXT, "
+                  "fetched_at TEXT)")
+        f = (now - timedelta(hours=fetch_h)).isoformat()
+        for i in range(high_passes):
+            c.execute("INSERT INTO economic_events VALUES (?,?,?)",
+                      ((now - timedelta(hours=10 + i)).isoformat(), "High", f))
+        for i in range(high_futurs):
+            c.execute("INSERT INTO economic_events VALUES (?,?,?)",
+                      ((now + timedelta(hours=24 + i)).isoformat(), "High", f))
+    return str(base)

@@ -94,21 +94,43 @@ def _calendrier() -> dict:
 
     ⚠️ L age tous niveaux reste rendu, pour qu on VOIE le masquage au lieu de
     le deviner.
+
+    ⛔ TROISIEME DEFAUT, attrape juste apres avoir force la synchro. Je
+    mesurais `MAX(ts_utc)` — l horodatage de l EVENEMENT. Des que le cache
+    contient le futur, ca rend un age NEGATIF : -121,9 h. Un age negatif n est
+    pas une fraicheur, et ma sonde n avait juste que par accident
+    (-121 > 48 est faux).
+
+    🔑 Deux santes DISTINCTES, et il faut les deux :
+
+        age_fetch_h    quand la DONNEE a ete recuperee (`fetched_at`)
+        high_a_venir   reste-t-il un evenement HIGH DEVANT nous ?
+
+    ⚠️ Un cache recupere il y a dix minutes mais sans aucun HIGH devant ne
+    protege de rien : << aucun evenement a venir >> n est pas << pas de
+    risque >>, c est << je ne vois plus loin >>.
     """
     try:
+        maintenant = datetime.now(timezone.utc).isoformat()
         with sqlite3.connect(CAL_DB) as c:
-            n, tous = c.execute(
-                "SELECT COUNT(*), MAX(ts_utc) FROM economic_events").fetchone()
-            haut, dernier_haut = c.execute(
-                "SELECT COUNT(*), MAX(ts_utc) FROM economic_events "
-                "WHERE impact = 'High'").fetchone()
-        age_haut = _age_heures(dernier_haut)
+            n, recup = c.execute(
+                "SELECT COUNT(*), MAX(fetched_at) FROM economic_events"
+            ).fetchone()
+            haut, = c.execute(
+                "SELECT COUNT(*) FROM economic_events WHERE impact = 'High'"
+            ).fetchone()
+            futurs, prochain = c.execute(
+                "SELECT COUNT(*), MIN(ts_utc) FROM economic_events "
+                "WHERE impact = 'High' AND ts_utc >= ?", (maintenant,)
+            ).fetchone()
+        age = _age_heures(recup)
         return {
             "evenements": int(n or 0),
             "high": int(haut or 0),
-            "age_heures": age_haut,
-            "age_tous_heures": _age_heures(tous),
-            "perime": age_haut is None or age_haut > CAL_AGE_MAX_H,
+            "high_a_venir": int(futurs or 0),
+            "prochain_high": prochain,
+            "age_fetch_h": age,
+            "perime": age is None or age > CAL_AGE_MAX_H or not futurs,
         }
     except Exception as e:  # noqa: BLE001
         return {"erreur": f"{type(e).__name__}: {e}"[:100]}
@@ -295,9 +317,9 @@ def evenements_calendrier(avant: dict, apres: dict) -> list[str]:
 
     pa, pb = bool(av.get("perime")), bool(ap.get("perime"))
     if pb and not pa:
-        age = ap.get("age_heures")
-        return [f"calendrier économique <b>PÉRIMÉ</b> — dernier événement il y "
-                f"a {_e(age)} h (seuil {CAL_AGE_MAX_H} h) ⇒ le blackout "
+        return [f"calendrier économique <b>PÉRIMÉ</b> — récupéré il y a "
+                f"{_e(ap.get('age_fetch_h'))} h (seuil {CAL_AGE_MAX_H} h), "
+                f"{_e(ap.get('high_a_venir'))} HIGH à venir ⇒ le blackout "
                 f"événementiel ne protège plus"]
     if pa and not pb:
         return ["calendrier économique de nouveau <b>à jour</b>"]
@@ -313,7 +335,9 @@ def evenements(avant: dict, apres: dict) -> list[str]:
         cal = apres.get("calendrier") or {}
         if cal.get("perime"):
             ev.append(f"⛔ calendrier économique <b>PÉRIMÉ</b> dès "
-                      f"l'armement — {_e(cal.get('age_heures'))} h")
+                      f"l'armement — récupéré il y a "
+                      f"{_e(cal.get('age_fetch_h'))} h, "
+                      f"{_e(cal.get('high_a_venir'))} HIGH à venir")
         elif "erreur" in cal:
             ev.append(f"⛔ calendrier <b>illisible</b> ({_e(cal['erreur'])})")
         return ev
@@ -370,8 +394,11 @@ def message(r: dict, ev: list[str]) -> str:
     elif cal:
         etat = "⛔ PÉRIMÉ" if cal.get("perime") else "à jour"
         L.append(f"calendrier : {etat} — {_e(cal.get('evenements'))} "
-                 f"événements ({_e(cal.get('high'))} HIGH), dernier il y a "
-                 f"{_e(cal.get('age_heures'))} h")
+                 f"événements, {_e(cal.get('high_a_venir'))} HIGH à venir, "
+                 f"récupéré il y a {_e(cal.get('age_fetch_h'))} h")
+        if cal.get("prochain_high"):
+            L.append(f"  prochain HIGH : "
+                     f"{_e(str(cal['prochain_high'])[:16])}")
 
     for pair in sorted(r.get("paires") or {}):
         p = r["paires"][pair]
