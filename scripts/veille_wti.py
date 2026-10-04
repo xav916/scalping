@@ -37,8 +37,21 @@ PAIRES: tuple[str, ...] = tuple(
     x.strip() for x in os.getenv(
         "VEILLE_PAIRES", "WTI/USD,BTC/USD,ETH/USD").split(",") if x.strip())
 DEST = "admin_live"
-# L'ouverture du marche WTI pour admin_live, mesuree : dimanche 23:00 UTC.
-OUVERTURE = datetime(2026, 10, 4, 23, 0, tzinfo=timezone.utc)
+# ⛔ FENETRE GLISSANTE, pas une date en dur. La premiere version portait
+# `datetime(2026, 10, 4, 23, 0)` — l'ouverture du marche WTI — et cette date
+# est devenue le FUTUR : la veille comptait donc zero ordre et zero refus pour
+# toutes les paires, en ayant l'air de surveiller. Xavier l'a vu avant moi
+# (<< il n'y a toujours pas de trade >>) alors que la production refusait
+# 300 signaux par heure.
+#
+# 🔑 Une veille ne doit jamais dependre d'une date ecrite a la main : elle
+# regarde les dernieres N heures, quelle que soit la date du jour.
+HEURES_FENETRE = int(os.getenv("VEILLE_HEURES", "6"))
+
+
+def _depuis() -> str:
+    return (datetime.now(timezone.utc)
+            - timedelta(hours=HEURES_FENETRE)).isoformat()
 
 
 def _etat_lu() -> dict:
@@ -93,17 +106,24 @@ def _ordres(PAIRE: str) -> list[dict]:
             "mt5_ticket, entry_price_5dp, destination_id, "
             "substr(COALESCE(bridge_response,''),1,120) AS reponse "
             "FROM mt5_pushes WHERE pair = ? AND pushed_at >= ? "
-            "ORDER BY id", (PAIRE, OUVERTURE.isoformat()))]
+            "ORDER BY id", (PAIRE, _depuis()))]
 
 
 def _refus(PAIRE: str) -> list[tuple[str, int]]:
-    """Les motifs de refus WTI depuis l'ouverture, les plus frequents d'abord."""
+    """Les motifs de refus sur NOTRE destination, les plus frequents d'abord.
+
+    ⛔ FILTRE PAR DESTINATION, et il n'y etait pas. La premiere version comptait
+    toutes les destinations : la veille annoncait << ETH : pair_not_whitelisted
+    x672 >> alors que ces refus venaient de la DEMO, dont la liste blanche est
+    une autre et n'a jamais ete ouverte. Un moniteur qui melange les comptes
+    fait chercher un defaut la ou il n'y en a pas.
+    """
     with sqlite3.connect(_db()) as c:
         return [(r[0], r[1]) for r in c.execute(
             "SELECT reason_code, COUNT(*) FROM signal_rejections "
-            "WHERE pair = ? AND created_at >= ? "
+            "WHERE pair = ? AND created_at >= ? AND destination_id = ? "
             "GROUP BY reason_code ORDER BY COUNT(*) DESC LIMIT 6",
-            (PAIRE, OUVERTURE.isoformat()))]
+            (PAIRE, _depuis(), DEST))]
 
 
 def _tick(PAIRE: str) -> dict | None:

@@ -276,3 +276,29 @@ def test_un_echec_sur_une_paire_n_emporte_pas_les_autres(monkeypatch):
     assert "erreur" in r["paires"]["CASSEE"]
     assert r["paires"]["BONNE"]["admission"]["buy"] == "AUTO_EXEC"
     assert r["paires"]["AUTRE"]["admission"]["buy"] == "AUTO_EXEC"
+
+
+def test_les_refus_sont_filtres_par_DESTINATION(monkeypatch, tmp_path):
+    """⛔ DEFAUT REEL du 2026-10-04 : la veille comptait les refus de TOUTES
+    les destinations. Elle annoncait << ETH : pair_not_whitelisted x672 >>
+    alors que ces refus venaient de la DEMO, dont la liste blanche est une
+    autre et n'a jamais ete ouverte. Un moniteur qui melange les comptes fait
+    chercher un defaut la ou il n'y en a pas.
+    """
+    import sqlite3
+    base = tmp_path / "t.db"
+    with sqlite3.connect(base) as c:
+        c.execute("CREATE TABLE signal_rejections (pair TEXT, created_at TEXT, "
+                  "destination_id TEXT, reason_code TEXT)")
+        for dest, motif, n in (("admin_live", "sl_too_close", 3),
+                               ("admin_legacy", "pair_not_whitelisted", 50),
+                               ("admin_kraken", "horizon_not_allowed", 99)):
+            for _ in range(n):
+                c.execute("INSERT INTO signal_rejections VALUES (?,?,?,?)",
+                          ("ETH/USD", "2099-01-01T00:00:00+00:00", dest, motif))
+    monkeypatch.setattr(veille, "_db", lambda: str(base))
+    monkeypatch.setattr(veille, "_depuis", lambda: "2000-01-01T00:00:00+00:00")
+    motifs = dict(veille._refus("ETH/USD"))
+    assert motifs == {"sl_too_close": 3}, motifs
+    assert "pair_not_whitelisted" not in motifs
+    assert "horizon_not_allowed" not in motifs
