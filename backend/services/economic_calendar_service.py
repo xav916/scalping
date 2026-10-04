@@ -166,9 +166,40 @@ def refresh_calendar() -> int:
             return 0
         fetched_at = datetime.now(timezone.utc).isoformat()
         with _get_db() as conn:
-            # Purge les événements passés de >7j pour garder la table légère
-            cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
-            conn.execute("DELETE FROM economic_events WHERE ts_utc < ?", (cutoff,))
+            # ⛔ ICI SE TROUVAIT UNE PURGE À 7 JOURS GLISSANTS, retirée le
+            # 2026-10-04 sur demande de Xavier :
+            #
+            #     # Purge les événements passés de >7j pour garder la table légère
+            #     conn.execute("DELETE FROM economic_events WHERE ts_utc < ?", ...)
+            #
+            # 🔑 Ce qu'elle effaçait, c'est l'ÉTIQUETTE, pas les prix. Les
+            # bougies restent disponibles chez le courtier à la demande — M5
+            # jusqu'au 2025-05-07, D1 jusqu'en avril 2021. Ce qui disparaissait,
+            # c'est « ce jour-là à 12h30, publication de l'emploi américain,
+            # consensus 9,0K, réel -41,7K ».
+            #
+            # Sans l'étiquette, une hypothèse événementielle est INÉPROUVABLE
+            # rétroactivement. Xavier l'a formulé exactement : « si le pattern a
+            # eu lieu il y a 3 semaines, comment on fait ? »
+            #
+            # ⚠️ Ce que la purge économisait, MESURÉ avant de la retirer :
+            #
+            #     220 lignes = 45 056 octets, soit 205 octets par ligne
+            #     4 000 événements par an = 800 Ko/an
+            #     la base entière pesait 88 Ko
+            #
+            # On détruisait un historique irremplaçable pour économiser moins
+            # qu'une photo. Le motif « garder la table légère » était sincère —
+            # ce projet a connu un disque à 97 % et un `backtest.db` qui grossit
+            # de 0,6 Go par jour — mais il ne s'applique PAS ici, et personne
+            # n'avait fait la division.
+            #
+            # ⛔ Ne pas la remettre. `test_calendrier_historique.py` la refuse,
+            # par le comportement ET par la forme.
+            #
+            # ⚠️ `INSERT OR REPLACE` sur l'`id` reste indispensable : le champ
+            # `actual` n'existe qu'APRÈS la publication, et doit remplacer le
+            # `None` initial. Accumuler n'est pas doubler.
             # Upsert
             conn.executemany(
                 """
