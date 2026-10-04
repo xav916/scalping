@@ -2871,3 +2871,63 @@ qu'il marche.
 Elle ne prédit **pas** que ça marche. Le laboratoire a rendu **0 retenu sur
 4 580 cellules** pour l'or et **0 sur 493** pour le WTI. Le passif est lourd et
 la seule chose acquise ce soir, c'est de pouvoir **poser la question**.
+
+### ⚖️ VERDICT — mesuré le 2026-10-05, quelques heures après la déclaration
+
+**INDÉCIDABLE**, et c'est **P4** qui le dit : `n = 60` hors échantillon là où la
+déclaration en exigeait **200**. L'appareil a refusé de trancher tout seul.
+
+| | 1 h | 2 h | 4 h | 8 h |
+|---|---|---|---|---|
+| **sélection 2021-2024** (n=153) | −0,790 | −0,761 | **−0,816** | −0,834 |
+| `t` contre le hasard | −15,13 | −12,08 | **−12,26** | −10,98 |
+| **hors échantillon 2025-2026** (n=60) | +0,151 | +0,334 | **+0,130** | +0,081 |
+| `t` contre le hasard | +4,75 | +7,29 | **+2,83** | +0,94 |
+
+⛔ **Le signe s'inverse complètement entre les deux fenêtres.** C'est la
+signature du bruit, pas celle d'un effet. Et la fenêtre de sélection n'est pas
+« un peu » négative : **−0,80 R par trade avec un `t` de −12 sur 153 trades**.
+
+🔑 Le contrôle apparié fonctionne : il reste entre −0,15 et +0,06 R dans les
+deux fenêtres. Le `delta` mesure donc bien la direction, pas le marché.
+
+⚠️ Lire le `+0,334` à 2 h comme encourageant exigerait d'ignorer **à la fois**
+les 153 trades contraires et la règle des 200 que j'ai déclarée avant de
+regarder. Je ne le fais pas.
+
+### ⛔ UN DÉFAUT DE MA DÉCLARATION, QUI DOIT ÊTRE ÉCRIT
+
+La table de polarité désignait six familles par des `event_code` que j'avais
+**devinés**. Confrontée aux codes réels du terminal, elle n'en a capté que
+**quatre** :
+
+| famille déclarée | code écrit | code réel | capté ? |
+|---|---|---|---|
+| emploi | `nonfarm-payrolls`, `employment-change` | identiques | ✅ |
+| PIB | `gdp` | `gdp-qq` | ✅ |
+| ventes au détail | `retail-sales` | `retail-sales-mm` | ✅ |
+| chômage | `unemployment-rate` | identique | ✅ |
+| **inflation** | `cpi` | **`consumer-price-index`** | ⛔ **non** |
+| **inscriptions** | `unemployment-claims` | **`initial-jobless-claims`** | ⛔ **non** |
+
+Le banc a donc éprouvé **quatre** familles, pas six, et a ignoré 201 relevés
+d'inflation et 291 d'inscriptions au chômage.
+
+⛔ **Je ne corrige pas ces deux orthographes pour relancer.** Changer la règle
+après avoir vu le résultat, fût-ce une transcription, c'est exactement ce que
+le pré-enregistrement interdit. Reprendre les deux familles manquantes exige
+une **déclaration neuve**, et elle serait honnête : la polarité n'aurait pas
+bougé, seul le code change.
+
+### ⚠️ Un second défaut, corrigé en cours de route
+
+Mon script laissait le **spread à zéro** alors que la déclaration dit qu'il est
+facturé. Les premiers chiffres étaient donc optimistes. Corrigé : le coût pèse
+**≈ 0,08 R** à l'échelle H1, et les tableaux ci-dessus l'incluent. Il ne
+retourne aucun verdict — l'ATR H1 vaut des dizaines de fois le spread.
+
+### Ce qui reste acquis
+
+Rien sur la rentabilité. Mais l'appareil existe, il est éprouvé par 30 tests,
+et la question **peut désormais être posée** — ce qui était impossible il y a
+six heures, faute d'un seul chiffre publié en base.

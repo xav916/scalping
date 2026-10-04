@@ -485,3 +485,31 @@ def test_une_ligne_ForexFactory_ECRITE_APRES_un_import_reste_a_NULL(base):
     assert brut.get("(nul)") == 1, "la ligne ajoutee apres devrait etre a NULL"
     assert avec_convention["forexfactory"] == 2
     assert avec_convention["mql5"] == 4
+
+
+def test_l_event_code_est_STOCKE_car_le_nom_est_dans_la_LANGUE_du_terminal(base):
+    """⛔ Defaut trouve le 2026-10-05 en ecrivant le banc.
+
+    Je ne stockais que `event_name`, qui vient du terminal dans SA langue :
+    « Evolution de l'emploi », « Salaires non-agricoles ». Toute regle ecrite
+    sur des codes anglais (`employment-change`, `nonfarm-payrolls`) aurait
+    trouve ZERO evenement — **en silence**, ce qui est le pire.
+
+    🔑 `event_code` est independant de la langue. C'est lui qui doit porter la
+    regle.
+    """
+    _ff(base, "2026-09-27T23:50:00+00:00", "USD", "Recent")
+    imp.importer(EXPORT, base, fuseau="Europe/Helsinki")
+    with sqlite3.connect(base) as c:
+        codes = dict(c.execute(
+            "SELECT event_name, event_code FROM economic_events "
+            "WHERE id LIKE 'mql5_%'"))
+    assert codes["Employment Change"] == "CA_EMPL"
+    assert codes["Nonfarm Payrolls"] == "US_NFP"
+    assert codes["Retail Sales"] == "DE_RET"
+
+
+def test_l_ajout_de_event_code_est_IDEMPOTENT(base):
+    _ff(base, "2026-09-27T23:50:00+00:00", "USD", "Recent")
+    imp.importer(EXPORT, base, fuseau="Europe/Helsinki")
+    imp.importer(EXPORT, base, fuseau="Europe/Helsinki")  # ne doit pas lever

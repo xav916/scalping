@@ -318,6 +318,13 @@ def _assurer_colonne_source(conn: sqlite3.Connection) -> None:
     colonnes = {r[1] for r in conn.execute("PRAGMA table_info(economic_events)")}
     if "source" not in colonnes:
         conn.execute("ALTER TABLE economic_events ADD COLUMN source TEXT")
+    # ⛔ `event_code` AJOUTE le 2026-10-05, et c'est un defaut que j'avais
+    # laisse passer : je ne stockais que `event_name`, qui vient du terminal
+    # dans SA langue — « Evolution de l'emploi ». Toute regle ecrite sur des
+    # codes anglais (`employment-change`) aurait trouve ZERO evenement, en
+    # silence. Le code, lui, est independant de la langue.
+    if "event_code" not in colonnes:
+        conn.execute("ALTER TABLE economic_events ADD COLUMN event_code TEXT")
     conn.execute(
         "UPDATE economic_events SET source = ? "
         "WHERE source IS NULL AND id NOT LIKE 'mql5_%'", (SOURCE_FF,))
@@ -371,15 +378,17 @@ def importer(texte: str, db: Path | str, fuseau: str) -> int:
                 "previous": _nombre(l.get("previous")),
                 "fetched_at": maintenant,
                 "source": SOURCE,
+                "event_code": (l.get("event_code") or "").strip() or None,
             })
 
         if a_ecrire:
             conn.executemany(
                 "INSERT OR REPLACE INTO economic_events "
                 "(id, ts_utc, currency, event_name, impact, actual, forecast, "
-                " previous, fetched_at, source) "
+                " previous, fetched_at, source, event_code) "
                 "VALUES (:id, :ts_utc, :currency, :event_name, :impact, "
-                " :actual, :forecast, :previous, :fetched_at, :source)",
+                " :actual, :forecast, :previous, :fetched_at, :source, "
+                " :event_code)",
                 a_ecrire)
 
     logger.info(
