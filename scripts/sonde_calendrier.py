@@ -177,7 +177,38 @@ def _etat_ecrit(d: dict) -> None:
         print(f"sonde_calendrier: etat non ecrit ({e})", file=sys.stderr)
 
 
+def message_bilan(m: dict | None, synchro: int) -> str:
+    """Le bilan qui PARLE meme quand il n'y a rien a dire.
+
+    ⛔ Sans lui, une sonde qui ne trouve jamais de chiffre reste muette — et
+    son silence devient indistinguable d'une panne. C'est le defaut que ce
+    projet a deja paye deux fois (moniteur au jeton mort, notifications
+    Python muettes) : un moniteur qui echoue en silence RASSURE au lieu de
+    proteger.
+    """
+    if m is None:
+        return ("<b>📅 Bilan calendrier</b>\n\n"
+                "⛔ base INJOIGNABLE — ce n'est pas « aucun chiffre », "
+                "c'est « je n'ai pas pu regarder ».")
+    if m["actual"]:
+        verdict = (f"✅ ForexFactory fournit le chiffre publié : "
+                   f"<b>{m['actual']}</b> évènements en portent un. "
+                   f"La surprise devient calculable en continu.")
+    else:
+        verdict = ("⛔ <b>Toujours ZÉRO chiffre publié.</b> Si une journée "
+                   "chargée en publications n'en produit aucun, ForexFactory "
+                   "ne le donnera jamais — et l'export MQL5 devient la "
+                   "<b>seule</b> route vers la surprise.")
+    return ("<b>📅 Bilan calendrier</b>\n\n"
+            f"{m['total']} évènements · {m['forecast']} avec prévision · "
+            f"{m['previous']} avec précédente · <b>{m['actual']} avec le "
+            f"réel</b>\n"
+            f"dernière synchro : {synchro} évènements récupérés\n\n"
+            f"{verdict}")
+
+
 def main() -> int:
+    bilan = "--bilan" in sys.argv
     try:
         n = _synchroniser()
     except Exception as e:  # noqa: BLE001
@@ -189,6 +220,14 @@ def main() -> int:
     m = mesurer(DB)
     etat = _etat_lu()
     neufs = nouveaux_actuels(DB, etat)
+
+    if bilan:
+        ok = _envoyer(message_bilan(m, n))
+        if neufs:
+            _etat_ecrit(etat_suivant(etat, neufs))
+        print(f"sonde_calendrier: bilan envoyé {'OK' if ok else 'ECHEC'} "
+              f"(base {m['actual'] if m else '?'} actuels)")
+        return 0 if ok else 1
 
     if not neufs:
         print(f"sonde_calendrier: aucun chiffre publié "

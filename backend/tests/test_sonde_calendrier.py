@@ -208,3 +208,47 @@ def test_la_sonde_n_ECRIT_PAS_dans_le_calendrier(base, monkeypatch):
         assert interdit not in code.lower(), (
             f"la sonde contient un `{interdit}` : elle ecrirait dans ce "
             f"qu'elle observe")
+
+
+# ─── Le bilan : parler MEME quand il n'y a rien a dire ──────────────────────
+#
+# ⛔ Sans lui, une sonde qui ne trouve jamais de chiffre reste muette, et son
+# silence devient indistinguable d'une panne. Deux fois deja dans ce projet :
+# le moniteur au jeton mort, et les notifications Python muettes.
+
+def test_le_bilan_dit_ZERO_au_lieu_de_se_taire():
+    txt = sc.message_bilan({"total": 220, "forecast": 116, "previous": 150,
+                            "actual": 0}, 75)
+    assert "ZÉRO" in txt
+    assert "MQL5" in txt, "le bilan doit nommer la consequence, pas juste le zero"
+    assert "220" in txt and "116" in txt
+
+
+def test_le_bilan_annonce_le_SUCCES_quand_des_chiffres_arrivent():
+    txt = sc.message_bilan({"total": 220, "forecast": 116, "previous": 150,
+                            "actual": 12}, 75)
+    assert "12" in txt
+    assert "ZÉRO" not in txt
+
+
+def test_le_bilan_distingue_INJOIGNABLE_de_zero():
+    """⛔ Trois etats, jamais deux."""
+    txt = sc.message_bilan(None, 0)
+    assert "INJOIGNABLE" in txt
+    assert "ZÉRO chiffre" not in txt
+
+
+def test_le_bilan_PARLE_meme_sans_rien_de_neuf(base, monkeypatch):
+    """Le contraire exact du mode evenement : --bilan envoie toujours."""
+    _ev(base, "a", "Rien de neuf", forecast="1.0")
+    envois = []
+    monkeypatch.setattr(sc, "_synchroniser", lambda: 75)
+    monkeypatch.setattr(sc, "_envoyer", lambda txt: envois.append(txt) or True)
+    monkeypatch.setattr(sc, "DB", str(base))
+    monkeypatch.setattr(sc, "_etat_lu", lambda: {"vus": []})
+    monkeypatch.setattr(sc, "_etat_ecrit", lambda d: None)
+    monkeypatch.setattr(sc.sys, "argv", ["sonde", "--bilan"])
+
+    assert sc.main() == 0
+    assert len(envois) == 1, "le bilan s'est tu"
+    assert "ZÉRO" in envois[0]
