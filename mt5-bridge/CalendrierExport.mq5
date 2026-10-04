@@ -57,9 +57,19 @@
 //| fonction definie avant son premier appel).
 //+------------------------------------------------------------------+
 #property copyright "Scalping Radar"
-#property version   "1.00"
-#property script_show_inputs
+#property version   "1.01"
 #property strict
+// ⛔ PAS de `#property script_show_inputs` — retire le 2026-10-05.
+//
+// Il ouvre une boite de dialogue pour saisir les entrees. Au glisser-deposer
+// c'est pratique ; en demarrage automatique (`terminal64.exe /config:...`,
+// section `[StartUp] Script=`) **elle attend un clic que personne ne fera**, et
+// le terminal reste bloque indefiniment — session ouverte sur le compte pour
+// rien.
+//
+// 🔑 Les entrees gardent leurs valeurs par defaut ci-dessous, qui sont celles
+// qu'on veut : tout l'historique disponible. Pour les changer sans dialogue,
+// passer un fichier `.set` via `ScriptParameters=`.
 
 input datetime InpDepuis  = D'2021.01.01';           // Debut de l'export
 input datetime InpJusqua  = D'2027.01.01';           // Fin de l'export
