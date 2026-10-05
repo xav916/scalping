@@ -453,7 +453,8 @@ def detections(bougies, pair: str = PAIRE,
         fen = [_obj(x) for x in bougies[i - FENETRE:i]]
         trouves = []
         for motif in detect_patterns(fen, pair):
-            s = calculate_trade_setup(pair, motif, fen, is_simulated=False)
+            s = calculate_trade_setup(pair, motif, fen, is_simulated=False,
+                                      stop_uniforme=False)
             if s is None:
                 continue
             trouves.append(s)

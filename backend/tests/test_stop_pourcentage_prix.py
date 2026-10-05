@@ -179,23 +179,37 @@ def test_la_regle_n_est_PAS_cablee_dans_le_detecteur():
         "test_laboratoire_controles.py AVANT de considerer que c'est bon")
 
 
-def test_l_OR_garde_sa_regle_en_euros(monkeypatch):
-    """⛔ Decision explicite de Xavier du 2026-10-02 : je ne la revoque pas en
-    silence. Et les deux regles sont a 10 % l'une de l'autre."""
-    monkeypatch.setattr(pd, "XAU_SL_FIXE_EUR", 10.0)
-    monkeypatch.setattr(pd, "_eur_usd_courant", lambda: 1.1257)
-    euros = pd._distance_sl_or()
-    pct = pd.distance_sl_pourcentage(4139.72)
-    assert euros == pytest.approx(11.257, rel=1e-3)
-    assert pct == pytest.approx(12.419, rel=1e-3)
-    ecart = abs(euros - pct) / pct
-    assert ecart < 0.12, f"les deux regles doivent etre proches, ecart {ecart:.1%}"
+def test_l_OR_est_passe_au_POURCENTAGE_le_2026_10_05(monkeypatch):
+    """⛔ LA REGLE EN EUROS EST REVOQUEE, et il faut dire pourquoi.
+
+    Xavier l'avait fixee a 10 € le 2026-10-02. Elle a fonctionne ce jour-la
+    (10 ordres, record de l'or) puis s'est refermee TOUTE SEULE : un montant
+    fixe devient relativement plus serre quand l'or monte, et la porte des
+    frais facture le rapport NOTIONNEL / RISQUE.
+
+        a 4 129 $ : 11,20 $ = 0,271 % du prix
+        cout = (4129 / 11,20) x 1e-4 = 0,03688 R
+        plafond = 30 % d'un edge de 0,10 = 0,0300 R    ⇒ BLOQUE de 23 %
+
+    Trois jours sans un seul trade or. Le pourcentage suit le cours, donc la
+    porte ne peut plus se refermer par derive.
+
+    ⚠️ Les deux regles restent proches — le changement n'est pas un
+    desserrement deguise, c'est un changement d'UNITE.
+    """
+    monkeypatch.setattr(pd, "XAU_SL_PCT", 0.35)
+    pct_or = pd._distance_sl_or(4139.72)
+    globale = pd.distance_sl_pourcentage(4139.72)
+    assert pct_or == pytest.approx(14.489, rel=1e-3)
+    assert globale == pytest.approx(12.419, rel=1e-3)
+    ecart = abs(pct_or - globale) / globale
+    assert ecart < 0.20, f"les deux regles doivent rester proches : {ecart:.1%}"
 
 
-def test_si_le_taux_or_est_illisible_le_POURCENTAGE_prend_le_relais(monkeypatch):
-    """⚠️ Avant, un taux illisible faisait retomber l'or sur l'ATR. Desormais
-    il y a un echelon intermediaire, et c'est mieux : une regle connue."""
-    monkeypatch.setattr(pd, "_eur_usd_courant", lambda: None)
-    assert pd._distance_sl_or() is None
-    assert pd.distance_sl_pourcentage(4139.72) == pytest.approx(12.419,
-                                                               rel=1e-3)
+def test_la_regle_de_l_OR_n_a_plus_besoin_du_TAUX(monkeypatch):
+    """🔑 Un effet de bord heureux : plus de dependance a l'EUR/USD, donc plus
+    de repli silencieux sur l'ATR quand le taux est illisible. C'est ce repli
+    qui masquait, dans les tests, que le laboratoire mesurait l'or a risque
+    uniforme depuis le 02/10."""
+    monkeypatch.setattr(pd, "_eur_usd_courant", lambda: None, raising=False)
+    assert pd._distance_sl_or(4139.72) == pytest.approx(14.489, rel=1e-3)

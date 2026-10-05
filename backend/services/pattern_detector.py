@@ -715,6 +715,23 @@ def _detect_fvg_inverse(candles: list[Candle], pair: str) -> list[PatternDetecti
     patterns: list[PatternDetection] = []
     if len(candles) < 6:
         return patterns
+    # ⛔ `stop_uniforme=False` — POUR LE LABORATOIRE, ET POUR LUI SEUL.
+    #
+    # Le stop de l'or est UNIFORME (un pourcentage du prix). En production
+    # c'est voulu. Mais le laboratoire appelle cette meme fonction, et un
+    # risque identique pour toutes les cellules rend son controle aleatoire —
+    # apparie au risque median — INDISCERNABLE des cellules qu'il doit
+    # departager. Mesure a l'appui : le controle atteint +1,599 contre +1,572
+    # pour la meilleure cellule, et certaines series ne produisent PLUS AUCUNE
+    # cellule peuplee.
+    #
+    # ⚠️ Et ce n'etait pas theorique : le stop fixe a 10 € est en production
+    # depuis le 2026-10-02, donc le laboratoire mesurait l'or a risque uniforme
+    # depuis trois jours. Les tests ne le voyaient pas parce que
+    # `_eur_usd_courant()` rend `None` hors production — l'or y retombait sur
+    # l'ATR, et les controles passaient PAR ACCIDENT.
+    #
+    # 🔑 Le laboratoire garde donc l'ATR, quoi que fasse la production.
     now = datetime.now(timezone.utc)
     last = candles[-1]
     atr = _calculate_atr(candles, period=14)
@@ -1036,20 +1053,58 @@ def distance_sl_pourcentage(prix, spread=None, pct: float | None = None,
     return distance
 
 
-def _distance_sl_or() -> float | None:
-    """La distance de PRIX qui vaut `XAU_SL_FIXE_EUR` au lot minimum.
+# ⛔ LE STOP DE L'OR EST UN POURCENTAGE DU PRIX depuis le 2026-10-05.
+#
+# Il valait 10 € fixes depuis le 02/10, decision de Xavier. Ce jour-la l'or a
+# produit 10 ordres, son record — puis plus RIEN pendant trois jours.
+#
+# 🔑 La cause, mesuree le 05/10 : la porte des frais. Elle ne regarde pas le
+# spread, elle facture le rapport NOTIONNEL / RISQUE :
+#
+#     cout_R = (entree / distance_du_stop) x 0,00005 x 2 jambes
+#
+# Un montant fixe en euros devient RELATIVEMENT plus serre quand l'or monte. A
+# 4 129 $, 11,20 $ ne valaient plus que 0,271 % du prix :
+#
+#     cout    = (4129 / 11,20) x 1e-4  = 0,03688 R
+#     plafond = 30 % d'un edge de 0,10 = 0,0300 R      ⇒ BLOQUE de 23 %
+#
+# La porte s'etait refermee TOUTE SEULE, par la hausse de l'or. Ni bug, ni
+# panne, ni verdict de banc : de la geometrie.
+#
+# 🔑 Et le pourcentage n'est pas choisi pour « passer » — c'est le modele de
+# cout qui dit a partir de quelle largeur un trade est viable :
+#
+#     distance minimale = entree x 1e-4 / 0,03 = 0,333 % du prix
+#
+# On pose 0,35 %, le seuil de viabilite plus une marge. Un stop plus serre
+# serait declare non rentable par le systeme lui-meme.
+#
+# ⚠️ Ce que cela coute : le risque n'est plus fixe en euros. A 4 129 $ il vaut
+# 14,45 $ soit ~12,8 € — 28 % de plus que les 10 € du 02/10.
+#
+# ⛔ La regle GLOBALE `distance_sl_pourcentage` reste INERTE : la cabler pour
+# toutes les paires casse les quatre controles du laboratoire. L'or avait DEJA
+# un stop uniforme, on passe d'un uniforme en euros a un uniforme en pourcent.
+XAU_SL_PCT = float(os.getenv("XAU_SL_PCT", "0.35"))
 
-    ⚠️ `None` quand le taux est illisible — et l'appelant RETOMBE alors sur le
-    stop ATR. Poser un stop de taille inconnue sur l'argent reel serait pire
-    que de garder l'ancien ; refuser tout setup couperait le flux pour une
-    panne qui n'est pas celle de la strategie. On ne devine pas un taux.
+
+def _distance_sl_or(prix: float | None) -> float | None:
+    """La distance de stop de l'or : `XAU_SL_PCT` % du prix d'entree.
+
+    ⚠️ `None` quand le reglage est nul ou le prix illisible — et l'appelant
+    RETOMBE alors sur le stop ATR. Poser un stop de taille inconnue sur
+    l'argent reel serait pire que de garder l'ancien.
     """
-    if XAU_SL_FIXE_EUR <= 0:
+    if XAU_SL_PCT <= 0:
         return None
-    taux = _eur_usd_courant()
-    if not taux or taux <= 0:
+    try:
+        p = float(prix)
+    except (TypeError, ValueError):
         return None
-    return XAU_SL_FIXE_EUR * taux
+    if p <= 0:
+        return None
+    return p * XAU_SL_PCT / 100.0
 
 
 def _est_de_l_or(pair: str) -> bool:
@@ -1061,6 +1116,7 @@ def calculate_trade_setup(
     pattern: PatternDetection,
     candles: list[Candle],
     is_simulated: bool = False,
+    stop_uniforme: bool = True,
 ) -> TradeSetup | None:
     """Calcule un setup de trade complet à partir d'un pattern détecté.
 
@@ -1124,7 +1180,8 @@ def calculate_trade_setup(
         # commentaire de ce motif interdit lui-meme — << un poc_return construit
         # ainsi n'est plus la strategie, juste un trade qui en porte le nom >>.
         # C'est la decision de Xavier du 02/10, prise en connaissance de cause.
-        distance = _distance_sl_or() if _est_de_l_or(pair) else None
+        distance = (_distance_sl_or(entry)
+                if (stop_uniforme and _est_de_l_or(pair)) else None)
         if distance is not None:
             signe = 1 if direction == TradeDirection.BUY else -1
             stop_loss = round(entry - signe * distance, decimals)
@@ -1169,7 +1226,8 @@ def calculate_trade_setup(
     #
     # ⚠️ `None` = la regle ne s'applique pas ⇒ on RETOMBE sur l'ATR, le
     # comportement d'avant. Un stop de taille inconnue serait pire que l'ancien.
-    distance = _distance_sl_or() if _est_de_l_or(pair) else None
+    distance = (_distance_sl_or(entry)
+                if (stop_uniforme and _est_de_l_or(pair)) else None)
     if distance is not None:
         signe = 1 if direction == TradeDirection.BUY else -1
         stop_loss = round(entry - signe * distance, decimals)
