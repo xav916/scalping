@@ -285,8 +285,28 @@ def _horizons_agreges() -> frozenset[str]:
     produits puis refusés en ``horizon_not_allowed``, sans autre trace.
     """
     try:
-        from backend.services.echelle_agregee import FACTEURS, horizon_pour
-        return frozenset(horizon_pour(f) for f in FACTEURS)
+        from backend.services import echelle_agregee as _ea
+        from backend.services.horizon import normalize
+        # ⛔ NORMALISÉS, et c'est un défaut corrigé le 2026-10-05.
+        #
+        # `horizon_pour(f)` rend `f"{5*f}min"` — donc « 60min » pour le facteur
+        # 12. Mais la porte d'horizon NORMALISE le setup avant de tester
+        # l'appartenance, et `normalize("60min")` vaut « 1h ». Elle cherchait
+        # donc « 1h » dans un ensemble qui contenait « 60min », et refusait les
+        # DEUX orthographes :
+        #
+        #     horizon=60min -> horizon_not_allowed
+        #     horizon=1h    -> horizon_not_allowed
+        #
+        # 🔑 L'échelle 60 minutes n'avait donc JAMAIS fonctionné, sur aucune
+        # route. Le 15 et le 30 min marchaient par coïncidence : leur nom brut
+        # EST leur nom normalisé.
+        #
+        # ⚠️ Troisième fois dans la même journée que le couple `1h` / `60min`
+        # fait des dégâts. Le remède général : ne jamais comparer deux noms
+        # d'horizon sans les normaliser TOUS LES DEUX.
+        return frozenset(normalize(_ea.horizon_pour(f)) or _ea.horizon_pour(f)
+                         for f in _ea.FACTEURS)
     except Exception as e:  # noqa: BLE001
         logger.warning("horizons agrégés illisibles (%s) — aucun ouvert", e)
         return frozenset()

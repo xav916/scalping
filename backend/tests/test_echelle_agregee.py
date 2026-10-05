@@ -141,16 +141,34 @@ def test_le_REEL_reste_ferme_MEME_declare(monkeypatch):
     monkeypatch.setattr(config.settings, "MT5_BRIDGE_LIVE_ALLOWED_HORIZONS",
                         ["5min", "4h"])
     servis = bd._mt5_horizons("admin_live")
+    # ⚠️ On normalise DES DEUX COTES : comparer un nom brut a un ensemble
+    # normalise est exactement le defaut corrige le 2026-10-05.
+    from backend.services.horizon import normalize
     for f in ea.FACTEURS:
-        assert ea.horizon_pour(f) not in servis, f
+        assert normalize(ea.horizon_pour(f)) not in servis, f
 
 
 def test_les_horizons_de_la_porte_sont_DERIVES_du_reglage(monkeypatch):
     """⛔ Codés en dur, ils se désynchroniseraient du scheduler au premier
-    changement d'échelle : des setups produits puis refusés, sans trace."""
+    changement d'échelle : des setups produits puis refusés, sans trace.
+
+    ⚠️ CE TEST VERROUILLAIT LE DÉFAUT — corrigé le 2026-10-05. Il exigeait
+    `{"60min"}`, la forme BRUTE rendue par `horizon_pour(12)`. Or la porte
+    d'horizon NORMALISE le setup avant de tester l'appartenance, et
+    `normalize("60min")` vaut `"1h"`. Elle cherchait donc « 1h » dans un
+    ensemble contenant « 60min », et refusait les DEUX orthographes.
+
+    🔑 L'échelle 60 minutes n'avait jamais fonctionné, sur aucune route. Le 15
+    et le 30 min marchaient par coïncidence : leur nom brut EST leur normalisé.
+    Un test vert peut donc graver un défaut au lieu de l'attraper.
+    """
     from backend.services import bridge_destinations as bd
+    from backend.services.horizon import normalize
     monkeypatch.setattr(ea, "FACTEURS", (12,))       # M60
-    assert bd._horizons_agreges() == frozenset({"60min"})
+    assert bd._horizons_agreges() == frozenset({"1h"})
+    assert normalize("60min") == "1h", "la normalisation a change de sens"
+    monkeypatch.setattr(ea, "FACTEURS", (3, 6))
+    assert bd._horizons_agreges() == frozenset({"15min", "30min"})
 
 
 # ── La sécurité du branchement ───────────────────────────────────────
