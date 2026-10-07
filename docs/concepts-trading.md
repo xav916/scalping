@@ -2931,3 +2931,134 @@ retourne aucun verdict — l'ATR H1 vaut des dizaines de fois le spread.
 Rien sur la rentabilité. Mais l'appareil existe, il est éprouvé par 30 tests,
 et la question **peut désormais être posée** — ce qui était impossible il y a
 six heures, faute d'un seul chiffre publié en base.
+
+---
+
+## LE CONTRE-FIL sur un trade collé au stop — déclaration du 2026-10-08
+
+### D'où vient la question
+
+Xavier, le 2026-10-08 : *« si un trade ouvert est depuis longtemps du côté du
+SL sans l'avoir atteint, alors ouvrir un trade dans le sens inverse »*.
+
+Deux mesures encadrent cette intuition, et elles ne disent pas la même chose.
+
+**Pour.** Sur `admin_live` depuis le 01/09, l'or a eu 7 paires de positions qui
+se chevauchaient. Les **3** fils en sens inverse ont fait **+20,03 €, 3 gagnants
+sur 3**, dont deux fois sur un premier fil perdant. Les 4 fils dans le même sens
+ont fait **−11,24 €**.
+
+**Contre.** La sortie sur le TEMPS a déjà été réfutée : contrefactuel n=5690,
+**t = −6,83**, avec sa raison — *« la main a coupé les perdants plus tôt que les
+gagnants ; un couperet à N heures couperait les deux »*. Et le score de
+confiance ne prédit rien (or, fermetures automatiques : r = −0,016, t = −0,10,
+n=42 ; bande 90-101 à **0 % de gagnants**).
+
+⚠️ **n = 3.** C'est une anecdote. Ce dépôt a une liste d'intuitions à sept
+lignes qu'un grand échantillon a inversées — le contrefactuel du 13/08
+promettait +215 € sur l'or et le backtest a retourné le verdict.
+
+🔑 Ce qui rend la formulation de Xavier différente de la sortie sur le temps :
+elle ne regarde pas une horloge seule, mais un **état du prix** — être du côté
+du stop et y rester. C'est précisément ce que la mesure du 06/09 désignait comme
+le moteur réel de ses sorties manuelles, *« ce que le prix a fait, une
+information qu'une horloge n'a pas »*.
+
+### Le déclencheur, défini sans ambiguïté
+
+Pour un trade d'entrée `E`, de stop `S`, de sens `d`, on définit la **fraction
+adverse** au temps `t` :
+
+```
+a(t) = (E - P(t)) / (E - S)      pour un ACHAT
+a(t) = (P(t) - E) / (S - E)      pour une VENTE
+```
+
+`a = 0` à l'entrée, `a = 1` au stop. Le déclencheur est franchi quand :
+
+> `a(t) >= θ` de façon **continue pendant au moins D minutes**, et `a(t) < 1`
+> sur toute cette durée (le stop n'a pas été touché).
+
+Balayage déclaré : `θ ∈ {0,3 ; 0,5 ; 0,7}` et `D ∈ {30 ; 60 ; 120 ; 240}`
+minutes — **12 cellules**, pas une de plus.
+
+### Les quatre bras, et celui qui décide
+
+| | bras | ce qu'il fait au déclenchement |
+|---|---|---|
+| **A** | référence | rien. Le trade court jusqu'à son SL ou son TP |
+| **B** | **contre-fil** | ouvre un trade de sens inverse, même taille, même géométrie de risque (`R` identique). Les deux jambes courent jusqu'à leur propre sortie |
+| **C** | **fermer** | ferme le premier trade au prix du déclenchement. Une seule jambe, un seul coût de sortie |
+| **D** | **placebo de déclencheur** | ouvre le contre-fil à un instant TIRÉ AU HASARD dans la vie du même trade, apparié en fréquence et en temps écoulé |
+
+**C est le bras qui décide.** Si fermer fait aussi bien ou mieux que le
+contre-fil, l'idée est **dominée par quelque chose de plus simple et moins
+cher** — et le verdict est non, quelle que soit la comparaison avec A. Sur les
+3 cas réels observés, deux fois le contre-fil a gagné *pendant que le premier
+perdait* : fermer aurait donné le même gain sans la seconde jambe. C'est cette
+ambiguïté que C lève.
+
+**D sépare le déclencheur du simple fait d'avoir une jambe inverse.** Sans lui,
+un écart entre A et B serait illisible : on ne saurait pas si c'est « collé au
+stop » qui informe, ou si avoir deux jambes opposées paie en soi sur un
+instrument qui oscille. D est apparié — même nombre de contre-fils, même
+distribution de temps écoulé — conformément à la leçon du 01/10 : un contrôle
+non apparié mesure le coût, pas la direction.
+
+### Les coûts, comptés deux fois quand il y a deux jambes
+
+Le spread s'applique à **chaque** entrée et **chaque** sortie. Le contre-fil en
+porte donc deux de plus que le bras A.
+
+⚠️ Le spread du laboratoire est celui d'un INSTANT (0,50 $ relevé contre 0,20 $
+chez le courtier). Le verdict est donc exigé **aux deux valeurs** : `0,20` et
+`0,50`. S'il ne tient qu'à l'une des deux, il ne tient pas.
+
+### Quatre prédictions falsifiables
+
+- **P1** — Le contre-fil battra la référence : `B − A > 0` avec `t ≥ 2,0`, sur
+  au moins **6 des 12 cellules** en échantillon.
+- **P2** — Le contre-fil battra la fermeture : `B − C > 0` avec `t ≥ 2,0`. ⛔ Si
+  `B ≤ C`, l'idée est **rejetée**, même si P1 passe.
+- **P3** — Le contre-fil battra son placebo : `B − D > 0` avec `t ≥ 2,0`. ⛔ Si
+  `B ≤ D`, ce n'est pas le déclencheur qui informe.
+- **P4** — L'effet survivra hors échantillon avec le **même signe** et
+  `t ≥ 2,0`.
+
+### La règle de décision, posée avant la première ligne de code
+
+Le contre-fil n'est **armé** que si les **quatre** prédictions passent, aux
+**deux** spreads, sur une cellule choisie **en échantillon** puis vérifiée
+**hors échantillon**.
+
+- Si `B ≤ C` : **rejet**, et la recommandation devient « fermer », pas
+  « couvrir ».
+- Si `B ≤ D` : **rejet**, le déclencheur n'apporte rien.
+- Si le signe s'inverse hors échantillon : **rejet**, c'est la signature du
+  bruit — comme la surprise économique du 05/10 (−0,80 R en sélection, +0,13
+  hors échantillon).
+
+### Les données, et le découpage déclaré MAINTENANT
+
+- `candles_5min.db` : **243 092 bougies de 5 minutes** sur `XAU/USD`, du
+  **2023-08-01** au **2026-08-08**, figées (archive du 08/08, non modifiable par
+  cette mesure).
+- Population de trades : celle qu'engendre `laboratoire_or` sur l'or 5 min —
+  mêmes motifs et même géométrie d'entrée/stop que les bancs précédents, pour
+  que le résultat soit comparable.
+- **En échantillon : 2023-08-01 → 2025-12-31.**
+- **Hors échantillon : 2026-01-01 → 2026-08-08.** ⛔ Non regardé avant qu'une
+  cellule soit choisie en échantillon.
+
+⚠️ Ces bougies viennent de Twelve Data, pas du courtier. La leçon du WTI — tout
+ce qu'on croyait savoir avait été mesuré sur un **autre contrat** — s'applique :
+un verdict positif ici devra être **remesuré sur les bougies du courtier** avant
+tout armement sur l'argent réel.
+
+### Ce que cette mesure ne pourra PAS dire
+
+Elle juge une règle sur des trades **engendrés par le laboratoire**, pas sur les
+trades réels — ils sont trop peu nombreux (7 chevauchements). Elle ne dira donc
+rien de la façon dont la MAIN de Xavier ferme, qui est à ce jour la seule chose
+mesurée comme gagnante sur ce compte (+188,02 € sur 78 fermetures contre
+−339,51 € pour l'automatique, sur 30 jours).
