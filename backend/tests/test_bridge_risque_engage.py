@@ -379,7 +379,10 @@ def test_l_ARGENT_est_SORTI_de_la_poche_des_15_pct(m):
     (3,93 EUR). L'argent se comporte dans la poche commune comme du forex.
 
     🔑 Xavier, le 08/09 : « 20 % de risque cumule dont 15 % reserves
-    UNIQUEMENT a l'or ».
+    UNIQUEMENT a l'or ». ⚠️ Le 07/10 il porte la poche de l'or a **20 %**
+    (total 25 %) ; ce qui suit ne teste pas les valeurs mais a QUELLE poche
+    chaque symbole appartient, et cela n'a pas change : l'argent reste dans la
+    poche commune.
     """
     assert m._poche_du_symbole("XAGUSD") == "autres"
     assert m._poche_du_symbole("SILVER") == "autres"
@@ -524,7 +527,7 @@ def test_l_or_ouvert_n_empeche_pas_un_forex(bridge, monkeypatch):
 
 # ─── Les VALEURS des deux poches, pas seulement leur mecanique ────────────
 
-def test_les_defauts_des_deux_poches_sont_5_et_15():
+def test_les_defauts_des_deux_poches_sont_5_et_20():
     """⛔ Tous les autres tests de ce fichier posent les pourcentages a la
     main pour eprouver la MECANIQUE. Personne ne gardait les VALEURS — or ce
     sont elles qui decident combien d'argent est expose, et elles n'existent
@@ -532,7 +535,9 @@ def test_les_defauts_des_deux_poches_sont_5_et_15():
 
     Historique, pour que le prochain changement soit une decision et non une
     derive : 6 % global (20/08) -> 6 % hors or + 14 % or (28/08 matin) ->
-    **5 % + 15 %** (28/08 soir). Le total reste a 20 %.
+    5 % + 15 % (28/08 soir, total 20 %) -> **5 % + 20 %** (07/10, demande de
+    Xavier : « la pochette OR represente 20 % du capital »). Le total passe
+    donc a 25 %, et c'est VOULU, pas une derive.
 
     ⚠️ Un `.env` peut surcharger ces defauts. Ce test garde ce que le CODE
     promet quand personne ne dit rien — la valeur qui s'applique apres un
@@ -548,8 +553,8 @@ def test_les_defauts_des_deux_poches_sont_5_et_15():
         "le defaut de la poche « autres » a change sans que ce test le dise")
 
     metaux = re.search(r'or "([\d.]+)"\)', src)
-    assert metaux and float(metaux.group(1)) == 15.0, (
+    assert metaux and float(metaux.group(1)) == 20.0, (
         "le defaut de la poche « or » a change sans que ce test le dise")
 
-    assert float(autres.group(1)) + float(metaux.group(1)) == 20.0, (
-        "le total des deux poches n'est plus 20 %")
+    assert float(autres.group(1)) + float(metaux.group(1)) == 25.0, (
+        "le total des deux poches n'est plus 25 %")

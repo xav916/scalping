@@ -21,7 +21,7 @@ fonction et on lui fournit ses globaux, comme `test_bridge_risque_engage.py`.
 from __future__ import annotations
 
 import types
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -88,6 +88,31 @@ def porte():
         "_ouverture_utc": lambda p: None,
         "MARGE_LIBRE_MIN_PCT": 0.0,
         "DEDUP_WINDOW_SEC": 0,
+    })
+    # ─── Etage 2 du plafond, pose le 2026-10-07 ──────────────────────────
+    #
+    # Les trois fonctions pures du plafond PAR PAIRE vivent plus haut dans le
+    # source, hors de la tranche extraite. On les injecte REELLES — extraites
+    # du meme fichier — plutot que de les reimplementer ici : une copie figee
+    # continuerait de passer apres un changement de leur logique.
+    debut2 = src.index("def _plafond_jour_pct(")
+    fin2 = src.index("def _parse_trading_hours(")
+    pur = types.ModuleType("bridge_plafond_pur")
+    pur.__dict__.update({
+        "DAILY_LOSS_PCT_PAR_SYMBOLE": {"XAU": 10.0, "GOLD": 10.0},
+        "DAILY_LOSS_PCT_PAIRE_DEFAUT": 3.0,
+        "DAILY_LOSS_EXCLUDED_TICKETS": frozenset(),
+    })
+    exec(compile(src[debut2:fin2], str(_SRC), "exec"), pur.__dict__)
+    mod.__dict__.update({
+        "DAILY_LOSS_PCT_PAR_SYMBOLE": {"XAU": 10.0, "GOLD": 10.0},
+        "DAILY_LOSS_PCT_PAIRE_DEFAUT": 3.0,
+        "DAILY_LOSS_EXCLUDED_TICKETS": frozenset(),
+        "_plafond_jour_pct": pur._plafond_jour_pct,
+        "_symbole_normalise": pur._symbole_normalise,
+        "_perte_du_jour_par_symbole": pur._perte_du_jour_par_symbole,
+        "_start_of_day_date": date(2026, 9, 4),
+        "date": date,
     })
     exec(compile(src[debut:fin], str(_SRC), "exec"), mod.__dict__)
     return mod

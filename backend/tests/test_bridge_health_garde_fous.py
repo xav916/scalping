@@ -32,6 +32,13 @@ _REGLAGES = {
     "MAX_LOT": 0.02,
     "MAX_LOT_PER_CLASS": {"forex": 0.02},
     "MAX_DAILY_LOSS_PCT": 3.0,
+    # ─── Plafond PAR PAIRE, pose le 2026-10-07 ───────────────────────
+    # L'or a son propre budget (10 %), chaque autre paire reste au defaut
+    # serre (3 %). Publies pour la meme raison que tout ce bloc : un
+    # garde-fou qu'on ne peut pas lire est un garde-fou dont on ne sait
+    # jamais s'il s'applique.
+    "DAILY_LOSS_PCT_PAR_SYMBOLE": {"XAU": 10.0, "GOLD": 10.0},
+    "DAILY_LOSS_PCT_PAIRE_DEFAUT": 3.0,
     "MAX_OPEN_POSITIONS": 3,
     # Fenetre de dedup, publiee depuis le 2026-08-28.
     "DEDUP_WINDOW_SEC": 3600,

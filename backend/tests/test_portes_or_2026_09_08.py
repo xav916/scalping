@@ -253,15 +253,21 @@ def test_l_etat_d_avant_reste_ATTEIGNABLE_sans_redeploiement():
     assert ns["_poche_du_symbole"]("XAGUSD") == "or_argent"
 
 
-def test_le_total_reste_a_20_pct():
-    """⚠️ 5 % + 15 % = 20 %. Les deux réglages vivent dans le bridge et rien
-    ne les additionne : un test le fait."""
+def test_le_total_passe_a_25_pct():
+    """⚠️ 5 % + 20 % = 25 %. Les deux réglages vivent dans le bridge et rien
+    ne les additionne : un test le fait.
+
+    Historique : 5 % + 15 % = 20 % du 28/08 au 07/10. Le 2026-10-07 Xavier
+    porte la poche de l'or à **20 %** (« la pochette OR représente 20 % du
+    capital ») ⇒ le cumul passe à 25 %. C'est une décision, pas une dérive —
+    ce test est là pour que la prochaine en soit une aussi.
+    """
     src = io.open("mt5-bridge/bridge.py", encoding="utf-8").read()
     import re
     autres = float(re.search(r'MAX_RISQUE_ENGAGE_PCT[^\n]*?"([\d.]+)"', src).group(1))
     metaux = float(re.search(r'or\s*"([\d.]+)"\s*\)', src).group(1))
-    assert autres + metaux == 20.0, (autres, metaux)
-    assert metaux == 15.0
+    assert autres + metaux == 25.0, (autres, metaux)
+    assert metaux == 20.0
 
 
 def test_le_bloc_de_risque_reconnait_les_DEUX_etiquettes():

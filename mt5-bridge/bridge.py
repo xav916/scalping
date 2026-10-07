@@ -96,7 +96,49 @@ LISTEN_PORT = int(os.getenv("LISTEN_PORT", "8787"))
 BREAKEVEN_TRIGGER_PCT = float(os.getenv("BREAKEVEN_TRIGGER_PCT", "50"))
 MONITOR_INTERVAL_SEC = int(os.getenv("MONITOR_INTERVAL_SEC", "5"))
 # Rails LIVE
-MAX_DAILY_LOSS_PCT = float(os.getenv("MAX_DAILY_LOSS_PCT", "3.0"))
+# ─── Plafond journalier : DEUX etages depuis le 2026-10-07 ───────────────
+#
+# Demande de Xavier : « le plafond journalier des trades OR a 10 % du
+# capital ». Le plafond etait unique et par COMPTE (3 %) : il coupait a 17,87
+# EUR bien avant que l'or n'approche ses 59,58 EUR, donc un reglage propre a
+# l'or n'aurait JAMAIS pu se declencher.
+#
+#     etage 1  le COMPTE     MAX_DAILY_LOSS_PCT          10 %  = 59,58 EUR
+#     etage 2  CHAQUE paire  DAILY_LOSS_PCT_PAIRE_DEFAUT  3 %  = 17,87 EUR
+#              sauf l'or     DAILY_LOSS_PCT_PAR_SYMBOLE  10 %  = 59,58 EUR
+#
+# 🔑 Les DEUX sont necessaires. Monter le compte a 10 % sans borner les paires
+# une par une ne confine rien : dix paires a 3 % chacune feraient un pire cas
+# de 178 EUR. Et borner les paires sans monter le compte rendrait le reglage de
+# l'or decoratif, car le compte couperait toujours le premier.
+#
+# ⚠️ 10 % est la valeur qu'une session passee avait identifiee comme un DEFAUT
+# sur ces deux ponts (le defaut du code etait 3.0, et 10.0 traînait depuis des
+# semaines sans que personne le sache). Ici elle est VOULUE, ecrite, et bornee
+# paire par paire — ce n'est pas le meme etat.
+#
+# ⛔ Et la mesure du 2026-10-07 dit que ce budget elargi est celui de la partie
+# la MOINS performante du systeme : sur 30 jours d'argent reel, l'automatique
+# de l'or fait -256,54 EUR pour 7 gagnantes sur 35.
+MAX_DAILY_LOSS_PCT = float(os.getenv("MAX_DAILY_LOSS_PCT", "10.0"))
+
+# Plafond par paire. Cle = FRAGMENT du symbole courtier, valeur = pourcentage.
+# Un courtier peut nommer l'or `XAUUSD` ou `GOLD` : n'en couvrir qu'un
+# laisserait l'autre au plafond serre SANS que rien ne le dise.
+try:
+    _daily_par_symbole_brut = os.getenv("DAILY_LOSS_PCT_PAR_SYMBOLE", "").strip()
+    DAILY_LOSS_PCT_PAR_SYMBOLE = (json.loads(_daily_par_symbole_brut)
+                                  if _daily_par_symbole_brut
+                                  else {"XAU": 10.0, "GOLD": 10.0})
+    if not isinstance(DAILY_LOSS_PCT_PAR_SYMBOLE, dict):
+        DAILY_LOSS_PCT_PAR_SYMBOLE = {"XAU": 10.0, "GOLD": 10.0}
+except (json.JSONDecodeError, TypeError):
+    # ⛔ Un JSON casse ne doit pas ELARGIR : on retombe sur le defaut voulu,
+    # pas sur un dictionnaire vide qui mettrait l'or a 3 % en silence.
+    DAILY_LOSS_PCT_PAR_SYMBOLE = {"XAU": 10.0, "GOLD": 10.0}
+
+DAILY_LOSS_PCT_PAIRE_DEFAUT = float(
+    os.getenv("DAILY_LOSS_PCT_PAIRE_DEFAUT", "3.0"))
 # Tickets dont le flottant NE COMPTE PAS dans le drawdown journalier
 # (2026-08-07). Une position tenue volontairement hors du système — sans stop,
 # conservée jusqu'à son objectif — confisque sinon le garde-fou de TOUTES les
@@ -170,10 +212,23 @@ MARGE_LIBRE_MIN_PCT = float(os.getenv("MARGE_LIBRE_MIN_PCT", "30.0"))
 # cassait 66 tests sur du code juste.
 _ARGENT_DANS_LA_POCHE_OR = os.getenv("POCHE_OR_INCLUT_ARGENT", "0") == "1"
 
+# ⛔ 15 -> 20 % le 2026-10-07, a la demande de Xavier : « la pochette OR
+# represente 20 % du capital ». Base = l'equity COURANTE (pas le solde
+# d'ouverture) : c'est `_controle_risque_engage` qui en decide, et on ne change
+# pas sa reference en meme temps que sa valeur.
+#
+# ⚠️ Cette poche est a l'OR SEUL depuis le 2026-09-08 ; l'argent est dans la
+# poche commune des 5 %. `POCHE_OR_INCLUT_ARGENT=1` y remettrait l'argent.
+#
+# ⚠️ Elle borne le risque ENGAGE simultanement, pas la perte du jour : 20 %
+# d'un compte de 596 EUR = 119 EUR de risque ouvert, soit DEUX fois le plafond
+# journalier de l'or (10 % = 59,58 EUR). C'est donc le plafond journalier qui
+# tranchera le premier, et c'est voulu : la poche dit « combien je peux avoir
+# en jeu », le plafond dit « combien j'accepte de perdre aujourd'hui ».
 MAX_RISQUE_ENGAGE_OR_ARGENT_PCT = float(
     os.getenv("MAX_RISQUE_ENGAGE_OR_ARGENT_PCT")
     or os.getenv("MAX_RISQUE_ENGAGE_OR_PCT")
-    or "15.0")
+    or "20.0")
 
 # ─── Remontee du stop a l'EQUILIBRE pour liberer du risque (2026-08-23) ───
 # Quand la porte des 6 % refuserait un ordre, on remonte a l'entree le stop de
@@ -672,6 +727,90 @@ def _flottant_exclu(positions) -> tuple[float, list[int]]:
     return total, vus
 
 
+def _plafond_jour_pct(symbol: str | None) -> float:
+    """Le plafond journalier de CE symbole, en % du solde d'ouverture.
+
+    ⛔ Pose le 2026-10-07 a la demande de Xavier : « le plafond journalier des
+    trades OR a 10 % du capital ». Jusque-la le plafond etait **unique et par
+    COMPTE** : il coupait a 3 % bien avant que l'or n'approche ses 10 %, donc
+    un reglage propre a l'or n'aurait JAMAIS pu se declencher.
+
+    🔑 Ce plafond est le SECOND etage. Le premier, `MAX_DAILY_LOSS_PCT`, reste
+    le filet dur du compte entier — sans lui, dix paires a 3 % chacune feraient
+    un pire cas de 30 %, pas de 10 %.
+
+    ⚠️ Un symbole inconnu, vide ou absent retombe sur le defaut SERRE. Se
+    tromper doit resserrer, jamais elargir : un plafond large accorde par
+    accident ne se verrait pas.
+    """
+    s = (symbol or "").upper()
+    for fragment, pct in DAILY_LOSS_PCT_PAR_SYMBOLE.items():
+        if fragment and fragment.upper() in s:
+            return float(pct)
+    return DAILY_LOSS_PCT_PAIRE_DEFAUT
+
+
+def _symbole_normalise(symbol: str | None) -> str:
+    """`XAUUSD.r`, `XAUUSD-ECN`, `xauusd` -> `XAUUSD`.
+
+    ⛔ Les compter a part laisserait CHACUN sous son propre plafond, ce qui
+    doublerait le budget de la paire sans que rien ne le dise.
+    """
+    s = (symbol or "").upper()
+    for sep in (".", "-"):
+        s = s.split(sep, 1)[0]
+    return s
+
+
+def _perte_du_jour_par_symbole(positions, deals) -> dict[str, float]:
+    """Perte du jour par symbole : realise + flottant. PURE et testable.
+
+    Rend des PERTES POSITIVES, comme `_perte_journaliere` : la porte compare
+    `perte >= plafond`. Un symbole en gain rend donc un nombre negatif.
+
+    - realise : les `deals` du jour, `profit + commission + swap`. Le cout fait
+      partie de la perte, c'est de l'argent qui est parti.
+    - flottant : les positions ouvertes, `profit + swap`. Le plafond du COMPTE
+      mesure l'`equity`, qui inclut le swap ; l'analogue par symbole doit
+      l'inclure aussi, sinon les deux etages comptent differemment le meme jour.
+
+    ⛔ Les tickets exclus du drawdown sont exclus ICI AUSSI. Sans ca le meme
+    jour aurait deux comptabilites, et la position tenue a part confisquerait
+    de nouveau le garde-fou des autres trades.
+
+    ⚠️ Chemin d'un ordre REEL : une donnee absente est ignoree, jamais levee.
+    """
+    net: dict[str, float] = {}
+
+    def _ajoute(symbole, montant):
+        cle = _symbole_normalise(symbole)
+        if not cle:
+            return
+        net[cle] = net.get(cle, 0.0) + montant
+
+    for d in deals or []:
+        try:
+            _ajoute(getattr(d, "symbol", None),
+                    float(getattr(d, "profit", 0.0) or 0.0)
+                    + float(getattr(d, "commission", 0.0) or 0.0)
+                    + float(getattr(d, "swap", 0.0) or 0.0))
+        except (TypeError, ValueError, AttributeError):
+            continue
+
+    for p in positions or []:
+        try:
+            if getattr(p, "ticket", None) in DAILY_LOSS_EXCLUDED_TICKETS:
+                continue
+            _ajoute(getattr(p, "symbol", None),
+                    float(getattr(p, "profit", 0.0) or 0.0)
+                    + float(getattr(p, "swap", 0.0) or 0.0))
+        except (TypeError, ValueError, AttributeError):
+            continue
+
+    # On rend des PERTES : le signe s'inverse ici, une seule fois.
+    return {k: -v for k, v in net.items()}
+
+
 def _parse_trading_hours(window: str) -> list[tuple[int, int]]:
     """Parse 'HH:MM-HH:MM,HH:MM-HH:MM' en [(minutes_from_midnight_start, end)]."""
     ranges = []
@@ -734,6 +873,30 @@ def _perte_journaliere(positions, info=None) -> dict | None:
         "exclu": exclu,
         "equity_retenue": equity_retenue,
     }
+
+
+def _deals_du_jour():
+    """Les deals du jour trading en cours. Rend ``(deals, lecture_reussie)``.
+
+    ⛔ Trois etats, jamais deux : une liste vide parce qu'aucun trade n'a eu
+    lieu n'est PAS la meme chose qu'une lecture ratee. L'appelant doit pouvoir
+    distinguer « rien ne s'est passe » de « je n'ai pas pu regarder », sinon
+    une panne de lecture se lirait comme un compte sans perte — et ouvrirait
+    la porte au lieu de la fermer.
+
+    La frontiere du jour est celle de `_start_of_day_date`, deliberement : une
+    SECONDE definition du jour ferait diverger les deux etages du plafond.
+    """
+    jour = _start_of_day_date or date.today()
+    try:
+        debut = datetime(jour.year, jour.month, jour.day)
+        deals = mt5.history_deals_get(debut, datetime.now())
+    except Exception as e:  # noqa: BLE001
+        logger.warning("_deals_du_jour: history_deals_get a leve (%s)", e)
+        return [], False
+    if deals is None:
+        return [], False
+    return list(deals), True
 
 
 def _drawdown_publie() -> dict:
@@ -824,6 +987,65 @@ def _check_safety_gates(mt5_symbol: str, direction: str,
                     f">= limit={loss_limit:.2f} ({MAX_DAILY_LOSS_PCT}% of "
                     f"{_start_of_day_balance:.2f})"
                 )
+
+    # ─── Plafond journalier PAR PAIRE — etage 2 (2026-10-07) ─────────────
+    #
+    # L'etage 1 ci-dessus borne le COMPTE a MAX_DAILY_LOSS_PCT. Celui-ci borne
+    # CHAQUE paire : l'or a son propre budget large, les autres restent au
+    # defaut serre. Sans lui, monter le compte a 10 % elargirait TOUTES les
+    # paires d'un coup — ce n'est pas ce qui est demande.
+    if _drawdown is not None and _start_of_day_balance:
+        deals_jour, deals_lus = _deals_du_jour()
+        pct_paire = _plafond_jour_pct(mt5_symbol)
+        plafond_paire = round(
+            _start_of_day_balance * pct_paire / 100.0, 2)
+
+        if not deals_lus:
+            # ⛔ NON MESURABLE par paire. On ne retombe PAS sur les 10 % du
+            # compte : ce serait plus LARGE qu'avant le 07/10 a cause d'une
+            # panne de lecture. On juge le COMPTE au plafond le plus SERRE,
+            # c'est-a-dire exactement le comportement d'hier.
+            serre = round(
+                _start_of_day_balance * DAILY_LOSS_PCT_PAIRE_DEFAUT / 100.0, 2)
+            logger.warning(
+                "[PLAFOND PAR PAIRE] historique du jour ILLISIBLE — repli sur "
+                "le plafond SERRE applique au compte : %.2f EUR (%.1f%%)",
+                serre, DAILY_LOSS_PCT_PAIRE_DEFAUT)
+            if current_loss >= serre:
+                if drawdown_arbitre:
+                    logger.warning(
+                        "[DRAWDOWN LEVE PAR ARBITRAGE] repli serre "
+                        "loss=%.2f >= limit=%.2f — autorisation de %s EUR",
+                        current_loss, serre,
+                        drawdown_arbitre.get("accorde_a"))
+                else:
+                    return False, (
+                        f"Daily drawdown reached (repli serre, historique du "
+                        f"jour illisible): loss={current_loss:.2f} >= "
+                        f"limit={serre:.2f} "
+                        f"({DAILY_LOSS_PCT_PAIRE_DEFAUT}% of "
+                        f"{_start_of_day_balance:.2f})"
+                    )
+        else:
+            pertes = _perte_du_jour_par_symbole(positions, deals_jour)
+            perte_paire = round(
+                pertes.get(_symbole_normalise(mt5_symbol), 0.0), 2)
+            if perte_paire >= plafond_paire:
+                if drawdown_arbitre:
+                    # Trace en clair, comme l'etage 1 : une protection levee
+                    # qui ne se voit pas est une protection qu'on oublie.
+                    logger.warning(
+                        "[DRAWDOWN PAIRE LEVE PAR ARBITRAGE] %s "
+                        "loss=%.2f >= limit=%.2f (%.1f%%) — autorisation "
+                        "accordee a %s EUR",
+                        mt5_symbol, perte_paire, plafond_paire, pct_paire,
+                        drawdown_arbitre.get("accorde_a"))
+                else:
+                    return False, (
+                        f"Daily drawdown reached for {mt5_symbol}: "
+                        f"loss={perte_paire:.2f} >= limit={plafond_paire:.2f} "
+                        f"({pct_paire}% of {_start_of_day_balance:.2f})"
+                    )
 
     # Max positions ouvertes — garde-fou d'EMBALLEMENT, pas de risque : il ne
     # distingue pas 0,01 lot de forex (~5,5 EUR risques) de 0,01 lot d'or
@@ -2394,6 +2616,12 @@ def health():
         "max_lot_per_class": MAX_LOT_PER_CLASS,
         "garde_fous": {
             "max_daily_loss_pct": MAX_DAILY_LOSS_PCT,
+            # ⛔ Publies parce qu'un garde-fou qu'on ne peut pas LIRE est un
+            # garde-fou dont on ne sait jamais s'il s'applique — c'est tout le
+            # motif de ce bloc. Le radar en a besoin pour poser la question du
+            # plafond a Xavier avec les BONS chiffres.
+            "daily_loss_pct_par_symbole": DAILY_LOSS_PCT_PAR_SYMBOLE,
+            "daily_loss_pct_paire_defaut": DAILY_LOSS_PCT_PAIRE_DEFAUT,
             # ⛔ L'ETAT, pas seulement le REGLAGE (2026-10-07). Le 07/10 ce
             # pont a coupe la journee 224 fois et le radar ne pouvait pas
             # savoir OU en etait ce plafond : il compte autrement (clotures en
