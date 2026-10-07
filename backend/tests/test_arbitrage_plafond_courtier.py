@@ -187,3 +187,56 @@ def test_lire_health_interroge_les_DEUX_endpoints(monkeypatch):
         f"les deux endpoints ne sont pas interroges : {vus}")
     assert h["balance"] == 715.69
     assert h["garde_fous"]["max_daily_loss_pct"] == 3.0
+
+
+# ─── 2026-10-07 : « continue » LÈVE desormais aussi la porte du pont ──
+
+def test_PAS_d_avertissement_quand_le_pont_publie_sa_perte():
+    """⛔ L'avertissement du 09/09 est devenu FAUX dans ce cas précis.
+
+    Quand le pont publie `daily_loss`, le radar sait où en est SON plafond, il
+    peut donc joindre `drawdown_arbitre` à l'ordre — et le `bridge.py` déployé
+    lève alors sa porte de drawdown, et elle seule. Continuer de promettre
+    l'inverse ferait hésiter Xavier devant un bouton qui marche.
+    """
+    texte = _question({"admin_live": {"seuil": -21.47, "solde": 715.69,
+                                      "perte": -24.62}})
+    plat = texte.lower()
+    assert "ne suffira pas" not in plat
+    assert "refusera" not in plat
+
+
+def test_le_message_dit_quand_meme_OU_en_est_le_courtier():
+    """Pas d'avertissement n'est pas le silence : les deux plafonds comptent,
+    et un message qui n'en nomme qu'un a déjà menti une fois."""
+    plat = " ".join(_question({"admin_live": {
+        "seuil": -21.47, "solde": 715.69, "perte": -24.62}}).split())
+    assert "21.47" in plat or "21,47" in plat
+    assert "courtier" in plat.lower()
+
+
+def test_un_pont_MUET_garde_son_avertissement():
+    """Sans `daily_loss`, aucun drapeau ne peut partir : l'avertissement du
+    09/09 reste vrai, donc il reste."""
+    texte = _question({"admin_live": {"seuil": -21.47, "solde": 715.69}})
+    assert "ne suffira pas" in texte.lower()
+
+
+def test_plafond_du_courtier_rapporte_la_perte_PUBLIEE(monkeypatch):
+    monkeypatch.setattr(
+        pa, "_lire_health",
+        lambda dest, *a, **k: {
+            "garde_fous": {"max_daily_loss_pct": 3.0, "daily_loss": 24.62},
+            "balance": 715.69},
+        raising=False)
+    r = pa.plafond_du_courtier(["admin_live"])
+    assert r["admin_live"]["perte"] == pytest.approx(-24.62)
+
+
+def test_un_pont_sans_daily_loss_ne_rapporte_AUCUNE_perte(monkeypatch):
+    monkeypatch.setattr(
+        pa, "_lire_health",
+        lambda dest, *a, **k: {"garde_fous": {"max_daily_loss_pct": 3.0},
+                               "balance": 715.69},
+        raising=False)
+    assert "perte" not in pa.plafond_du_courtier(["admin_live"])["admin_live"]

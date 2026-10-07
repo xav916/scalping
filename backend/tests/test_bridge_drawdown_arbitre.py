@@ -60,7 +60,10 @@ def porte():
     16:44.
     """
     src = _SRC.read_text(encoding="utf-8")
-    debut = src.index("def _check_safety_gates(")
+    # Depuis le 2026-10-07 la porte lit `_perte_journaliere()` — la MEME
+    # arithmetique que `/health` publie. On etend donc la tranche extraite
+    # plutot que de stuber le calcul : c'est lui le sujet.
+    debut = src.index("def _perte_journaliere(")
     fin = src.index("def _pick_filling_mode(")
 
     mod = types.ModuleType("bridge_portes")

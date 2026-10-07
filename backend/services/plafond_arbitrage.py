@@ -417,7 +417,8 @@ def _restant_avant_minuit(maintenant: datetime) -> str:
 # REELLEMENT chez lui. On rend le message honnete, on ne desserre pas le
 # dernier garde-fou avant l'argent.
 
-def _lire_health(destination_id: str) -> dict[str, Any] | None:
+def _lire_health(destination_id: str, avec_compte: bool = True
+                 ) -> dict[str, Any] | None:
     """Ce qu'il faut du bridge : le POURCENTAGE et le SOLDE. `None` si illisible.
 
     ⛔ Les deux ne vivent pas au meme endroit — decouvert en verifiant le
@@ -444,6 +445,10 @@ def _lire_health(destination_id: str) -> dict[str, Any] | None:
         return None
     with urllib.request.urlopen(f"{base}/health", timeout=5) as r:
         sante = json.load(r)
+    if not avec_compte:
+        # ⚠️ `perte_du_courtier` est sur le chemin de l'ORDRE : on ne paie pas
+        # un second aller-retour pour un solde dont elle n'a pas besoin.
+        return {"garde_fous": sante.get("garde_fous") or {}, "balance": None}
     entetes = {}
     cle = os.environ.get(getattr(d, "key_env", "") or "", "")
     if cle:
@@ -453,6 +458,49 @@ def _lire_health(destination_id: str) -> dict[str, Any] | None:
         compte = json.load(r)
     return {"garde_fous": sante.get("garde_fous") or {},
             "balance": compte.get("balance")}
+
+
+def perte_du_courtier(destination_id: str) -> float | None:
+    """La perte du jour que le COURTIER compte, en NEGATIF. ``None`` si illisible.
+
+    Meme convention de signe que notre cumul : −19,77 pour 19,77 EUR perdus, et
+    un nombre POSITIF quand la journee est gagnante.
+
+    🔑 Pourquoi elle existe : sa mesure n'est pas la notre. Il compare le solde
+    d'ouverture a l'equity, donc flottant et frais inclus, et il a sa propre
+    heure de bascule ; nous additionnons des clotures en base. Le 07/10 il
+    comptait 19,77 EUR quand nous en comptions 16,45. Pour savoir si une
+    autorisation couvre ENCORE, c'est SON chiffre qu'il faut, pas le notre.
+
+    ⛔ **Fail-closed, a chaque etage.** Pont muet, champ absent, valeur
+    illisible : ``None``. L'appelant le lit comme « le pont applique son
+    garde-fou », donc le defaut sur l'argent reel.
+
+    ⛔ Un flottant EXCLU du drawdown rend sa perte incomparable a la notre : on
+    se tait plutot que de comparer deux choses differentes. Le cas est trace,
+    une protection affaiblie qui ne se voit pas est une protection qu'on oublie
+    d'avoir levee.
+    """
+    try:
+        h = _lire_health(destination_id, avec_compte=False) or {}
+        gf = h.get("garde_fous") or {}
+        if gf.get("daily_loss_excluded_tickets"):
+            logger.warning(
+                "arbitrage[%s]: le pont exclut des tickets de son drawdown "
+                "(%s) — perte non comparable, aucun drapeau",
+                destination_id, gf.get("daily_loss_excluded_tickets"))
+            return None
+        perte = gf.get("daily_loss")
+        if perte is None:
+            logger.info(
+                "arbitrage[%s]: le pont ne publie pas `daily_loss` — "
+                "aucun drapeau (il appliquera son plafond)", destination_id)
+            return None
+        return -float(perte)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("arbitrage[%s]: perte du courtier illisible : %s",
+                       destination_id, e)
+        return None
 
 
 def plafond_du_courtier(destinations) -> dict[str, dict[str, float]]:
@@ -471,11 +519,17 @@ def plafond_du_courtier(destinations) -> dict[str, dict[str, float]]:
     for dest in destinations or []:
         try:
             h = _lire_health(dest) or {}
-            pct = float((h.get("garde_fous") or {}).get("max_daily_loss_pct") or 0)
+            gf = h.get("garde_fous") or {}
+            pct = float(gf.get("max_daily_loss_pct") or 0)
             solde = float(h.get("balance") or 0)
             if pct > 0 and solde > 0:
                 out[dest] = {"seuil": -round(solde * pct / 100.0, 2),
                              "solde": solde}
+                # ⛔ L'ETAT du plafond, publie par le pont depuis le 07/10.
+                # ABSENT = inconnu : le radar ne peut alors joindre aucun
+                # drapeau, et le message doit le dire (cf. `construire_question`).
+                if gf.get("daily_loss") is not None:
+                    out[dest]["perte"] = -float(gf["daily_loss"])
         except Exception as e:  # noqa: BLE001
             logger.debug("arbitrage: plafond courtier illisible (%s) : %s", dest, e)
     return out
@@ -500,6 +554,13 @@ def construire_question(demandes: list[dict[str, Any]],
         lignes.append(
             f"  {d['destination_id']} : {d.get('pnl_au_moment')} EUR "
             f"(plafond {d.get('seuil')} EUR, palier {d['palier']})")
+        # Les DEUX plafonds, quand on sait lire le sien : un message qui n'en
+        # nomme qu'un a deja menti une fois (09/09).
+        p = (plafond_courtier or {}).get(d["destination_id"]) or {}
+        if p.get("seuil") is not None and p.get("perte") is not None:
+            lignes.append(
+                f"    cote courtier : {p['perte']:.2f} EUR pour un plafond de "
+                f"{p['seuil']:.2f} EUR")
     lignes += [
         "",
         "Le compte est DEJA bloque - il le reste tant que tu n'as pas repondu.",
@@ -528,6 +589,14 @@ def construire_question(demandes: list[dict[str, Any]],
         p = (plafond_courtier or {}).get(d["destination_id"]) or {}
         seuil_c, cumul = p.get("seuil"), d.get("pnl_au_moment")
         if seuil_c is None or cumul is None or cumul > seuil_c:
+            continue
+        # ⛔ DEVENU FAUX le 2026-10-07 quand le pont publie `daily_loss` : le
+        # radar sait alors ou en est SON plafond, joint `drawdown_arbitre` a
+        # l'ordre, et le pont leve sa porte de drawdown — celle-la seule.
+        # Continuer d'avertir ferait hesiter Xavier devant un bouton qui
+        # marche. Sans ce chiffre, aucun drapeau ne peut partir : l'avertissement
+        # reste vrai, et il reste.
+        if p.get("perte") is not None:
             continue
         lignes_avert = [
             "",

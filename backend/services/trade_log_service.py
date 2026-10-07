@@ -594,11 +594,28 @@ def arbitrage_actif_pour(destination_id: str | None) -> dict | None:
     try:
         if destination_id not in _destinations_reelles():
             return None
-        cumul, limite = _cumul_et_limite(destination_id)
-        if cumul is None or cumul > limite:
-            return None
         from backend.services import plafond_arbitrage
-        return plafond_arbitrage.autorisation_couvrante(destination_id, cumul)
+        cumul, limite = _cumul_et_limite(destination_id)
+        if cumul is not None and cumul <= limite:
+            return plafond_arbitrage.autorisation_couvrante(
+                destination_id, cumul)
+
+        # ⛔ LE TROU DU 2026-10-07. On s'arrêtait ici, et c'était faux : le
+        # courtier coupe sur SA mesure (solde d'ouverture − equity, flottant et
+        # frais inclus). Il franchissait à 19,77 € quand nos clôtures en base
+        # n'en comptaient que 16,45 — donc après un « continue » aucun drapeau
+        # ne partait, le pont refusait quand même, et le bouton était décoratif.
+        #
+        # 🔑 Une ligne du jour signifie qu'une tranche a été ouverte sur SES
+        # chiffres. On juge alors la couverture sur SA perte actuelle, jamais
+        # sur la nôtre : l'autorisation doit s'éteindre quand SA perte sort de
+        # la tranche, pas quand la nôtre le ferait.
+        if not plafond_arbitrage.lignes_du_jour(destination_id):
+            return None
+        perte = plafond_arbitrage.perte_du_courtier(destination_id)
+        if perte is None:
+            return None
+        return plafond_arbitrage.autorisation_couvrante(destination_id, perte)
     except Exception as e:  # pragma: no cover - défensif
         logger.warning(f"arbitrage actif illisible ({e}) — aucun drapeau joint")
         return None

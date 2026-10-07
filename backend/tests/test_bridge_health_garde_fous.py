@@ -76,7 +76,22 @@ def _appeler_health(**surcharges):
     module.__dict__.update(surcharges)
     module.__dict__["jsonify"] = lambda d: d
     module.__dict__["ensure_mt5_connected"] = lambda: True
-    module.__dict__["mt5"] = types.SimpleNamespace(__version__="5.0.5735")
+    module.__dict__["mt5"] = types.SimpleNamespace(
+        __version__="5.0.5735",
+        account_info=lambda: None,
+        positions_get=lambda **kw: [])
+    module.__dict__["logger"] = types.SimpleNamespace(
+        info=lambda *a, **k: None, warning=lambda *a, **k: None)
+    # Depuis le 2026-10-07, `/health` publie aussi l'ETAT du drawdown via
+    # `_drawdown_publie()`. Ici le solde d'ouverture est INCONNU : les deux
+    # champs d'etat restent donc absents, et ce fichier garde son sujet — les
+    # REGLAGES. L'etat est tenu par `test_bridge_publie_sa_perte_du_jour`.
+    module.__dict__["_start_of_day_balance"] = None
+    module.__dict__["_refresh_start_of_day"] = lambda: None
+    module.__dict__["_flottant_exclu"] = lambda p: (0.0, set())
+    etat = src[src.index("def _perte_journaliere("):
+               src.index("def _check_safety_gates(")]
+    exec(compile(etat, str(_SRC), "exec"), module.__dict__)
     exec(compile(src[debut:fin], str(_SRC), "exec"), module.__dict__)
     return module.health()
 

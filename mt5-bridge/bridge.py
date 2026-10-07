@@ -632,6 +632,57 @@ def _in_trading_hours() -> bool:
     return False
 
 
+def _perte_journaliere(positions, info=None) -> dict | None:
+    """L'etat du drawdown journalier, ou ``None`` si on ne sait pas.
+
+    ``{perte, plafond, tickets_exclus, exclu, equity_retenue}`` — la perte et
+    son plafond sont arrondis au centime, comme le message de refus.
+
+    🔑 **UNE seule arithmetique, pour la PORTE et pour `/health`** (2026-10-07).
+    Le radar a besoin de savoir ou en est CE plafond : il compte autrement (la
+    somme de ses clotures en base) et le 07/10 il en etait a 16,45 EUR quand ce
+    pont en comptait 19,77. Deux calculs du meme drawdown qui divergeraient
+    seraient exactement la faille que ce dispositif pretend fermer.
+
+    ⛔ ``None`` des que le solde d'ouverture ou le compte est illisible : se
+    taire plutot qu'avancer un chiffre qu'on n'a pas mesure.
+    """
+    _refresh_start_of_day()
+    if _start_of_day_balance is None:
+        return None
+    if info is None:
+        info = mt5.account_info()
+    if info is None:
+        return None
+    exclu, tickets_exclus = _flottant_exclu(positions)
+    equity_retenue = info.equity - exclu
+    return {
+        "perte": round(_start_of_day_balance - equity_retenue, 2),
+        "plafond": round(_start_of_day_balance * MAX_DAILY_LOSS_PCT / 100.0, 2),
+        "tickets_exclus": tickets_exclus,
+        "exclu": exclu,
+        "equity_retenue": equity_retenue,
+    }
+
+
+def _drawdown_publie() -> dict:
+    """``daily_loss`` / ``daily_loss_limit`` pour `/health`. ``{}`` si inconnu.
+
+    ⚠️ Ne leve JAMAIS : le moniteur d'infra et le radar consomment `/health`,
+    et une exception ici transformerait un chiffre manquant en panne de
+    surveillance.
+    """
+    try:
+        etat = _perte_journaliere(mt5.positions_get() or [])
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"health: drawdown illisible ({e})")
+        return {}
+    if not etat:
+        return {}
+    return {"daily_loss": etat["perte"],
+            "daily_loss_limit": etat["plafond"]}
+
+
 def _check_safety_gates(mt5_symbol: str, direction: str,
                         lots: float | None = None,
                         entry: float | None = None,
@@ -664,12 +715,12 @@ def _check_safety_gates(mt5_symbol: str, direction: str,
     positions = mt5.positions_get() or []
 
     # Drawdown journalier
-    _refresh_start_of_day()
-    if _start_of_day_balance is not None:
-        loss_limit = _start_of_day_balance * MAX_DAILY_LOSS_PCT / 100.0
-        exclu, tickets_exclus = _flottant_exclu(positions)
-        equity_retenue = info.equity - exclu
-        current_loss = _start_of_day_balance - equity_retenue
+    _drawdown = _perte_journaliere(positions, info)
+    if _drawdown is not None:
+        current_loss = _drawdown["perte"]
+        loss_limit = _drawdown["plafond"]
+        tickets_exclus = _drawdown["tickets_exclus"]
+        exclu, equity_retenue = _drawdown["exclu"], _drawdown["equity_retenue"]
         if tickets_exclus:
             # Tracé à chaque passage : une protection affaiblie qui ne se voit
             # pas dans les logs est une protection qu'on oublie d'avoir levée.
@@ -2272,6 +2323,14 @@ def health():
         "max_lot_per_class": MAX_LOT_PER_CLASS,
         "garde_fous": {
             "max_daily_loss_pct": MAX_DAILY_LOSS_PCT,
+            # ⛔ L'ETAT, pas seulement le REGLAGE (2026-10-07). Le 07/10 ce
+            # pont a coupe la journee 224 fois et le radar ne pouvait pas
+            # savoir OU en etait ce plafond : il compte autrement (clotures en
+            # base, 16,45 EUR) que lui (solde d'ouverture moins equity, 19,77).
+            # Sans ces deux champs, une autorisation « continue » de Xavier ne
+            # pouvait etre ni verifiee ni bornee. Absents = inconnu, et le
+            # radar le lit comme « applique ton garde-fou ».
+            **_drawdown_publie(),
             "max_open_positions": MAX_OPEN_POSITIONS,
             # Plafond par le RISQUE plutot que par le nombre (2026-08-20).
             # 0 = desarme, seul le compteur agit alors.

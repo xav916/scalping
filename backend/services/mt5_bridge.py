@@ -20,6 +20,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 from datetime import date, datetime, timezone
 
@@ -2001,6 +2002,100 @@ def _categoriser_refus(status: int, corps: str) -> str:
     return "bridge_error"
 
 
+# ─── Le plafond du COURTIER doit poser la question, pas couper en silence ──
+#
+# ⛔ Le 2026-10-07, le pont a refuse l'or 224 fois sur son propre plafond
+# journalier sans que Xavier recoive rien. Le dispositif d'arbitrage existe
+# depuis le 04/09 — il pose la question sur Telegram et bloque le compte en
+# attendant — mais il n'etait branche que sur le plafond du RADAR, qui compte
+# autrement : nos clotures en base donnaient −16,45 EUR quand le courtier,
+# qui mesure solde d'ouverture moins equity (flottant et frais inclus), en
+# comptait 19,77. Il franchissait, nous non : aucune question n'etait posee.
+#
+# 🔑 On ne devine pas sa perte, on lit SES chiffres dans SON refus.
+
+_PERTE_COURTIER = re.compile(
+    r"loss=(-?\d+(?:\.\d+)?)\s*>=\s*limit=(-?\d+(?:\.\d+)?)")
+
+
+def _perte_journaliere_du_courtier(corps: str | None
+                                   ) -> tuple[float, float] | None:
+    """``(perte, plafond)`` lus dans le message du pont, ``None`` si illisible.
+
+    ⚠️ Un refus qu'on ne sait pas lire ne rend RIEN. Inventer une perte ferait
+    poser a Xavier une question sur un chiffre jamais mesure — et ancrerait une
+    autorisation sur lui.
+    """
+    m = _PERTE_COURTIER.search(corps or "")
+    if not m:
+        return None
+    try:
+        return float(m.group(1)), float(m.group(2))
+    except ValueError:  # pragma: no cover - la regex l'interdit deja
+        return None
+
+
+def _arbitrer_plafond_du_courtier(destination_id: str | None,
+                                  corps: str | None) -> bool:
+    """Ouvre l'arbitrage sur les chiffres DU COURTIER. Ne leve JAMAIS.
+
+    🔑 Toute l'idempotence est deja dans `doit_bloquer()` : un `GELER` du jour
+    n'ouvre rien, un `CONTINUER` qui couvre n'ouvre rien, une question en
+    attente n'en pose pas une seconde. 224 refus ne produisent donc qu'une
+    seule ligne — et une perte qui creuse au-dela de la tranche autorisee en
+    ouvre une nouvelle, donc repose la question.
+
+    ⚠️ Elle est sur le chemin qui PREVIENT Xavier : une exception ici ferait
+    d'un refus du courtier un blocage muet, exactement ce que ce code existe
+    pour empecher.
+    """
+    if not destination_id:
+        return False
+    lu = _perte_journaliere_du_courtier(corps)
+    if lu is None:
+        return False
+    perte, plafond = lu
+    try:
+        from backend.services import plafond_arbitrage
+        return plafond_arbitrage.doit_bloquer(destination_id, -perte, -plafond)
+    except Exception as e:  # pragma: no cover - defensif
+        logger.warning(
+            f"plafond courtier[{destination_id}]: arbitrage impossible ({e})")
+        return False
+
+
+def _traiter_refus_du_pont(dest, setup, direction: str, status: int,
+                           corps: str | None) -> str:
+    """Journalise le refus ET pose la question s'il vient du plafond. Rend le motif.
+
+    🔑 **Les deux au MEME point, et c'est tout l'objet de cette fonction.** Le
+    07/10, les 224 refus du plafond etaient parfaitement journalises sous
+    `bridge_perte_journaliere` : ce n'est pas la mesure qui a manque, c'est la
+    question. Separes, l'un peut vivre sans l'autre pendant des semaines sans
+    que rien ne le dise.
+
+    ⛔ La demo n'ouvre aucun arbitrage : elle perd de l'argent qui n'existe
+    pas (meme portee que le correctif du 2026-08-20). Son refus reste
+    journalise — c'est une mesure.
+    """
+    from backend.services.rejection_service import record_rejection
+
+    reason = _categoriser_refus(status, corps or "")
+    record_rejection(
+        pair=setup.pair,
+        direction=direction,
+        confidence=getattr(setup, "confidence_score", None),
+        reason_code=reason,
+        details={"status": status, "body": (corps or "")[:200]},
+        user_id=getattr(dest, "user_id", None),
+        destination_id=getattr(dest, "destination_id", None),
+    )
+    if reason == "bridge_perte_journaliere" and getattr(dest, "reel", False):
+        _arbitrer_plafond_du_courtier(
+            getattr(dest, "destination_id", None), corps)
+    return reason
+
+
 async def _push_to_destination(setup, dest) -> None:
     """Push un setup vers UNE destination (``BridgeConfig``).
 
@@ -2333,16 +2428,8 @@ async def _push_to_destination(setup, dest) -> None:
                 )
                 # Catégorise la rejection bridge pour la viz dédiée
                 body_text = r.text or ""
-                reason = _categoriser_refus(r.status_code, body_text)
-                record_rejection(
-                    pair=setup.pair,
-                    direction=direction,
-                    confidence=getattr(setup, "confidence_score", None),
-                    reason_code=reason,
-                    details={"status": r.status_code, "body": body_text[:200]},
-                    user_id=dest.user_id,
-                    destination_id=dest.destination_id,
-                )
+                _traiter_refus_du_pont(
+                    dest, setup, direction, r.status_code, body_text)
                 # Si l'ordre a été rejeté par le bridge, on retire de la dedup
                 # (mémoire + DB) pour qu'un cycle suivant puisse retenter.
                 _sent_setups_today.discard(key)
