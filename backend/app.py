@@ -3007,7 +3007,14 @@ async def api_admin_notify_infra_telegram(
                     "cooldown_seconds": cooldown_seconds,
                     "remaining_seconds": int(cooldown_seconds - elapsed),
                 }
-        _INFRA_ALERT_LAST_SENT[dedup_key] = now
+        # ⛔ ON N'ESTAMPILLE PAS ICI. Le 2026-10-07 : la marque etait posee
+        # AVANT l'appel a Telegram, donc un envoi qui echouait ensuite (502,
+        # jeton mort, Telegram en panne) consommait quand meme le silence —
+        # l'alerte etait **perdue** pour toute la duree du cooldown, sans que
+        # personne l'apprenne. C'est l'inverse du but d'un cooldown : il doit
+        # taire les DOUBLONS, pas les ECHECS.
+        #
+        # 🔑 La marque est donc posee apres un 200 confirme, plus bas.
 
     # HTML depuis 2026-05-13 : Markdown legacy cassait dès qu'un body
     # contenait un underscore (88 HTTP 400 / 96h observés). html.escape
@@ -3035,6 +3042,11 @@ async def api_admin_notify_infra_telegram(
             )
     except httpx.HTTPError as e:
         raise HTTPException(status_code=502, detail=f"telegram api error: {e}")
+
+    # 🔑 Ici, et seulement ici : Telegram a repondu 200. Un echec plus haut a
+    # leve, donc n'a RIEN estampille et sera rejoue par l'appelant.
+    if dedup_key and cooldown_seconds > 0:
+        _INFRA_ALERT_LAST_SENT[dedup_key] = datetime.now(timezone.utc)
 
     return {"sent": True, "chars": len(text)}
 

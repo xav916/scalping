@@ -42,6 +42,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import socket
 import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -50,6 +51,42 @@ from pathlib import Path
 sys.path.insert(0, "/app")
 
 DELAI = 10
+
+# ⛔ LA PATIENCE DU CLIENT DOIT ETRE PLUS GRANDE QUE CELLE DU SERVEUR.
+#
+# Le 2026-10-07, cette sonde a renvoye 8 fois le MEME ordre metal (ticket
+# 1360596228), toutes les 15 min :
+#
+#     ENVOI ECHOUE (TimeoutError: The read operation timed out)
+#     curseur NON avance — l'evenement sera rejoue
+#
+# ... alors que le message PARTAIT a chaque fois.
+#
+# ⚠️ Le relais n'est PAS lent en permanence : mesure le soir du 07/10, il
+# repond en **0,17 s** (et en 0,03 s quand il refuse l'authentification, donc
+# le reseau n'y est pour rien). Ce fut un EPISODE de lenteur Telegram cet
+# apres-midi la — le meme qui a fait expirer `veilleur_arret_or` a 15 s.
+#
+# 🔑 Le defaut n'est donc pas la lenteur, c'est que la patience du client
+# etait EGALE a celle du serveur : 10 s ici, et `app.py` attend Telegram
+# `httpx.AsyncClient(timeout=10.0)`, plus le DNS, le TLS et nginx — car
+# l'appel sort du conteneur et revient par l'URL publique. Des que Telegram
+# traine, le client lache AVANT le serveur et prend un succes lent pour un
+# echec. Une marge franche suffit a le rendre impossible.
+DELAI_NOTIF = int(os.environ.get("PREMIER_METAL_DELAI_NOTIF", "30"))
+
+# Le relais sait taire un doublon — mais SEULEMENT si on lui donne une duree :
+# `app.py` teste `if dedup_key and cooldown_seconds > 0`. La sonde envoyait la
+# cle SANS la duree, donc la garde du serveur etait INERTE et chaque rejeu
+# repartait vraiment.
+COOLDOWN_NOTIF = int(os.environ.get("PREMIER_METAL_COOLDOWN", "21600"))
+
+# ⛔ Et si la reponse n'arrive toujours pas : un delai de lecture n'est NI un
+# succes NI un echec, c'est « je ne sais pas ». Rejouer indefiniment sur un
+# « je ne sais pas » est ce qui a produit les 8 copies. Au-dela de ce nombre
+# d'essais sans reponse, on avance le curseur en le DISANT : a ce stade le
+# message est presque surement passe plusieurs fois, et continuer est pire.
+MAX_ESSAIS_SANS_REPONSE = int(os.environ.get("PREMIER_METAL_MAX_ESSAIS", "3"))
 
 # Nommés un par un, comme dans `bridge.py::_poche_du_symbole` : filtrer sur
 # « métal » embarquerait le platine et le palladium, qui ne sont pas le sujet.
@@ -390,8 +427,9 @@ def _ecrire_etat(etat: dict) -> None:
 
 
 def _notifier(titre: str, corps: str, dedup: str,
-              destination_id: str | None = None) -> bool:
-    """Rend **True seulement si l'envoi est confirmé**.
+              destination_id: str | None = None) -> bool | None:
+    """Trois états, jamais deux : `True` envoyé, `False` refusé, `None` **sans
+    réponse** — et « sans réponse » n'est pas « pas envoyé ».
 
     ⛔ On lit `sent` dans la réponse. Un POST qui aboutit ne prouve pas qu'un
     message est arrivé — c'est exactement ainsi que le moniteur est resté muet
@@ -401,19 +439,66 @@ def _notifier(titre: str, corps: str, dedup: str,
         print(f"  [DRY_RUN] {titre}\n{corps}\n")
         return False
     charge = json.dumps({"title": titre, "body": corps,
-                         "dedup_key": dedup}).encode("utf-8")
+                         "dedup_key": dedup,
+                         # ⛔ Sans cette duree, la garde du relais est inerte.
+                         "cooldown_seconds": COOLDOWN_NOTIF}).encode("utf-8")
     rq = urllib.request.Request(
         f"{BASE_URL}&channel={canal_pour(destination_id)}", data=charge,
         headers={"Content-Type": "application/json"}, method="POST")
     try:
-        with urllib.request.urlopen(rq, timeout=DELAI) as r:
+        with urllib.request.urlopen(rq, timeout=DELAI_NOTIF) as r:
             reponse = json.load(r)
-    except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:
+    except (TimeoutError, socket.timeout) as e:
+        # ⛔ PAS « echoue » : sans reponse, on ne SAIT pas. Le message est
+        # peut-etre parti. C'est l'appelant qui tranche, avec son compteur.
+        print(f"  REPONSE NON RECUE apres {DELAI_NOTIF} s ({type(e).__name__}:"
+              f" {e}) — l'envoi a peut-etre abouti")
+        return None
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        cause = getattr(e, "reason", None)
+        if isinstance(cause, (TimeoutError, socket.timeout)):
+            print(f"  REPONSE NON RECUE apres {DELAI_NOTIF} s ({cause!r}) — "
+                  f"l'envoi a peut-etre abouti")
+            return None
         print(f"  ENVOI ECHOUE ({type(e).__name__}: {e})")
         return False
     envoye = bool(reponse.get("sent")) or reponse.get("skipped") == "cooldown"
     print(f"  reponse : {reponse}")
     return envoye
+
+
+def _trancher(issue: bool | None, etat: dict, nouveau: dict,
+              dedup: str, quoi: str) -> bool:
+    """Faut-il considérer l'annonce comme faite ? Arbitre les TROIS états.
+
+    ⛔ Le cas qui a produit les 8 doublons du 2026-10-07 est `issue is None` :
+    la réponse n'arrive pas. Rejouer indéfiniment sur un « je ne sais pas »
+    envoie un doublon de plus à chaque passage, toutes les 15 min.
+
+    🔑 On compte les essais sans réponse, et au bout de
+    `MAX_ESSAIS_SANS_REPONSE` on considère l'annonce faite **en le disant**.
+    Se tromper là coûte une alerte manquée ; ne pas trancher coûte une alerte
+    répétée sans fin — et une alerte répétée sans fin n'est plus lue.
+    """
+    cle = f"essais_sans_reponse:{dedup}"
+    if issue is True:
+        nouveau.pop(cle, None)
+        return True
+    if issue is False:
+        # Un vrai refus : le relais a répondu non. On rejoue.
+        nouveau.pop(cle, None)
+        return False
+    essais = int(etat.get(cle) or 0) + 1
+    if essais >= MAX_ESSAIS_SANS_REPONSE:
+        nouveau.pop(cle, None)
+        print(f"    {essais} essais SANS REPONSE sur {quoi} — annonce "
+              f"consideree FAITE : un {essais + 1}e rejeu enverrait surtout un "
+              f"doublon de plus")
+        return True
+    nouveau[cle] = essais
+    print(f"    essai {essais}/{MAX_ESSAIS_SANS_REPONSE} sans reponse sur "
+          f"{quoi} — on rejouera")
+    return False
 
 
 def main() -> int:
@@ -472,11 +557,12 @@ def main() -> int:
 
         quelque_chose_est_parti = True
         titre, corps = message_depart(did, partis)
+        dedup = f"metal_parti:{did}:{borne}"
         print(f"  ALERTE : {len(partis)} ordre(s) metal parti(s)")
-        if _notifier(titre, corps, dedup=f"metal_parti:{did}:{borne}",
-                     destination_id=did):
-            # ⛔ Le curseur n'avance qu'ici. Une annonce ratee doit etre
-            # rejouee au passage suivant, pas perdue.
+        issue = _notifier(titre, corps, dedup=dedup, destination_id=did)
+        if _trancher(issue, etat, nouveau, dedup, "l'ordre metal"):
+            # ⛔ Le curseur n'avance qu'ici. Une annonce VRAIMENT ratee doit
+            # etre rejouee au passage suivant, pas perdue.
             nouveau[f"curseur:{did}"] = borne
         else:
             print("    curseur NON avance — l'evenement sera rejoue")
@@ -491,7 +577,8 @@ def main() -> int:
         refus, horizons = _refus_metaux(heures)
         titre, corps = message_silence(refus, heures, horizons)
         print(f"silence : {len(refus)} motif(s) de refus sur {heures} h")
-        if _notifier(titre, corps, dedup="metal_silence"):
+        issue = _notifier(titre, corps, dedup="metal_silence")
+        if _trancher(issue, etat, nouveau, "metal_silence", "le digest"):
             nouveau["dernier_silence"] = maintenant.isoformat()
     else:
         print("silence : deja dit recemment")

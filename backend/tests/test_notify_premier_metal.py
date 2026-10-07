@@ -406,3 +406,178 @@ def test_un_ok_FALSE_du_bridge_est_aussi_une_lecture_ratee(s, monkeypatch):
         bridge_type = "kraken"
 
     assert s._lignes_du_journal(_Dest(), 0) == (None, False)
+
+
+# ── Le 3e état : « je n'ai pas eu de réponse » ─────────────────────────────
+#
+# ⛔ LE BUG DU 2026-10-07. Xavier a reçu **8 fois** le même message pour le
+# même ordre (ticket 1360596228, parti à 14h00). Journal, à chaque passage de
+# cron, toutes les 15 min :
+#
+#     ALERTE : 4 ordre(s) metal parti(s)
+#     ENVOI ECHOUE (TimeoutError: The read operation timed out)
+#     curseur NON avance — l'evenement sera rejoue
+#
+# Trois défauts qui se renforcent :
+#   1. la sonde attendait la réponse 10 s, et le relais attend Telegram 10 s
+#      lui aussi, DNS + TLS + nginx en plus ⇒ patience ÉGALE. ⚠️ Le relais
+#      n'est pas lent en soi (mesuré 0,17 s le soir même) : ce fut un épisode
+#      de lenteur Telegram. Mais à patience égale, le moindre épisode fait
+#      lâcher le client avant le serveur ;
+#   2. elle envoyait `dedup_key` SANS `cooldown_seconds`, donc la garde du
+#      relais (`if dedup_key and cooldown_seconds > 0`) était INERTE ;
+#   3. un délai de lecture était compté comme un échec d'envoi, et rejoué —
+#      alors que le message partait vraiment.
+#
+# 🔑 « Je n'ai pas eu la réponse » n'est ni un succès ni un échec.
+
+def _armer3(s, monkeypatch, etat, lignes, issue):
+    """Comme `_armer`, mais `_notifier` peut rendre les TROIS états."""
+    ecrits = {}
+    monkeypatch.setattr(s, "_charger_etat", lambda: dict(etat))
+    monkeypatch.setattr(s, "_ecrire_etat", lambda e: ecrits.update(e))
+    monkeypatch.setattr(s, "_lignes_audit",
+                        lambda dest, depuis: (list(lignes), True))
+    monkeypatch.setattr(
+        s, "_notifier",
+        lambda t, c, dedup, destination_id=None: issue)
+    monkeypatch.setattr(s, "_refus_metaux", lambda h: ([], {}))
+    return ecrits
+
+
+def test_le_cooldown_part_AVEC_la_cle_sinon_la_garde_est_inerte(s, monkeypatch):
+    """🔑 Le défaut n° 2 : `app.py` exige `cooldown_seconds > 0`."""
+    envoye = {}
+
+    class _R:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return b'{"sent": true}'
+
+    def _faux_urlopen(rq, timeout=None):
+        envoye["corps"] = json.loads(rq.data.decode())
+        envoye["timeout"] = timeout
+        return _R()
+
+    import json
+    import urllib.request
+    monkeypatch.setattr(urllib.request, "urlopen", _faux_urlopen)
+    monkeypatch.delenv("DRY_RUN", raising=False)
+
+    assert s._notifier("T", "b", dedup="metal_parti:admin_live:4930") is True
+    assert envoye["corps"]["dedup_key"] == "metal_parti:admin_live:4930"
+    assert envoye["corps"]["cooldown_seconds"] > 0, (
+        "sans duree, le relais ne tait RIEN et chaque rejeu repart vraiment")
+
+
+def test_la_sonde_est_PLUS_patiente_que_le_relais(s):
+    """🔑 Le défaut n° 1 — une patience ÉGALE est une patience trop courte.
+
+    Le relais attend Telegram 10 s (`app.py`), plus le DNS, le TLS et nginx.
+    ⚠️ Il n'est pas lent en soi : 0,17 s mesuré le soir du 07/10. Mais à
+    patience égale, le moindre épisode de lenteur fait prendre au client un
+    succès lent pour un échec — et il le rejoue sans fin.
+    """
+    assert s.DELAI_NOTIF > s.DELAI
+    assert s.DELAI_NOTIF >= 20, (
+        "10 s cote relais + reseau : il faut une marge franche")
+
+
+def test_sans_reponse_on_rejoue_mais_PAS_indefiniment(s, monkeypatch):
+    """🔑 Le défaut n° 3, et le cœur du correctif.
+
+    Les premiers passages rejouent — le message a peut-être échoué. Mais au
+    bout de `MAX_ESSAIS_SANS_REPONSE`, on considère l'annonce faite : à ce
+    stade, un rejeu de plus n'apporte rien qu'un doublon de plus.
+    """
+    etat = {"curseur:admin_legacy": 5, "curseur:admin_live": 5}
+    ecrits = _armer3(s, monkeypatch, etat, [_ligne(id=9)], issue=None)
+    assert s.main() == 0
+    # 1er essai sans réponse : on ne bouge pas, on compte
+    assert ecrits["curseur:admin_live"] == 5
+    assert ecrits["essais_sans_reponse:metal_parti:admin_live:9"] == 1
+
+    # ... au dernier essai, on tranche et on avance
+    etat2 = dict(etat)
+    etat2["essais_sans_reponse:metal_parti:admin_live:9"] = \
+        s.MAX_ESSAIS_SANS_REPONSE - 1
+    ecrits2 = _armer3(s, monkeypatch, etat2, [_ligne(id=9)], issue=None)
+    assert s.main() == 0
+    assert ecrits2["curseur:admin_live"] == 9
+    assert "essais_sans_reponse:metal_parti:admin_live:9" not in ecrits2
+
+
+def test_un_VRAI_refus_rejoue_sans_jamais_s_epuiser(s, monkeypatch):
+    """⛔ Un refus du relais est une réponse : il dit que rien n'est parti.
+
+    Celui-là doit être rejoué, et le compteur d'essais-sans-réponse ne doit
+    PAS le faire abandonner — sinon un jeton mort perdrait l'alerte en
+    silence, ce que cette sonde existe précisément pour empêcher.
+    """
+    etat = {"curseur:admin_legacy": 5, "curseur:admin_live": 5,
+            "essais_sans_reponse:metal_parti:admin_live:9": 99}
+    ecrits = _armer3(s, monkeypatch, etat, [_ligne(id=9)], issue=False)
+    assert s.main() == 0
+    assert ecrits["curseur:admin_live"] == 5
+    assert "essais_sans_reponse:metal_parti:admin_live:9" not in ecrits
+
+
+def test_un_succes_efface_le_compteur_d_essais(s, monkeypatch):
+    etat = {"curseur:admin_legacy": 5, "curseur:admin_live": 5,
+            "essais_sans_reponse:metal_parti:admin_live:9": 2}
+    ecrits = _armer3(s, monkeypatch, etat, [_ligne(id=9)], issue=True)
+    assert s.main() == 0
+    assert ecrits["curseur:admin_live"] == 9
+    assert "essais_sans_reponse:metal_parti:admin_live:9" not in ecrits
+
+
+def test_un_delai_de_lecture_rend_None_et_PAS_False(s, monkeypatch):
+    """⛔ Le mapping exact qui a produit les 8 doublons.
+
+    `urllib` lève `TimeoutError` quand la réponse n'arrive pas. L'ancienne
+    sonde l'attrapait dans le même `except` que les erreurs réseau et rendait
+    `False` — « rien n'est parti ». C'était faux : le message partait.
+    """
+    import urllib.request
+
+    def _trop_lent(rq, timeout=None):
+        raise TimeoutError("The read operation timed out")
+
+    monkeypatch.setattr(urllib.request, "urlopen", _trop_lent)
+    monkeypatch.delenv("DRY_RUN", raising=False)
+
+    assert s._notifier("T", "b", dedup="k") is None
+
+
+def test_une_URLError_enveloppant_un_timeout_rend_aussi_None(s, monkeypatch):
+    """`urllib` emballe parfois le délai dans `URLError.reason`."""
+    import urllib.error
+    import urllib.request
+
+    def _trop_lent(rq, timeout=None):
+        raise urllib.error.URLError(TimeoutError("timed out"))
+
+    monkeypatch.setattr(urllib.request, "urlopen", _trop_lent)
+    monkeypatch.delenv("DRY_RUN", raising=False)
+
+    assert s._notifier("T", "b", dedup="k") is None
+
+
+def test_une_VRAIE_panne_reseau_rend_bien_False(s, monkeypatch):
+    """⚠️ Ne pas tout transformer en « je ne sais pas » : une connexion
+    refusée est une réponse, et elle veut dire que rien n'est parti."""
+    import urllib.error
+    import urllib.request
+
+    def _refuse(rq, timeout=None):
+        raise urllib.error.URLError(ConnectionRefusedError("refuse"))
+
+    monkeypatch.setattr(urllib.request, "urlopen", _refuse)
+    monkeypatch.delenv("DRY_RUN", raising=False)
+
+    assert s._notifier("T", "b", dedup="k") is False
