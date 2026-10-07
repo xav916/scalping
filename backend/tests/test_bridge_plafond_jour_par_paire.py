@@ -440,3 +440,53 @@ def test_l_arbitrage_leve_AUSSI_le_plafond_de_la_paire():
         drawdown_arbitre={"accorde_a": -80.0, "couvre_jusqua": -120.0,
                           "repondu_le": "2026-10-07T13:58:41+00:00"})
     assert ok is True, raison
+
+
+# ─── Les DEUX freins de compte doivent CONCORDER ──────────────────────────
+
+def test_les_deux_plafonds_de_compte_CONCORDENT():
+    """⛔ Deux freins au même nom qui divergent sont pires qu'un seul.
+
+    Sur un compte réel il y a deux plafonds journaliers indépendants :
+
+        radar  `DAILY_LOSS_LIMIT_PCT`  sur les pertes RÉALISÉES en base
+        pont   `MAX_DAILY_LOSS_PCT`    sur l'equity (réalisé + flottant)
+
+    Le 2026-10-07 ils comptaient **16,45 €** et **19,77 €** du même jour — deux
+    mesures, c'est assumé. Mais leur POURCENTAGE doit être le même : laisser le
+    radar à 3 % quand le pont est à 10 % aurait gelé la destination bien avant
+    que l'or n'approche son budget, et le réglage du pont serait resté
+    **décoratif**.
+
+    🔑 Ce test n'existait pas, et c'est précisément pour ça que les deux ont pu
+    vivre séparément : rien ne les additionnait, rien ne les comparait.
+    """
+    import re
+    from config.settings import DAILY_LOSS_LIMIT_PCT
+
+    src = _SRC.read_text(encoding="utf-8")
+    m = re.search(
+        r'MAX_DAILY_LOSS_PCT = float\(os\.getenv\("MAX_DAILY_LOSS_PCT",\s*"([\d.]+)"\)\)',
+        src)
+    assert m, "le defaut du pont n'est plus lisible — ce test ne garde plus rien"
+    pont = float(m.group(1))
+
+    assert pont == DAILY_LOSS_LIMIT_PCT, (
+        f"les deux plafonds de compte divergent : pont {pont} %, "
+        f"radar {DAILY_LOSS_LIMIT_PCT} %")
+    assert pont == 10.0, (
+        "le plafond de compte a change sans que ce test le dise "
+        f"(il vaut {pont} %)")
+
+
+def test_le_plafond_d_une_paire_ne_depasse_PAS_celui_du_compte():
+    """⚠️ Un plafond de paire plus large que celui du compte serait
+    inatteignable — le compte couperait toujours le premier."""
+    import re
+    src = _SRC.read_text(encoding="utf-8")
+    pont = float(re.search(
+        r'MAX_DAILY_LOSS_PCT = float\(os\.getenv\("MAX_DAILY_LOSS_PCT",\s*"([\d.]+)"\)\)',
+        src).group(1))
+    m = _charger()
+    for symbole in ("XAUUSD", "XAGUSD", "EURUSD", "BTCUSD"):
+        assert m._plafond_jour_pct(symbole) <= pont, symbole

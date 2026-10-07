@@ -186,7 +186,13 @@ def test_la_vue_expose_le_seuil_REELLEMENT_applique(monkeypatch, tmp_path):
     vue = ks._daily_loss_par_destination()
 
     assert vue["admin_live"]["capital"] == pytest.approx(719.18)
-    assert vue["admin_live"]["seuil"] == pytest.approx(-21.58, abs=0.01)
+    # ⚠️ Le seuil est DERIVE du reglage, pas ecrit en dur. Le sujet de ce test
+    # est QUEL CAPITAL sert au calcul (le solde vivant, pas TRADING_CAPITAL) —
+    # pas le pourcentage. Le figer a 3 % le faisait tomber le 2026-10-07 quand
+    # Xavier a porte le plafond a 10 %, sur un code pourtant juste.
+    from config.settings import DAILY_LOSS_LIMIT_PCT
+    attendu = -719.18 * DAILY_LOSS_LIMIT_PCT / 100
+    assert vue["admin_live"]["seuil"] == pytest.approx(attendu, abs=0.01)
     assert vue["admin_live"]["source"] == "live"
     # Un compte dont le solde n'est pas connu doit le DIRE, pas afficher un
     # capital d'apparence normale.

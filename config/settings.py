@@ -1278,7 +1278,29 @@ TRADING_CAPITAL = float(os.getenv("TRADING_CAPITAL", "10000"))  # Capital en USD
 RISK_PER_TRADE_PCT = float(os.getenv("RISK_PER_TRADE_PCT", "1.0"))  # % du capital risqué par trade
 MIN_CONFIDENCE_SCORE = float(os.getenv("MIN_CONFIDENCE_SCORE", "75"))  # Score min pour afficher un setup (0-100)
 # Limite de perte journaliere : au-dela, mode silencieux (pas de bip, pas de telegram)
-DAILY_LOSS_LIMIT_PCT = float(os.getenv("DAILY_LOSS_LIMIT_PCT", "3.0"))
+#
+# ⛔ 3 -> 10 % le 2026-10-07, et PAS pour desserrer : pour arreter de contredire
+# le pont en silence.
+#
+# Il y a DEUX freins journaliers independants sur un compte reel :
+#   - CELUI-CI, cote radar, sur les pertes REALISEES en base ;
+#   - celui du pont, sur l'equity (realise + flottant).
+# Le 07/10 ils comptaient 16,45 EUR et 19,77 EUR du MEME jour.
+#
+# Xavier a demande ce jour-la un plafond de 10 % pour l'or. Le pont l'applique,
+# avec un second etage qui BORNE chaque autre paire a 3 % — c'est la, et la
+# seule, que le confinement par paire vit, parce que le pont voit la verite du
+# courtier. Laisser ce frein-ci a 3 % aurait gele la destination bien avant que
+# l'or n'approche ses 59,58 EUR : le reglage du pont serait reste DECORATIF,
+# exactement le defaut repare le matin meme sur l'arbitrage.
+#
+# ⚠️ Ce frein reste un frein de DESTINATION, pas de paire. Le dupliquer par
+# paire ici ferait deux calculs du meme drawdown a deux endroits — la faille
+# que tout ce dispositif pretend fermer.
+#
+# 🔑 `test_les_deux_plafonds_de_compte_CONCORDENT` garde l'egalite avec le
+# defaut du pont : deux freins au meme nom qui divergent sont pires qu'un seul.
+DAILY_LOSS_LIMIT_PCT = float(os.getenv("DAILY_LOSS_LIMIT_PCT", "10.0"))
 
 # Watchdog rafale stops loss : si True, le watchdog déclenche une pause
 # auto-exec quand un seuil de SL est franchi. Smart resume basé sur
