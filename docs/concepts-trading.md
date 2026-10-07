@@ -3068,3 +3068,60 @@ trades réels — ils sont trop peu nombreux (7 chevauchements). Elle ne dira do
 rien de la façon dont la MAIN de Xavier ferme, qui est à ce jour la seule chose
 mesurée comme gagnante sur ce compte (+188,02 € sur 78 fermetures contre
 −339,51 € pour l'automatique, sur 30 jours).
+
+### ⛔ VERDICT du 2026-10-08 — REJETÉ par son propre placebo
+
+Banc `d195187`, fenêtre en échantillon 2023-08-01 → 2026-01-01 : **180 095
+bougies**, 314 769 setups détectés, **2 010 entrées** du bras A.
+
+| prédiction | exigé | obtenu | |
+|---|---|---|---|
+| **P1** `B−A>0`, t≥2,0 | 6 cellules sur 12 | **2** à 0,20 $ · **1** à 0,50 $ | ⛔ échoue |
+| **P2** `B−C>0`, t≥2,0 | — | **5 cellules**, aux deux spreads | ✅ passe |
+| **P3** `B−D>0`, t≥2,0 | — | **négatif sur les 12**, t jusqu'à **−8,62** | ⛔ échoue |
+| **P4** hors échantillon | — | **non lancé** | — |
+
+> ⛔ **La règle disait : « si `B ≤ D` : rejet, le déclencheur n'apporte rien. »**
+> C'est exactement ce qui arrive, sur les douze cellules et aux deux spreads.
+> Le hors échantillon n'a donc pas été regardé : le lancer après un rejet en
+> échantillon serait de la pêche.
+
+#### Ce que le placebo révèle, et c'est contre-intuitif
+
+Ouvrir le contre-fil à un instant **tiré au hasard** dans la vie du trade fait
+**bien mieux** que l'ouvrir quand le trade est collé à son stop :
+
+```
+cellule θ=0,5 D=60   A -0,717   B -0,516   C -0,729   D -0,157
+cellule θ=0,7 D=30   A -0,817   B -0,551   C -0,831   D -0,165
+cellule θ=0,3 D=60   A -0,578   B -0,559   C -0,587   D -0,083
+```
+
+🔑 **La raison est mécanique.** Quand le prix est à 50 ou 70 % du chemin vers le
+stop, le mouvement adverse **a déjà eu lieu**. On entre le contre-fil *après*
+le mouvement, donc tard. Un instant tiré au hasard tombe en moyenne plus tôt,
+plus près de l'entrée, et capte davantage de ce mouvement.
+
+⇒ **Le déclencheur proposé est le PIRE moment pour faire ce qu'il propose.**
+
+#### Ce que le banc confirme quand même de l'intuition
+
+`P2` passe sur 5 cellules aux deux spreads : le contre-fil fait **mieux que
+fermer** (+0,18 à +0,41 R, t de 2,00 à 2,93). Avoir une jambe opposée n'est
+donc pas inutile — c'est le **moment** choisi pour l'ouvrir qui inverse le
+résultat. L'intuition de direction tient ; la règle de timing la retourne.
+
+#### ⚠️ Et tous les bras PERDENT
+
+`A` va de **−0,38 à −1,01 R**. Le meilleur bras de la meilleure cellule (`D` à
+θ=0,3 / D=240) vaut **−0,02 R**. C'est une population de trades déjà coincés
+contre leur stop : elle perd. Le contre-fil rend la perte **moins grosse**, il
+ne fabrique aucun gain.
+
+#### ⛔ Ce qu'on ne fera PAS maintenant
+
+`D` était un **contrôle**, pas un candidat. Partir mesurer « couvrir à un
+instant quelconque » parce que le contrôle a bien marché, c'est précisément la
+sélection post hoc que toute cette discipline existe pour empêcher. Si cette
+piste mérite un banc, elle mérite une **déclaration neuve**, écrite avant la
+première ligne — comme celle-ci.
