@@ -1886,6 +1886,40 @@ def _alerter_position_sans_stop(destination_id: str | None, pair: str,
             destination_id, pair, data.get("ticket"), e)
 
 
+def _est_argent_reel(dest) -> bool:
+    """CE compte touche-t-il de l'argent reel ? Lu dans le REGISTRE.
+
+    ⛔ **Le defaut repare le 2026-10-07.** Les deux gardes qui decident si
+    l'arbitrage du plafond s'applique testaient `getattr(dest, "reel", False)`.
+    Or `BridgeConfig` **n'a jamais eu** d'attribut `reel` : les deux valaient
+    donc toujours FAUX. Consequences, mesurees en production :
+
+    - le drapeau `drawdown_arbitre` n'a JAMAIS pu partir depuis le 04/09, ce qui
+      explique le 09/09 — Xavier repond « continue », le pont refuse quand meme,
+      et on a cru a un plafond du courtier impossible a lever ;
+    - le 07/10, six refus `bridge_perte_journaliere` sur l'or n'ont ouvert
+      AUCUNE demande d'arbitrage.
+
+    ⚠️ Les tests ne l'avaient pas vu parce qu'ils fabriquaient un
+    `SimpleNamespace(reel=True)` : ils affirmaient sur un objet factice portant
+    un attribut que le vrai n'a pas. Ils construisent desormais un vrai
+    `BridgeConfig`.
+
+    🔑 La realite d'une destination est une donnee du registre, jamais un
+    attribut de la configuration de pont. Fail-closed : illisible = non reel,
+    donc aucune porte levee.
+    """
+    did = getattr(dest, "destination_id", None) if dest is not None else None
+    if not did:
+        return False
+    try:
+        from backend.services import destinations_registry as reg
+        return bool(reg.is_real_money(did))
+    except Exception as e:  # pragma: no cover - defensif
+        logger.warning(f"realite de '{did}' illisible ({e}) — traite comme NON reel")
+        return False
+
+
 def _build_order_payload(setup, sz: dict, dest=None) -> dict:
     """Construit le dict envoyé à l'EA MQL5 / bridge.py.
 
@@ -1943,7 +1977,7 @@ def _build_order_payload(setup, sz: dict, dest=None) -> dict:
     # du moment. Absent, le bridge applique son garde-fou : c'est le défaut, et
     # il est fermé. Il ne lève que cette porte-là — marge libre, risque engagé,
     # max positions et heures de marché restent intactes.
-    if dest is not None and getattr(dest, "reel", False):
+    if _est_argent_reel(dest):
         try:
             from backend.services import trade_log_service
             arbitre = trade_log_service.arbitrage_actif_pour(
@@ -2090,7 +2124,7 @@ def _traiter_refus_du_pont(dest, setup, direction: str, status: int,
         user_id=getattr(dest, "user_id", None),
         destination_id=getattr(dest, "destination_id", None),
     )
-    if reason == "bridge_perte_journaliere" and getattr(dest, "reel", False):
+    if reason == "bridge_perte_journaliere" and _est_argent_reel(dest):
         _arbitrer_plafond_du_courtier(
             getattr(dest, "destination_id", None), corps)
     return reason

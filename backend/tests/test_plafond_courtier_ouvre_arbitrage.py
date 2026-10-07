@@ -96,9 +96,24 @@ def _refus_journalises(chemin):
             "SELECT reason_code, destination_id FROM signal_rejections").fetchall()
 
 
-def _dest(destination_id, reel):
-    from types import SimpleNamespace as NS
-    return NS(destination_id=destination_id, user_id=None, reel=reel)
+def _dest(destination_id="admin_live"):
+    """⛔ Un VRAI `BridgeConfig`, et c'est le coeur du defaut du 2026-10-07.
+
+    L'ancienne version de cette aide fabriquait un `SimpleNamespace` portant un
+    attribut `reel=True` — que `BridgeConfig` **ne possede pas**. Les deux
+    gardes de production testaient `getattr(dest, "reel", False)`, donc
+    toujours FAUX : le drapeau n'a jamais pu partir depuis le 04/09, et c'est
+    ce qui a annule la reponse de Xavier le 09/09. Le test passait parce qu'il
+    affirmait sur un objet factice au lieu du vrai.
+
+    La realite d'une destination se lit dans le REGISTRE, pas sur un attribut.
+    """
+    from backend.services.bridge_destinations import BridgeConfig
+    return BridgeConfig(
+        destination_id=destination_id, user_id=None,
+        bridge_url="http://pont:8788", bridge_api_key="cle",
+        min_confidence=50.0, allowed_asset_classes=frozenset({"metal"}),
+        auto_exec_enabled=True)
 
 
 def _setup():
@@ -117,7 +132,7 @@ def test_le_refus_du_pont_est_a_la_fois_JOURNALISE_et_ARBITRE(arbitrage, tmp_pat
     from backend.services import mt5_bridge as m
 
     assert m._traiter_refus_du_pont(
-        _dest("admin_live", True), _setup(), "buy", 429, CORPS
+        _dest("admin_live"), _setup(), "buy", 429, CORPS
     ) == "bridge_perte_journaliere"
 
     assert _refus_journalises(tmp_path / "trades.db") == [
@@ -135,7 +150,7 @@ def test_la_DEMO_ne_derange_PAS_Xavier(arbitrage, tmp_path):
     from backend.services import mt5_bridge as m
 
     m._traiter_refus_du_pont(
-        _dest("admin_legacy", False), _setup(), "buy", 429, CORPS)
+        _dest("admin_legacy"), _setup(), "buy", 429, CORPS)
 
     assert _refus_journalises(tmp_path / "trades.db") == [
         ("bridge_perte_journaliere", "admin_legacy")]
@@ -147,7 +162,44 @@ def test_un_autre_refus_429_n_ouvre_aucun_arbitrage(arbitrage, tmp_path):
     from backend.services import mt5_bridge as m
 
     assert m._traiter_refus_du_pont(
-        _dest("admin_live", True), _setup(), "buy", 429,
+        _dest("admin_live"), _setup(), "buy", 429,
         '{"reason":"Max open positions reached: 10"}'
     ) == "bridge_max_positions"
     assert arbitrage.lignes_du_jour("admin_live") == []
+
+
+# ── Le defaut qui rendait les deux gardes TOUJOURS faux ───────────────────
+
+def test_la_realite_ne_se_lit_PAS_sur_un_attribut_du_BridgeConfig():
+    """⛔ Epingle le defaut du 2026-10-07.
+
+    `BridgeConfig` n'a jamais eu d'attribut `reel`. Les deux gardes de
+    production testaient pourtant `getattr(dest, "reel", False)` : toujours
+    FAUX. Le drapeau `drawdown_arbitre` n'a donc jamais pu partir depuis le
+    04/09 — ce qui explique le 09/09, ou Xavier repond « continue » et le pont
+    refuse quand meme — et le 07/10, six refus du plafond sur l'or n'ont ouvert
+    aucune demande.
+
+    Si quelqu'un rajoute un attribut `reel` a `BridgeConfig`, ce test tombe :
+    la realite d'une destination est une donnee du REGISTRE, pas de la
+    configuration d'un pont.
+    """
+    from backend.services import destinations_registry as reg
+
+    assert not hasattr(_dest("admin_live"), "reel")
+    assert reg.is_real_money("admin_live") is True
+    assert reg.is_real_money("admin_legacy") is False
+
+
+def test_le_predicat_est_fail_closed(monkeypatch):
+    """Sans destination, inconnue, ou registre en panne : NON reel."""
+    from backend.services import mt5_bridge as m
+
+    assert m._est_argent_reel(None) is False
+    assert m._est_argent_reel(_dest("inconnue_du_registre")) is False
+
+    def _boom(*a, **k):
+        raise RuntimeError("registre illisible")
+    from backend.services import destinations_registry as reg
+    monkeypatch.setattr(reg, "is_real_money", _boom)
+    assert m._est_argent_reel(_dest("admin_live")) is False

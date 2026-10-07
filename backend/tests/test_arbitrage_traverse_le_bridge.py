@@ -73,9 +73,24 @@ def _setup():
         confidence_score=52.2)
 
 
-def _dest(destination_id="admin_live", reel=True):
-    return SimpleNamespace(destination_id=destination_id, reel=reel,
-                           symbol_map=None)
+def _dest(destination_id="admin_live"):
+    """⛔ Un VRAI `BridgeConfig`, et c'est le coeur du defaut du 2026-10-07.
+
+    L'ancienne version de cette aide fabriquait un `SimpleNamespace` portant un
+    attribut `reel=True` — que `BridgeConfig` **ne possede pas**. Les deux
+    gardes de production testaient `getattr(dest, "reel", False)`, donc
+    toujours FAUX : le drapeau n'a jamais pu partir depuis le 04/09, et c'est
+    ce qui a annule la reponse de Xavier le 09/09. Le test passait parce qu'il
+    affirmait sur un objet factice au lieu du vrai.
+
+    La realite d'une destination se lit dans le REGISTRE, pas sur un attribut.
+    """
+    from backend.services.bridge_destinations import BridgeConfig
+    return BridgeConfig(
+        destination_id=destination_id, user_id=None,
+        bridge_url="http://pont:8788", bridge_api_key="cle",
+        min_confidence=50.0, allowed_asset_classes=frozenset({"metal"}),
+        auto_exec_enabled=True)
 
 
 def _payload(dest):
@@ -157,7 +172,7 @@ def test_aucun_drapeau_sur_un_compte_DEMO(base):
     mensonge, et brouillerait la lecture des logs du bridge."""
     t, a, chemin = base
     _perte(chemin, -500.00, 1001, destination="admin_legacy")
-    assert "drawdown_arbitre" not in _payload(_dest("admin_legacy", reel=False))
+    assert "drawdown_arbitre" not in _payload(_dest("admin_legacy"))
 
 
 def test_une_lecture_impossible_ne_joint_AUCUN_drapeau(base, monkeypatch):
