@@ -3007,8 +3007,14 @@ non apparié mesure le coût, pas la direction.
 
 ### Les coûts, comptés deux fois quand il y a deux jambes
 
-Le spread s'applique à **chaque** entrée et **chaque** sortie. Le contre-fil en
-porte donc deux de plus que le bras A.
+Le laboratoire facture **un spread par trade** — c'est la bonne convention : un
+aller-retour, c'est acheter à l'`ask` et vendre au `bid`, donc **un** spread.
+Le contre-fil est deux trades : il porte donc **UN** spread de plus que le
+bras A, pas deux.
+
+⚠️ Rectifié le 2026-10-08 avant la première mesure : j'avais écrit « deux de
+plus », ce qui chargeait l'idée de Xavier d'un coût qu'elle n'a pas. Se tromper
+contre la chose qu'on teste n'est pas plus honnête que se tromper pour elle.
 
 ⚠️ Le spread du laboratoire est celui d'un INSTANT (0,50 $ relevé contre 0,20 $
 chez le courtier). Le verdict est donc exigé **aux deux valeurs** : `0,20` et
