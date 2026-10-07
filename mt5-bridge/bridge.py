@@ -544,6 +544,62 @@ _start_of_day_balance: float | None = None
 _start_of_day_date: date | None = None
 
 
+# ⛔ LE SOLDE D'OUVERTURE DOIT SURVIVRE A UN REDEMARRAGE (2026-10-07).
+#
+# Mesure, a 12h00 UTC. Juste avant un redeploiement, ce pont refusait les
+# ordres du compte REEL sur son propre plafond :
+#
+#     "Daily drawdown reached: loss=19.77 >= limit=17.87 (3.0% of 595.81)"
+#
+# Apres le redemarrage, le meme /health publiait :
+#
+#     daily_loss 1.49   daily_loss_limit 17.31   (3.0% of 576.95)
+#
+# Les 19,77 EUR perdus dans la journee avaient disparu de sa vue : la variable
+# ne vivait qu'en MEMOIRE, donc `_start_of_day_date != today` au demarrage et le
+# pont prenait le solde du MOMENT comme solde d'ouverture. Le plafond
+# journalier du compte reel etait desarme jusqu'a minuit — et il l'etait a
+# CHAQUE redemarrage, silencieusement, depuis toujours.
+#
+# > Un garde-fou qu'un redemarrage remet a zero n'est pas un garde-fou
+# > journalier : c'est un garde-fou depuis le dernier redemarrage.
+#
+# 🔑 Relu SEULEMENT si sa date est celle du jour : un solde de la veille ne doit
+# jamais ressusciter. Le filet anti-derive de 2026-07-31 reste en place au-dessus
+# et son resync est persiste lui aussi, sinon il se rejouerait a vide.
+_FICHIER_SOLDE_JOUR = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "solde_ouverture.json")
+
+
+def _lire_solde_du_jour(aujourdhui) -> float | None:
+    """Le solde d'ouverture deja etabli AUJOURD'HUI, ou ``None``.
+
+    ⚠️ Best-effort : fichier absent, illisible, corrompu ou d'un autre jour
+    rendent ``None``, donc le comportement d'avant. Ce chemin est celui d'un
+    ordre sur l'argent reel — il ne peut pas lever.
+    """
+    try:
+        with open(_FICHIER_SOLDE_JOUR, "r", encoding="utf-8") as f:
+            donnees = json.load(f)
+        if donnees.get("date") != aujourdhui.isoformat():
+            return None
+        solde = float(donnees["balance"])
+        return solde if solde > 0 else None
+    except Exception:  # noqa: BLE001 — voir docstring
+        return None
+
+
+def _ecrire_solde_du_jour(aujourdhui, solde: float) -> None:
+    """Persiste le solde d'ouverture. Ne leve JAMAIS, meme disque plein."""
+    try:
+        with open(_FICHIER_SOLDE_JOUR, "w", encoding="utf-8") as f:
+            json.dump({"date": aujourdhui.isoformat(),
+                       "balance": round(float(solde), 2)}, f)
+    except Exception as e:  # noqa: BLE001 — voir docstring
+        logger.warning(f"solde d'ouverture non persiste ({e}) — un redemarrage "
+                       "aujourd'hui repartirait du solde du moment")
+
+
 def _refresh_start_of_day() -> None:
     """Relit la balance au début de chaque jour trading.
 
@@ -551,6 +607,9 @@ def _refresh_start_of_day() -> None:
     balance actuelle d'un facteur > 1.5x (dans un sens ou l'autre), resync
     immédiat. Couvre les retraits/dépôts entre les redémarrages du bridge, ou
     les états stale d'anciennes sessions où la balance était très différente.
+
+    Ajout 2026-10-07 : le solde du jour est PERSISTÉ, donc un redémarrage ne
+    l'efface plus — voir le bloc au-dessus.
     """
     global _start_of_day_balance, _start_of_day_date
     today = date.today()
@@ -559,8 +618,19 @@ def _refresh_start_of_day() -> None:
         return
     # Refresh normal au changement de jour UTC
     if _start_of_day_date != today:
+        persiste = _lire_solde_du_jour(today)
+        if persiste is not None:
+            _start_of_day_balance = persiste
+            _start_of_day_date = today
+            logger.info(
+                f"Start-of-day balance = {_start_of_day_balance:.2f} "
+                f"RELU du jour en cours (date={today.isoformat()}, "
+                f"solde actuel {info.balance:.2f})"
+            )
+            return
         _start_of_day_balance = info.balance
         _start_of_day_date = today
+        _ecrire_solde_du_jour(today, _start_of_day_balance)
         logger.info(
             f"Start-of-day balance = {_start_of_day_balance:.2f} "
             f"(date={today.isoformat()})"
@@ -576,6 +646,7 @@ def _refresh_start_of_day() -> None:
                 f"ratio={ratio:.2f} - resync"
             )
             _start_of_day_balance = info.balance
+            _ecrire_solde_du_jour(today, _start_of_day_balance)
 
 
 def _flottant_exclu(positions) -> tuple[float, list[int]]:
