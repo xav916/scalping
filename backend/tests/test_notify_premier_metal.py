@@ -581,3 +581,76 @@ def test_une_VRAIE_panne_reseau_rend_bien_False(s, monkeypatch):
     monkeypatch.delenv("DRY_RUN", raising=False)
 
     assert s._notifier("T", "b", dedup="k") is False
+
+
+# ── Le digest ne doit pas AFFIRMER plus large que ce qu'il mesure ──────────
+#
+# ⛔ LE 4e DÉFAUT DU 2026-10-07, révélé le soir même. À 19h30 UTC la sonde a
+# envoyé « Aucun ordre or ni argent n'est parti depuis 24 h » — alors que
+# QUATRE étaient partis l'après-midi (ids 4922, 4926, 4928, 4929).
+#
+# Elle affirmait un fait sur 24 HEURES en ne testant qu'une condition de CE
+# PASSAGE : `quelque_chose_est_parti` ne vaut que pour les lignes neuves lues
+# à l'instant. Les 8 rejeux le masquaient — ils gardaient le drapeau à vrai à
+# chaque passage. Avancer le curseur à la main a levé le masque.
+
+def test_un_depart_ANNONCE_est_retenu_dans_l_etat(s, monkeypatch):
+    etat = {"curseur:admin_legacy": 5, "curseur:admin_live": 5}
+    ecrits = _armer3(s, monkeypatch, etat, [_ligne(id=9)], issue=True)
+    assert s.main() == 0
+    assert "dernier_depart_metal" in ecrits, (
+        "sans cette date, le digest ne sait que ce que CE passage a vu")
+
+
+def test_le_digest_SE_TAIT_si_un_metal_est_parti_dans_la_fenetre(s,
+                                                                 monkeypatch):
+    """🔑 L'INVARIANT : ne pas dire « rien depuis 24 h » quand il y a eu
+    quelque chose dans ces 24 h, même si CE passage ne voit rien de neuf."""
+    recent = (datetime.now(timezone.utc) - timedelta(hours=5)).isoformat()
+    etat = {"curseur:admin_legacy": 5, "curseur:admin_live": 5,
+            "dernier_depart_metal": recent,
+            # il y a plus de 24 h qu'on n'a pas fait de digest : l'ancienne
+            # version aurait donc parle
+            "dernier_silence": (datetime.now(timezone.utc)
+                                - timedelta(hours=30)).isoformat()}
+    envois = []
+    ecrits = _armer3(s, monkeypatch, etat, [], issue=True)
+    monkeypatch.setattr(
+        s, "_notifier",
+        lambda t, c, dedup, destination_id=None: envois.append(t) or True)
+    assert s.main() == 0
+    assert envois == [], f"le digest a parle alors qu'un metal est parti : {envois}"
+    # ⚠️ `nouveau` est une COPIE de l'etat : la cle est REPORTEE, pas reecrite.
+    # Exiger son absence testait le mauvais invariant — ce qui compte est
+    # qu'elle n'ait pas AVANCE.
+    assert ecrits["dernier_silence"] == etat["dernier_silence"]
+
+
+def test_le_digest_PARLE_si_vraiment_rien_depuis_la_fenetre(s, monkeypatch):
+    """⚠️ Ne pas rendre la sonde muette : son silence doit rester un signal."""
+    vieux = (datetime.now(timezone.utc) - timedelta(hours=40)).isoformat()
+    etat = {"curseur:admin_legacy": 5, "curseur:admin_live": 5,
+            "dernier_depart_metal": vieux,
+            "dernier_silence": (datetime.now(timezone.utc)
+                                - timedelta(hours=30)).isoformat()}
+    envois = []
+    ecrits = _armer3(s, monkeypatch, etat, [], issue=True)
+    monkeypatch.setattr(
+        s, "_notifier",
+        lambda t, c, dedup, destination_id=None: envois.append(t) or True)
+    assert s.main() == 0
+    assert len(envois) == 1 and "aucun ordre metal" in envois[0].lower()
+    assert ecrits["dernier_silence"] != etat["dernier_silence"], (
+        "le digest a parle sans noter qu'il l'avait fait : il se repetera")
+
+
+def test_jamais_vu_de_depart_le_digest_parle_quand_meme(s, monkeypatch):
+    """Au tout debut, aucun depart connu : le silence est legitime."""
+    etat = {"curseur:admin_legacy": 5, "curseur:admin_live": 5}
+    envois = []
+    _armer3(s, monkeypatch, etat, [], issue=True)
+    monkeypatch.setattr(
+        s, "_notifier",
+        lambda t, c, dedup, destination_id=None: envois.append(t) or True)
+    assert s.main() == 0
+    assert len(envois) == 1

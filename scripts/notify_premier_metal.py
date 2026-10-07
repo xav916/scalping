@@ -572,6 +572,26 @@ def main() -> int:
     heures = max(1, SILENCE_SEC // 3600)
     if quelque_chose_est_parti:
         print("silence : sans objet, quelque chose est parti")
+        # 🔑 On RETIENT la date du dernier depart. Sans elle, le digest ne
+        # savait que ce que CE passage avait vu.
+        nouveau["dernier_depart_metal"] = maintenant.isoformat()
+    elif not doit_parler_du_silence(etat.get("dernier_depart_metal"),
+                                    maintenant, SILENCE_SEC):
+        # ⛔ LE 4e DEFAUT DU 2026-10-07, revele le soir meme.
+        #
+        # A 19h30 UTC la sonde a envoye « Aucun ordre or ni argent n'est parti
+        # depuis 24 h » — alors que QUATRE etaient partis l'apres-midi meme
+        # (ids 4922, 4926, 4928, 4929). Elle affirmait un fait sur 24 HEURES
+        # en ne testant qu'une condition de CE PASSAGE : `quelque_chose_est_
+        # parti` ne vaut que pour les lignes neuves lues a l'instant.
+        #
+        # Les 8 rejeux le masquaient : ils gardaient le drapeau a vrai a chaque
+        # passage. Avancer le curseur a la main a leve le masque.
+        #
+        # > Un message ne doit jamais affirmer plus large que ce qu'il mesure.
+        reste = etat.get("dernier_depart_metal")
+        print(f"silence : TU — un metal est parti a {reste}, il est faux de "
+              f"dire que rien n'est parti depuis {heures} h")
     elif doit_parler_du_silence(etat.get("dernier_silence"), maintenant,
                                 SILENCE_SEC):
         refus, horizons = _refus_metaux(heures)
