@@ -190,4 +190,46 @@ echo "=== service status ==="
 sudo systemctl status scalping --no-pager | head -15
 echo "=== container status ==="
 sudo docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
+
+# ─── L INTERRUPTEUR D EXECUTION, VERIFIE A CHAQUE DEPLOIEMENT ────────────
+#
+# ⛔ POURQUOI CE BLOC EXISTE. Consigne de Xavier le 2026-10-08 : « verifie
+# l interrupteur apres chaque deploiement ». Le 07/10 a 22h14 UTC un
+# deploiement a change l empreinte du code ; REM-002 a desarme l execution,
+# comme il doit. Personne ne l a vu. Resultat : 456 refus
+# execution_globale_fermee sur l or, SIX HEURES de marche sans un ordre, et
+# c est Xavier qui l a remarque en regardant ses bougies.
+#
+# 🔑 Le garde-fou a parfaitement fonctionne. Ce qui a manque, c est de le LIRE.
+# Une consigne qui depend de la memoire de quelqu un est plus faible qu une
+# consigne que l outil applique — d ou ce bloc, et non une note.
+echo
+echo "=== REM-002 : interrupteur d execution ==="
+sleep 8
+ETAT=$(sudo docker exec scalping-radar python -c "
+import json
+from backend.services import global_execution_switch as sw
+e = sw.status()
+print(json.dumps({k: e.get(k) for k in (
+    'decision', 'reason_code', 'live_execution', 'fingerprint_running',
+    'fingerprint_armed', 'configuration_drift')}))
+" 2>/dev/null || echo '{}')
+echo "  $ETAT"
+if echo "$ETAT" | grep -q '"decision": "ALLOW"'; then
+    echo "  OK : execution ARMEE sur l empreinte courante, rien a faire"
+else
+    echo
+    echo "  ####################################################"
+    echo "  #  L EXECUTION EST DESARMEE - AUCUN ORDRE NE PARTIRA  #"
+    echo "  ####################################################"
+    echo
+    echo "  Comportement ATTENDU apres un changement de code : REM-002 exige"
+    echo "  qu un humain rearme. Mais il faut le FAIRE, sinon le marche tourne"
+    echo "  sans vous - six heures perdues le 2026-10-08 faute de l avoir lu."
+    echo
+    echo "  Rearmement (decision de Xavier, pas la votre) :"
+    echo "    docker exec scalping-radar python -c \"from backend.services import global_execution_switch as s; print(s.arm('<motif>', by='Xavier (delegation explicite)'))\""
+    echo
+fi
+
 REMOTE
