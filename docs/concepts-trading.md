@@ -3872,3 +3872,73 @@ coût et non la direction (`97e3c39`).
 Elle porte sur les bougies du courtier, pas sur les ~86 fermetures
 automatiques mensuelles du compte réel. Un verdict positif dirait que la règle
 tient **sur l'historique**, pas qu'elle rapporte sur l'argent de Xavier.
+
+---
+
+## CORRECTION DE LA DÉCLARATION `b624909` — le seuil est vers le STOP (2026-10-08)
+
+> Xavier : *« Une erreur de ma part : quand le TP est à 2 euros on sort
+> normalement. Je voulais dire à 2 euros de l'entrée vers le SL. »*
+
+⛔ **La déclaration `b624909` mesurait la mauvaise règle** et son banc a été
+arrêté avant d'avoir produit un seul chiffre — donc aucun résultat n'a pu
+influencer cette correction. La règle réelle :
+
+> Quand un trade d'or est en **perte de 2 €** (2,24 $ vers son stop), ouvrir
+> une position de **sens opposé**, même stop (14,43 $) et même cible (2,24 $).
+
+### 🔑 CE QUI CHANGE, ET CE N'EST PAS UN DÉTAIL
+
+**1. Le premier trade reste OUVERT.** Contrairement à la version « au TP », ici
+rien ne se ferme : la règle crée **deux positions simultanées**. Elle exige donc
+le plafond de l'or à **2** (il vaut 1), et de la marge :
+
+```
+marge     2 × 184,27 = 368,54 €   contre un solde de 644,93 €   -> possible
+risque    2 ×  12,88 =  25,78 €   contre un plafond de 59,68 €   -> possible
+```
+
+**2. À lots égaux et sens opposés, l'exposition nette est ZÉRO.** La paire n'est
+plus un pari directionnel : c'est une structure dont les deux jambes ont des
+sorties différentes (achat : cible +2,24, stop −14,43 ; vente ouverte 2,24 plus
+bas : cible −4,48, stop +12,19). Ce qu'elle rend ne se devine pas — il faut
+le simuler.
+
+**3. 🔑 Son seuil est SOUS tout ce qui a été testé.**
+
+```
+theta de Xavier  = 2,24 / 14,43 = 0,155
+thetas rejetes le 2026-10-08 (3302fa5) : 0,30   0,50   0,70
+```
+
+⇒ **48 % sous le plus bas θ mesuré**, et sans la condition de durée (30 à
+240 min) qui conditionnait ce banc-là. Le rejet du contre-fil **ne couvre donc
+pas** cette cellule : l'argument *« collé au stop, le mouvement adverse a déjà
+eu lieu »* perd sa force à 15,5 % du stop. C'est une hypothèse neuve.
+
+### Les bras, sur l'ÉPISODE COMPLET
+
+🔑 On ne mesure pas le contre-fil seul mais **le total des deux jambes** : la
+question est *« est-ce que l'ajouter améliore le résultat ? »*, pas *« le
+contre-fil gagne-t-il tout seul ? »*.
+
+| bras | l'épisode |
+|---|---|
+| **A** | le trade seul — le comportement actuel |
+| **B** | le trade **+** le contre-fil à −2 € : la règle de Xavier |
+| **C** | le trade **+** un contre-fil à un instant **TIRÉ AU HASARD**, 200 tirages |
+| **D** | le trade **+** un renfort de **MÊME sens** à −2 € (moyenne à la baisse) |
+
+### Prédictions, posées d'avance
+
+- **P1** `B − A` : intervalle 95 % strictement positif (`t ≥ 2,0`). ⛔ Sinon
+  ajouter la jambe ne sert à rien.
+- **P2** `B − C` : strictement positif, **0 tirage sur 200** ne doit battre
+  `B`. ⛔ Si `B ≤ C`, **rejet** — comme pour le contre-fil au stop.
+- **P3** `B − D` : strictement positif. ⛔ Si l'intervalle contient zéro, le
+  **sens** de la jambe ajoutée ne porte rien, et c'est le fait d'ajouter une
+  position qu'on mesure.
+
+> ⛔ **Les trois, aux DEUX spreads.** Et `A` est ici un bras exigeant : il est
+> déjà mesuré à **−0,70 €/trade**. Battre un bras perdant ne suffit pas — il
+> faudra regarder si `B` est positif en euros, pas seulement supérieur à `A`.
