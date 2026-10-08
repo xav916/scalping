@@ -22,7 +22,7 @@ import secrets
 import sqlite3
 import threading
 import time
-from datetime import datetime, timezone, date
+from datetime import datetime, timezone, date, timedelta
 from functools import wraps
 from pathlib import Path
 
@@ -139,6 +139,25 @@ except (json.JSONDecodeError, TypeError):
 
 DAILY_LOSS_PCT_PAIRE_DEFAUT = float(
     os.getenv("DAILY_LOSS_PCT_PAIRE_DEFAUT", "3.0"))
+
+# ─── Decoupage des plages de `/rates` ────────────────────────────────────
+#
+# ⚠️ LUS ICI, loin de `/rates` qui les utilise, et c'est VOULU : une dizaine de
+# fichiers de tests extraient des tranches de ce source et les executent SANS
+# `os`. Pose pres de la fonction, un `os.getenv` cassait trois tests sur du
+# code juste — meme piege que `POCHE_OR_INCLUT_ARGENT`, deja paye ici.
+#
+# Au-dela de ce nombre de barres, le terminal refuse l'appel. Mesure du
+# 2026-10-08 sur le pont REEL : 180 j de M5 (51 840 barres) passent, 365 j
+# (105 120) rendent `(-2, 'Terminal: Invalid params')` — et le MEME an decoupe
+# en tranches de 60 j passe SIX FOIS SUR SIX. On reste tres en dessous.
+BARRES_PAR_APPEL = int(os.getenv("RATES_BARRES_PAR_APPEL", "5000"))
+
+# ⛔ Garde-fou de boucle : dix ans de M1 feraient 1 820 tranches a 5 000
+# barres. Au-dela on elargit le pas plutot que de fabriquer des milliers
+# d'appels, et `suite_from` dit ou reprendre. Un decoupage non borne
+# emporterait le pont — donc le chemin d'un ordre reel.
+MAX_TRANCHES = int(os.getenv("RATES_MAX_TRANCHES", "2000"))
 # Tickets dont le flottant NE COMPTE PAS dans le drawdown journalier
 # (2026-08-07). Une position tenue volontairement hors du système — sans stop,
 # conservée jusqu'à son objectif — confisque sinon le garde-fou de TOUTES les
@@ -2258,6 +2277,56 @@ _TIMEFRAMES = {
 MAX_BOUGIES = 5000
 
 
+# Secondes couvertes par une barre de chaque horizon. Sert a DIMENSIONNER le
+# decoupage d'une plage, pas a interpreter les donnees.
+_SECONDES_PAR_BARRE = {
+    "M1": 60, "M5": 300, "M15": 900, "M30": 1800,
+    "H1": 3600, "H4": 14400, "D1": 86400,
+}
+
+
+def _tranches_de_plage(debut, fin, tf_nom: str, barres_max: int) -> list[tuple]:
+    """Decoupe `[debut, fin)` en tranches qui tiennent chacune dans un appel.
+
+    🔑 POURQUOI. Une plage large ne depasse pas une limite de DONNEES, elle
+    depasse ce que le terminal accepte de servir d'un coup. Decouper ne perd
+    rien : les tranches sont bout a bout, sans trou ni recouvrement, et dans
+    l'ordre du temps.
+
+    ⛔ Un horizon inconnu retombe sur la MINUTE, la granularite la plus fine,
+    donc le decoupage le plus prudent. Se tromper doit decouper PLUS, jamais
+    moins — l'inverse rendrait un appel refuse au lieu de donnees.
+
+    ⚠️ Un `barres_max` nul ou negatif ferait une boucle infinie : on le ramene
+    a 1 barre, et `MAX_TRANCHES` borne le tout de toute facon.
+    """
+    if fin <= debut:
+        return []
+    secondes = _SECONDES_PAR_BARRE.get((tf_nom or "").upper(), 60)
+    try:
+        n_barres = int(barres_max)
+    except (TypeError, ValueError):
+        n_barres = 1
+    n_barres = max(1, n_barres)
+    pas = timedelta(seconds=secondes * n_barres)
+
+    # Si la plage demande plus de tranches qu'on n'en sert, on elargit le pas
+    # plutot que d'en fabriquer des milliers : la troncature se dira dans
+    # `suite_from`, elle ne se cachera pas.
+    besoin = (fin - debut) / pas
+    if besoin > MAX_TRANCHES:
+        pas = (fin - debut) / MAX_TRANCHES
+
+    out, a = [], debut
+    while a < fin and len(out) < MAX_TRANCHES:
+        b = min(a + pas, fin)
+        out.append((a, b))
+        a = b
+    if out and out[-1][1] != fin:
+        out[-1] = (out[-1][0], fin)
+    return out
+
+
 def _decalage_serveur_sec() -> float | None:
     """Ecart entre l'heure SERVEUR du courtier et l'heure UTC reelle.
 
@@ -2416,6 +2485,18 @@ def rates():
         fin = datetime.fromisoformat(request.args["to"].replace("Z", "+00:00"))
     except (KeyError, ValueError):
         return jsonify({"error": "from et to requis, en ISO 8601"}), 400
+    # ⛔ UNE borne NAIVE et l'autre AWARE font LEVER la comparaison ci-dessous,
+    # et le pont rendait 500. Decouvert le 2026-10-08 en rebouclant le
+    # `suite_from` de la pagination : il est aware (`+00:00`) alors que les
+    # appelants ecrivent souvent `to` sans fuseau. Le defaut etait LATENT —
+    # n'importe quel appelant melangeant les deux formes le declenchait.
+    #
+    # Les bornes sont documentees UTC : une borne sans fuseau est donc de l'UTC
+    # qui ne se declare pas, et on le declare pour elle.
+    if debut.tzinfo is None:
+        debut = debut.replace(tzinfo=timezone.utc)
+    if fin.tzinfo is None:
+        fin = fin.replace(tzinfo=timezone.utc)
     if fin <= debut:
         return jsonify({"error": "to doit suivre from"}), 400
 
@@ -2431,11 +2512,65 @@ def rates():
     # copy_rates_range attend des datetime interpretes en heure serveur.
     d_srv = datetime.fromtimestamp(debut.timestamp() + decalage, tz=timezone.utc)
     f_srv = datetime.fromtimestamp(fin.timestamp() + decalage, tz=timezone.utc)
-    brut = mt5.copy_rates_range(symbole, tf, d_srv, f_srv)
-    if brut is None:
-        return jsonify({"error": f"copy_rates_range a echoue: {mt5.last_error()}"}), 502
+    # ─── Decoupage de la plage (2026-10-08) ──────────────────────────────
+    #
+    # ⛔ Mesure du jour sur le pont REEL : 180 j de M5 (51 840 barres) passent,
+    # 365 j (105 120) rendent `(-2, 'Terminal: Invalid params')`. Le MEME an
+    # decoupe en tranches de 60 j passe SIX FOIS SUR SIX. Ce n'est donc pas une
+    # plage impossible, c'est une plage trop large pour UN appel.
+    #
+    # ⚠️ Un seul appel qui echoue rendait 502 et rien d'autre : l'appelant
+    # devait deviner qu'il fallait decouper, et a quelle largeur.
+    tranches = _tranches_de_plage(debut, fin, tf_nom, BARRES_PAR_APPEL)
+    brut: list = []
+    tranches_ratees = 0
+    derniere_servie = None
+    for a, b in tranches:
+        a_srv = datetime.fromtimestamp(a.timestamp() + decalage, tz=timezone.utc)
+        b_srv = datetime.fromtimestamp(b.timestamp() + decalage, tz=timezone.utc)
+        part = mt5.copy_rates_range(symbole, tf, a_srv, b_srv)
+        if part is None:
+            # ⛔ Une tranche ratee ne doit PAS annuler les autres — mais elle
+            # doit se compter, sinon on servirait un trou en silence.
+            tranches_ratees += 1
+            logger.warning("rates: tranche %s -> %s refusee par le terminal (%s)",
+                           a.isoformat(), b.isoformat(), mt5.last_error())
+            continue
+        brut.extend(part)
+        derniere_servie = b
+        if len(brut) >= MAX_BOUGIES:
+            break
 
-    bougies = [_bougie_json(b, decalage) for b in brut[:MAX_BOUGIES]]
+    if not brut and tranches_ratees:
+        return jsonify({
+            "error": f"copy_rates_range a echoue: {mt5.last_error()}",
+            "tranches": len(tranches), "tranches_ratees": tranches_ratees,
+        }), 502
+
+    # Dedoublonnage : deux tranches bout a bout peuvent rendre la bougie de
+    # la frontiere deux fois. On garde l'ordre du temps.
+    vus, propres = set(), []
+    for b in sorted(brut, key=lambda x: x["time"]):
+        if b["time"] in vus:
+            continue
+        vus.add(b["time"])
+        propres.append(b)
+
+    tronque = len(propres) > MAX_BOUGIES
+    gardees = propres[:MAX_BOUGIES]
+    bougies = [_bougie_json(b, decalage) for b in gardees]
+
+    # 🔑 OU REPRENDRE. La troncature garde les plus ANCIENNES — c'est le bon
+    # sens pour avancer dans le temps — mais sans ce champ l'appelant devait
+    # DEVINER a quelle date relancer. Le laboratoire s'en sortait en paginant
+    # lui-meme par 10 jours ; rien n'empechait l'appelant suivant de lire
+    # 24 jours en croyant en lire 180.
+    suite = None
+    if tronque and gardees:
+        suite = datetime.fromtimestamp(
+            float(gardees[-1]["time"]) - decalage, tz=timezone.utc).isoformat()
+    elif derniere_servie is not None and derniere_servie < fin:
+        suite = derniere_servie.isoformat()
 
     return jsonify({
         "pair": pair,
@@ -2444,7 +2579,13 @@ def rates():
         "decalage_serveur_sec": decalage,
         # Necessaire pour convertir le spread (en points) en unites de prix.
         "point": float(getattr(mt5.symbol_info(symbole), "point", 0) or 0),
-        "tronque": len(brut) > MAX_BOUGIES,
+        "tronque": tronque,
+        # Combien d'appels au terminal, et combien ont ete refuses : un trou
+        # dans les donnees doit se LIRE, pas se deviner.
+        "tranches": len(tranches),
+        "tranches_ratees": tranches_ratees,
+        # `None` quand la plage est servie en entier.
+        "suite_from": suite,
         "n": len(bougies),
         "bougies": bougies,
     })
