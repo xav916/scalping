@@ -977,7 +977,15 @@ def _est_un_achat(motif) -> bool:
 # plafonne le metal a 0,01 lot. La distance de prix en dollars vaut donc
 # exactement `euros x EUR/USD`. Si l'un de ces deux faits change, ce calcul est
 # faux — et c'est pour ca qu'ils sont ecrits ici.
-XAU_SL_FIXE_EUR = float(os.getenv("XAU_SL_FIXE_EUR", "10"))
+# ⛔ DEFAUT 0 = INERTE, et ce n'est pas cosmetique. Cette constante
+# etait MORTE depuis le 2026-10-05, quand `XAU_SL_PCT` a remplace le stop
+# fixe de 10 EUR -- plus personne ne la lisait. En la recablant le
+# 2026-10-08 (demande de Xavier : un stop a 20 EUR), son defaut de "10"
+# aurait arme un stop de DIX euros au prochain deploiement : 11,20 $, sous
+# le plancher de viabilite de 13,74 $, donc la porte des frais refusait
+# tout et l'or redevenait MUET -- les trois jours de silence d'octobre, a
+# l'identique. Attrape par `test_le_defaut_du_SOURCE_est_INERTE`.
+XAU_SL_FIXE_EUR = float(os.getenv("XAU_SL_FIXE_EUR", "0"))
 
 
 def _eur_usd_courant() -> float | None:
@@ -1139,20 +1147,79 @@ def _distance_tp_or(prix: float | None) -> float | None:
     return XAU_TP_FIXE_EUR * taux
 
 
-def _distance_sl_or(prix: float | None) -> float | None:
-    """La distance de stop de l'or : `XAU_SL_PCT` % du prix d'entree.
+# Stop de l'or FIXE EN EUROS — demande par Xavier le 2026-10-08 :
+# « je veux que le stop loss soit a 20 euros et pas a 12 ».
+#
+# ⛔ CE QUE LA MESURE DIT, et qui n'a pas change. A 20 EUR de stop pour 2 EUR
+# de cible, le rapport vaut 0,1000 R et le seuil de rentabilite monte a
+# 90,91 %. Le banc d'un an (910 entrees, ordre respecte) donne 86,2 % a cette
+# geometrie exacte : 4,7 points manquants, z = -4,94, soit -0,80 EUR/trade
+# contre -0,70 au stop de 12,88. Elargir le stop AGGRAVE la configuration, et
+# plus nettement qu'avant.
+#
+# ⚠️ ET LE PIEGE DU 05/10, qu'on reintroduit sciemment. Un stop fixe en euros
+# se RESSERRE en proportion quand l'or monte, et referme la porte des frais
+# tout seul : l'or est reste MUET TROIS JOURS pour cette raison, avec un stop
+# fixe de 10 EUR. C'est pourquoi `XAU_SL_PCT` l'avait remplace.
+#
+# 🔑 Mais la marge n'est pas la meme. La porte des frais exige
+# `cout_r <= 0,30 x edge_r` ; au plancher de viabilite le stop doit valoir au
+# moins `prix / 300`. A 20 EUR (22,39 $) cela tient jusqu'a un or a **6 717 $**,
+# contre 4 123 $ aujourd'hui. Le reglage est donc sur de la marge — tant qu'on
+# le SURVEILLE, d'ou le detecteur ci-dessous.
+#
+# ⛔ 0 = INERTE : sans ce reglage, c'est `XAU_SL_PCT` qui gouverne, inchange.
+# ⛔ La constante est declaree PLUS HAUT (une seule fois) : la
+# redeclarer ici creerait un doublon dont Python garderait la DERNIERE
+# valeur, ce qui rendrait le defaut illisible.
 
-    ⚠️ `None` quand le reglage est nul ou le prix illisible — et l'appelant
-    RETOMBE alors sur le stop ATR. Poser un stop de taille inconnue sur
-    l'argent reel serait pire que de garder l'ancien.
+# Part du plancher de viabilite en dessous de laquelle on ALERTE, avant que la
+# porte des frais ne refuse. 1,20 = on parle quand il reste moins de 20 % de
+# marge.
+_MARGE_ALERTE_STOP = 1.20
+
+
+def _distance_sl_or(prix: float | None) -> float | None:
+    """La distance de stop de l'or, en prix.
+
+    `XAU_SL_FIXE_EUR` d'abord (converti au taux EUR/USD vivant), sinon
+    `XAU_SL_PCT` % du prix d'entree.
+
+    ⚠️ `None` quand aucun des deux reglages n'est pose ou que le prix est
+    illisible — et l'appelant RETOMBE alors sur le stop ATR. Poser un stop de
+    taille inconnue sur l'argent reel serait pire que de garder l'ancien.
     """
-    if XAU_SL_PCT <= 0:
-        return None
     try:
         p = float(prix)
     except (TypeError, ValueError):
         return None
     if p <= 0:
+        return None
+
+    if XAU_SL_FIXE_EUR > 0:
+        taux = _eur_usd_courant()
+        if taux and taux > 0:
+            distance = XAU_SL_FIXE_EUR * taux
+            # 🔑 LE DETECTEUR, et non une deuxieme porte des frais. Dupliquer
+            # la porte ici en ferait DEUX a tenir d'accord ; on se contente de
+            # PARLER avant qu'elle ne refuse, pour que l'or ne redevienne
+            # jamais muet sans explication comme en octobre 2026.
+            plancher = p / 300.0
+            if distance < plancher * _MARGE_ALERTE_STOP:
+                logger.warning(
+                    "XAU_SL_FIXE_EUR=%.2f donne un stop de %.2f $ pour un "
+                    "plancher de viabilite de %.2f $ (or a %.2f $) : la porte "
+                    "des frais va bientot refuser l'or. Repasser a "
+                    "XAU_SL_PCT ou relever le montant.",
+                    XAU_SL_FIXE_EUR, distance, plancher, p)
+            return distance
+        # ⛔ Taux illisible : on ne DEVINE pas un stop en euros. On retombe sur
+        # le pourcentage, qui ne depend d'aucune conversion.
+        logger.warning(
+            "XAU_SL_FIXE_EUR pose mais taux EUR/USD illisible — repli sur "
+            "XAU_SL_PCT=%.3f %%", XAU_SL_PCT)
+
+    if XAU_SL_PCT <= 0:
         return None
     return p * XAU_SL_PCT / 100.0
 

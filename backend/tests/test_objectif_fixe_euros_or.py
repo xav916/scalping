@@ -33,6 +33,7 @@ que le modèle de coût exige. C'est donc lui qu'on garde.
 """
 from __future__ import annotations
 
+import ast
 import types
 from pathlib import Path
 
@@ -42,16 +43,27 @@ _SRC = Path(__file__).resolve().parents[2] / "backend" / "services" / "pattern_d
 
 
 def _charger(tp_eur: float, taux: float | None = 1.125):
-    """Extrait `_distance_tp_or` du source, avec le réglage voulu."""
+    """Extrait `_distance_tp_or` du source, avec le réglage voulu.
+
+    ⛔ Découpé par `ast`, et non entre deux ancres textuelles. La première
+    version prenait la tranche allant de `def _distance_tp_or(` à
+    `def _distance_sl_or(` — ce qui supposait les deux fonctions
+    **adjacentes**. Le 2026-10-08, l'ajout de `XAU_SL_FIXE_EUR` entre elles a
+    fait tomber six tests d'un coup : la tranche emportait du code étranger.
+    `ast` prend exactement la fonction, quoi qu'on insère autour.
+    """
     src = _SRC.read_text(encoding="utf-8")
-    debut = src.index("def _distance_tp_or(")
-    fin = src.index("def _distance_sl_or(")
+    arbre = ast.parse(src)
+    noeud = next(n for n in arbre.body
+                 if isinstance(n, ast.FunctionDef)
+                 and n.name == "_distance_tp_or")
     mod = types.ModuleType("detecteur_extrait")
     mod.__dict__.update({
         "XAU_TP_FIXE_EUR": tp_eur,
         "_eur_usd_courant": lambda: taux,
     })
-    exec(compile(src[debut:fin], str(_SRC), "exec"), mod.__dict__)
+    exec(compile(ast.get_source_segment(src, noeud), str(_SRC), "exec"),
+         mod.__dict__)
     return mod
 
 
