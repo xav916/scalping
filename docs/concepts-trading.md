@@ -3559,3 +3559,70 @@ Enregistrer, **à partir de maintenant**, ce que la règle aurait pondéré sur 
 trades à venir, et comparer après N trades. Rien n'est armé, rien ne change
 dans les décisions — on observe. C'est le seul test que le choix d'une fenêtre
 ne peut pas biaiser.
+
+---
+
+## OBSERVATION À BLANC du risque ÷2 — déclaration du 2026-10-08
+
+### Pourquoi à blanc, et pas armée
+
+Le verdict `4ba1717` passe ses trois prédictions sur 324 622 trades, **mais en
+échantillon seulement** : aucun hors échantillon n'avait été déclaré pour cette
+population. Et l'effet vaut **~0,10 € par trade**, sur une population qui n'est
+pas celle du compte réel (`A` y est positif, le compte réel perd).
+
+⇒ Armer maintenant serait disproportionné. Mais **laisser la question ouverte
+sans rien mesurer** serait pire : on y reviendrait dans six mois avec le même
+chiffre en échantillon.
+
+🔑 **Le seul hors échantillon qu'un choix de fenêtre ne peut pas biaiser est
+celui qui n'existe pas encore.** On enregistre donc, à partir de maintenant, ce
+que la règle **aurait** pondéré — sans que rien ne change dans les décisions.
+
+### Le point de départ, posé MAINTENANT
+
+> **Borne : `2026-10-08T12:00:00Z`.** Seuls les trades dont `emitted_at` est
+> **strictement postérieur** entrent dans l'observation.
+
+⚠️ Les trades **antérieurs** restent lus — il faut bien les résolutions passées
+pour savoir ce qui était connu — mais ils ne sont **jamais comptés** dans le
+résultat.
+
+### Ce qui est enregistré, et rien de plus
+
+Par trade : `pair`, `emitted_at`, `checked_at`, `rr_realized`, et le **poids
+causal** que la règle lui aurait donné (`1` ou `0,5`), calculé comme au banc —
+d'après le dernier trade de la même paire **dont `checked_at < emitted_at`**.
+
+⛔ Le placebo n'est **pas** enregistré : il sera retiré **200 fois à la
+lecture**, comme au banc. Le figer maintenant reviendrait à le tirer une fois,
+et un placebo tiré une fois ne vaut rien.
+
+### ⛔ LE SEUIL DE LECTURE, déclaré pour m'empêcher de regarder trop tôt
+
+> **Aucun verdict avant 5 000 trades accumulés** après la borne.
+
+Un décompte intermédiaire peut être affiché — il n'est **pas** un verdict, et
+ne doit jamais être cité comme tel. Regarder jusqu'à ce que le chiffre plaise
+est exactement ce que cette observation existe pour empêcher.
+
+Au rythme constaté (~2 400 trades/jour toutes paires), le seuil tombe en
+**environ deux jours**.
+
+### Les prédictions, identiques au banc
+
+- **P1** `B−A` : intervalle 95 % strictement positif, lecture **par paire**.
+- **P2** `B−C` : idem, placebo retiré **200 fois**. ⛔ Si `B ≤ C`, **rejet**.
+- **P3** `B−C` positif sur au moins **8** des paires présentes.
+
+⇒ Si les trois passent **hors échantillon**, la règle devient armable et la
+question se posera à Xavier. Si l'une tombe, le résultat en échantillon était du
+bruit, et on le saura **sans avoir risqué un euro**.
+
+### Ce que l'observation ne corrige PAS
+
+La population reste celle du **pipeline** (shadow compris), pas celle du compte
+réel. Un verdict positif hors échantillon dirait que la règle tient sur les
+trades du pipeline — **pas** qu'elle rapporte sur l'argent de Xavier. Ce
+dernier pas demanderait sa propre mesure, sur les ~86 fermetures automatiques
+mensuelles du compte, et il faudrait **des mois** pour l'alimenter.
