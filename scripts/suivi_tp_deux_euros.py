@@ -61,6 +61,7 @@ def main() -> int:
         return 0
 
     armes, hors, fermes, exclus, pnl = 0, [], [], [], 0.0
+    geos = {}
     print("    %-6s %-5s %-22s %-7s %8s %8s  %-10s %9s"
           % ("id", "sens", "motif", "horizon", "stop $", "cible $", "etat", "pnl EUR"))
     for (i, d, ent, sl, tp, slip, mot, hz, st, p, cr, qd) in lignes:
@@ -70,6 +71,11 @@ def main() -> int:
         e = _entree_signal(ent, slip, sl)
         dsl, dtp = abs(sl - e), abs(tp - e)
         arme = 2.0 < dtp < 2.6          # la cible en euros, au taux du jour
+        # 🔑 DEUX GEOMETRIES se succedent, et les melanger dans une seule
+        # moyenne comparerait des trades dont le seuil de rentabilite
+        # differe de 4,35 points (86,56 % contre 90,91 %). On les separe.
+        geo = "stop 20 EUR" if dsl > 18.0 else "stop 12,88 EUR"
+        geos.setdefault(geo, []).append((i, st, float(p or 0), arme))
         armes += arme
         if not arme:
             hors.append((i, dtp, dtp / dsl if dsl else 0))
@@ -96,6 +102,21 @@ def main() -> int:
     if exclus:
         print("    ⛔ %d trade(s) ferme(s) EXCLU(S) du verdict (hors cible) : %s"
               % (len(exclus), ", ".join("#%s %+.2f EUR" % e for e in exclus[:5])))
+    if len(geos) > 1:
+        print("")
+        print("    ⚠️ DEUX GEOMETRIES dans cette fenetre — a NE PAS moyenner")
+        print("       ensemble : leurs seuils de rentabilite diffferent de")
+        print("       4,35 points (86,56 %% contre 90,91 %%).")
+        for nom, lignes in sorted(geos.items()):
+            fer = [x for x in lignes if x[1] == "CLOSED" and x[3]]
+            gag = sum(1 for x in fer if x[2] > 0)
+            tot = sum(x[2] for x in fer)
+            req = 90.91 if "20" in nom else 86.56
+            if fer:
+                print("       %-16s %2d fermes, %d au TP (%.1f %%, requis %.2f %%), "
+                      "%+.2f EUR" % (nom, len(fer), gag, gag*100.0/len(fer), req, tot))
+            else:
+                print("       %-16s aucun ferme" % nom)
     print("")
     print("=== LE REEL CONTRE LA PREDICTION ===")
     if n == 0:
