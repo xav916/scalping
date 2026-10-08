@@ -3503,3 +3503,59 @@ tourné sur **23 paires** alors que la déclaration en annonçait 13. `WTI/USD`
 
 Les trois prédictions restent inchangées. Le premier passage est rapporté avec
 son annulation, **pas effacé**.
+
+### ✅ VERDICT du 2026-10-08 — les trois prédictions passent, avec leurs limites
+
+Règle **causale** (dernier trade *résolu*), population corrigée :
+**324 622 trades sur 18 paires**, `XAU` `WTI` et les actions exclus.
+
+```
+rendement par unite de risque DEPLOYEE
+  A reference  +0,03679
+  B la regle   +0,04471
+  C placebo    +0,03498
+```
+
+| | exigé | obtenu | |
+|---|---|---|---|
+| **P1** `B−A` | IC 95 % > 0, par paire | `[+0,00429 ; +0,01196]` | ✅ |
+| **P2** `B−C` | IC 95 % > 0, par paire | `[+0,00636 ; +0,01373]` | ✅ |
+| **P3** | `B−C` > 0 sur ≥ 8 paires | **18 sur 18** | ✅ |
+
+#### 🔑 Le placebo, tiré 200 fois et non une
+
+`C` ci-dessus n'est **un** tirage. Comparer la règle à un seul coup de hasard ne
+vaut rien : une graine malchanceuse suffit à rendre `B−C` positif pour la
+mauvaise raison. Le placebo a donc été retiré **200 fois** :
+
+```
+placebo : moyenne +0,03706   95 % [+0,03552 ; +0,03888]
+B       : +0,04471
+placebos qui EGALENT ou BATTENT B : 0 sur 200      p = 0,000
+```
+
+⇒ `B` **sort** de la distribution du hasard. Et la moyenne des placebos
+(+0,03706) colle à `A` (+0,03679) : alléger au hasard est bien **neutre**, ce
+qui valide la métrique.
+
+#### ⚠️ CE QUE CE VERDICT NE DIT PAS — quatre limites
+
+1. **Le lookahead avait d'abord gonflé l'effet ×8.** Avec le dernier trade
+   *émis*, `B−A` valait **+0,0613** ; avec le dernier trade *résolu*, **+0,0079**.
+   L'essentiel du premier résultat était du futur lu à l'envers.
+2. **Aucun hors échantillon n'avait été déclaré** pour cette population. Ce
+   résultat est donc **en échantillon seulement**. Un découpage choisi
+   maintenant, après avoir vu le total, serait de la pêche.
+3. **La population n'est pas celle du compte réel.** Ici `A` est **positif**
+   (+0,0368) alors que le compte réel **perd** (algorithme −322,64 € vérifiés
+   sur 30 jours). Ce sont les trades du pipeline, shadow compris, sur 5 mois.
+4. **L'effet est petit** : +0,0079 R par unité de risque déployée. Sur un lot de
+   0,01 risquant ~13 €, cela fait **~0,10 € par trade** — environ 9 €/mois au
+   rythme du compte. Réel, contrôlé, et marginal.
+
+#### Le seul hors échantillon qui ne puisse pas être pêché
+
+Enregistrer, **à partir de maintenant**, ce que la règle aurait pondéré sur les
+trades à venir, et comparer après N trades. Rien n'est armé, rien ne change
+dans les décisions — on observe. C'est le seul test que le choix d'une fenêtre
+ne peut pas biaiser.
