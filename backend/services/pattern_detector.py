@@ -1088,6 +1088,56 @@ def distance_sl_pourcentage(prix, spread=None, pct: float | None = None,
 # un stop uniforme, on passe d'un uniforme en euros a un uniforme en pourcent.
 XAU_SL_PCT = float(os.getenv("XAU_SL_PCT", "0.35"))
 
+# ─── OBJECTIF FIXE EN EUROS SUR L'OR — 2026-10-08, demande de Xavier ─────
+#
+# « Je veux quand meme tester le TP a 2 euros et le SL a moins 12 euros. »
+#
+# ⛔ CE QUE LA MESURE DIT, ET QUI N'A PAS CHANGE. Un an d'or, 910 entrees,
+# ordre respecte (`_issue` teste le stop AVANT l'objectif) :
+#
+#     objectif 0,167 R : 81,9 % au TP, 18,1 % au stop, -0,70 EUR/trade
+#     objectif 1,800 R : 37,9 % au TP, 62,1 % au stop, +0,58 EUR/trade
+#
+# 🔑 Et la GEOMETRIE, avant toute mesure : pour un prix SANS tendance, toucher
+# +2 avant -12 arrive avec probabilite 12/14 = 85,71 % — EXACTEMENT le seuil de
+# rentabilite de cette configuration. Un prix sans tendance rend donc ZERO, le
+# spread part de la vers le bas, et la mesure donne 81,9 %, soit 3,8 points
+# SOUS le prix sans tendance.
+#
+# ⚠️ Le stop n'est PAS mis a 12 EUR, et ce n'est pas un oubli : a 12 EUR
+# (13,50 $) le cout vaut 0,03052 R contre un plafond de 0,0300, donc la porte
+# des frais REFUSERAIT chaque ordre. Le minimum viable est 12,21 EUR au prix du
+# jour, et il MONTE avec le prix de l'or. Le 0,35 % en place vaut 12,81 EUR :
+# c'est le seuil de viabilite plus la marge que le modele de cout exige.
+#
+# ⛔ 0 = INERTE. Rien ne change tant que ce reglage n'est pas pose.
+XAU_TP_FIXE_EUR = float(os.getenv("XAU_TP_FIXE_EUR", "0"))
+
+
+def _distance_tp_or(prix: float | None) -> float | None:
+    """La distance de PRIX qui vaut `XAU_TP_FIXE_EUR` au lot minimum.
+
+    L'or se trade a 0,01 lot, soit UNE once : un dollar de prix vaut un
+    dollar. La distance en prix est donc le montant en euros multiplie par le
+    taux EUR/USD vivant.
+
+    ⚠️ `None` des que le reglage est nul ou le taux illisible — et l'appelant
+    garde alors l'objectif ordinaire. Poser une cible de taille inconnue sur
+    l'argent reel serait pire que de garder la regle en place.
+    """
+    if XAU_TP_FIXE_EUR <= 0:
+        return None
+    taux = _eur_usd_courant()
+    if not taux or taux <= 0:
+        return None
+    try:
+        p = float(prix)
+    except (TypeError, ValueError):
+        return None
+    if p <= 0:
+        return None
+    return XAU_TP_FIXE_EUR * taux
+
 
 def _distance_sl_or(prix: float | None) -> float | None:
     """La distance de stop de l'or : `XAU_SL_PCT` % du prix d'entree.
@@ -1243,7 +1293,19 @@ def calculate_trade_setup(
             stop_loss = round(recent_high + atr * atr_k, decimals)
             risk = stop_loss - entry
 
-    if direction == TradeDirection.BUY:
+    # Objectif fixe en euros sur l'or (2026-10-08) — cf. le bloc de
+    # `XAU_TP_FIXE_EUR`. Inerte tant que le reglage vaut 0.
+    #
+    # ⚠️ TP2 = TP1 quand il est arme : a 2 EUR de cible, un second palier plus
+    # loin n'a aucun sens, et laisser TP2 a 3 R ferait croire a une gestion en
+    # deux temps qui n'existe pas.
+    dist_tp = (_distance_tp_or(entry)
+               if (stop_uniforme and _est_de_l_or(pair)) else None)
+    signe_tp = 1 if direction == TradeDirection.BUY else -1
+    if dist_tp is not None:
+        take_profit_1 = round(entry + signe_tp * dist_tp, decimals)
+        take_profit_2 = take_profit_1
+    elif direction == TradeDirection.BUY:
         take_profit_1 = round(entry + risk * PATTERN_TP1_RR, decimals)
         take_profit_2 = round(entry + risk * PATTERN_TP2_RR, decimals)
     else:
