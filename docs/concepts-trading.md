@@ -3996,3 +3996,84 @@ mêmes instants** — mais les euros absolus ne sont pas ceux du compte.
 
 ⛔ **Pas de passage hors échantillon** : `P1` échoue en échantillon avec
 `t = −15`. Aller chercher une fenêtre plus clémente serait de la pêche.
+
+---
+
+## DÉCLARATION — FILTRE DE TENDANCE sur l'or (2026-10-08)
+
+> Xavier : *« lorsque la trend est haussière ou baissière, faire du buy ou du
+> sell en fonction, pour avoir le maximum de trades gagnants. »*
+
+⚠️ **Déclarée AVANT une ligne de banc.** Critère, bras, prédictions et règle de
+rejet figés ici ; le commit qui porte ce texte précède le code.
+
+### La règle, exécutable
+
+> Ne retenir un signal d'or que si son sens **concorde** avec
+> `compute_h1_trend` : `bullish` → achats seuls, `bearish` → ventes seules.
+> **`neutral` → aucun trade** (« suivre la tendance » suppose qu'il y en ait
+> une).
+
+🔑 **La formule est celle de la PRODUCTION**, reproduite à l'identique : moyenne
+des **5** dernières clôtures H1 contre celle des **20**, seuil **±0,15 %**.
+Inventer ma propre définition de « tendance » mesurerait une autre règle que la
+sienne — et l'écart ne se verrait nulle part.
+
+⇒ Sur bougies M5, une H1 vaut 12 bougies : la fenêtre longue regarde donc
+240 bougies M5 en arrière.
+
+### Les quatre bras
+
+| bras | ce qu'il retient parmi les trades de `A` |
+|---|---|
+| **A** | tous — le comportement actuel |
+| **B** | ceux qui **concordent** avec la tendance : la règle de Xavier |
+| **C** | ceux qui vont **CONTRE** la tendance |
+| **D** | un **tirage au hasard** du même NOMBRE que `B`, **200 fois** |
+
+🔑 **`C` est indispensable, et c'est lui qui peut tuer la règle.** Si `B ≈ C`,
+la tendance ne porte aucune information et l'on ne mesure que l'effet de
+prendre moins de trades. 🔑 **`D` l'est tout autant** : retenir 40 % des trades
+au hasard change déjà la moyenne, et sans ce contrôle apparié en nombre on
+confondrait « la tendance informe » avec « moins de trades, c'est mieux » —
+exactement l'erreur du contrôle non apparié du 01/10 (`97e3c39`).
+
+### ⚠️ LA LIMITE DE MÉTHODE, assumée d'avance
+
+La population est **celle de `A`**, figée : on **ne rejoue pas** la séquence
+sous filtre. Filtrer en production libère la place plus tôt et ferait entrer
+d'autres trades — la séquence divergerait, et `B` ne serait plus un
+sous-ensemble de `A`.
+
+⇒ Ce banc mesure donc **le contenu informatif de la tendance**, à trades
+identiques. Il ne mesure **pas** ce que le filtre rapporterait en production,
+où la dynamique de la place changerait aussi. Un verdict positif justifierait
+un second banc séquentiel, pas un déploiement.
+
+### Prédictions, posées d'avance
+
+- **P1** `B − A` : intervalle 95 % strictement positif (`t ≥ 2,0`).
+- **P2** `B − C` : strictement positif (`t ≥ 2,0`). ⛔ **Si `B ≤ C`, rejet** —
+  la tendance ne porterait rien.
+- **P3** `B − D` : strictement positif, **0 tirage sur 200** ne doit battre
+  `B`. ⛔ Sinon c'est la réduction du nombre de trades qu'on mesure.
+
+> ⛔ **Les trois, aux DEUX spreads (0,20 et 0,50 $).** Et comme toujours : `A`
+> est déjà un bras perdant, donc battre `A` ne suffit pas — il faudra regarder
+> si `B` est positif en R.
+
+### Ce que les 90 jours réels disaient déjà, et qui ne tranche pas
+
+```
+ACHAT  n=61   -4,85 EUR/trade        VENTE n=114  +0,99 EUR/trade
+ecart +5,84 EUR/trade   t = +1,45   => INDECIDABLE
+```
+
+Le détail par motif avait l'air spectaculaire (`momentum_down` +162 € contre
+`momentum_up` −106 €) mais chaque case ne porte que 9 à 40 trades. C'est
+précisément pour ça qu'on mesure dans le laboratoire, où `n` se compte en
+milliers.
+
+⚠️ Et **25 trades sans aucun motif enregistré, −275,08 €** du 15/07 au 07/09 —
+le plus gros poste de perte de la période, `horizon` à `None` aussi. Arrêté
+depuis un mois, mais toute lecture par motif sur cette fenêtre en est faussée.
