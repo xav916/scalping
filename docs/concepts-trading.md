@@ -4133,3 +4133,35 @@ prédiction ne la couvrait, `t` à peine au-dessus de 2, une seule paire, en
 > **Prédiction unique** : sur 2024-08-08 → 2025-08-08, jamais vue,
 > `N − B > 0` avec `t ≥ 2,0` aux deux spreads.
 > ⛔ **Sinon la piste est abandonnée**, et je n'y reviendrai pas.
+
+#### ⛔ HORS ÉCHANTILLON — les DEUX trouvailles s'évaporent
+
+Fenêtre 2024-08-08 → 2025-08-08, **jamais vue**, 6 981 trades.
+
+```
+                 EN ECHANTILLON          HORS ECHANTILLON
+B - C     +0,0181   t = +2,28      +0,0071   t = +0,52
+N - B     +0,0183   t = +2,09      +0,0023   t = +0,16
+B - A     +0,0026   t = +0,48      +0,0017   t = +0,18
+B - D     +0,0022   58/200         +0,0011   82/200
+```
+
+**Les deux effets perdent un facteur 2,5 à 8 en amplitude, et 4 à 13 en `t`.**
+
+⛔ **RETRAIT.** J'avais annoncé à Xavier, sur la seule lecture en échantillon,
+que *« la tendance porte bien de l'information : concorder bat contrer,
+`t = +2,28` aux deux spreads »*. **Hors échantillon, `t` tombe à +0,52.** Cette
+phrase était fausse, et je la retire : rien dans ces données ne dit que la
+tendance informe.
+
+⛔ **La piste `N` est ABANDONNÉE**, comme déclaré : `t` passe de +2,09 à +0,16.
+Je n'y reviendrai pas.
+
+🔑 **Ce que cet épisode vaut.** Deux effets à `t ≈ 2,1-2,3` sur **15 657**
+trades, les deux disparus sur une année voisine. Un `t` juste au-dessus de 2,
+sur une seule paire, en échantillon, ne vaut **rien** — et c'est la troisième
+fois que ce dépôt le vérifie (`fvg_up` +2,47 → +0,101, `pin_bar_down`,
+`sur_niveau_majeur` dont le signe s'inversait à n=8-30).
+
+⇒ Le filtre de tendance est **clos**. L'idée de Xavier était testable, elle a
+été testée proprement, et elle ne tient pas.
