@@ -3459,3 +3459,47 @@ donc pas tel quel vers le rejeu 5 min, et inversement.
 
 Et elle recouvre dans le temps le compte réel : ces trades ont été émis pendant
 que le compte tradait, ce ne sont pas des données d'avant.
+
+### ⛔ RÉSULTAT ANNULÉ pour LOOKAHEAD — et la correction, 2026-10-08
+
+Le premier passage a donné les trois prédictions passantes, et **beaucoup trop
+proprement** : `B` 2,3 fois meilleur que `A` (+0,108 contre +0,047), `B−C`
+positif sur **23 paires sur 23**. Un effet aussi fort et aussi uniforme est la
+signature d'un artefact.
+
+🔑 **Mesure qui le démasque :**
+
+```
+écart médian entre deux trades consécutifs d'une paire :   719 s = 12 min
+temps médian pour qu'un trade se RÉSOLVE                : 3 363 s = 56 min
+```
+
+⇒ Quand le trade `N+1` est émis, le trade `N` **n'est pas encore résolu**. Son
+issue est **inconnue**. La règle « ÷2 si le précédent a perdu » lisait donc une
+information qui n'existe pas à la décision : **du lookahead**.
+
+Et cela explique tout : `B` sous-pondérait les trades dont un *frère
+contemporain* allait mal finir — c'est-à-dire qu'il connaissait le futur proche
+du marché.
+
+#### ✅ Ce que cela ne remet PAS en cause
+
+Le banc `7443d16` (verdict « indécidable ») est **sain** : son rejeu est
+**séquentiel**, `i = sortie + 1`, donc chaque entrée commence **après** la
+sortie de la précédente. L'issue y est connue par construction.
+
+#### La correction déclarée MAINTENANT
+
+> Le poids d'un trade émis à `t` dépend du dernier trade de la même paire
+> **dont `checked_at < t`** — le dernier **RÉSOLU**, pas le dernier **ÉMIS**.
+
+Si aucun trade n'est encore résolu à `t`, le poids vaut `1` : on n'allège pas
+sur une information qu'on n'a pas.
+
+⚠️ **Et deux écarts de population du premier passage, corrigés aussi :** il a
+tourné sur **23 paires** alors que la déclaration en annonçait 13. `WTI/USD`
+(source connue fausse) et `MSFT`/`NVDA`/`TSLA` (756 à 815 trades) n'avaient pas
+été exclus. Ils le sont.
+
+Les trois prédictions restent inchangées. Le premier passage est rapporté avec
+son annulation, **pas effacé**.
