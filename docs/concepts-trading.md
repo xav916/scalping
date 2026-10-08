@@ -3280,3 +3280,113 @@ ici serait de la pêche.
 population sur les **bougies du courtier** sur plusieurs années (`/rates`
 pagine depuis `9056d41`). Mais élargir la population — ou mettre d'autres paires
 en commun — change ce qu'on mesure : **cela demanderait une déclaration neuve.**
+
+---
+
+## RISQUE ÷2 APRÈS UNE PERTE — RÉPLICATION sur 15 paires, déclaration du 2026-10-08
+
+### ⛔ D'abord, ma reco précédente était infaisable
+
+J'ai recommandé à Xavier de « réélargir sur les bougies du courtier sur 3 ans ».
+**Le courtier ne les a pas.** Mesure du jour : en demandant depuis 2019, la
+première bougie M5 servie est du **2025-05-12** pour `XAU/USD` et du
+**2025-05-13** pour `XAG/USD`. Le terminal MT5 ne garde que **~17 mois** de M5
+sur ces symboles.
+
+⇒ Les bougies du courtier n'apporteraient que 9 mois indépendants sur l'or
+(2026-01 → 2026-10) et 17 mois sur l'argent, soit **moins de trades que les
+2 010 déjà mesurés**. Cela ne trancherait rien.
+
+### La question, et pourquoi elle reste ouverte
+
+Hypothèse formée sur `XAU/USD` (2 010 entrées, 2023-08 → 2026-01) :
+
+> Après une perte, engager la moitié du risque améliore le rendement **par
+> unité de risque déployée**.
+
+Verdict du banc `7443d16` : `B−A` positif (`[+0,0007 ; +0,0421]`) mais `B−C`
+**contient zéro** (`[−0,0061 ; +0,0546]`). **Indécidable.** Il faudrait environ
+**6 fois plus de trades**.
+
+### 🔑 Ce que cette déclaration fait de différent : une RÉPLICATION
+
+L'hypothèse a été formée sur l'or. Elle est testée ici sur **15 paires qui
+n'ont jamais servi à la former** — pas sur une nouvelle découpe de l'or.
+
+Population déclarée, depuis `candles_5min.db` (archive figée, 2023-08 →
+2026-08) :
+
+```
+XAG/USD  EUR/USD  GBP/USD  USD/JPY  EUR/GBP  USD/CHF  AUD/USD  USD/CAD
+EUR/JPY  GBP/JPY  LTC/USD  BCH/USD  DOT/USD  ADA/USD
+```
+
+⛔ **Exclusions, et leurs raisons, posées maintenant :**
+
+| exclu | raison |
+|---|---|
+| `XAU/USD` | a servi à **former** l'hypothèse — la réutiliser ne serait pas une réplication |
+| `WTI/USD` | ⛔ source **connue fausse** : Twelve Data cotait un AUTRE contrat (leçon du 03/10) |
+| `NVDA` `AAPL` `TSLA` `MSFT` `SPX` | 1 780 à 55 129 bougies contre ~240 000 : ce ne sont pas des séries de 5 min continues |
+
+Soit **14 paires**. Volume attendu : ~2 700 entrées par paire sur trois ans,
+donc **~38 000 entrées** — très au-delà des ~12 000 nécessaires.
+
+### ⚠️ LA CORRÉLATION ENTRE PAIRES, et la double lecture qu'elle impose
+
+`EUR/USD`, `GBP/USD`, `EUR/GBP`, `USD/CHF` bougent ensemble. Un
+rééchantillonnage **par trade** les traite comme indépendants, ce qu'ils ne
+sont pas : il gonflerait la précision.
+
+⇒ **Deux lectures, et c'est la plus sévère qui décide :**
+
+1. **par trade** — 2 000 tirages de trades avec remise. Optimiste.
+2. **par PAIRE** — 2 000 tirages des 14 paires avec remise, chaque paire
+   entrant avec tous ses trades. **14 unités seulement, et c'est celle qui
+   tranche.**
+
+### Les trois bras, inchangés depuis `7443d16`
+
+| | bras | poids `w_i` |
+|---|---|---|
+| **A** | référence | `1` partout |
+| **B** | la règle | `0,5` si le trade précédent de LA MÊME PAIRE a perdu |
+| **C** | **placebo apparié** | `0,5` sur le même NOMBRE de trades, au hasard |
+
+⚠️ « Le trade précédent » se lit **par paire**, chronologiquement, jamais à
+travers les paires : une perte sur l'argent ne dit rien du prochain trade sur
+l'euro, et mélanger fabriquerait une séquence qui n'existe pas.
+
+Métrique inchangée : `m = Σ(w×R) / Σ(w)`, vérifiée insensible à un allègement
+uniforme.
+
+### Trois prédictions falsifiables
+
+- **P1** — `B−A` : intervalle 95 % strictement positif, **en lecture par
+  paire**.
+- **P2** — `B−C` : intervalle 95 % strictement positif, **en lecture par
+  paire**. ⛔ Si `B ≤ C`, **rejet**.
+- **P3** — l'effet n'est pas porté par deux ou trois paires : `B−C` doit être
+  positif sur **au moins 8 des 14** paires prises une par une.
+
+### La règle de décision
+
+Retenu seulement si **P1, P2 et P3** passent, **aux deux spreads** (`0,20` et
+`0,50 $`). Il n'y a **rien à optimiser** : le facteur `0,5` est donné, la
+population est déclarée, aucun balayage.
+
+- Si `B ≤ C` en lecture par paire : **rejet**. La série ne porte rien et on
+  n'aura mesuré qu'« engager moins ».
+- Si P1 et P2 passent mais pas P3 : **non retenu**, et le résultat devient une
+  question sur les deux ou trois paires qui le portent, pas une règle.
+
+### Ce que cette mesure ne pourra PAS dire
+
+Elle tourne sur **Twelve Data**, pas sur les bougies du courtier — qui ne
+remontent qu'à mai 2025. Un verdict positif resterait donc à confirmer sur
+17 mois de bougies courtier avant tout armement sur l'argent réel, et la leçon
+du WTI dit pourquoi : on a déjà mesuré trois ans de certitudes sur le mauvais
+instrument.
+
+Et elle ne dit rien de la **main** de Xavier, seule chose mesurée comme
+gagnante sur ce compte.
