@@ -3231,3 +3231,52 @@ Elle ne dit rien de la **main** de Xavier, qui reste la seule chose mesurée
 comme gagnante sur ce compte. Et elle ne juge pas `recent_pnl_multiplier`, qui
 regarde **7 jours de P&L** et non le trade précédent : c'est une autre règle,
 elle demanderait sa propre déclaration.
+
+### ⛔ VERDICT du 2026-10-08 — NON RETENU, indécidable sur le bras qui décide
+
+Banc `banc_risque_apres_perte.py`, en échantillon 2023-08-01 → 2026-01-01 :
+180 095 bougies, **2 010 entrées**, taux de réussite 36,1 %, **1 284 trades
+allégés sur 2 010 (63 %)**.
+
+| | exigé | spread 0,20 | spread 0,50 | |
+|---|---|---|---|---|
+| **P1** `B−A` > 0 | IC 95 % strictement positif | `[+0,00065 ; +0,04206]` | `[+0,00149 ; +0,04281]` | ✅ passe |
+| **P2** `B−C` > 0 | IC 95 % strictement positif | `[−0,00614 ; +0,05462]` | `[−0,00465 ; +0,05566]` | ⛔ **0 dedans** |
+
+Rendement par unité de risque déployée, spread 0,20 $ :
+
+```
+A  reference  -0,02315
+B  la regle   -0,00077     <- efface presque toute la perte
+C  placebo    -0,02538     <- alleger AU HASARD n aide pas
+```
+
+#### ⚠️ Ce n'est PAS le verdict du contre-fil
+
+Le contre-fil avait été **réfuté** : son placebo le **battait**, avec des `t`
+jusqu'à −8,62. Ici, la règle **bat** son placebo en moyenne (+0,024, du même
+ordre que `B−A`) — mais l'intervalle contient zéro. C'est **indécidable**, pas
+réfuté. La règle déclarée exige `P1 ET P2` : elle n'est donc **pas retenue**,
+et elle n'est pas écartée non plus.
+
+🔑 **Et le piège annoncé s'est produit exactement comme prévu.** Les totaux en
+R pondéré — `A −46,53`, `B −1,06`, `C −34,72` — donnent à `B` l'air
+spectaculaire. Mais `B` déploie **32 % moins de risque** : c'est la quantité qui
+parle, pas le placement. La métrique qui neutralise la quantité dit
+« indécidable ». Sans le bras `C` et sans cette normalisation, on aurait armé
+une règle sur un artefact d'exposition.
+
+#### Ce qu'il faudrait pour trancher
+
+L'intervalle `B−C` fait ~0,060 de large pour un effet de 0,024 : il faudrait
+environ **(0,060/0,024)² ≈ 6 fois plus de trades**, soit ~12 000. La fenêtre
+hors échantillon (2026-01 → 2026-08) n'en apportera pas le dixième.
+
+⛔ **Le hors échantillon n'a donc PAS été lancé** : la règle posée d'avance
+exige que `P1` et `P2` passent en échantillon avant de le regarder. Le lancer
+ici serait de la pêche.
+
+🔑 Ce qui est désormais possible et ne l'était pas ce matin : élargir la
+population sur les **bougies du courtier** sur plusieurs années (`/rates`
+pagine depuis `9056d41`). Mais élargir la population — ou mettre d'autres paires
+en commun — change ce qu'on mesure : **cela demanderait une déclaration neuve.**
