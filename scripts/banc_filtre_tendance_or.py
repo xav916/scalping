@@ -222,6 +222,12 @@ def main() -> int:
 
         B = [t["r"] for t in seq if concorde(t)]
         C = [t["r"] for t in seq if contre(t)]
+        # 🔑 LE TROISIEME PANIER, qu'aucune prediction ne couvrait. Si filtrer
+        # vers B n'apporte presque rien alors que B bat C, c'est que les
+        # trades en tendance NEUTRE -- ecartes par la regle de Xavier -- sont
+        # meilleurs que les deux. On le MESURE au lieu de le deduire de la
+        # moyenne du melange.
+        N = [t["r"] for t in seq if t["tendance"] == "neutral"]
         neutres = sum(1 for t in seq if t["tendance"] == "neutral")
         print(f"    A : {len(A)} trades")
         print(f"    B : {len(B)} concordent  ({len(B)*100.0/len(A):.1f} %)")
@@ -248,6 +254,13 @@ def main() -> int:
         print(f"      B  CONCORDENT     R {mB:+.4f}  = {eur(mB):+.2f} EUR")
         print(f"      C  CONTRE         R {mC:+.4f}  = {eur(mC):+.2f} EUR")
         print(f"      D  hasard (n=|B|) R {mD:+.4f}   ({TIRAGES} tirages)")
+        if len(N) >= 30:
+            mN = statistics.fmean(N)
+            tNB = _t_deux(N, B)
+            print(f"      N  tendance NEUTRE R {mN:+.4f}  = {eur(mN):+.2f} EUR"
+                  f"   ({len(N)} trades, ECARTES par la regle)")
+            print(f"         N - B = {mN-mB:+.4f}   t = "
+                  + ("n/a" if tNB is None else f"{tNB:+.2f}"))
         print("")
         tBA = _t_un_echantillon(B, mA)
         tBC = _t_deux(B, C)

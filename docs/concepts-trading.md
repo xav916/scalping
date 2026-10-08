@@ -4077,3 +4077,59 @@ milliers.
 ⚠️ Et **25 trades sans aucun motif enregistré, −275,08 €** du 15/07 au 07/09 —
 le plus gros poste de perte de la période, `horizon` à `None` aussi. Arrêté
 depuis un mois, mais toute lecture par motif sur cette fenêtre en est faussée.
+
+### VERDICT — filtre de tendance : ⛔ REJETÉ, et une PISTE inattendue
+
+Banc `5e63b5d`, fenêtre figée 2025-08-08 → 2026-08-08, **97 350 bougies du
+courtier**, 15 657 trades séquentiels.
+
+```
+                           R        EUR/trade   n
+N  tendance NEUTRE     -0,0413      -0,53     3 575   <- le MEILLEUR
+B  CONCORDE            -0,0596      -0,77     6 233
+A  tous                -0,0622      -0,80    15 657
+C  CONTRE              -0,0777      -1,00     5 849
+D  hasard (n=|B|)      -0,0618                 200 tirages
+
+B - A = +0,0026   t = +0,48                    <- P1 ECHOUE
+B - C = +0,0181   t = +2,28                    <- P2 PASSE
+B - D = +0,0022   t = +0,50   58/200 battent B <- P3 ECHOUE
+N - B = +0,0183   t = +2,09
+```
+
+(au spread de 0,50 $ : mêmes écarts au millième, `N−B` = +0,0179 / t +2,04,
+55/200.)
+
+#### ✅ Ce que l'intuition de Xavier gagne
+
+🔑 **La tendance porte bien de l'information** : concorder bat contrer de
+**0,0181 R**, `t = +2,28`, aux deux spreads. Ce n'est pas rien, et c'était la
+partie testable de son idée.
+
+#### ⛔ Pourquoi la règle est rejetée quand même
+
+Filtrer vers `B` ne gagne que **+0,0026 R** contre `A` (`t = +0,48`), et **58
+tirages sur 200** d'un sous-ensemble aléatoire de même taille font mieux que
+`B`. ⇒ Le filtre ne fait pas mieux que *prendre 40 % des trades au hasard*.
+
+#### 🔑 LA RAISON, mesurée et non déduite
+
+Le panier que la règle **écarte** — tendance **neutre** — est le **meilleur des
+trois** : `−0,0413 R` contre `−0,0596` pour `B`. `N − B = +0,0183`, `t = +2,09`.
+Filtrer « avec la tendance » revient donc à jeter le meilleur quart de la
+population pour garder un panier intermédiaire.
+
+⚠️ **CECI EST UNE PISTE, PAS UN RÉSULTAT.** Trouvée **post-hoc**, aucune
+prédiction ne la couvrait, `t` à peine au-dessus de 2, une seule paire, en
+échantillon. C'est le profil exact de ce qui s'évapore : `fvg_up` est passé de
+`t +2,47` à `+0,101` hors échantillon (`641df08`).
+
+#### Déclaration de l'usage de la fenêtre HORS ÉCHANTILLON
+
+> Le filtre de tendance est **rejeté en échantillon** (`P1` et `P3` échouent) :
+> sa fenêtre hors échantillon ne lui sert donc plus à rien. Je la consacre à la
+> piste `N`, et je le déclare **avant** de la lire.
+>
+> **Prédiction unique** : sur 2024-08-08 → 2025-08-08, jamais vue,
+> `N − B > 0` avec `t ≥ 2,0` aux deux spreads.
+> ⛔ **Sinon la piste est abandonnée**, et je n'y reviendrai pas.
