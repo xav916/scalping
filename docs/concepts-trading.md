@@ -3125,3 +3125,109 @@ instant quelconque » parce que le contrôle a bien marché, c'est précisément
 sélection post hoc que toute cette discipline existe pour empêcher. Si cette
 piste mérite un banc, elle mérite une **déclaration neuve**, écrite avant la
 première ligne — comme celle-ci.
+
+---
+
+## RISQUE ÷2 APRÈS UNE PERTE — déclaration du 2026-10-08
+
+### D'où vient la question
+
+Mesure du 08/10 sur la population du laboratoire (or 5 min, 2 010 trades) :
+
+```
+P(gain | gain precedent)   38,9 %   (n=  725)
+P(gain | perte precedente) 34,4 %   (n=1 284)
+ecart                      z = +2,01
+```
+
+**+4,5 points** de réussite après un gain, `z` franchi de justesse. L'échelle
+TP/SL que Xavier proposait a été écartée sur l'arithmétique (au taux mesuré,
+son compteur `N` reste à 0 ou 1 plus de 90 % du temps). Reste le seul candidat
+qui n'exige pas que `N` grimpe : **une règle binaire**.
+
+> Après une perte, engager **la moitié** du risque. Après un gain, le risque
+> normal.
+
+⚠️ Une version grossière existe déjà dans le code et **n'a jamais été
+validée** : `sizing.recent_pnl_multiplier(days=7)` divise le risque par 2 quand
+le P&L des 7 derniers jours est négatif.
+
+### ⛔ LE PIÈGE, et la métrique qu'il impose
+
+La population du laboratoire a un **R moyen de −0,0231** : elle **perd**. Donc
+**toute règle qui engage moins de risque améliore le total**, sans rien
+apporter. La règle toucherait 1 284 trades sur 2 010 — 64 % de la population.
+
+Et un second piège, plus technique : **le laboratoire mesure en R**, c'est-à-dire
+en multiples du risque pris. Diviser le risque par deux **ne change pas le R** ;
+cela change les euros. Mesurer en R ne verrait donc rien, et mesurer en euros
+récompenserait mécaniquement celui qui engage le moins.
+
+🔑 **La métrique est donc le rendement par unité de risque DÉPLOYÉE :**
+
+```
+m = Σ(w_i × R_i) / Σ(w_i)        avec w_i ∈ {1 ; 0,5}
+```
+
+Elle demande : *la règle place-t-elle le risque au bon endroit ?* — et elle est
+insensible au fait d'en déployer moins, ce qui neutralise le premier piège.
+
+### Les trois bras, et celui qui décide
+
+| | bras | poids `w_i` |
+|---|---|---|
+| **A** | référence | `1` partout |
+| **B** | **la règle** | `0,5` si le trade précédent a perdu, `1` sinon |
+| **C** | **placebo apparié** | `0,5` sur le **même NOMBRE** de trades, tirés au **hasard** (graine fixe), sans regarder l'issue précédente |
+
+**C est le bras qui décide.** Il déploie exactement autant de risque que B, mais
+le place au hasard. Si B ne le bat pas, la série ne porte rien et on n'a mesuré
+que « engager moins ». C'est la leçon du 01/10 — un contrôle non apparié mesure
+le coût, pas la direction — et celle du contre-fil rejeté le 08/10, où le
+placebo a battu la règle sur les douze cellules.
+
+### L'incertitude, par rééchantillonnage
+
+`m` est un rapport de sommes : un `t` naïf sur les contributions serait mal
+calibré. On rééchantillonne donc les trades avec remise, **2 000 fois, graine
+fixée à 20261008**, et on lit l'intervalle à 95 % des écarts `B − A` et `B − C`.
+
+⚠️ Le rééchantillonnage casse l'ordre chronologique, dont la règle dépend. Les
+poids `w_i` sont donc calculés **UNE fois sur la séquence réelle**, puis portés
+par chaque trade comme une étiquette. On rééchantillonne des couples
+`(w_i, R_i)` déjà formés, jamais la règle elle-même.
+
+### Deux prédictions falsifiables, et rien de plus
+
+- **P1** — l'intervalle à 95 % de `B − A` est **strictement positif**.
+- **P2** — l'intervalle à 95 % de `B − C` est **strictement positif**.
+  ⛔ Si `B ≤ C`, **rejet** : la série ne porte rien, même si P1 passe.
+
+### La règle de décision, posée avant la première ligne de code
+
+Retenu seulement si **P1 et P2 passent en échantillon**, puis **hors
+échantillon avec le même signe**. Une seule cellule, aucun balayage : il n'y a
+rien à optimiser, le facteur `0,5` est donné.
+
+- Si `B ≤ C` : **rejet**, et la conclusion devient « engager moins de risque
+  aide parce que la population perd », ce qui est un verdict sur la population,
+  pas sur la série.
+- Si le signe s'inverse hors échantillon : **rejet**, signature du bruit.
+
+### Données et découpage, déclarés MAINTENANT
+
+- `candles_5min.db`, `XAU/USD`, bougies de 5 min figées.
+- Population : les entrées du bras A de `banc_contre_fil_or` — **même
+  arithmétique, même séquentialité** (`i = sortie + 1`), pour que les deux
+  bancs parlent de la même chose.
+- **En échantillon : 2023-08-01 → 2026-01-01** (2 010 entrées mesurées).
+- **Hors échantillon : 2026-01-01 → 2026-08-09**, non regardé avant qu'un
+  verdict soit rendu en échantillon.
+- Spread : `0,20` et `0,50 $`, le verdict exigé **aux deux**.
+
+### Ce que cette mesure ne pourra PAS dire
+
+Elle ne dit rien de la **main** de Xavier, qui reste la seule chose mesurée
+comme gagnante sur ce compte. Et elle ne juge pas `recent_pnl_multiplier`, qui
+regarde **7 jours de P&L** et non le trade précédent : c'est une autre règle,
+elle demanderait sa propre déclaration.
