@@ -129,3 +129,74 @@ def test_le_stop_de_l_or_n_est_PAS_touche():
     src = _SRC.read_text(encoding="utf-8")
     ligne = next(l for l in src.splitlines() if l.startswith("XAU_SL_PCT"))
     assert '"0.35"' in ligne, f"le stop de l'or a change : {ligne!r}"
+
+
+# ─── 🔑 LE DÉTECTEUR : la branche qui ÉCHAPPE à la cible en euros ─────────
+#
+# ⛔ Trouvé en vérifiant le déploiement du 2026-10-08, pas écrit d'avance.
+#
+# `calculate_trade_setup` a **deux** sites qui posent le stop de l'or
+# (`_distance_sl_or`), mais **un seul** honore la cible en euros
+# (`_distance_tp_or`, chemin générique). La branche `poc_return_up/down`
+# garde `PATTERN_TP1_RR` — soit **1,8 R** — et n'a **aucun repli** vers le
+# chemin générique.
+#
+# ✅ Aujourd'hui c'est LATENT, et c'est mesuré, pas supposé :
+#   - `poc_return` est ABSENT des 7 horizons de XAU/USD dans
+#     `MT5_BRIDGE_PATTERN_OVERRIDES` (vérifié dans le `.env` de production) ;
+#   - le seul chemin ADDITIF, `MT5_BRIDGE_LEGACY_EXTRA_PATTERNS`, est porté
+#     par `extra_patterns` sur la destination `admin_legacy` — la **démo**.
+#     L'or réel part sur `admin_live`.
+#
+# ⚠️ Mais le jour où `poc_return` serait ouvert à l'or, une partie des trades
+# garderait 1,8 R **en silence** et contaminerait l'expérience de Xavier : la
+# même mécanique de repli muet que le 04/10 (clé `1h` posée, prod estampillant
+# `60min`). D'où ce test : il ne change RIEN, il refuse que ça passe inaperçu.
+
+def test_la_branche_poc_return_ECHAPPE_a_la_cible_en_euros():
+    """🔑 Épingle le défaut connu. Si cette branche se met à honorer
+    `_distance_tp_or`, ce test tombe — et c'est une BONNE nouvelle : il faudra
+    alors le remplacer par l'assertion inverse."""
+    src = _SRC.read_text(encoding="utf-8")
+    poc = src[src.index("if pattern.pattern in (PatternType.POC_RETURN_UP,"):]
+    poc = poc[:poc.index("    risk = abs(entry - stop_loss)")]
+    assert "_distance_sl_or" in poc, "la branche poc ne force plus le stop ?"
+    assert "_distance_tp_or" not in poc, (
+        "la branche poc_return honore maintenant la cible en euros : "
+        "remplacer ce test par l'assertion inverse"
+    )
+    assert "PATTERN_TP1_RR" in poc
+
+
+def test_poc_return_N_EST_PAS_ouvert_a_l_or():
+    """⛔ CE test est celui qui compte : il rend le défaut ci-dessus
+    inoffensif. Si `poc_return` apparaît dans les motifs de XAU, l'expérience
+    du TP à 2 € est contaminée et il faut corriger la branche AVANT."""
+    import json
+    import os
+    from pathlib import Path
+
+    brut = os.getenv("MT5_BRIDGE_PATTERN_OVERRIDES", "").strip()
+    if not brut:
+        env = Path("/opt/scalping/.env")
+        if not env.exists():
+            pytest.skip("dérogations de production indisponibles ici")
+        for ligne in env.read_text(encoding="utf-8",
+                                   errors="replace").splitlines():
+            if ligne.startswith("MT5_BRIDGE_PATTERN_OVERRIDES="):
+                brut = ligne.split("=", 1)[1]
+                break
+    if not brut:
+        pytest.skip("MT5_BRIDGE_PATTERN_OVERRIDES absent")
+
+    par_paire = json.loads(brut)
+    fautifs = [
+        f"{paire}/{horizon}: {m}"
+        for paire, par_h in par_paire.items() if "XAU" in paire.upper()
+        for horizon, motifs in par_h.items()
+        for m in motifs if "poc" in m.lower()
+    ]
+    assert not fautifs, (
+        "poc_return est ouvert a l'or alors que sa branche garde 1,8 R : "
+        + ", ".join(fautifs)
+    )

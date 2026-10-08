@@ -3626,3 +3626,77 @@ réel. Un verdict positif hors échantillon dirait que la règle tient sur les
 trades du pipeline — **pas** qu'elle rapporte sur l'argent de Xavier. Ce
 dernier pas demanderait sa propre mesure, sur les ~86 fermetures automatiques
 mensuelles du compte, et il faudrait **des mois** pour l'alimenter.
+
+---
+
+## 2026-10-08 — Vérification du déploiement `c0ea150` : un défaut LATENT trouvé
+
+Déploiement vérifié **après** armement (`ALLOW` / `ARMED`, empreinte
+`c0ea15011ce8`, aucune dérive de configuration). Trois constats.
+
+### ✅ L'interrupteur fermait VRAIMENT, et la base le prouve — pas les logs
+
+```
+execution_globale_fermee   3 246 refus sur XAU   00:27:20 -> 12:20:57 UTC
+```
+
+Le dernier refus tombe à **12:20:57**, l'instant de l'armement. ⚠️ `docker logs`
+en annonçait **ZÉRO** sur deux heures : ce motif n'est pas journalisé sur la
+sortie standard, il n'existe que dans `signal_rejections`. **Compter les refus
+dans les logs aurait conclu à tort qu'aucun signal n'était bloqué.**
+
+### ✅ Le trade d'or ouvert est ANTÉRIEUR, et conforme
+
+Ticket `1360653630`, créé à 06h54:42, donc avant `c0ea150`. L'arithmétique du
+**signal** (et non du fill) :
+
+```
+entree signal = fill 4124,90 - slippage 859/100 = 4116,31
+stop  4130,72  ->  14,41 $  =  0,350 %   <- la regle XAU_SL_PCT
+cible 4090,37  ->  25,94 $  =  1,80 R    <- l'ancienne regle
+```
+
+🔑 Lu depuis `entry_price` (le **fill**), le stop semble ne faire que 5,82 $ —
+0,141 %, soit une fausse alarme de violation. C'est la **troisième** fois que ce
+piège se présente : `entry_price` est le FILL, `stop_loss` le niveau du SIGNAL.
+Chez le courtier le stop est ré-ancré à 4139,31 = fill + 14,41 ✓ ; la cible y
+vaut 4102,69 parce que `post_entry_tp=1` — elle a été **déplacée à la main**.
+
+### ⛔ LE DÉFAUT : une branche échappe à la cible en euros
+
+`calculate_trade_setup` a **deux** sites qui forcent le stop de l'or
+(`_distance_sl_or`, lignes 1233 et 1279) mais **un seul** qui honore la cible en
+euros (`_distance_tp_or`, ligne 1302, chemin générique). La branche
+`poc_return_up/down` garde `PATTERN_TP1_RR` — **1,8 R** — et n'a **aucun repli**
+vers le chemin générique, par décision délibérée du 04/09.
+
+**Portée réelle, mesurée et non supposée** — le défaut est **LATENT** :
+
+- `poc_return` est **ABSENT des 7 horizons** de `XAU/USD` dans
+  `MT5_BRIDGE_PATTERN_OVERRIDES` (5min, 15min, 30min, 1h, 60min, 4h, 1d) ;
+- le seul chemin **additif**, `MT5_BRIDGE_LEGACY_EXTRA_PATTERNS`
+  (`poc_return_up,poc_return_down`), est porté par `extra_patterns` sur la
+  destination **`admin_legacy`** — la démo. L'or réel part sur `admin_live`.
+
+⇒ Aucun trade d'or ne peut sortir aujourd'hui avec 1,8 R. **Je ne touche donc
+pas à la branche** : la corriger demanderait une déclaration neuve pour un
+chemin inatteignable.
+
+⚠️ Mais le jour où `poc_return` serait ouvert à l'or, une partie des trades
+garderait 1,8 R **en silence** et contaminerait l'expérience du TP à 2 € — la
+même mécanique de repli muet que le 04/10 (clé `1h` posée, production
+estampillant `60min`).
+
+**Détecteur posé plutôt que comportement changé** — deux tests :
+`test_la_branche_poc_return_ECHAPPE_a_la_cible_en_euros` épingle le défaut et
+tombera si la branche se met à l'honorer ; `test_poc_return_N_EST_PAS_ouvert_a_l_or`
+lit la dérogation de production. ✅ Éprouvé **dans les deux sens** : il passe sur
+la vraie configuration, et il **ÉCHOUE** quand on y injecte `poc_return_up` sur
+XAU/USD.
+
+### État à la remise
+
+Expérience **armée et en vol**. Le prochain signal d'or portera une cible de
+**2,24 $ = 2,00 €**. Il attend que la place se libère : le trade 1995 occupe
+l'unique position d'or (`max_positions_per_pair`), et sa fermeture est
+**manuelle**.
