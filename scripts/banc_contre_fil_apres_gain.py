@@ -73,9 +73,12 @@ SPREADS = (0.20, 0.50)        # le verdict est exigé aux DEUX
 TIRAGES = 200                 # le placebo est retiré 200 fois
 GRAINE = 20261008
 
+# ⛔ Alignées sur la FIN DES DONNÉES (l'archive du courtier s'arrête au
+# 2026-08-08), et posées AVANT le premier passage. Choisir les bornes après
+# avoir vu un résultat serait choisir le résultat.
 FENETRES = {
-    "echantillon": ("2025-10-08", "2026-10-08"),   # un an, figé
-    "hors":        ("2024-10-08", "2025-10-08"),   # l'année précédente
+    "echantillon": ("2025-08-08", "2026-08-08"),   # un an plein
+    "hors":        ("2024-08-08", "2025-08-08"),   # l'année précédente
 }
 
 
