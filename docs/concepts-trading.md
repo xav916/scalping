@@ -3942,3 +3942,57 @@ contre-fil gagne-t-il tout seul ? »*.
 > ⛔ **Les trois, aux DEUX spreads.** Et `A` est ici un bras exigeant : il est
 > déjà mesuré à **−0,70 €/trade**. Battre un bras perdant ne suffit pas — il
 > faudra regarder si `B` est positif en euros, pas seulement supérieur à `A`.
+
+### VERDICT — contre-fil à −2 € : ⛔ REJETÉ, mais deux tiers de l'intuition sont JUSTES
+
+Banc `7045753`, fenêtre figée 2025-08-08 → 2026-08-08, **97 350 bougies du
+courtier**, 15 657 épisodes séquentiels dont **9 309 atteignent −2 €
+(59,5 %)**.
+
+```
+                              R         EUR/episode
+A  trade seul             -0,1948         -2,51
+B  + contre-fil a -2 EUR  -0,2626         -3,38
+C  + contre-fil au HASARD -0,2768
+D  + MEME sens a -2 EUR   -0,3222         -4,15
+
+B - A = -0,0678   t = -15,06                      <- P1 ECHOUE
+B - C = +0,0142   t =  +2,90   1/200 battent B     <- P2 limite
+B - D = +0,0596   t =  +8,00                      <- P3 PASSE
+```
+
+(au spread de 0,50 $ : `B−A` = −0,0872 / t −19,36 ; `B−C` = +0,0148 / t +3,01,
+**0/200** ; `B−D` identique.)
+
+#### ⛔ Pourquoi c'est rejeté
+
+**`P1` échoue massivement, aux deux spreads** : ajouter la jambe coûte
+**0,068 R**, soit `t = −15,06`. L'épisode passe de −2,51 € à **−3,38 €**. Ce
+n'est pas une incertitude, c'est un écart net et répété sur 9 309 cas.
+
+#### ✅ Mais DEUX tiers de l'intuition de Xavier sont confirmés
+
+🔑 **Le SENS porte vraiment quelque chose.** `B − D = +0,0596`, `t = +8,00` : le
+sens **opposé** fait franchement mieux que le même sens. Sur un trade qui perd,
+renforcer serait bien pire que contrer — et c'est mesuré, pas supposé.
+
+🔑 **Le MOMENT porte un peu.** `B − C` est positif aux deux spreads, avec
+**0/200** tirages battant `B` à 0,50 $ (1/200 à 0,20 $). Ouvrir à −2 € vaut
+mieux qu'ouvrir au hasard. ⚠️ Mais l'effet est **petit** (+0,014 R) et à la
+limite de la règle de rejet : à ne pas revendiquer comme solide.
+
+⇒ **Ce qui tue la règle n'est ni le sens ni le moment : c'est le COÛT d'une
+jambe de plus.** Deux trades paient quatre demi-spreads, et la structure à
+exposition nette nulle ne rapporte pas de quoi les couvrir.
+
+#### ⚠️ La limite à ne pas cacher
+
+`A` vaut ici **−2,51 €/épisode**, bien pire que les −0,70 €/trade mesurés sur la
+configuration de production. La population n'est pas la même : ce banc prend le
+**premier candidat de chaque index** sur un an (15 657 épisodes), là où la
+production filtre par motif, horizon, confiance et fenêtre de spread (910
+entrées). La comparaison `B` contre `A` reste valide — **même population,
+mêmes instants** — mais les euros absolus ne sont pas ceux du compte.
+
+⛔ **Pas de passage hors échantillon** : `P1` échoue en échantillon avec
+`t = −15`. Aller chercher une fenêtre plus clémente serait de la pêche.
