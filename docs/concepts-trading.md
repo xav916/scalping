@@ -3390,3 +3390,72 @@ instrument.
 
 Et elle ne dit rien de la **main** de Xavier, seule chose mesurée comme
 gagnante sur ce compte.
+
+---
+
+## RISQUE ÷2 — RÉPLICATION sur les 360 784 trades du laboratoire, 2026-10-08
+
+### ⛔ Pourquoi la déclaration `ff61d9a` est abandonnée
+
+Elle voulait rejouer 14 paires depuis les bougies. **Impossible sur ces
+machines**, et mesuré :
+
+```
+une seule paire : 174 902 bougies = 122 Mo,  puis les DETECTIONS
+                  depassent 1 Go a elles seules -> tuees par le cgroup
+EC2             : le radar occupe deja 1,83 Gio sur 3,75
+ma machine      : 1,2 Go disponible sur 8,5
+```
+
+Ce banc a déjà coûté **56 minutes de production**. Le rendre sobre
+demanderait une détection en tranches glissantes, avec un **risque de
+correctness aux bords** — la famille d'artefacts qui a tué le candidat WTI (son
+R changeait de signe selon la phase d'agrégation). Je ne construis pas ça pour
+une hypothèse dont le meilleur résultat connu est « indécidable ».
+
+### 🔑 La population qui existait déjà
+
+`backtest.db`, table `trades` : **360 784 trades portant `outcome` ET
+`rr_realized`**, du 2026-05-18 au 2026-10-08, sur 14 paires. Aucune détection à
+refaire, aucune bougie à charger, une lecture seule.
+
+```
+BTC 28 627 · ETH 25 117 · XAU 22 242 · XRP 21 528 · SOL 21 058 · DOT 20 331
+GBP/USD 20 147 · EUR/USD 19 335 · LTC 18 970 · GBP/JPY 17 708 · EUR/JPY 17 241
+USD/CAD 17 159 · USD/JPY 16 910 · USD/CHF 16 736
+```
+
+Taux de réussite global **37 %** (228 345 `LOSS` contre 132 439 `WIN_*`) —
+cohérent avec les 36,1 % du rejeu 5 min, ce qui rend les deux comparables.
+
+⛔ **`XAU/USD` est EXCLU** : il a formé l'hypothèse. 13 paires restent, soit
+**~338 500 trades**.
+
+### Ce qui est repris sans changement de `7443d16`
+
+Les trois bras (`A` référence, `B` la règle, `C` placebo apparié en nombre), la
+métrique `m = Σ(w×R)/Σ(w)` vérifiée insensible à un allègement uniforme, et la
+double lecture — par trade (optimiste) et **par paire, qui décide**.
+
+« Le trade précédent » se lit **par paire**, par `emitted_at` croissant.
+
+### Trois prédictions, inchangées
+
+- **P1** — `B−A` : intervalle 95 % strictement positif, **lecture par paire**.
+- **P2** — `B−C` : intervalle 95 % strictement positif, **lecture par paire**.
+  ⛔ Si `B ≤ C`, **rejet**.
+- **P3** — `B−C` positif sur au moins **8 des 13** paires prises une par une.
+
+Retenu seulement si les trois passent. Rien à optimiser : le facteur `0,5` est
+donné, la population est déclarée, aucun balayage, aucun spread à choisir — le
+coût est déjà dans `rr_realized`.
+
+### ⚠️ Ce que cette population n'est PAS
+
+Ce sont les trades du **pipeline vivant** (shadow compris), sur **5 mois**, et
+non le rejeu 5 min sur trois ans. La **question** est la même — les issues se
+suivent-elles ? — la **population** ne l'est pas. Un verdict ici ne transporte
+donc pas tel quel vers le rejeu 5 min, et inversement.
+
+Et elle recouvre dans le temps le compte réel : ces trades ont été émis pendant
+que le compte tradait, ce ne sont pas des données d'avant.
