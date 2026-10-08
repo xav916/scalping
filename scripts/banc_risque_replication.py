@@ -44,7 +44,18 @@ from backend.services import laboratoire_or as labo   # noqa: E402
 
 ARCHIVE = "/app/data/candles_5min.db"
 DEBUT, FIN = "2023-08-01", "2026-08-09"
-SPREADS_REL = (0.0001, 0.00025)   # 0,20 $ et 0,50 $ de l'or, en FRACTION du prix
+# ⚠️ ECART TROUVE LE 2026-10-08, PENDANT le premier passage. La declaration
+# `ff61d9a` dit « 0,20 et 0,50 $ ». J'avais pose 0,0001 et 0,00025, qui valent
+# 0,41 $ et 1,02 $ sur l'or a 4 100 — soit DEUX FOIS plus que declare.
+#
+# 🔑 L'ecart est CONSERVATEUR : un spread plus large degrade tous les bras, il
+# ne peut pas fabriquer un resultat positif. Et il est a peu pres NEUTRE sur la
+# comparaison B-C, qui est ce qui decide : le cout frappe les trois bras.
+#
+# Corrige ici pour qu'un rejeu colle a la declaration. Le premier passage est
+# rapporte avec son ecart dit, pas efface.
+_OR_REF = 4100.0            # prix de reference de l'or, pour la conversion
+SPREADS_REL = (0.20 / _OR_REF, 0.50 / _OR_REF)
 GRAINE = 20261008
 TIRAGES = 2000
 
@@ -65,37 +76,44 @@ def bougies(paire: str) -> list[dict]:
             for t, o, h, lo, cl in lignes]
 
 
-# ⚠️ La detection coute ~190 s par paire sur 240 000 bougies. Elle ne depend
-# PAS du spread : la calculer par spread doublait le temps du banc pour un
-# resultat identique. On la garde donc en memoire, par paire.
-_CACHE: dict[str, tuple] = {}
+# ⛔ CE CACHE A FAIT TOMBER LA PRODUCTION — 2026-10-08, 56 MINUTES.
+#
+# J'avais mis les detections en cache PAR PAIRE pour ne pas les recalculer a
+# chaque spread. L'intention etait bonne, l'effet desastreux : le cache gardait
+# en memoire, SIMULTANEMENT pour les 14 paires, ~240 000 bougies ET le relevé de
+# detections (314 769 setups pour le seul XAU). La machine a 3 839 Mo.
+#
+# Mesure : de 08:58:53 a 09:54:48 UTC, le radar n'a evalue AUCUN signal. Ni SSH
+# ni l'API publique ne repondaient. Il a fallu un `aws ec2 reboot-instances`,
+# decide par Xavier, pour reprendre la main.
+#
+# 🔑 L'optimisation que j'avais ajoutee POUR ALLER PLUS VITE est ce qui a coute
+# 56 minutes de marche. Une paire a la fois, memoire plate : on recalcule la
+# detection une fois par paire et on s'en sert pour LES DEUX spreads dans la
+# meme passe, puis on libere.
+def rs_de_la_paire_tous_spreads(paire: str,
+                                spreads: tuple) -> dict[float, list[float]]:
+    """Les R de cette paire pour CHAQUE spread, en UNE passe de detection.
 
-
-def _bougies_et_releve(paire: str):
-    if paire not in _CACHE:
-        bgs = bougies(paire)
-        if len(bgs) < labo.FENETRE + 500:
-            _CACHE[paire] = (None, None, None)
-        else:
-            _CACHE[paire] = (bgs, labo.detections(bgs),
-                             statistics.median(float(b["c"]) for b in bgs))
-    return _CACHE[paire]
-
-
-def rs_de_la_paire(paire: str, spread_rel: float) -> list[float]:
-    """Les R de cette paire, dans l'ORDRE du temps.
+    ⛔ Rien n'est garde entre deux paires : c'est ce qui borne la memoire.
 
     ⚠️ Le spread est donne en FRACTION du prix et non en dollars : 0,20 $ sur
     l'or a 4 100 ne veut rien dire sur l'euro a 1,08. On le convertit au prix
     median de la paire, sinon on comparerait des couts incomparables.
     """
-    bgs, releve, prix_med = _bougies_et_releve(paire)
-    if bgs is None:
-        return []
-    spread = prix_med * spread_rel
-    ent = bq.banc._entrees(bgs, releve, spread)
-    return [bq.banc._issue(bgs, i, e, r, o, s, spread / r)[0]
-            for i, e, r, o, s, _srt in ent]
+    bgs = bougies(paire)
+    if len(bgs) < labo.FENETRE + 500:
+        return {}
+    prix_med = statistics.median(float(b["c"]) for b in bgs)
+    releve = labo.detections(bgs)
+    out = {}
+    for sr in spreads:
+        spread = prix_med * sr
+        ent = bq.banc._entrees(bgs, releve, spread)
+        out[sr] = [bq.banc._issue(bgs, i, e, r, o, s, spread / r)[0]
+                   for i, e, r, o, s, _srt in ent]
+    del bgs, releve          # explicite : la paire suivante ne doit rien herite
+    return out
 
 
 def _lecture(par_paire: dict[str, list[float]], spread_rel: float) -> dict:
@@ -166,17 +184,26 @@ def main() -> int:
           f"{DEBUT} -> {FIN} ===")
     print("⛔ XAU/USD EXCLU : il a FORME l hypothese.\n")
 
+    # ⛔ UNE SEULE boucle sur les paires, les deux spreads a l'interieur : c'est
+    # ce qui garde la memoire plate. Voir le bloc au-dessus de
+    # `rs_de_la_paire_tous_spreads` — l'inverse a coute 56 min de production.
+    par_spread: dict[float, dict[str, list[float]]] = {s: {} for s in SPREADS_REL}
+    for paire in PAIRES:
+        res = rs_de_la_paire_tous_spreads(paire, SPREADS_REL)
+        if not res:
+            print(f"  {paire:9s} ecartee (trop peu de bougies)")
+            continue
+        for sr, rs in res.items():
+            if rs:
+                par_spread[sr][paire] = rs
+        n0 = len(res[SPREADS_REL[0]])
+        print(f"  {paire:9s} {n0:5d} entrees")
+
     for spread_rel in SPREADS_REL:
+        print("")
         print(f"--- spread {spread_rel * 100:.3f} % du prix "
               f"(~{spread_rel * 4100:.2f} $ sur l or) ---")
-        par_paire = {}
-        for paire in PAIRES:
-            rs = rs_de_la_paire(paire, spread_rel)
-            if rs:
-                par_paire[paire] = rs
-                print(f"  {paire:9s} {len(rs):5d} entrees")
-            else:
-                print(f"  {paire:9s} ecartee (trop peu de bougies)")
+        par_paire = par_spread[spread_rel]
         if len(par_paire) < 5:
             print("  pas assez de paires")
             continue
