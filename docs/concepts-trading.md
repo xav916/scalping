@@ -3791,3 +3791,84 @@ intersection                 -> substitution   => le test TOMBE  ✓
 lanceur, celui-ci sera muet pour ces clôtures-là — **et il marchera quand même
 la plupart du temps**, ce qui le rend indétectable à l'usage. Le test compare
 les deux comptes au lieu de figer le nombre 3.
+
+---
+
+## DÉCLARATION — CONTRE-FIL APRÈS UN GAIN DE 2 € (2026-10-08)
+
+> Xavier : *« je veux que lorsque le 1er trade est à 2 euros de l'entrée vers
+> le TP, alors ouvrir un trade dans l'autre sens. »*
+
+⚠️ **Déclaré AVANT d'écrire une ligne de banc.** Le critère, les prédictions et
+la règle de rejet sont figés ici ; le commit qui porte ce texte précède le code.
+
+### La règle, sans ambiguïté
+
+Le TP de l'or vaut **2 € = 2,24 $**. « À 2 € de l'entrée vers le TP » est donc
+**exactement le TP**. La règle se lit :
+
+> À l'instant où un trade d'or touche sa cible de 2 €, ouvrir immédiatement une
+> position **de sens opposé**, au prix de sortie, avec le même stop (0,35 % =
+> 14,43 $) et la même cible (2,24 $).
+
+🔑 **Aucun plafond de positions n'est concerné** : le premier trade se ferme en
+touchant sa cible, la place se libère. C'est une consigne de **direction** sur
+le trade suivant, pas un empilement. Rien à voir avec les 5 positions
+simultanées, impossibles par la marge (184,27 € par position, 921 € pour cinq
+contre 645 € de solde).
+
+### Pourquoi ça mérite une mesure, et pas un déploiement
+
+Le contre-fil sur un trade **collé au stop** a été **rejeté** le 2026-10-08
+(`3302fa5`) : son placebo le battait franchement, *« collé au stop, le
+mouvement adverse a déjà eu lieu »*. Ici la prémisse est **inversée** — le prix
+vient de courir 2,24 $ **en notre faveur**, et la règle parie sur le retour.
+C'est une hypothèse de retour à la moyenne, pas de continuation : elle doit
+être éprouvée pour elle-même.
+
+### Les bras, et le seul qui compte
+
+| bras | ce qu'il ouvre à l'instant du TP |
+|---|---|
+| **A** | rien — on attend le prochain signal (le comportement actuel) |
+| **B** | le sens **OPPOSÉ** — la règle de Xavier |
+| **C** | le sens opposé, mais à un instant **TIRÉ AU HASARD**, apparié en nombre, **200 tirages** |
+| **D** | le sens **IDENTIQUE** (continuation) — le contrôle qui dit si la direction porte quelque chose |
+
+🔑 **D est indispensable.** Si `B ≈ D`, alors le sens choisi n'apporte rien et
+on ne mesure que le coût d'ouvrir un trade de plus. C'est l'erreur que j'ai
+commise le 01/10 avec un contrôle aléatoire **non apparié**, qui mesurait le
+coût et non la direction (`97e3c39`).
+
+### Prédictions, posées d'avance
+
+- **P1** `B − C` : intervalle 95 % strictement positif, placebo retiré
+  **200 fois**. ⛔ Si `B ≤ C`, **rejet** — comme pour le contre-fil au stop.
+- **P2** `B − D` : intervalle 95 % strictement positif. ⛔ Si l'intervalle
+  contient zéro, **le sens ne porte rien** et la règle n'est pas armable.
+- **P3** `B` atteint un taux au TP **≥ 85,7 %** — le seuil de rentabilité de la
+  géométrie 2/12. ⛔ En dessous, `B` perd de l'argent même s'il bat `C` et `D`.
+
+> ⛔ **Les TROIS doivent passer.** Battre le hasard sans atteindre 85,7 % ne
+> donne qu'une façon moins mauvaise de perdre.
+
+### Méthode, et les pièges déjà connus
+
+- **Bougies DU COURTIER**, M5, **un an** — une paire entière dépasse 1 Go de
+  détections et se fait tuer par le cgroup, et le banc tourne dans le conteneur
+  **borné** (`banc_borne.sh`), jamais dans la production.
+- `laboratoire_or._issue`, qui teste le **stop AVANT la cible** dans chaque
+  bougie. L'ordre est tout le sujet.
+- **Fenêtre figée** au commit : trois passages sur une fenêtre glissante
+  avaient rendu 0, puis 1, puis 0 retenue.
+- Spread facturé aux **deux jambes**, et le profil horaire appliqué : ×3,02 à
+  20h UTC, aucune cotation à 21h.
+- Lecture **par paire** impossible ici (une seule paire) ⇒ la borne vient du
+  **bootstrap par trade**, et je le dis comme une **limite**, pas comme un
+  détail.
+
+### Ce que la mesure ne dira PAS
+
+Elle porte sur les bougies du courtier, pas sur les ~86 fermetures
+automatiques mensuelles du compte réel. Un verdict positif dirait que la règle
+tient **sur l'historique**, pas qu'elle rapporte sur l'argent de Xavier.
