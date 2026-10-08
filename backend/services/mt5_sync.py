@@ -749,6 +749,29 @@ async def _notify_close_telegram(ticket: int) -> None:
         logger.warning(f"mt5_sync: notify_close_telegram ticket={ticket} failed: {e}")
 
 
+async def _relancer_apres_fermeture(ticket: int) -> None:
+    """Previent le lanceur qu'une position vient de fermer.
+
+    🔑 La PAIRE vient de la base, par le ticket : les trois sites de
+    fermeture n'ont pas la meme charge utile (celui de `/deals` ne porte
+    aucune paire), et deviner aurait rendu le lanceur muet sur l'un des
+    trois sans que rien ne le signale.
+
+    Best-effort, comme la notification juste au-dessus : une relance qui
+    echoue ne doit pas empecher la cloture d'etre enregistree.
+    """
+    try:
+        from backend.services.lanceur_sur_fermeture import (
+            relancer_apres_fermeture)
+        trade = _fetch_closed_trade_for_notify(ticket)
+        if not trade:
+            return
+        await relancer_apres_fermeture(trade.get("pair"), ticket)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            f"mt5_sync: lanceur ticket={ticket} failed: {e}")
+
+
 def _select_open_auto_tickets() -> set[int]:
     """Tickets **MT5** des personal_trades auto encore OPEN.
 
@@ -908,6 +931,7 @@ async def _reconcile_open_trades() -> None:
             })
             n_full += 1
             await _notify_close_telegram(int(ticket))
+            await _relancer_apres_fermeture(int(ticket))
         elif data.get("closed") is None:
             logger.warning(
                 f"mt5_sync: ticket {ticket} history introuvable, status=CLOSED sans pnl"
@@ -915,6 +939,7 @@ async def _reconcile_open_trades() -> None:
             _mark_ticket_closed_no_deal(ticket)
             n_partial += 1
             await _notify_close_telegram(int(ticket))
+            await _relancer_apres_fermeture(int(ticket))
 
     if n_full or n_partial:
         logger.info(
@@ -1018,6 +1043,7 @@ async def _sync_one(name: str, base_url: str, api_key: str) -> tuple[int, int]:
             ticket = row.get("ticket")
             if ticket:
                 await _notify_close_telegram(int(ticket))
+                await _relancer_apres_fermeture(int(ticket))
 
     state.setdefault("bridges", {})[name] = max_id
     _save_state(state)

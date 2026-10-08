@@ -58,6 +58,21 @@ _latest_h1_candles_by_pair: dict[str, list] = {}
 _last_cycle_at: datetime | None = None
 _scheduler: AsyncIOScheduler | None = None
 
+# ⛔ UN SEUL cycle d'analyse a la fois (2026-10-08). Le lanceur sur fermeture
+# peut declencher `run_analysis_cycle` a n'importe quel instant, et la duree
+# mesuree sur 500 cycles monte a 183,7 s au p99 — contre un intervalle de
+# 180 s. Deux cycles concurrents, c'est deux fois les bougies en memoire sur
+# une instance ou le radar SEUL prend deja 1,83 Gio sur 3,75 : c'est
+# exactement ce qui a fait tomber la production 56 min le 2026-10-08.
+#
+# 🔑 `asyncio.Lock` et non un drapeau : le drapeau laisse une fenetre entre le
+# test et la pose.
+_verrou_cycle = asyncio.Lock()
+
+
+class _PasDeBattement(Exception):
+    """Sentinelle interne : un cycle restreint n ecrit pas de battement."""
+
 
 def get_latest_overview() -> MarketOverview | None:
     return _latest_overview
@@ -94,9 +109,46 @@ def compute_h1_trend(candles: list) -> str:
     return "neutral"
 
 
-async def run_analysis_cycle() -> None:
-    """Exécute un cycle complet : récupération, analyse, détection de patterns, notification."""
+async def run_analysis_cycle(univers_force: list[str] | None = None) -> None:
+    """Exécute un cycle complet : récupération, analyse, détection de patterns, notification.
+
+    `univers_force` restreint le cycle à ces paires — utilisé par le lanceur
+    sur fermeture, pour reprendre la main sur une paire sans attendre le
+    prochain tour d'horloge.
+
+    ⛔ **Un cycle restreint n'est PAS un cycle**, et trois choses en découlent.
+    Il ne publie pas `_latest_overview` (l'interface n'afficherait plus que la
+    paire relancée), il ne touche pas `_last_cycle_at`, et il n'écrit **aucun
+    battement** : `bridge_monitor` se sert de `radar_cycle_heartbeat` depuis le
+    2026-05-09 pour détecter un radar mort. Un lancement de l'or toutes les
+    deux minutes ferait passer un cycle complet BLOQUÉ pour vivant — une
+    alerte de sécurité rendue muette par une optimisation de confort.
+
+    🔑 Tout le reste est le chemin de production **à l'identique** : mêmes
+    portes, mêmes verdicts, même routage. Écrire une analyse allégée pour l'or
+    aurait créé une doublure qui dérive en silence — le piège déjà relevé deux
+    fois dans ce dépôt (`feedback_router_une_source_en_laisser_deux`,
+    `feedback_doublure_de_test_absente_en_prod`).
+    """
     global _latest_overview, _latest_candles_by_pair, _latest_h1_candles_by_pair, _last_cycle_at
+
+    restreint = bool(univers_force)
+    if _verrou_cycle.locked():
+        # ⚠️ Ne PAS attendre : un lanceur qui patiente derriere un cycle de
+        # 183 s arriverait apres le tour d'horloge qu'il voulait devancer, et
+        # relancerait sur des bougies deja analysees.
+        logger.info("cycle%s ignore : un cycle est deja en cours",
+                    " restreint" if restreint else "")
+        return
+    async with _verrou_cycle:
+        await _run_analysis_cycle_verrouille(univers_force)
+
+
+async def _run_analysis_cycle_verrouille(
+        univers_force: list[str] | None = None) -> None:
+    global _latest_overview, _latest_candles_by_pair, _latest_h1_candles_by_pair, _last_cycle_at
+
+    restreint = bool(univers_force)
 
     # ⛔ L'univers est fige UNE SEULE FOIS pour tout le cycle. Les resultats
     # de `asyncio.gather` sont indexes par POSITION (`results[1 + i]`) : deux
@@ -109,10 +161,24 @@ async def run_analysis_cycle() -> None:
     # destination la recevra. Le scope se joue au ROUTAGE, dans
     # `resolve_destinations`, jamais ici.
     univers = univers_a_analyser()
+    if univers_force:
+        # 🔑 INTERSECTION, jamais substitution : une paire hors univers n'a ni
+        # destination ni portee, et l'analyser produirait un setup que rien ne
+        # peut router — un ordre fantome dans les journaux.
+        demande = {p.upper() for p in univers_force}
+        univers = [p for p in univers if p.upper() in demande]
+        if not univers:
+            logger.warning("cycle restreint : %s hors univers, rien a faire",
+                           sorted(demande))
+            return
 
-    logger.info("Démarrage du cycle d'analyse...")
+    logger.info("Démarrage du cycle d'analyse%s...",
+                (" RESTREINT a %s" % univers) if restreint else "")
     cycle_started_at = datetime.now(timezone.utc)
-    _last_cycle_at = cycle_started_at
+    if not restreint:
+        # ⛔ Un cycle restreint ne rajeunit PAS cette horloge : elle dit
+        # « quand l'univers ENTIER a ete analyse pour la derniere fois ».
+        _last_cycle_at = cycle_started_at
     cycle_signals_count = 0
     cycle_setups_count = 0
     cycle_error: str | None = None
@@ -404,6 +470,16 @@ async def run_analysis_cycle() -> None:
         )
 
         now = datetime.now(timezone.utc)
+        if restreint:
+            # ⛔ NE RIEN PUBLIER. `_latest_overview` alimente l'interface
+            # et l'API : la remplacer par la seule paire relancee ferait
+            # DISPARAITRE les dix-neuf autres de l'ecran de Xavier. Les
+            # ordres de ce cycle sont deja partis plus haut, par le chemin
+            # normal — c'est tout ce qu'on lui demandait.
+            logger.info(
+                'cycle restreint termine : %d setups, rien de publie',
+                cycle_setups_count)
+            return
         _latest_candles_by_pair = all_candles
         _latest_h1_candles_by_pair = h1_candles
         _latest_overview = MarketOverview(
@@ -499,6 +575,15 @@ async def run_analysis_cycle() -> None:
         # se base dessus depuis 2026-05-09 pour ne plus déclencher de faux
         # positifs sur des sessions calmes (cf. radar_heartbeat_service.py).
         try:
+            if restreint:
+                # 🔑 LA GARDE QUI COMPTE. `bridge_monitor` lit
+                # `radar_cycle_heartbeat` depuis le 2026-05-09 pour savoir
+                # si le radar vit encore. Un lancement de l'or, rapide et
+                # frequent, y ecrirait des battements reguliers : un cycle
+                # COMPLET bloque passerait alors pour vivant, et l'alerte
+                # de radar mort deviendrait muette. Jamais pour un cycle
+                # restreint.
+                raise _PasDeBattement()
             from backend.services.radar_heartbeat_service import record_cycle
             record_cycle(
                 started_at=cycle_started_at,
@@ -506,6 +591,8 @@ async def run_analysis_cycle() -> None:
                 setups_count=cycle_setups_count,
                 error_message=cycle_error,
             )
+        except _PasDeBattement:
+            pass
         except Exception as e:
             logger.warning(f"radar_heartbeat record failed (non-bloquant): {e}")
 

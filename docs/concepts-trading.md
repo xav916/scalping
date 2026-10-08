@@ -3700,3 +3700,94 @@ Expérience **armée et en vol**. Le prochain signal d'or portera une cible de
 **2,24 $ = 2,00 €**. Il attend que la place se libère : le trade 1995 occupe
 l'unique position d'or (`max_positions_per_pair`), et sa fermeture est
 **manuelle**.
+
+---
+
+## 2026-10-08 — LANCEUR SUR FERMETURE : reprendre la main sans attendre l'horloge
+
+Demandé par Xavier : *« Je trouve que le fait d'attendre 3 minutes est un peu
+long. Peut-on redévelopper le lanceur ? […] qu'il soit à l'écoute des threads
+fermés. »*
+
+### Ce que ça gagne, et ce que ça ne gagne pas
+
+```
+synchro MT5 (détection de la fermeture)    60 s
+cycle d'analyse (tour d'horloge)          180 s
+⇒ latence observée après une fermeture : 2 min 03  (fermeture 12h34:15, ordre 12h36:18)
+```
+
+La fermeture **déclenche** désormais l'analyse au lieu de l'attendre : il ne
+reste que la détection, soit **~30 s en moyenne**.
+
+⚠️ **Ce que ça ne gagne pas** : l'écart entre deux trades d'or est gouverné par
+l'**arrivée des setups qualifiés** — 33/jour mesurés, un toutes les ~25 min. Ce
+lanceur supprime 2 min de latence ; il ne fabrique aucun signal. Sans setup
+qualifié au moment où il tire, rien ne part — et c'est voulu.
+
+### ⛔ Pourquoi baisser l'intervalle global était EXCLU
+
+Durée du cycle, mesurée sur **500 cycles** (`radar_cycle_heartbeat`) :
+
+```
+médiane 22,4 s    p75 26,4 s    p90 42,3 s    p99 183,7 s    max 191,6 s
+intervalle : 180 s      ⇒ marge au p99 : −3,7 s
+```
+
+🔑 **Au p99 le cycle dépasse déjà son propre intervalle.** Le baisser ferait se
+chevaucher les cycles, donc doubler les bougies en mémoire sur une instance où
+le radar seul prend 1,83 Gio sur 3,75 — exactement ce qui a fait tomber la
+production 56 min le matin même.
+
+### L'architecture : AUCUNE analyse dans le lanceur
+
+Il appelle `run_analysis_cycle(univers_force=[paire])` — le chemin de
+production **à l'identique** : mêmes portes, mêmes verdicts, même routage.
+Écrire une analyse allégée pour l'or aurait produit une doublure qui dérive en
+silence, piège déjà payé deux fois (le WTI avait **trois** chemins de prix).
+
+### Les gardes, et la raison de chacune
+
+| garde | pourquoi |
+|---|---|
+| `LANCEUR_SUR_FERMETURE=0` par défaut | un lanceur qui s'allume au déploiement changerait la cadence de l'argent réel sans demande |
+| `LANCEUR_PAIRES=XAU/USD` | l'or est la seule paire dont la cadence a été mesurée |
+| `LANCEUR_COOLDOWN_SEC=60` | deux clôtures dans la même passe de synchro ne doivent déclencher qu'**un** lancement |
+| `asyncio.Lock` partagé | un `Lock` et non un drapeau : le drapeau laisse une fenêtre entre le test et la pose |
+| renoncer si verrouillé | **attendre serait pire** : le lanceur arriverait après le tour d'horloge qu'il voulait devancer, sur des bougies déjà analysées |
+
+### ⛔ TROIS gardes sur le cycle restreint, dont une de SÉCURITÉ
+
+Un cycle restreint **n'est pas** un cycle, et il ne doit donc pas :
+
+1. **publier `_latest_overview`** — l'interface n'afficherait plus que la paire
+   relancée, les dix-neuf autres disparaîtraient de l'écran ;
+2. **toucher `_last_cycle_at`** — cette horloge dit « quand l'univers ENTIER a
+   été analysé » ;
+3. **écrire un battement** — 🔑 `bridge_monitor` lit `radar_cycle_heartbeat`
+   depuis le 2026-05-09 pour détecter un radar mort. Des battements écrits par
+   des lancements de l'or feraient passer un cycle **complet bloqué** pour
+   vivant : une alerte de sécurité rendue muette par une optimisation de
+   confort.
+
+Et `univers_force` est une **intersection**, jamais une substitution : une paire
+hors univers n'a ni destination ni portée, l'analyser produirait un setup que
+rien ne peut router.
+
+### ✅ Chaque garde ÉPROUVÉE EN LA CASSANT
+
+31 tests passent — mais un test qui n'a jamais échoué ne prouve rien. Quatre
+sabotages, un à la fois, avec restauration :
+
+```
+raise _PasDeBattement()      -> pass           => le test TOMBE  ✓
+un des 3 sites de fermeture  -> retiré         => le test TOMBE  ✓
+défaut "0"                   -> "1"            => le test TOMBE  ✓
+intersection                 -> substitution   => le test TOMBE  ✓
+```
+
+🔑 Le test le plus important est `test_TOUS_les_sites_de_fermeture_appellent_le_lanceur` :
+`mt5_sync` ferme un trade à **trois** endroits. Si un quatrième apparaît sans le
+lanceur, celui-ci sera muet pour ces clôtures-là — **et il marchera quand même
+la plupart du temps**, ce qui le rend indétectable à l'usage. Le test compare
+les deux comptes au lieu de figer le nombre 3.
