@@ -43,8 +43,12 @@ def _brancher(monkeypatch, positions, reponse):
     async def _p(base, cle):
         return positions
 
-    async def _po(base, cle, ticket, sl):
-        appels.append({"ticket": ticket, "sl": sl})
+    async def _po(base, cle, ticket, sl, tp=None):
+        # ⚠️ `tp` ajoute le 2026-10-09 : la boucle transmet desormais aussi
+        # l'objectif (regle de Xavier, << toujours 2 euros d'ecart devant >>).
+        # La doublure le CAPTURE plutot que de l'ignorer -- une doublure qui
+        # jette un argument ne garde rien de ce qu'il transporte.
+        appels.append({"ticket": ticket, "sl": sl, "tp": tp})
         return reponse
 
     monkeypatch.setattr(B, "_positions", _p)
@@ -180,3 +184,30 @@ def test_le_pont_a_son_PROPRE_cliquet():
 def test_le_pont_distingue_les_deux_usages_dans_sa_trace():
     src = _PONT.read_text(encoding="utf-8")
     assert '"sltp-deplacement" if deplacer else "sltp-guard"' in src
+
+
+def test_la_boucle_transmet_AUSSI_l_objectif(monkeypatch):
+    """🔑 Regle de Xavier du 2026-10-09 : l'objectif suit le prix, a 2 EUR
+    devant. Le stop seul ne suffit plus -- et un TP calcule mais jamais
+    transmis serait le defaut de l'echelle de ce matin, en pire : elle
+    calculait juste et n'appliquait rien.
+    """
+    monkeypatch.setenv("ECHELLE_STOP_OR", "1")
+    monkeypatch.setenv("ECHELLE_STOP_OR_PALIERS", "1.0:0.75")
+    monkeypatch.delenv("ECHELLE_TP_ECART_EUR", raising=False)
+    monkeypatch.setattr(B, "_taux", lambda: 1.1235)
+    monkeypatch.setenv("MT5_BRIDGE_LIVE_URL", "http://pont.test")
+    monkeypatch.setenv("MT5_BRIDGE_LIVE_API_KEY", "k")
+
+    pos = [{"ticket": 7, "symbol": "XAUUSD", "type": "buy",
+            "price_open": 4190.0, "price_current": 4190.0 + 1.20 * 1.1235,
+            "sl": 4190.0 - 20 * 1.1235, "tp": 0.0,
+            "comment": "scalping-radar-2026-10-09"}]
+    appels = _brancher(monkeypatch, pos, {"ok": True})
+
+    asyncio.run(B.appliquer())
+
+    assert len(appels) == 1
+    # Stop a +0,75 EUR, objectif a +3,00 EUR (seuil 1,00 + ecart 2,00).
+    assert appels[0]["sl"] == pytest.approx(4190.0 + 0.75 * 1.1235, abs=0.01)
+    assert appels[0]["tp"] == pytest.approx(4190.0 + 3.00 * 1.1235, abs=0.01)

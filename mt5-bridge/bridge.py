@@ -4295,6 +4295,45 @@ def _lire_sl_demande(data: dict):
     return (sl_dist, sl_absolu, None)
 
 
+def _lire_tp_demande(data: dict):
+    """``(tp_absolu, erreur)``. ``None`` = ne touche pas au TP.
+
+    Regle de Xavier le 2026-10-09 : << toujours 2 euros d'ecart quand on se
+    rapproche du TP >>. Le TP suit donc le prix, et il faut pouvoir le
+    DEPLACER -- la route le PRESERVAIT, explicitement.
+
+    ⛔ `None` ET NON ZERO quand le champ est absent. Rendre `0` EFFACERAIT
+    l'objectif : un ordre sans TP ne sort plus jamais au profit. Et un `0`
+    envoye explicitement est refuse pour la meme raison -- ce serait un
+    effacement deguise en valeur.
+    """
+    brut = data.get("tp_absolu")
+    if brut is None:
+        return (None, None)
+    try:
+        tp = float(brut)
+    except (TypeError, ValueError):
+        return (None, "tp_absolu doit etre un nombre")
+    if tp <= 0:
+        return (None, "tp_absolu doit etre > 0")
+    return (tp, None)
+
+
+def _tp_mieux(nouveau: float, actuel: float | None, is_buy: bool) -> bool:
+    """🔑 LE CLIQUET DU TP, miroir exact de celui du stop.
+
+    Un objectif ne doit JAMAIS se rapprocher du prix d'entree : le ramener
+    reduirait le gain vise sur une position qui travaille. Pour un achat il ne
+    peut que MONTER, pour une vente que DESCENDRE.
+
+    ⚠️ Un TP absent (0 ou None) accepte le premier objectif : une position nue
+    doit pouvoir en recevoir un.
+    """
+    if actuel is None or actuel == 0:
+        return True
+    return nouveau > actuel if is_buy else nouveau < actuel
+
+
 @app.route("/position/sltp", methods=["POST"])
 @require_api_key
 def set_position_sltp():
@@ -4345,6 +4384,9 @@ def set_position_sltp():
     sl_dist, sl_absolu, _erreur = _lire_sl_demande(data)
     if _erreur:
         return jsonify({"ok": False, "error": _erreur}), 400
+    tp_absolu, _err_tp = _lire_tp_demande(data)
+    if _err_tp:
+        return jsonify({"ok": False, "error": _err_tp}), 400
 
     if not ensure_mt5_connected():
         return jsonify({"ok": False, "error": "MT5 not connected"}), 503
@@ -4404,6 +4446,22 @@ def set_position_sltp():
                 "sl_actuel": ancien, "sl_demande": new_sl,
             }), 409
     new_tp = p.tp or 0.0  # préserve le TP existant tel quel (0 = pas de TP)
+    # 🔑 LE TP DEVIENT DEPLACABLE (2026-10-09), sous les MEMES deux conditions
+    # que le stop : le client doit le DEMANDER et le drapeau doit l'autoriser.
+    # Sans cela un appelant historique deplacerait un objectif sans le savoir.
+    #
+    # ⛔ Et son CLIQUET : un objectif ne se rapproche JAMAIS de l'entree. Le
+    # ramener reduirait le gain vise sur une position qui travaille.
+    tp_recule = False
+    if tp_absolu is not None and deplacer:
+        if _tp_mieux(tp_absolu, p.tp, is_buy):
+            new_tp = tp_absolu
+        else:
+            tp_recule = True
+            logger.info(
+                "sltp: tp_absolu %s refuse par le cliquet (actuel %s, %s) "
+                "— un objectif ne se rapproche jamais de l'entree",
+                tp_absolu, p.tp, "achat" if is_buy else "vente")
 
     info = mt5.symbol_info(p.symbol)
     digits = info.digits if info else 5
@@ -4445,6 +4503,9 @@ def set_position_sltp():
         "sl_clampe_par_le_courtier": clampe,
         "sl": result["sl"],
         "tp": result["tp"],
+        # 🔑 Le client doit SAVOIR que son objectif a ete refuse : croire un TP
+        # pose quand il ne l'est pas rendrait toute la mesure fausse.
+        "tp_refuse_par_cliquet": tp_recule,
         "retcode": result.get("retcode"),
         "error": result.get("error"),
     })

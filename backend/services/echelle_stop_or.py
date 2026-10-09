@@ -71,6 +71,24 @@ def arme() -> bool:
         "1", "true", "yes", "on")
 
 
+# ⛔ TOLERANCE SUR LA COMPARAISON DE SEUIL, et ce n'est PAS defensif.
+#
+# Un cours pile au palier ne le franchissait PAS. Mesure : pour une entree a
+# 4190,00 et un taux de 1,1235, un cours a +1,00 EUR vaut
+# `4190 + 1.00 * 1.1235`, et le profit recalcule par division rend
+# **0.9999999999999999**. Le seuil de 1,00 n'etait donc jamais atteint a
+# l'euro exact.
+#
+# 🔑 Trouve par un test qui construisait le prix DEPUIS le seuil -- c'est-a-dire
+# exactement le cas limite que la production rencontre quand le prix arrive
+# pile au palier. Un dix-milliardieme d'euro de tolerance le couvre, et aucune
+# decision reelle ne se joue a cette echelle.
+_TOLERANCE = 1e-9
+
+# ⚠️ Ecart par defaut entre le palier et l'objectif (regle du 2026-10-09).
+TP_ECART_DEFAUT = 2.0
+
+
 def echelle() -> tuple[tuple[float, float], ...]:
     """Les paliers, surchargeables par `ECHELLE_STOP_OR_PALIERS`.
 
@@ -109,8 +127,72 @@ def palier_atteint(profit_eur: float) -> float | None:
     """
     retenu = None
     for seuil, cible in echelle():
-        if profit_eur >= seuil:
+        if profit_eur >= seuil - _TOLERANCE:
             retenu = cible
+    return retenu
+
+
+def tp_ecart_eur() -> float:
+    """L'ecart entre le palier et l'objectif, en euros. Defaut 2,00.
+
+    ⚠️ UN ECART NUL OU ILLISIBLE RETOMBE SUR 2,00, jamais sur zero : un
+    objectif colle au cours ferait sortir le trade instantanement, et un
+    reglage illisible ne doit pas produire ce comportement en silence.
+    """
+    brut = os.getenv("ECHELLE_TP_ECART_EUR", "").strip()
+    if not brut:
+        return TP_ECART_DEFAUT
+    try:
+        v = float(brut)
+        if v <= 0:
+            raise ValueError(f"ecart {v} <= 0")
+        return v
+    except Exception as e:  # noqa: BLE001
+        logger.warning("ECHELLE_TP_ECART_EUR illisible (%s) — repli sur "
+                       "%.2f EUR", e, TP_ECART_DEFAUT)
+        return TP_ECART_DEFAUT
+
+
+def tp_vise_eur(profit_eur: float) -> float | None:
+    """L'objectif a poser, en euros de profit, ou ``None``.
+
+    Regle de Xavier le 2026-10-09 : << toujours 2 euros d'ecart quand on se
+    rapproche du TP : quand 1 euro est atteint, update SL:1 et TP:3 ; si 1,5
+    est atteint, SL:1,5 et TP:3,5, etc. >>
+
+    🔑 L'objectif suit le PALIER FRANCHI, pas le profit instantane : sinon il
+    bougerait a chaque tick et le courtier recevrait un ordre de modification
+    toutes les 15 s pour trois centimes.
+
+    ⛔ `None` sous le premier palier : deplacer l'objectif d'une position qui
+    n'a rien prouve serait gratuit.
+
+    ⚠️ Et le SL, lui, ne change PAS d'un centime : la marge de 0,25 EUR choisie
+    par Xavier apres mesure du spread (0,151 EUR) fait que `niveau - 0,25` est
+    EXACTEMENT l'echelle deja en production. Seul le TP est nouveau.
+    """
+    # ⛔ ON PART DU SEUIL FRANCHI, PAS DE LA CIBLE DU STOP, et ma premiere
+    # version confondait les deux. `palier_atteint` rend la CIBLE (0,75 pour un
+    # seuil de 1,00) : l'objectif en aurait valu 2,75 au lieu des 3,00 que
+    # Xavier a dictes. Son exemple est sans ambiguite -- << quand 1 euro est
+    # atteint, TP:3 >> -- donc l'ecart se compte depuis le NIVEAU ATTEINT.
+    seuil = seuil_atteint(profit_eur)
+    if seuil is None:
+        return None
+    return seuil + tp_ecart_eur()
+
+
+def seuil_atteint(profit_eur: float) -> float | None:
+    """Le SEUIL de palier le plus haut franchi, ou ``None``.
+
+    🔑 A distinguer de `palier_atteint`, qui rend la CIBLE DU STOP. Les deux
+    existent parce que le stop et l'objectif ne se comptent pas depuis le meme
+    point : le stop depuis sa cible, l'objectif depuis le niveau atteint.
+    """
+    retenu = None
+    for seuil, _cible in echelle():
+        if profit_eur >= seuil - _TOLERANCE:
+            retenu = seuil
     return retenu
 
 
@@ -196,7 +278,16 @@ def decision(position: dict, taux_eur_usd: float,
             logger.warning("echelle[%s]: stop %.2f sous le prix %.2f — "
                            "ignore", position.get("ticket"), sl, courant)
             return None
+        # 🔑 L'OBJECTIF SUIT, a `tp_ecart_eur()` devant le palier. On rend un
+        # PRIX, comme pour le stop : la lecon du defaut de signe du matin --
+        # une distance se lit dans les deux sens, un prix non.
+        tp = None
+        vise_tp = tp_vise_eur(profit_eur)
+        if vise_tp is not None:
+            signe_tp = 1 if sens == "buy" else -1
+            tp = round(entree + signe_tp * vise_tp * taux_eur_usd, 2)
         return {"ticket": position.get("ticket"), "sl": round(sl, 2),
+                "tp": tp, "tp_eur": vise_tp,
                 "profit_eur": round(profit_eur, 3), "palier": cible,
                 "sl_actuel": actuel}
     except Exception as e:  # noqa: BLE001

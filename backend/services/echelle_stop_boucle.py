@@ -59,7 +59,8 @@ async def _positions(base: str, cle: str) -> list[dict] | None:
         return None
 
 
-async def _poser(base: str, cle: str, ticket: int, sl: float) -> dict:
+async def _poser(base: str, cle: str, ticket: int, sl: float,
+                 tp: float | None = None) -> dict:
     """Appelle `/position/sltp` avec le PRIX du stop et `deplacer: true`.
 
     ⛔ CORRIGÉ LE 2026-10-09, et c'était un vrai défaut sur l'argent réel.
@@ -81,6 +82,10 @@ async def _poser(base: str, cle: str, ticket: int, sl: float) -> dict:
             r = await c.post(
                 base.rstrip("/") + "/position/sltp",
                 json={"ticket": int(ticket), "sl_absolu": float(sl),
+                      # 🔑 L'OBJECTIF SUIT AUSSI (2026-10-09). Omis quand il
+                      # n'y a rien a poser : le pont PRESERVE alors le TP
+                      # existant, il ne l'efface pas.
+                      **({"tp_absolu": float(tp)} if tp else {}),
                       "deplacer": True},
                 headers={"X-API-Key": cle})
             try:
@@ -121,7 +126,7 @@ async def appliquer() -> dict:
         # 🔑 On transmet le PRIX, pas la distance : c'est tout le correctif.
         if not d.get("sl"):
             continue
-        r = await _poser(base, cle, d["ticket"], d["sl"])
+        r = await _poser(base, cle, d["ticket"], d["sl"], d.get("tp"))
         # 🔑 `already_protected` est compte A PART : c'est le symptome exact du
         # cas ou la route refuse de deplacer. Le confondre avec un succes
         # ferait croire que l'echelle tourne alors qu'elle ne fait rien.
