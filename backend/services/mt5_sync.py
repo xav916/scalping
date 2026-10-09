@@ -828,6 +828,253 @@ def _mark_ticket_closed_no_deal(ticket: int) -> None:
         )
 
 
+# ─────────────────────────────────────────────────────────────────────────
+# ADOPTION DES POSITIONS OUVERTES HORS DU RADAR (2026-10-09)
+# ─────────────────────────────────────────────────────────────────────────
+#
+# ⛔ LE TROU. Le 2026-10-09, six fermetures d'or faites DANS LE TERMINAL MT5
+# entre 05h36 et 05h55 UTC ont coûté −157,35 € sur le compte réel. Aucun
+# garde-fou ne les a vues et `personal_trades` en comptait ZÉRO ligne.
+#
+# La cause n'est pas un garde-fou défaillant, c'est qu'aucun chemin ne part du
+# COURTIER :
+#   - `_sync_one` lit `/audit`, le journal de ce que LE PONT a fait. Un ordre
+#     passé dans le terminal ne traverse pas le pont ;
+#   - `_reconcile_open_trades` compare `/positions` aux tickets DÉJÀ en base.
+#     Un ticket absent de la base est hors de la comparaison.
+#
+# 🔑 Or `/positions` déclare TOUTES les positions du courtier, les manuelles
+# comprises — la charge utile était déjà lue, et déjà pour tous les ponts. Il
+# manquait de l'ADOPTER au lieu de n'en garder que l'intersection.
+#
+# Le marqueur porte `MANUEL` à dessein : le suivi de l'expérience TP 2 €
+# exclut déjà `notes LIKE '%MANUEL%'` (cf. 527e42d). Un trade du terminal n'a
+# passé AUCUNE des portes du radar — il ne doit jamais entrer dans la mesure.
+MARQUE_ADOPTION = "MANUEL-TERM"
+
+# Métaux et énergie : le symbole du courtier ne se découpe pas en deux moitiés
+# de trois lettres. Les alias viennent des symboles RÉELS d'IC Markets et de
+# Pepperstone, pas d'une convention supposée.
+_ALIAS_SYMBOLES = {
+    "GOLD": "XAU/USD", "XAUUSD": "XAU/USD",
+    "SILVER": "XAG/USD", "XAGUSD": "XAG/USD",
+    "XTIUSD": "WTI/USD", "SPOTCRUDE": "WTI/USD", "WTIUSD": "WTI/USD",
+    "BTCUSD": "BTC/USD", "ETHUSD": "ETH/USD",
+}
+
+
+def _paire_depuis_symbole(symbole: str) -> tuple[str, bool]:
+    """``(paire, cartographiee)`` depuis le symbole du courtier.
+
+    ⛔ **Rend le symbole BRUT plutôt qu'une paire inventée**, et le second
+    terme dit laquelle des deux. Le 2026-09-09, un repli silencieux de `pair`
+    sur le symbole du courtier avait rendu six lignes invisibles à tout filtre
+    `pair = 'XAU/USD'` — mais inventer une paire serait pire : un faux
+    rattachement ferait porter la perte à une paire qui n'a rien fait, et
+    déclencherait son régulateur.
+    """
+    brut = (symbole or "").strip().upper()
+    if not brut:
+        return ("?", False)
+
+    # La configuration d'abord : elle seule connaît les suffixes du courtier
+    # (`GOLD.pro`…). On l'inverse, car elle va paire → symbole.
+    try:
+        from config.settings import (
+            MT5_BRIDGE_LIVE_SYMBOL_MAP,
+            MT5_SYMBOL_MAP,
+        )
+        inverse: dict[str, str] = {}
+        for carte in (MT5_SYMBOL_MAP, MT5_BRIDGE_LIVE_SYMBOL_MAP):
+            for paire, symb in (carte or {}).items():
+                inverse[str(symb).strip().upper()] = paire
+        if brut in inverse:
+            return (inverse[brut], True)
+    except Exception as e:  # noqa: BLE001 — une carte illisible ne perd pas le trade
+        logger.debug("mt5_sync: carte des symboles illisible (%s)", e)
+
+    if brut in _ALIAS_SYMBOLES:
+        return (_ALIAS_SYMBOLES[brut], True)
+
+    # Forex : six lettres, deux devises. `EURUSD` → `EUR/USD`.
+    sans_suffixe = brut.split(".")[0]
+    if len(sans_suffixe) == 6 and sans_suffixe.isalpha():
+        return (f"{sans_suffixe[:3]}/{sans_suffixe[3:]}", True)
+
+    return (brut, False)
+
+
+def _tickets_connus() -> set[int]:
+    """Tous les tickets MT5 que `personal_trades` porte déjà, quel que soit
+    leur statut ou leur origine.
+
+    ⚠️ Volontairement SANS filtre sur `is_auto` ni sur le statut : la question
+    posée est « connaissons-nous ce ticket ? ». Un filtre ferait ré-adopter une
+    position déjà fermée à chaque cycle, soit six lignes par minute au rythme
+    de production (sondage toutes les 10 s).
+    """
+    with sqlite3.connect(_db_path()) as c:
+        rows = c.execute(
+            "SELECT mt5_ticket FROM personal_trades "
+            "WHERE mt5_ticket IS NOT NULL"
+        ).fetchall()
+    connus: set[int] = set()
+    for (valeur,) in rows:
+        try:
+            connus.add(int(valeur))
+        except (TypeError, ValueError):
+            # Un identifiant non MT5 (UUID Kraken) n'est pas un ticket : il ne
+            # peut ni entrer en collision, ni être écarté en silence.
+            continue
+    return connus
+
+
+def _valeur_reelle(valeur, defaut=None):
+    """Un ``0`` de MT5 signifie ABSENT pour un stop ou un objectif."""
+    try:
+        v = float(valeur)
+    except (TypeError, ValueError):
+        return defaut
+    return v if v != 0.0 else defaut
+
+
+def _adopter_positions_du_courtier(
+    positions: list[dict[str, Any]], destination_id: str,
+) -> int:
+    """Crée une ligne `personal_trades` pour chaque position que le COURTIER
+    porte et que la base ignore. Retourne le nombre de lignes créées.
+
+    🔑 C'est le seul chemin par lequel un trade ouvert dans le terminal MT5
+    entre dans les comptes — donc dans le plafond journalier, qui somme
+    `personal_trades` SANS filtre sur `is_auto`
+    (`trade_log_service._pnl_du_jour_par_destination`).
+    """
+    if not positions:
+        return 0
+
+    connus = _tickets_connus()
+    user = _resolve_auto_user()
+    cree = 0
+
+    for p in positions:
+        try:
+            ticket = int(p.get("ticket"))
+        except (TypeError, ValueError):
+            continue
+        if ticket in connus:
+            continue
+
+        direction = (p.get("type") or "").lower()
+        if direction not in ("buy", "sell"):
+            # Même règle que `_upsert_open_trade` : le SENS distingue un ordre
+            # de tout le reste. Sans lui, la clé `(mt5_ticket, direction)` ne
+            # protège plus de rien.
+            logger.warning(
+                "mt5_sync[%s]: position %s au sens illisible (%r) — NON "
+                "adoptee, elle restera invisible aux comptes.",
+                destination_id, ticket, p.get("type"),
+            )
+            continue
+
+        paire, cartographiee = _paire_depuis_symbole(p.get("symbol") or "")
+        if not cartographiee:
+            logger.warning(
+                "mt5_sync[%s]: symbole %r non cartographie pour le ticket %s "
+                "— la ligne garde le symbole BRUT comme paire. Elle comptera "
+                "dans le plafond journalier, mais aucun filtre par paire ne "
+                "la verra. Completer MT5_SYMBOL_MAP.",
+                destination_id, p.get("symbol"), ticket,
+            )
+
+        with sqlite3.connect(_db_path()) as c:
+            c.execute(
+                "INSERT INTO personal_trades "
+                " (user, pair, direction, entry_price, stop_loss, take_profit,"
+                "  size_lot, status, created_at, mt5_ticket, is_auto, notes,"
+                "  destination_id, fill_price) "
+                "VALUES (?,?,?,?,?,?,?,'OPEN',?,?,0,?,?,?)",
+                (
+                    user, paire, direction,
+                    _valeur_reelle(p.get("price_open"), 0.0),
+                    _valeur_reelle(p.get("sl")),
+                    _valeur_reelle(p.get("tp")),
+                    _valeur_reelle(p.get("volume"), 0.0),
+                    p.get("time") or datetime.now(timezone.utc).isoformat(),
+                    ticket, MARQUE_ADOPTION, destination_id,
+                    _valeur_reelle(p.get("price_open")),
+                ),
+            )
+        connus.add(ticket)
+        cree += 1
+        logger.info(
+            "mt5_sync[%s]: position %s ADOPTEE (%s %s %s lot a %s) — ouverte "
+            "hors du radar, elle entre desormais dans les comptes.",
+            destination_id, ticket, paire, direction,
+            p.get("volume"), p.get("price_open"),
+        )
+
+    return cree
+
+def _select_open_tickets_adoptes() -> set[int]:
+    """Tickets des lignes ADOPTÉES encore ouvertes.
+
+    🔑 Pourquoi un sélecteur à part et non un élargissement de
+    `_select_open_auto_tickets` : celui-ci filtre `is_auto=1`, et c'est juste —
+    il sert la réconciliation des trades du radar. Les lignes adoptées sont
+    `is_auto=0` **par vérité** (elles n'ont passé aucune porte), donc invisibles
+    pour lui. Les deux ensembles sont réunis à l'appel, et le second sert aussi
+    à savoir qu'une clôture ne doit déclencher AUCUN effet de bord.
+
+    ⚠️ Le filtre porte sur le marqueur, pas sur `is_auto=0` seul : un trade que
+    Xavier a saisi à la main dans le tableau de bord est aussi `is_auto=0`, et
+    la réconciliation MT5 n'a rien à lui dire.
+    """
+    with sqlite3.connect(_db_path()) as c:
+        rows = c.execute(
+            "SELECT mt5_ticket FROM personal_trades "
+            "WHERE status='OPEN' AND mt5_ticket IS NOT NULL "
+            "  AND notes LIKE ?",
+            (f"%{MARQUE_ADOPTION}%",),
+        ).fetchall()
+    tickets: set[int] = set()
+    for (valeur,) in rows:
+        try:
+            tickets.add(int(valeur))
+        except (TypeError, ValueError):
+            continue
+    return tickets
+
+
+async def _apres_cloture(ticket: int, adoptee: bool) -> None:
+    """Les effets de bord d'une clôture — et pour qui ils valent.
+
+    ⛔ **CE GARDE EXISTE POUR UNE RAISON PRÉCISE.**
+    `_relancer_apres_fermeture` prévient le lanceur de l'expérience TP 2 €
+    qu'une place s'est libérée, et il n'a **aucun** garde sur `is_auto`. Faire
+    passer les lignes adoptées par le chemin de clôture ordinaire aurait donc
+    fait **relancer un ordre d'argent réel sur un geste de Xavier** — déplacer
+    en silence le comportement d'une mesure en cours est exactement ce que ce
+    dépôt a déjà payé plusieurs fois.
+
+    La notification Telegram est écartée pour la même raison : Xavier vient de
+    fermer la position lui-même, dans son terminal. Lui annoncer sa propre
+    action ajouterait du bruit à un fil qui en a déjà trop reçu (huit copies du
+    même message le 07/10).
+
+    🔑 Ce que la clôture fait quand même, dans TOUS les cas : écrire le P&L en
+    base. C'est tout l'objet du correctif — les comptes, pas les messages.
+    """
+    if adoptee:
+        logger.info(
+            "mt5_sync: ticket %s ferme (ligne ADOPTEE) — P&L enregistre, "
+            "ni notification ni relance : ce geste est celui de Xavier.",
+            ticket,
+        )
+        return
+    await _notify_close_telegram(ticket)
+    await _relancer_apres_fermeture(ticket)
+
+
 async def _reconcile_open_trades() -> None:
     """Compare les tickets DB OPEN vs /positions du bridge et réconcilie
     les fermetures naturelles (SL/TP touchés par le marché).
@@ -837,9 +1084,13 @@ async def _reconcile_open_trades() -> None:
     if not (MT5_SYNC_ENABLED and MT5_BRIDGE_URL and MT5_BRIDGE_API_KEY):
         return
 
+    # ⛔ IL Y AVAIT ICI UN `return` QUAND LA BASE N'AVAIT AUCUN TICKET OUVERT.
+    # C'est exactement la situation du 2026-10-09 : six positions d'or vivantes
+    # chez le courtier, ouvertes dans le terminal, et zero ligne en base. La
+    # fonction rendait donc la main sans meme interroger `/positions`.
+    # Desormais on interroge TOUJOURS : c'est le courtier qui dit ce qui existe,
+    # pas notre base.
     open_tickets = _select_open_auto_tickets()
-    if not open_tickets:
-        return
 
     # ⚠️ TOUS les bridges, pas seulement le démo. `personal_trades` ne porte
     # pas de colonne de destination : les tickets du compte réel y côtoient
@@ -847,14 +1098,20 @@ async def _reconcile_open_trades() -> None:
     # `closed=None` au démo sur un ticket qu'il n'a jamais vu — lu comme
     # « historique purgé », donc fermeture. Mesuré le 2026-08-13 : les 16
     # trades réels d'août portaient tous une durée d'exactement 1 minute.
-    bridges = [(MT5_BRIDGE_URL.rstrip("/"), MT5_BRIDGE_API_KEY)]
+    # Le NOM accompagne desormais chaque pont : il devient le
+    # `destination_id` (`admin_legacy` / `admin_live`) des lignes adoptees,
+    # exactement comme dans `_sync_one`. Sans lui, une position adoptee
+    # n'appartiendrait a aucun compte et le plafond journalier ne saurait pas
+    # a qui l'imputer.
+    bridges = [("legacy", MT5_BRIDGE_URL.rstrip("/"), MT5_BRIDGE_API_KEY)]
     live_url = os.getenv("MT5_BRIDGE_LIVE_URL", "")
     live_key = os.getenv("MT5_BRIDGE_LIVE_API_KEY", "")
     if live_url and live_key:
-        bridges.append((live_url.rstrip("/"), live_key))
+        bridges.append(("live", live_url.rstrip("/"), live_key))
 
     live_tickets: set[int] = set()
-    for base, key in bridges:
+    n_adoptees = 0
+    for nom, base, key in bridges:
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 r = await client.get(
@@ -867,6 +1124,15 @@ async def _reconcile_open_trades() -> None:
                 live_tickets |= {
                     int(p["ticket"]) for p in positions if "ticket" in p
                 }
+                # 🔑 LE TROU DU 2026-10-09 SE BOUCHE ICI. Jusqu'alors cette
+                # charge utile ne servait qu'a repondre « ce ticket est-il
+                # encore ouvert ? » pour les tickets DEJA connus. Le courtier y
+                # declare pourtant TOUT ce qu'il porte, les positions ouvertes
+                # a la main dans le terminal comprises — elles etaient lues, et
+                # jetees.
+                n_adoptees += _adopter_positions_du_courtier(
+                    positions, destination_id=f"admin_{nom}",
+                )
         except Exception as e:
             # ⛔ Un bridge muet ne prouve RIEN. Poursuivre déclarerait fermés
             # tous les tickets qu'il est seul à porter. Cf.
@@ -874,7 +1140,12 @@ async def _reconcile_open_trades() -> None:
             logger.debug(f"mt5_sync: /positions unreachable ({base}): {e}")
             return
 
-    closed_tickets = open_tickets - live_tickets
+    # Les lignes adoptees doivent etre reconciliees comme les autres : sans
+    # cela elles resteraient `OPEN` pour toujours et leur P&L n'entrerait
+    # JAMAIS dans le plafond journalier, qui ne somme que les `CLOSED`.
+    # ⚠️ Elles sont `is_auto=0`, donc invisibles a `_select_open_auto_tickets`.
+    tickets_adoptes = _select_open_tickets_adoptes()
+    closed_tickets = (open_tickets | tickets_adoptes) - live_tickets
     if not closed_tickets:
         return
 
@@ -885,7 +1156,7 @@ async def _reconcile_open_trades() -> None:
         # foi ; les autres répondent `closed=None` parce que le ticket n'est
         # pas le leur, ce qui n'est pas une information sur sa fermeture.
         data = None
-        for base, key in bridges:
+        for _nom, base, key in bridges:
             try:
                 async with httpx.AsyncClient(timeout=5.0) as client:
                     r = await client.get(
@@ -930,20 +1201,19 @@ async def _reconcile_open_trades() -> None:
                 "niveaux_source": data.get("niveaux_source"),
             })
             n_full += 1
-            await _notify_close_telegram(int(ticket))
-            await _relancer_apres_fermeture(int(ticket))
+            await _apres_cloture(int(ticket), ticket in tickets_adoptes)
         elif data.get("closed") is None:
             logger.warning(
                 f"mt5_sync: ticket {ticket} history introuvable, status=CLOSED sans pnl"
             )
             _mark_ticket_closed_no_deal(ticket)
             n_partial += 1
-            await _notify_close_telegram(int(ticket))
-            await _relancer_apres_fermeture(int(ticket))
+            await _apres_cloture(int(ticket), ticket in tickets_adoptes)
 
     if n_full or n_partial:
         logger.info(
             f"mt5_sync: {n_full} closures reconciled (full), {n_partial} partial"
+            f"{f', {n_adoptees} adoptee(s)' if n_adoptees else ''}"
         )
 
 
@@ -1042,8 +1312,11 @@ async def _sync_one(name: str, base_url: str, api_key: str) -> tuple[int, int]:
             new_closed += 1
             ticket = row.get("ticket")
             if ticket:
-                await _notify_close_telegram(int(ticket))
-                await _relancer_apres_fermeture(int(ticket))
+                # Une cloture vue par `/audit` vient du PONT : elle est
+                # automatique par construction (une ligne adoptee n'y figure
+                # jamais). Elle passe quand meme par l'entonnoir, pour qu'il
+                # n'existe qu'UN SEUL endroit ou se decide ce qui part.
+                await _apres_cloture(int(ticket), False)
 
     state.setdefault("bridges", {})[name] = max_id
     _save_state(state)

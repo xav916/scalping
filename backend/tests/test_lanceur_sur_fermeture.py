@@ -179,20 +179,73 @@ def test_desarme_il_n_appelle_RIEN(monkeypatch):
 
 # ─── 5. ⛔ LES TROIS SITES DE FERMETURE ───────────────────────────────────
 
-def test_TOUS_les_sites_de_fermeture_appellent_le_lanceur():
-    """⛔ Le test le plus important de ce fichier. `mt5_sync` notifie une
-    clôture à trois endroits ; si un quatrième apparaît sans le lanceur, le
-    lanceur sera muet pour ces clôtures-là — et il marchera quand même la
-    plupart du temps, ce qui le rend indétectable à l'usage."""
+def test_TOUS_les_sites_de_fermeture_passent_par_L_ENTONNOIR():
+    """⛔ Le test le plus important de ce fichier. `mt5_sync` ferme une
+    position à trois endroits ; si un quatrième apparaît sans prévenir le
+    lanceur, le lanceur sera muet pour ces clôtures-là — et il marchera quand
+    même la plupart du temps, ce qui le rend indétectable à l'usage.
+
+    🔑 **CE QUE CE TEST VÉRIFIE A CHANGÉ LE 2026-10-09, et il est devenu plus
+    strict.** Avant, il comptait les COPIES de deux lignes (`_notify…` puis
+    `_relancer…`) et vérifiait qu'elles allaient par paires. Trois copies de
+    deux lignes, c'est trois occasions d'en oublier une.
+
+    Depuis l'adoption des positions ouvertes dans le terminal MT5, la décision
+    de prévenir le lanceur n'est plus la même pour tout le monde : une
+    fermeture faite à la main par Xavier ne doit RIEN relancer. Il fallait donc
+    un endroit, et un seul, où cette décision se prend — `_apres_cloture`.
+
+    L'invariant est maintenant à deux volets, et le second est celui qui
+    manquait :
+      1. chaque site de fermeture appelle l'entonnoir ;
+      2. **personne n'appelle le lanceur en dehors de l'entonnoir** — c'est ce
+         qui empêche un futur site de court-circuiter la décision.
+    """
     src = _SRC_SYNC.read_text(encoding="utf-8")
-    notifs = re.findall(r"^[ \t]+await _notify_close_telegram\(int\(ticket\)\)$",
-                        src, re.M)
-    relances = re.findall(r"^[ \t]+await _relancer_apres_fermeture\(int\(ticket\)\)$",
-                          src, re.M)
-    assert len(notifs) >= 3, "sites de fermeture introuvables"
-    assert len(relances) == len(notifs), (
-        "%d sites de fermeture mais %d relances : un site n'appelle pas le "
-        "lanceur" % (len(notifs), len(relances)))
+
+    sites = re.findall(r"^[ \t]+await _apres_cloture\(int\(ticket\), ",
+                       src, re.M)
+    assert len(sites) >= 3, (
+        "%d site(s) de fermeture trouve(s) au lieu de 3 au moins : soit un "
+        "site a disparu, soit il ne passe plus par l'entonnoir" % len(sites))
+
+    # Volet 2 : hors du corps de `_apres_cloture`, aucun appel direct.
+    debut = src.index("async def _apres_cloture(")
+    fin = src.index("async def _reconcile_open_trades(")
+    hors_entonnoir = src[:debut] + src[fin:]
+    for interdit in ("_notify_close_telegram(", "_relancer_apres_fermeture("):
+        appels = re.findall(r"await " + re.escape(interdit), hors_entonnoir)
+        assert appels == [], (
+            "%s est appele HORS de `_apres_cloture` : ce site-la echappe a la "
+            "decision, et relancerait sur une fermeture a la main" % interdit)
+
+
+def test_l_entonnoir_NE_RELANCE_PAS_une_ligne_adoptee():
+    """⛔ Le dégât qu'on évite : `_relancer_apres_fermeture` n'a aucun garde sur
+    `is_auto`. Sans ce filtre, fermer une position à la main dans le terminal
+    aurait relancé un ordre d'ARGENT RÉEL de l'expérience TP 2 €."""
+    import asyncio
+
+    from backend.services import mt5_sync
+
+    appels = []
+
+    async def _espion(ticket):
+        appels.append(ticket)
+
+    vrai_notif = mt5_sync._notify_close_telegram
+    vrai_relance = mt5_sync._relancer_apres_fermeture
+    mt5_sync._notify_close_telegram = _espion
+    mt5_sync._relancer_apres_fermeture = _espion
+    try:
+        asyncio.run(mt5_sync._apres_cloture(123, True))
+        assert appels == [], "une ligne adoptee a declenche un effet de bord"
+        asyncio.run(mt5_sync._apres_cloture(456, False))
+        assert appels == [456, 456], (
+            "une cloture AUTOMATIQUE doit, elle, notifier ET relancer")
+    finally:
+        mt5_sync._notify_close_telegram = vrai_notif
+        mt5_sync._relancer_apres_fermeture = vrai_relance
 
 
 def test_la_paire_vient_de_la_BASE_et_non_de_la_charge_utile():
