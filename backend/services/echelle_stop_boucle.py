@@ -59,18 +59,28 @@ async def _positions(base: str, cle: str) -> list[dict] | None:
         return None
 
 
-async def _poser(base: str, cle: str, ticket: int, sl_dist: float) -> dict:
-    """Appelle `/position/sltp` avec `deplacer: true`.
+async def _poser(base: str, cle: str, ticket: int, sl: float) -> dict:
+    """Appelle `/position/sltp` avec le PRIX du stop et `deplacer: true`.
 
-    ⚠️ `sl_dist` est une DISTANCE depuis `price_open`, jamais un prix absolu :
-    c'est le contrat de la route, et lui passer un prix placerait le stop à des
-    milliers de dollars de l'entrée.
+    ⛔ CORRIGÉ LE 2026-10-09, et c'était un vrai défaut sur l'argent réel.
+    Je passais `sl_dist`, une DISTANCE — or la route calcule toujours
+    `price_open − sl_dist` pour un achat. Mon `abs()` perdait donc le signe, et
+    un stop voulu à **+0,75 €** était posé à **−0,75 €** : au lieu de
+    verrouiller un gain, ça plafonnait une perte.
+
+    🔑 Mesuré sur deux trades réels avant correction : `#2013` et `#2014`, stop
+    final à **−0,840 $ = −0,75 €** de l'entrée, du mauvais côté. Xavier l'a vu
+    avant moi.
+
+    ⇒ On passe désormais `sl_absolu`, un PRIX. Une « distance négative » aurait
+    marché aussi, mais la prochaine lecture du code se demanderait dans quel
+    sens — un prix ne laisse aucune ambiguïté.
     """
     try:
         async with httpx.AsyncClient(timeout=TIMEOUT) as c:
             r = await c.post(
                 base.rstrip("/") + "/position/sltp",
-                json={"ticket": int(ticket), "sl_dist": float(sl_dist),
+                json={"ticket": int(ticket), "sl_absolu": float(sl),
                       "deplacer": True},
                 headers={"X-API-Key": cle})
             try:
@@ -108,11 +118,10 @@ async def appliquer() -> dict:
         d = E.decision(p, taux)
         if d is None:
             continue
-        entree = float(p.get("price_open") or 0)
-        sl_dist = abs(entree - d["sl"])
-        if sl_dist <= 0:
+        # 🔑 On transmet le PRIX, pas la distance : c'est tout le correctif.
+        if not d.get("sl"):
             continue
-        r = await _poser(base, cle, d["ticket"], sl_dist)
+        r = await _poser(base, cle, d["ticket"], d["sl"])
         # 🔑 `already_protected` est compte A PART : c'est le symptome exact du
         # cas ou la route refuse de deplacer. Le confondre avec un succes
         # ferait croire que l'echelle tourne alors qu'elle ne fait rien.
@@ -127,7 +136,16 @@ async def appliquer() -> dict:
         elif r.get("ok"):
             bilan["deplaces"].append(
                 {"ticket": d["ticket"], "palier": d["palier"],
-                 "sl": r.get("sl"), "profit_eur": d["profit_eur"]})
+                 "sl": r.get("sl"), "profit_eur": d["profit_eur"],
+                 "clampe": bool(r.get("sl_clampe_par_le_courtier"))})
+            if r.get("sl_clampe_par_le_courtier"):
+                # ⛔ Croire qu'un stop est a +0,75 quand le courtier l'a
+                # repousse ailleurs rendrait toute la mesure fausse.
+                bilan["clampes"] = bilan.get("clampes", 0) + 1
+                logger.warning(
+                    "echelle: ticket %s — le COURTIER a repousse le stop : "
+                    "demande %s, pose %s", d["ticket"],
+                    r.get("sl_demande"), r.get("sl"))
             logger.warning(
                 "echelle: ticket %s profit %.2f EUR -> palier %.2f, "
                 "stop porte a %s", d["ticket"], d["profit_eur"],

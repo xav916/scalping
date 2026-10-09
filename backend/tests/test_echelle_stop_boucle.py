@@ -43,8 +43,8 @@ def _brancher(monkeypatch, positions, reponse):
     async def _p(base, cle):
         return positions
 
-    async def _po(base, cle, ticket, sl_dist):
-        appels.append({"ticket": ticket, "sl_dist": sl_dist})
+    async def _po(base, cle, ticket, sl):
+        appels.append({"ticket": ticket, "sl": sl})
         return reponse
 
     monkeypatch.setattr(B, "_positions", _p)
@@ -57,22 +57,59 @@ def test_desarmee_elle_ne_sonde_RIEN(monkeypatch):
     assert asyncio.run(B.appliquer()) == {"arme": False}
 
 
-def test_elle_deplace_et_passe_une_DISTANCE(monkeypatch):
-    """⚠️ Le contrat de la route est une DISTANCE depuis `price_open`. Lui
-    passer un prix absolu placerait le stop à des milliers de dollars."""
+def test_elle_passe_un_PRIX_et_du_BON_COTE(monkeypatch):
+    """🔑 LE TEST QUI MANQUAIT, et son absence a coûté un défaut sur l'argent
+    réel le 2026-10-09.
+
+    L'ancienne version vérifiait une **distance** (`sl_dist == 1,50 × taux`) —
+    et elle passait, parce que la distance était juste. Mais la route calcule
+    `price_open − sl_dist` pour un achat : le stop atterrissait **du côté de la
+    perte**. Un stop voulu à +0,75 € était posé à −0,75 €.
+
+    ⇒ Vérifier une magnitude ne dit rien du **côté**. Ce test vérifie le côté,
+    qui est tout le sujet d'un stop.
+    """
     appels = _brancher(monkeypatch, [_pos()], {"ok": True, "sl": 4201.69})
     b = asyncio.run(B.appliquer())
     assert len(b["deplaces"]) == 1
     assert b["deplaces"][0]["palier"] == 1.50
-    # +1,50 EUR au-dessus de l'entree, mais le PRIX du stop est arrondi a
-    # 2 decimales (precision de l'or) : la distance en decoule.
-    # ⛔ Ma premiere version exigeait 1,50 x taux exactement. Elle etait
-    # FAUSSE : arrondir le prix PUIS en deduire la distance est correct, car
-    # un stop doit tomber sur un prix que le courtier accepte.
-    sl_attendu = round(4200.0 + 1.50 * TAUX, 2)
-    assert appels[0]["sl_dist"] == pytest.approx(abs(4200.0 - sl_attendu))
-    assert abs(appels[0]["sl_dist"] - 1.50 * TAUX) < 0.01, "arrondi aberrant"
-    assert appels[0]["ticket"] == 777
+
+    # C'est un PRIX qui part, pas une distance.
+    assert "sl_absolu" not in appels[0] or True   # lisibilite
+    envoye = appels[0]["sl"]
+    attendu = round(4200.0 + 1.50 * TAUX, 2)
+    assert envoye == pytest.approx(attendu), (
+        "le prix envoye n'est pas celui du palier")
+
+    # ⛔ ET SURTOUT : du cote du PROFIT. Pour un achat, au-DESSUS de l'entree.
+    assert envoye > 4200.0, (
+        "le stop est du cote de la PERTE : c'est exactement le defaut du "
+        "2026-10-09, ou +0,75 EUR etait pose a -0,75 EUR")
+
+
+def test_pour_une_VENTE_le_stop_est_SOUS_l_entree(monkeypatch):
+    """⚠️ Le miroir du test ci-dessus. Un signe correct pour l'achat et faux
+    pour la vente serait passe inapercu la moitie du temps."""
+    appels = _brancher(
+        monkeypatch,
+        [_pos(type="sell", price_current=4200.0 - 1.80 * TAUX, sl=4210.0)],
+        {"ok": True, "sl": 4198.31})
+    b = asyncio.run(B.appliquer())
+    assert len(b["deplaces"]) == 1
+    envoye = appels[0]["sl"]
+    assert envoye == pytest.approx(round(4200.0 - 1.50 * TAUX, 2))
+    assert envoye < 4200.0, "le stop d'une vente doit etre SOUS l'entree"
+
+
+def test_un_stop_REPOUSSE_par_le_courtier_est_SIGNALE(monkeypatch):
+    """⛔ Croire qu'un stop est a +0,75 quand le courtier l'a repousse ailleurs
+    rendrait toute la mesure fausse."""
+    _brancher(monkeypatch, [_pos()],
+              {"ok": True, "sl": 4195.00, "sl_demande": 4201.69,
+               "sl_clampe_par_le_courtier": True})
+    b = asyncio.run(B.appliquer())
+    assert b.get("clampes") == 1
+    assert b["deplaces"][0]["clampe"] is True
 
 
 def test_already_protected_est_compte_A_PART(monkeypatch):

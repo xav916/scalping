@@ -4164,10 +4164,32 @@ def set_position_sltp():
         ticket = int(data.get("ticket"))
     except (TypeError, ValueError):
         return jsonify({"ok": False, "error": "ticket requis (int)"}), 400
+
+    # 🔑 `sl_absolu` : un PRIX de stop, pas une distance. Seul moyen de poser
+    # un stop du COTE DU PROFIT (au-dessus de l'entree pour un achat), ce que
+    # `sl_dist` ne peut pas exprimer puisqu'il est toujours soustrait.
+    #
+    # ⛔ Soumis aux MEMES deux conditions que le deplacement : le client doit
+    # le demander ET le drapeau doit l'autoriser. Sans quoi un appelant
+    # historique pourrait deplacer un stop sans le savoir.
+    sl_absolu = data.get("sl_absolu")
+    if sl_absolu is not None:
+        try:
+            sl_absolu = float(sl_absolu)
+        except (TypeError, ValueError):
+            return jsonify({"ok": False,
+                            "error": "sl_absolu doit etre un nombre"}), 400
+        if sl_absolu <= 0:
+            return jsonify({"ok": False,
+                            "error": "sl_absolu doit etre > 0"}), 400
     try:
         sl_dist = float(data.get("sl_dist"))
     except (TypeError, ValueError):
-        return jsonify({"ok": False, "error": "sl_dist requis (float > 0)"}), 400
+        if sl_absolu is None:
+            return jsonify({
+                "ok": False,
+                "error": "sl_dist (float > 0) ou sl_absolu requis"}), 400
+        sl_dist = 0.0
     if sl_dist <= 0:
         return jsonify({"ok": False, "error": "sl_dist doit être > 0"}), 400
 
@@ -4205,7 +4227,13 @@ def set_position_sltp():
         })
 
     is_buy = p.type == mt5.POSITION_TYPE_BUY
-    new_sl = p.price_open - sl_dist if is_buy else p.price_open + sl_dist
+    if sl_absolu is not None and deplacer:
+        # 🔑 Un prix tel quel : c'est ce qui permet un stop DU COTE DU PROFIT.
+        # ⚠️ `_clamp_stops` plus bas le repoussera hors de la zone interdite du
+        # courtier si besoin, et la reponse dira s'il a ete deplace.
+        new_sl = float(sl_absolu)
+    else:
+        new_sl = p.price_open - sl_dist if is_buy else p.price_open + sl_dist
 
     # 🔑 LE CLIQUET, cote SERVEUR. Un stop ne recule jamais, meme si le
     # client le demande. Le radar a deja le sien, mais un cliquet cote client
@@ -4251,10 +4279,17 @@ def set_position_sltp():
     else:
         logger.warning(f"[SLTP GUARD] échec ticket={ticket} {p.symbol}: {result.get('error')}")
 
+    # ⛔ Si le courtier a repousse le stop hors de sa zone interdite, le
+    # client doit le SAVOIR : croire qu'un stop est a +0,75 quand il est
+    # ailleurs rendrait toute mesure fausse.
+    clampe = (sl_absolu is not None and deplacer
+              and abs(float(new_sl) - float(sl_absolu)) > 1e-6)
     return jsonify({
         "ok": result["ok"],
         "ticket": ticket,
         "symbol": p.symbol,
+        "sl_demande": float(sl_absolu) if sl_absolu is not None else None,
+        "sl_clampe_par_le_courtier": clampe,
         "sl": result["sl"],
         "tp": result["tp"],
         "retcode": result.get("retcode"),
