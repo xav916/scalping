@@ -230,3 +230,53 @@ def test_une_paire_qui_n_est_pas_de_l_or_est_ignoree(s):
 
     assert s.observer([p], TAUX) == 0
     assert _lignes(s) == []
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 5. L'HISTOIRE que lit la protection des pertes (2026-10-09)
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_negatif_depuis_est_POSE_au_passage_en_negatif(s):
+    """🔑 La regle de protection des pertes a besoin d'une DUREE, pas d'un
+    instantane. C'est la sonde qui la tient, parce qu'elle seule echantillonne
+    assez vite (5 s)."""
+    s.observer([_pos(1, courant=4190.0 + 0.50 * TAUX)], TAUX)   # positif
+    assert _lignes(s)[0]["negatif_depuis"] is None
+
+    s.observer([_pos(1, courant=4190.0 - 0.50 * TAUX)], TAUX)   # negatif
+    pose = _lignes(s)[0]["negatif_depuis"]
+    assert pose is not None
+
+
+def test_negatif_depuis_NE_BOUGE_PAS_tant_qu_on_reste_negatif(s):
+    """⛔ C'est tout l'interet : si l'horodatage se remettait a jour a chaque
+    passage, la duree vaudrait toujours zero et la regle ne se declencherait
+    JAMAIS."""
+    s.observer([_pos(1, courant=4190.0 - 0.50 * TAUX)], TAUX)
+    premier = _lignes(s)[0]["negatif_depuis"]
+
+    for _ in range(4):
+        s.observer([_pos(1, courant=4190.0 - 0.80 * TAUX)], TAUX)
+
+    assert _lignes(s)[0]["negatif_depuis"] == premier
+
+
+def test_un_RETOUR_en_positif_remet_le_compteur_a_zero(s):
+    """Une position qui repasse au-dessus de l'equilibre n'est plus << negative
+    depuis >> : le compteur doit repartir de zero si elle replonge."""
+    s.observer([_pos(1, courant=4190.0 - 0.50 * TAUX)], TAUX)
+    assert _lignes(s)[0]["negatif_depuis"] is not None
+
+    s.observer([_pos(1, courant=4190.0 + 0.30 * TAUX)], TAUX)
+
+    assert _lignes(s)[0]["negatif_depuis"] is None
+
+
+def test_l_heure_d_OUVERTURE_est_conservee(s):
+    """La regle laisse le trade evoluer 5 min : il faut son age."""
+    p = _pos(1, courant=4191.0)
+    p["time"] = "2026-10-09T15:09:01+00:00"
+
+    s.observer([p], TAUX)
+
+    assert _lignes(s)[0]["ouvert_depuis"] == "2026-10-09T15:09:01+00:00"

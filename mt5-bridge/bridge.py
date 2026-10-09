@@ -4237,6 +4237,64 @@ def _handle_live_order(*, data, pair, mt5_symbol, direction, lots, entry, sl, tp
         }), 500
 
 
+def _lire_sl_demande(data: dict):
+    """``(sl_dist, sl_absolu, erreur)`` depuis la charge de `/position/sltp`.
+
+    ⛔ EXTRAITE LE 2026-10-09 PARCE QUE LA VALIDATION SE CONTREDISAIT, et que
+    la contradiction etait invisible dans l'enchevetrement de `try`, de replis
+    et de retours anticipes qu'elle formait :
+
+        except (TypeError, ValueError):
+            if sl_absolu is None:
+                return 400 "sl_dist (float > 0) ou sl_absolu requis"
+            sl_dist = 0.0                       # sl_absolu fourni : on met 0
+        if sl_dist <= 0:
+            return 400 "sl_dist doit etre > 0"  # ET ON REFUSE CE 0
+
+    Le repli posait `sl_dist = 0` PRECISEMENT quand `sl_absolu` etait fourni,
+    et la ligne suivante rejetait ce zero. => Fournir `sl_absolu` ne pouvait
+    JAMAIS marcher.
+
+    🔑 CE QUE CELA A COUTE : l'echelle de gains etait 100 % INERTE depuis son
+    deploiement du matin. Elle appelait la route toutes les 15 s et recevait
+    `400` a chaque fois. Mesure du 2026-10-09 : trois positions du radar ont
+    atteint leur palier (+1,37 et +1,81 EUR) et leur stop n'a pas bouge d'un
+    centime -- `sl au max` identique a `sl apres`.
+
+    ⛔ Et mon message de commit du matin affirmait << le pont accepte
+    sl_absolu >> et << verifie en production, les six paliers >>. J'avais
+    verifie le CALCUL du prix, jamais la ROUTE. Une verification qui ne
+    traverse pas le chemin reel n'est pas une verification -- c'est la
+    question de Xavier (<< pourquoi les SL n'ont pas evolue ? >>) qui l'a
+    revele.
+
+    🔑 LA REGLE, maintenant lisible d'un seul coup d'oeil : `sl_dist` n'est
+    valide QUE s'il est la seule information disponible. Quand `sl_absolu`
+    porte le prix, `sl_dist` n'est pas utilise -- donc pas juge.
+    """
+    sl_absolu = data.get("sl_absolu")
+    if sl_absolu is not None:
+        try:
+            sl_absolu = float(sl_absolu)
+        except (TypeError, ValueError):
+            return (0.0, None, "sl_absolu doit etre un nombre")
+        if sl_absolu <= 0:
+            return (0.0, None, "sl_absolu doit etre > 0")
+
+    try:
+        sl_dist = float(data.get("sl_dist"))
+    except (TypeError, ValueError):
+        sl_dist = 0.0
+
+    # ⛔ LA CONDITION QUI MANQUAIT. Le garde d'origine est conserve mot pour
+    # mot — une distance nulle ou negative ferait poser un stop AU PRIX
+    # D'ENTREE — mais il ne s'applique QUE faute de prix absolu.
+    if sl_absolu is None and sl_dist <= 0:
+        return (0.0, None, "sl_dist (float > 0) ou sl_absolu requis")
+
+    return (sl_dist, sl_absolu, None)
+
+
 @app.route("/position/sltp", methods=["POST"])
 @require_api_key
 def set_position_sltp():
@@ -4284,33 +4342,9 @@ def set_position_sltp():
     except (TypeError, ValueError):
         return jsonify({"ok": False, "error": "ticket requis (int)"}), 400
 
-    # 🔑 `sl_absolu` : un PRIX de stop, pas une distance. Seul moyen de poser
-    # un stop du COTE DU PROFIT (au-dessus de l'entree pour un achat), ce que
-    # `sl_dist` ne peut pas exprimer puisqu'il est toujours soustrait.
-    #
-    # ⛔ Soumis aux MEMES deux conditions que le deplacement : le client doit
-    # le demander ET le drapeau doit l'autoriser. Sans quoi un appelant
-    # historique pourrait deplacer un stop sans le savoir.
-    sl_absolu = data.get("sl_absolu")
-    if sl_absolu is not None:
-        try:
-            sl_absolu = float(sl_absolu)
-        except (TypeError, ValueError):
-            return jsonify({"ok": False,
-                            "error": "sl_absolu doit etre un nombre"}), 400
-        if sl_absolu <= 0:
-            return jsonify({"ok": False,
-                            "error": "sl_absolu doit etre > 0"}), 400
-    try:
-        sl_dist = float(data.get("sl_dist"))
-    except (TypeError, ValueError):
-        if sl_absolu is None:
-            return jsonify({
-                "ok": False,
-                "error": "sl_dist (float > 0) ou sl_absolu requis"}), 400
-        sl_dist = 0.0
-    if sl_dist <= 0:
-        return jsonify({"ok": False, "error": "sl_dist doit être > 0"}), 400
+    sl_dist, sl_absolu, _erreur = _lire_sl_demande(data)
+    if _erreur:
+        return jsonify({"ok": False, "error": _erreur}), 400
 
     if not ensure_mt5_connected():
         return jsonify({"ok": False, "error": "MT5 not connected"}), 503

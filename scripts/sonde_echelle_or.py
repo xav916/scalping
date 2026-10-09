@@ -82,10 +82,32 @@ def _assurer_table(c: sqlite3.Connection) -> None:
             sl_au_max           REAL,
             profit_dernier_eur  REAL,
             sl_dernier          REAL,
+            -- 🔑 L'HISTOIRE que lit `protection_perte_or.py` (2026-10-09).
+            -- << negatif depuis 2 min 30 >> demande une duree, pas un
+            -- instantane : seule la sonde echantillonne assez vite (5 s) pour
+            -- la tenir.
+            -- ⛔ `negatif_depuis` ne doit PAS se remettre a jour tant que la
+            -- position reste negative, sinon la duree vaudrait toujours zero
+            -- et la regle ne se declencherait JAMAIS.
+            negatif_depuis      TEXT,
+            ouvert_depuis       TEXT,
             vu_n                INTEGER NOT NULL DEFAULT 0,
             vu_dernier_a        TEXT
         )
     """)
+
+
+def _assurer_colonnes(c: sqlite3.Connection) -> None:
+    """Ajoute les colonnes d'histoire a une table deja creee.
+
+    ⚠️ `CREATE TABLE IF NOT EXISTS` ne fait RIEN sur une table existante : sans
+    cette migration, la sonde deja installee en production garderait son ancien
+    schema et `protection_perte_or` lirait une colonne absente.
+    """
+    existantes = {r[1] for r in c.execute("PRAGMA table_info(echelle_or_suivi)")}
+    for nom in ("negatif_depuis", "ouvert_depuis"):
+        if nom not in existantes:
+            c.execute(f"ALTER TABLE echelle_or_suivi ADD COLUMN {nom} TEXT")
 
 
 def observer(positions: list[dict], taux_eur_usd: float) -> int:
@@ -139,12 +161,14 @@ def observer(positions: list[dict], taux_eur_usd: float) -> int:
         try:
             with sqlite3.connect(_db_path()) as c:
                 _assurer_table(c)
+                _assurer_colonnes(c)
                 c.execute("""
                     INSERT INTO echelle_or_suivi
                       (ticket, symbol, sens, entree, suivie, motif,
                        profit_max_eur, profit_max_a, palier_max_eur, sl_au_max,
-                       profit_dernier_eur, sl_dernier, vu_n, vu_dernier_a)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1,?)
+                       profit_dernier_eur, sl_dernier, vu_n, vu_dernier_a,
+                       negatif_depuis, ouvert_depuis)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?)
                     ON CONFLICT (ticket) DO UPDATE SET
                       suivie = excluded.suivie,
                       motif  = excluded.motif,
@@ -171,10 +195,26 @@ def observer(positions: list[dict], taux_eur_usd: float) -> int:
                       profit_dernier_eur = excluded.profit_dernier_eur,
                       sl_dernier = excluded.sl_dernier,
                       vu_n = echelle_or_suivi.vu_n + 1,
-                      vu_dernier_a = excluded.vu_dernier_a
+                      vu_dernier_a = excluded.vu_dernier_a,
+                      -- ⛔ LE CŒUR DE L'HISTOIRE. On ne POSE l'horodatage que
+                      -- si la position est negative ET ne l'etait pas deja :
+                      -- le remettre a jour a chaque passage ferait valoir la
+                      -- duree ZERO pour toujours, et la regle de protection ne
+                      -- se declencherait jamais. Un retour en positif
+                      -- l'EFFACE, parce qu'elle n'est plus << negative
+                      -- depuis >>.
+                      negatif_depuis = CASE
+                          WHEN excluded.negatif_depuis IS NULL THEN NULL
+                          WHEN echelle_or_suivi.negatif_depuis IS NULL
+                               THEN excluded.negatif_depuis
+                          ELSE echelle_or_suivi.negatif_depuis END,
+                      ouvert_depuis = COALESCE(excluded.ouvert_depuis,
+                                               echelle_or_suivi.ouvert_depuis)
                 """, (int(ticket), sym, sens, entree, 1 if suivie else 0, motif,
                       profit_eur, maintenant, palier, sl,
-                      profit_eur, sl, maintenant))
+                      profit_eur, sl, maintenant,
+                      maintenant if profit_eur < 0 else None,
+                      p.get("time")))
         except Exception as e:  # noqa: BLE001
             logger.warning("sonde echelle : ecriture du ticket %s echouee "
                            "(%s: %s)", ticket, type(e).__name__, e)
@@ -227,6 +267,7 @@ def _bilan() -> None:
         with sqlite3.connect(_db_path()) as c:
             c.row_factory = sqlite3.Row
             _assurer_table(c)
+            _assurer_colonnes(c)
             lignes = list(c.execute(
                 "SELECT * FROM echelle_or_suivi ORDER BY vu_dernier_a DESC LIMIT 12"))
     except Exception as e:  # noqa: BLE001
