@@ -1212,8 +1212,14 @@ def _check_rejection(setup, dest=None) -> str | None:
     # MAINTENANT ? >>) et doivent se relire ensemble.
     from backend.services import fenetre_hebdo
     if not fenetre_hebdo.ouverte():
-        logger.info("mt5_bridge[%s]: %s — %s", dest_id, fenetre_hebdo.MOTIF,
-                    fenetre_hebdo.detail())
+        # ⛔ `dest_id_for_hours` et NON `dest_id` : ce dernier n'est affecte que
+        # DANS le bloc du verdict, 30 lignes plus haut. Sur tout autre chemin
+        # le nom n'existe pas, et cette ligne de journal levait
+        # `UnboundLocalError` — un defaut LATENT, invisible 167 h sur 168 :
+        # il demande que le marche du courtier soit OUVERT et cette fenetre
+        # FERMEE, soit 25 min par semaine.
+        logger.info("mt5_bridge[%s]: %s — %s", dest_id_for_hours,
+                    fenetre_hebdo.MOTIF, fenetre_hebdo.detail())
         return fenetre_hebdo.MOTIF
     # No-weekend-hold energy : bloque les nouveaux pushes energy (WTI/Brent/NatGas)
     # vendredi après NO_FRIDAY_LATE_OPEN_ENERGY_HOUR_UTC (défaut 18h UTC = 20h Paris).

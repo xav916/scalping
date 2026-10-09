@@ -99,18 +99,53 @@ jour. Je n'ai **aucune** donnée dessus — l'ancienne porte les interdisait,
 donc 0 trade auto entre 20h et 05h UTC. C'est précisément ce que cette
 ouverture va mesurer pour la première fois.
 
-## Critère de verdict, fixé d'avance
+## Critère de verdict, fixé d'avance — un APPARIEMENT, pas un passé
 
-Au bout de **10 jours de marché** :
+⚠️ **Correction de mon premier jet.** J'avais écrit « confirmée si les heures de
+nuit font pire que −0,93 €/trade ». Ce −0,93 € vient d'une fenêtre de 30 jours
+qui enjambe **deux régimes différents** : avant et après l'ouverture de tous
+les horizons (01/10), et avant les changements du 09/10 (cycle 5 s, objectif
+2 €, échelle par paliers). Sur la seule fenêtre actuelle, le radar est à
+**−6,96 € sur 48 fermetures, soit −0,145 €/trade** — six fois mieux. Comparer
+les futures nuits à l'un ou l'autre de ces chiffres mesurerait surtout le
+**changement de régime**.
 
-- ✅ **Infirmée** si l'or AUTO des heures 20h–05h UTC fait **mieux que
-  −0,30 €/trade** sur n ≥ 30, et que le total de l'or auto ne s'aggrave pas.
-- ⛔ **Confirmée** si ces heures font **pire que −0,93 €/trade** (le niveau de
-  jour) sur n ≥ 30.
-- ⚖️ **Indécidable** entre les deux, ou si n < 30.
+🔑 **On compare donc les nuits aux JOURS DE LA MÊME PÉRIODE.** Même
+configuration, même marché, même tout — seule l'heure diffère. C'est le
+principe d'appariement que ce dépôt a déjà payé pour apprendre
+(`feedback_controle_aleatoire_doit_etre_apparie`, 2026-10-01 : un contrôle non
+apparié avait produit un « +8,60 contre le hasard » qu'il a fallu retirer).
 
-Mesure à faire par heure d'OUVERTURE (`created_at`), `is_auto=1`,
-`pair='XAU/USD'`, `destination_id='admin_live'`.
+Au bout de **10 jours de marché**, sur `is_auto=1`, `pair='XAU/USD'`,
+`destination_id='admin_live'`, trades **ouverts par le radar** (hors
+`MANUEL-TERM`), groupés par heure UTC de `created_at` :
+
+    NUITS = heures 20h-05h UTC   (les heures ouvertes le 09/10)
+    JOURS = heures 06h-19h UTC   (les heures deja ouvertes)
+
+- ⛔ **Confirmée** — les nuits sont pires — si `NUITS − JOURS < −0,20 €/trade`
+  avec n ≥ 30 de chaque côté.
+- ✅ **Infirmée** si `NUITS − JOURS > −0,05 €/trade` avec n ≥ 30 de chaque côté
+  (les nuits valent les jours, l'ouverture était gratuite).
+- ⚖️ **Indécidable** entre les deux, ou si l'un des deux n a moins de 30.
+
+⚠️ **Ce que ce critère ne règle pas** : 20h UTC coûte ~0,10 €/trade de spread en
+plus, et il est dans le seau NUITS. Un écart de −0,10 à −0,20 € serait donc
+compatible avec « les nuits valent les jours, sauf 20h ». Si le verdict tombe
+dans cette bande, il faudra **isoler 20h** avant de conclure quoi que ce soit
+sur les nuits.
+
+## Ce qui reste prédit, et tient
+
+1. **Le volume monte.** Le rythme mesuré le 09/10 dans le régime pleinement
+   armé est de **5,0 ordres/h** (3 dernières heures) ; sur tout le jour,
+   32 ordres en 14 h ouvertes = **2,3/h**. Avec 22,9 h/jour au lieu de 14,0 :
+   entre **53 et 115 ordres/jour**, contre 5,94/jour mesurés sur 30 jours.
+   ⇒ Le budget d'ordres de la règle d'arrêt est passé de **60 à 800** le même
+   jour, sur cette arithmétique.
+2. **Le spread n'est pour presque rien dans le coût.** ~0,10 €/trade sur la
+   seule heure de 20h UTC, contre 0,145 à 0,93 € que la stratégie perd déjà par
+   trade selon le régime.
 
 ## Garde-fous déjà en place, inchangés
 

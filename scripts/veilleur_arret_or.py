@@ -110,7 +110,24 @@ def _corps_bilan(m: dict | None, etat: dict) -> str:
         f"• Ce que le **code** a fait tout seul : **{m['pnl_auto']:+.2f} €** "
         f"/ {ra.MAX_PERTE_EUR:+.0f} €, sur {m['ordres_auto']} fermeture(s)\n"
         f"• Ce que **ta main** a fait : **{m['pnl_main']:+.2f} €** sur "
-        f"{m['ordres_main']} fermeture(s)\n")
+        f"{m['ordres_main']} fermeture(s) de positions **du radar**\n")
+    # ⛔ 2026-10-09. L'adoption (`ac2823b`) fait entrer ses trades du TERMINAL
+    # MT5 dans la base. Separes par la seule `close_reason`, ceux fermes par
+    # leur stop tombaient dans la jambe AUTOMATIQUE : 87 % de la << perte du
+    # code >> etaient ses propres stops, et la regle a franchi ses deux bornes
+    # le jour du deploiement, par artefact.
+    #
+    # 🔑 Les sortir de la BORNE ne doit pas les sortir du MESSAGE : 45,42 € de
+    # stops reels effaces du compte-rendu seraient une perte invisible.
+    #
+    # ⚠️ `.get` et non `[...]` : le `.py` est recopie par `docker cp` a chaque
+    # passage du cron, veilleur et regle peuvent etre desynchronises une fois.
+    # Un `KeyError` rendrait le bilan MUET, ce qui est pire qu'incomplet.
+    if m.get("ordres_terminal"):
+        corps += (f"• À part, **ouverts dans le terminal MT5** : "
+                  f"**{m['pnl_terminal']:+.2f} €** sur "
+                  f"{m['ordres_terminal']} trade(s) — **hors borne**, c'est "
+                  f"ton volume à toi\n")
     if m["sans_pnl"]:
         corps += (f"• ⚠️ {m['sans_pnl']} clôture(s) sans montant vérifié — la "
                   f"somme ne porte que sur {m['couverture'] * 100:.0f} %\n")

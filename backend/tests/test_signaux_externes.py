@@ -200,11 +200,22 @@ def test_la_porte_de_confiance_lit_bien_la_confiance_du_signal(confiance, refuse
 
     Un mécanisme écrit, testé en isolation, et inerte en composition : la
     famille de défauts que ce dépôt a déjà nommée quatre fois.
+
+    ⚠️ **ET IL DÉPENDAIT DE L'HORLOGE** — corrigé le 2026-10-09. La chaîne
+    passe par `is_market_open_for_destination` avant la porte de confiance :
+    passé ~21 h UTC et le week-end, ce test recevait `market_closed` et le cas
+    `[45.0-True]` tombait. Il échouait donc **selon l'heure à laquelle on
+    lançait la suite**, ce qui ne prouve rien et coûte une relecture à chaque
+    fois. Les horaires de marché ne sont pas le sujet ici : on les force.
     """
+    from unittest.mock import patch
+
     from backend.services.external_signals import ExternalSetup
     from backend.services.mt5_bridge import _check_rejection
     setup = ExternalSetup({**CHARGE, "confidence": confiance})
-    motif = _check_rejection(setup, _dest(60.0))
+    with patch("backend.services.mt5_bridge.is_market_open_for_destination",
+               return_value=True):
+        motif = _check_rejection(setup, _dest(60.0))
     assert (motif == "below_confidence") is refuse, motif
 
 

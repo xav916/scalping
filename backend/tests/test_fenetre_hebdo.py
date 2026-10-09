@@ -144,6 +144,10 @@ def test_un_instant_SANS_fuseau_est_lu_comme_UTC(F):
 # ─────────────────────────────────────────────────────────────────────────
 
 def test_les_bornes_sont_reglables(monkeypatch):
+    # ⛔ Retirer la neutralisation POSEE PAR LA SUITE (conftest,
+    # `fenetre_hebdo_neutre`) : sans cela `ouverte()` rend True partout et ce
+    # test passerait pour une raison qui n'a rien a voir avec les bornes.
+    monkeypatch.delenv("FENETRE_HEBDO_ENABLED", raising=False)
     monkeypatch.setenv("FENETRE_HEBDO_DEBUT", "mar 08:30")
     monkeypatch.setenv("FENETRE_HEBDO_FIN", "jeu 18:00")
     from backend.services import fenetre_hebdo as mod
@@ -237,3 +241,169 @@ def test_la_porte_est_posee_PRES_de_celle_des_horaires_de_marche():
     i_hebdo = src.index("fenetre_hebdo.ouverte(")
     assert abs(i_hebdo - i_marche) < 1500, (
         "les deux portes horaires sont trop éloignées dans le fichier")
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 6. ⛔ LE REFUS DOIT ÊTRE ATTEIGNABLE — défaut du 2026-10-09
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_le_bloc_de_refus_n_utilise_AUCUN_nom_non_LIE():
+    """⛔ MON DÉFAUT, trouvé 2 h après avoir déployé la fenêtre.
+
+    La ligne de journal du refus utilisait `dest_id`, affecté **dans un bloc
+    conditionnel** 30 lignes plus haut. Hors de ce bloc le nom n'existe pas :
+
+        UnboundLocalError: cannot access local variable 'dest_id'
+
+    🔑 Et il était **LATENT**. Il ne se déclenche que si le marché du courtier
+    est OUVERT et sa fenêtre FERMÉE — 25 min par semaine (lundi 00h00-00h05 et
+    vendredi 22h40-23h00, heure de Paris). Au moment du déploiement la fenêtre
+    était encore ouverte ; j'ai donc vérifié une porte que je n'avais jamais
+    fait REFUSER. C'est le même angle mort que l'échelle de gains du matin,
+    dont j'avais vérifié le calcul et non la route.
+
+    ⚠️ Il a été trouvé par un test EXISTANT (`test_tick_rejection_propagated`)
+    qui ne passait plus une fois la fenêtre fermée — pas par les miens.
+
+    Ce test lit l'arbre syntaxique du bloc : tout nom qu'il utilise doit être
+    lié à ce point de la fonction, quel que soit le chemin pris.
+    """
+    import ast
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[1] / "services"
+           / "mt5_bridge.py").read_text(encoding="utf-8")
+    arbre = ast.parse(src)
+    fonction = next(n for n in ast.walk(arbre)
+                    if isinstance(n, ast.FunctionDef)
+                    and n.name == "_check_rejection")
+
+    # Le `if not fenetre_hebdo.ouverte():` et son corps.
+    bloc = next(n for n in ast.walk(fonction)
+                if isinstance(n, ast.If) and "fenetre_hebdo.ouverte"
+                in ast.unparse(n.test))
+
+    # Les noms affectés INCONDITIONNELLEMENT avant ce bloc, au corps de la
+    # fonction : tout le reste peut ne pas exister.
+    surs = {a.arg for a in fonction.args.args}
+    for noeud in fonction.body:
+        if noeud is bloc:
+            break
+        if isinstance(noeud, ast.Assign):
+            surs |= {t.id for t in noeud.targets if isinstance(t, ast.Name)}
+        elif isinstance(noeud, (ast.Import, ast.ImportFrom)):
+            surs |= {(a.asname or a.name).split(".")[0] for a in noeud.names}
+
+    utilises = {n.id for n in ast.walk(bloc)
+                if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)}
+    # ⛔ NIVEAU MODULE SEULEMENT. Mon premier jet marchait sur `ast.walk(arbre)`
+    # entier : il ramassait les variables locales des AUTRES fonctions, dont un
+    # `dest_id` affecte 300 lignes plus bas. Le test passait donc sur le code
+    # DEFECTUEUX -- une tautologie, exactement ce qu'il devait attraper.
+    import builtins
+    globaux = set(dir(builtins))
+    for noeud in arbre.body:
+        if isinstance(noeud, ast.Assign):
+            globaux |= {t.id for t in noeud.targets
+                        if isinstance(t, ast.Name)}
+        elif isinstance(noeud, ast.AnnAssign) and isinstance(noeud.target,
+                                                             ast.Name):
+            globaux.add(noeud.target.id)
+        elif isinstance(noeud, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                ast.ClassDef)):
+            globaux.add(noeud.name)
+        elif isinstance(noeud, (ast.Import, ast.ImportFrom)):
+            globaux |= {(a.asname or a.name).split(".")[0]
+                        for a in noeud.names}
+        elif isinstance(noeud, ast.Try):
+            for sous in ast.walk(noeud):
+                if isinstance(sous, (ast.Import, ast.ImportFrom)):
+                    globaux |= {(a.asname or a.name).split(".")[0]
+                                for a in sous.names}
+                elif isinstance(sous, ast.Assign):
+                    globaux |= {t.id for t in sous.targets
+                                if isinstance(t, ast.Name)}
+
+    non_lies = utilises - surs - globaux
+    assert not non_lies, (
+        f"le bloc de refus de la fenêtre hebdo utilise des noms qui peuvent "
+        f"ne pas être liés : {sorted(non_lies)} — UnboundLocalError en "
+        f"production, 25 min par semaine")
+
+
+def test_la_porte_REFUSE_VRAIMENT_sans_lever(monkeypatch):
+    """⛔ LE TEST QUI MANQUAIT, et qui aurait trouvé le défaut tout seul.
+
+    Mes tests du déploiement vérifiaient `ouverte()` — le CALCUL — et la
+    PRÉSENCE de la porte dans le fichier. Aucun ne la faisait **refuser** le
+    long de la vraie chaîne. La ligne de journal du refus utilisait `dest_id`,
+    non lié sur ce chemin : `UnboundLocalError`.
+
+    🔑 C'est la deuxième fois dans la journée : le matin, l'échelle de gains
+    calculait le bon prix et la ROUTE rendait 400 à chaque appel. Vérifier le
+    calcul n'est pas vérifier le chemin.
+
+    ⚠️ Et il était invisible 167 h sur 168 : il faut le marché du courtier
+    OUVERT et cette fenêtre FERMÉE, soit 25 min par semaine.
+
+    On réutilise les constructeurs de `test_bridge_tick_validator` plutôt que
+    de recopier 40 lignes de setup : un setup abrégé ne franchirait pas les
+    portes situées AVANT celle-ci, et le test serait vert sans rien prouver.
+    """
+    from unittest.mock import patch
+
+    from backend.services import mt5_bridge
+    from backend.tests.test_bridge_tick_validator import (
+        TestMt5BridgeIntegration as T,
+    )
+
+    monkeypatch.delenv("FENETRE_HEBDO_ENABLED", raising=False)
+    cas = T()
+    setup, dest = cas._full_setup(), cas._dest_admin()
+
+    with patch("backend.services.mt5_bridge.is_market_open_for_destination",
+               return_value=True), \
+         patch("backend.services.mt5_bridge._count_open_trades_for_pair",
+               return_value=0), \
+         patch("backend.services.mt5_bridge.MT5_BRIDGE_BLOCKED_DIRECTIONS",
+               set()), \
+         patch("backend.services.mt5_bridge.MT5_BRIDGE_AVOID_HOURS_UTC",
+               set()), \
+         patch("backend.services.mt5_bridge.MT5_BRIDGE_BLOCKED_PAIRS",
+               frozenset()), \
+         patch("backend.services.fenetre_hebdo.ouverte", return_value=False):
+        motif = mt5_bridge._check_rejection(setup, dest)
+
+    assert motif == "hors_fenetre_hebdo", motif
+
+
+def test_la_porte_LAISSE_PASSER_quand_la_fenetre_est_ouverte(monkeypatch):
+    """⚠️ Le pendant du test ci-dessus. Sans lui, une porte qui refuse TOUJOURS
+    passerait le precedent -- et arreterait le trading pour de bon."""
+    from unittest.mock import patch
+
+    from backend.services import mt5_bridge
+    from backend.tests.test_bridge_tick_validator import (
+        TestMt5BridgeIntegration as T,
+    )
+
+    monkeypatch.delenv("FENETRE_HEBDO_ENABLED", raising=False)
+    cas = T()
+    setup, dest = cas._full_setup(), cas._dest_admin()
+
+    with patch("backend.services.mt5_bridge.is_market_open_for_destination",
+               return_value=True), \
+         patch("backend.services.mt5_bridge._count_open_trades_for_pair",
+               return_value=0), \
+         patch("backend.services.mt5_bridge.MT5_BRIDGE_BLOCKED_DIRECTIONS",
+               set()), \
+         patch("backend.services.mt5_bridge.MT5_BRIDGE_AVOID_HOURS_UTC",
+               set()), \
+         patch("backend.services.mt5_bridge.MT5_BRIDGE_BLOCKED_PAIRS",
+               frozenset()), \
+         patch("backend.services.mt5_bridge._positions_courtier",
+               return_value=[]), \
+         patch("backend.services.fenetre_hebdo.ouverte", return_value=True):
+        motif = mt5_bridge._check_rejection(setup, dest)
+
+    assert motif != "hors_fenetre_hebdo", motif

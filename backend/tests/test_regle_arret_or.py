@@ -190,3 +190,227 @@ def test_base_vide_ne_declenche_rien(base):
     m = ra.releve(base, DEPUIS)
     assert m["ordres"] == 0
     assert ra.verdict(m)["borne_atteinte"] is False
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# ⛔ 2026-10-09 — L'ADOPTION A CONTAMINÉ LA RÈGLE
+# ═════════════════════════════════════════════════════════════════════════
+#
+# L'adoption des positions du courtier (`ac2823b`, déployée le 2026-10-09) fait
+# entrer dans `personal_trades` les trades que Xavier ouvre **dans le terminal
+# MT5**, marqués `notes = 'MANUEL-TERM'`.
+#
+# 🔑 La règle sépare « automatique » et « main » par `close_reason`, c'est-à-dire
+# par **qui a FERMÉ**. Or un trade né dans le terminal et fermé par son stop a
+# `close_reason = 'SL'` : il atterrit donc dans la jambe **AUTOMATIQUE**, qui
+# borne l'expérience.
+#
+# Mesuré le soir du déploiement, fenêtre de la règle :
+#
+#     jambe "auto"   RADAR     n=48    −6,96 €
+#     jambe "auto"   TERMINAL  n= 7   −45,42 €   <- les stops de Xavier
+#     ─────────────────────────────────────────
+#     ce que la borne de −50 € regardait          −52,38 €
+#
+#     compteur d'ordres : RADAR 59 + TERMINAL 43 = 102, contre un budget de 60
+#
+# ⇒ **87 % de la « perte de l'automatique » étaient les stops de Xavier**, et la
+# règle a franchi ses DEUX bornes le jour même du déploiement, par artefact.
+#
+# La séparation doit donc se faire sur **QUI A OUVERT**, pas seulement sur qui a
+# fermé. Quatre populations, et seule la première borne quoi que ce soit.
+
+def _base_avec_notes(tmp_path):
+    """⛔ Le schéma de production porte `notes`. Un gabarit sans cette colonne
+    rendrait ces tests verts pour une mauvaise raison — c'est exactement le
+    défaut qui a fait croire, le matin du 09/10, que l'adoption marchait."""
+    chemin = tmp_path / "trades_notes.db"
+    with sqlite3.connect(chemin) as c:
+        c.execute("""CREATE TABLE personal_trades (
+            id INTEGER PRIMARY KEY, pair TEXT, status TEXT, pnl REAL,
+            close_reason TEXT, created_at TEXT, destination_id TEXT,
+            notes TEXT)""")
+    return chemin
+
+
+def _t(chemin, i, pnl=None, close_reason=None, notes=None, status="CLOSED",
+       pair="XAU/USD", dest="admin_live", quand=APRES):
+    with sqlite3.connect(chemin) as c:
+        c.execute("INSERT INTO personal_trades VALUES (?,?,?,?,?,?,?,?)",
+                  (i, pair, status, pnl, close_reason, quand, dest, notes))
+
+
+@pytest.fixture
+def base_n(tmp_path):
+    return _base_avec_notes(tmp_path)
+
+
+def test_un_stop_de_XAVIER_ne_compte_pas_dans_la_jambe_AUTOMATIQUE(base_n):
+    """⛔ LE DÉFAUT DU 09/10. Un trade né dans le terminal et fermé par son
+    stop a `close_reason='SL'` : il tombait dans la jambe automatique et
+    bornait l'expérience du radar."""
+    _t(base_n, 1, pnl=-45.42, close_reason="SL", notes="MANUEL-TERM")
+    _t(base_n, 2, pnl=-6.96, close_reason="SL", notes="Auto-exec via bridge MT5")
+
+    m = ra.releve(base_n)
+
+    assert m["pnl_auto"] == pytest.approx(-6.96), (
+        "les stops de Xavier sont comptes comme des pertes du radar")
+    assert m["ordres_auto"] == 1
+
+
+def test_un_trade_du_TERMINAL_ne_mange_pas_le_budget_D_ORDRES(base_n):
+    """⛔ 43 trades du terminal avaient pousse le compteur de 59 a 102 contre
+    un budget de 60 : la borne tombait sur le VOLUME DE XAVIER."""
+    for i in range(5):
+        _t(base_n, 100 + i, pnl=1.0, close_reason="TP",
+           notes="Auto-exec via bridge MT5")
+    for i in range(40):
+        _t(base_n, 200 + i, pnl=-1.0, close_reason="SL", notes="MANUEL-TERM")
+
+    m = ra.releve(base_n)
+
+    assert m["ordres"] == 5, "le budget d'ordres compte les trades du terminal"
+
+
+def test_les_trades_du_TERMINAL_sont_DITS_a_part_jamais_tus(base_n):
+    """⚠️ Les exclure de la borne ne doit pas les faire DISPARAITRE : c'est de
+    l'argent reel. Ils se lisent, ils ne bornent rien."""
+    _t(base_n, 1, pnl=-45.42, close_reason="SL", notes="MANUEL-TERM")
+    _t(base_n, 2, pnl=23.04, close_reason="MANUAL", notes="MANUEL-TERM")
+
+    m = ra.releve(base_n)
+
+    assert m["ordres_terminal"] == 2
+    assert m["pnl_terminal"] == pytest.approx(-22.38)
+
+
+def test_la_MAIN_est_celle_qui_ferme_les_positions_DU_RADAR(base_n):
+    """🔑 C'est CETTE main-la que << couper l'or couperait aussi >> : elle vit
+    des positions que le code ouvre. Mesure du 09/10 : +42,35 EUR sur 11
+    fermetures, soit 65 % du gain total de la main."""
+    _t(base_n, 1, pnl=42.35, close_reason="MANUAL",
+       notes="Auto-exec via bridge MT5")
+    _t(base_n, 2, pnl=23.04, close_reason="MANUAL", notes="MANUEL-TERM")
+
+    m = ra.releve(base_n)
+
+    assert m["pnl_main"] == pytest.approx(42.35)
+    assert m["ordres_main"] == 1
+
+
+def test_le_verdict_ne_tombe_PLUS_sur_le_volume_de_Xavier(base_n):
+    """⛔ L'invariant complet : 48 fermetures du radar a -6,96 EUR et 43 trades
+    du terminal a -45,42 EUR ne doivent franchir AUCUNE borne."""
+    for i in range(48):
+        _t(base_n, 100 + i, pnl=-6.96 / 48, close_reason="SL",
+           notes="Auto-exec via bridge MT5")
+    for i in range(43):
+        _t(base_n, 300 + i, pnl=-45.42 / 43, close_reason="SL",
+           notes="MANUEL-TERM")
+
+    v = ra.verdict(ra.releve(base_n))
+
+    assert v["borne_atteinte"] is False, v["motif"]
+
+
+def test_une_base_SANS_colonne_notes_ne_fait_pas_LEVER(base):
+    """⚠️ Toutes les bases ne portent pas `notes`. Une requete qui leve rendrait
+    `None`, et un releve absent ne conclut sur RIEN -- la regle deviendrait
+    muette au lieu de se degrader."""
+    _trade(base, 1, pnl=-10.0, close_reason="SL")
+
+    m = ra.releve(base)
+
+    assert m is not None, "la regle est devenue muette sur un schema sans notes"
+    assert m["ordres"] == 1
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# 2026-10-09 — LE BUDGET D'ORDRES, RECALIBRÉ SUR LE NOUVEAU RYTHME
+# ═════════════════════════════════════════════════════════════════════════
+#
+# Demande de Xavier le 2026-10-09, après l'ouverture de l'or sur toute la
+# fenêtre hebdomadaire : *« Je veux recalibrer le budget d'ordre au nouveau
+# rythme. »*
+#
+# ## L'arithmétique, explicite
+#
+# Les 60 ordres venaient d'un rythme de **25 ordres en 6 jours** (4,2/jour).
+# Deux choses ont changé depuis :
+#
+# 1. l'objectif court de 2 € rend les trades **consécutifs** — mesuré le 09/10
+#    sur les trois dernières heures pleinement armées : **5,0 ordres/h** ;
+# 2. la fenêtre est passée de **70,0 h à 114,6 h par semaine** (+64 %), soit
+#    **22,9 h par jour de marché** au lieu de 14,0.
+#
+#     taux bas  (32 ordres / 14 h = 2,3/h)  ->  53 ordres/jour
+#     taux haut (15 ordres /  3 h = 5,0/h)  -> 115 ordres/jour
+#
+# Pour **10 jours de marché** d'observation — l'intention d'origine était
+# « ~9 jours » — cela donne entre **530 et 1 150**. On retient **800**, soit
+# ~7 jours au taux haut et ~15 au taux bas.
+#
+# ⚠️ La borne d'ARGENT (−50 €) tombera probablement bien avant : au −0,145 €
+# par trade mesuré sur le radar seul, 115 ordres/jour font ~−17 €/jour.
+# C'est voulu — « le premier atteint ».
+#
+# ⛔ Et 800 reste très au-dessus du plancher statistique qui justifiait 60
+# (en dessous, 39 % de gagnants ne se distinguent pas du hasard).
+
+
+def test_le_budget_d_ordres_est_recalibre_sur_le_nouveau_rythme():
+    """⛔ 60 correspondait a 4,2 ordres/jour. Le rythme mesure est de 53 a 115
+    par jour : 60 serait franchi en moins d'une journee, et la regle ne dirait
+    plus rien d'autre que << il a trade >>."""
+    assert ra.MAX_ORDRES >= 500, (
+        f"budget {ra.MAX_ORDRES} : moins de 5 jours de marche au rythme mesure")
+    assert ra.MAX_ORDRES <= 1200, (
+        f"budget {ra.MAX_ORDRES} : plus de 10 jours, l'experience ne conclut "
+        f"jamais")
+
+
+def test_le_budget_reste_REGLABLE_sans_redeploiement(monkeypatch):
+    """Une experience bornee doit pouvoir voir ses bornes bouger quand Xavier
+    le decide, pas quand une image se reconstruit."""
+    import importlib
+    monkeypatch.setenv("OR_ARRET_MAX_ORDRES", "123")
+    importlib.reload(ra)
+    try:
+        assert ra.MAX_ORDRES == 123
+    finally:
+        monkeypatch.delenv("OR_ARRET_MAX_ORDRES", raising=False)
+        importlib.reload(ra)
+
+
+def test_la_borne_d_ARGENT_reste_inchangee():
+    """⚠️ Xavier a demande de recalibrer le BUDGET D'ORDRES. La borne d'argent
+    n'etait pas dans sa demande : la bouger serait decider a sa place."""
+    assert ra.MAX_PERTE_EUR == -50.0
+
+
+def test_le_motif_DIT_la_jambe_terminal_jamais_tue(base_n):
+    """⛔ Exclure les trades du terminal de la borne ne doit pas les faire
+    disparaitre du message : -45,42 EUR de stops reels, c'est de l'argent."""
+    _t(base_n, 1, pnl=-6.96, close_reason="SL",
+       notes="Auto-exec via bridge MT5")
+    _t(base_n, 2, pnl=-45.42, close_reason="SL", notes="MANUEL-TERM")
+
+    motif = ra.verdict(ra.releve(base_n))["motif"]
+
+    assert "terminal" in motif.lower(), motif
+    assert "-45.42" in motif or "45,42" in motif, motif
+
+
+def test_le_motif_de_FRANCHISSEMENT_dit_aussi_le_terminal(base_n):
+    """Le message qui alerte doit porter la meme decomposition : sinon la
+    lecture d'une alerte et celle d'un releve calme ne concordent pas."""
+    for i in range(3):
+        _t(base_n, 10 + i, pnl=-30.0, close_reason="SL",
+           notes="Auto-exec via bridge MT5")
+    _t(base_n, 99, pnl=-45.42, close_reason="SL", notes="MANUEL-TERM")
+
+    v = ra.verdict(ra.releve(base_n))
+
+    assert v["borne_atteinte"] is True
+    assert "terminal" in v["motif"].lower(), v["motif"]

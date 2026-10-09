@@ -27,6 +27,28 @@ def anyio_backend():
 
 
 @pytest.fixture(autouse=True)
+def fenetre_hebdo_neutre(monkeypatch):
+    """⛔ La fenêtre hebdomadaire rend la SUITE dépendante de l'HORLOGE.
+
+    Posée le 2026-10-09 (lun 00h05 → ven 22h40, heure de Paris), elle s'insère
+    dans `_check_rejection` juste après les horaires de marché. Trois tests de
+    `test_bridge_tick_validator` — qui forcent `is_market_open_for_destination`
+    à `True` — se sont mis à recevoir `hors_fenetre_hebdo` au lieu du motif
+    attendu, **uniquement le vendredi soir et le week-end**.
+
+    🔑 Un test qui passe ou tombe selon l'heure qu'il est ne prouve rien. Ce
+    dépôt en porte déjà un (`test_signaux_externes[45.0-True]`, qui rend
+    `market_closed` passé ~21 h UTC) et il coûte une relecture à chaque fois.
+
+    ⇒ La porte est désarmée par défaut dans la suite. Les tests qui l'étudient
+    (`test_fenetre_hebdo.py`) retirent cette variable et rechargent le module :
+    ils voient donc la VRAIE logique, sur des instants EXPLICITES.
+    """
+    monkeypatch.setenv("FENETRE_HEBDO_ENABLED", "false")
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _clear_analytics_cache():
     """Cache in-memory de build_analytics (TTL 60s) doit être vidé entre
     tests sinon les mutations DB ne sont pas reflétées dans la réponse."""

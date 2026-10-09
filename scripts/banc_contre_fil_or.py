@@ -233,6 +233,11 @@ def main() -> int:
 
     for spread in SPREADS:
         print(f"\n--- spread {spread:.2f} $ ---")
+        # ⚠️ UNE fois par spread : les entrees ne dependent que de lui, pas
+        # du declencheur. Les recalculer par cellule coutait 24 rejeux de
+        # trois ans pour un resultat identique.
+        ent = _entrees(bgs, releve, spread)
+        print(f"entrees du bras A : {len(ent)}")
         print(f"{'theta':>6s} {'D':>4s} {'n':>5s} "
               f"{'A':>8s} {'B':>8s} {'C':>8s} {'D':>8s} | "
               f"{'B-A':>8s} {'t':>6s} | {'B-C':>8s} {'t':>6s} | "
