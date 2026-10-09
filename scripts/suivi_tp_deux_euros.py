@@ -40,18 +40,50 @@ REQUIS_TAUX_TP = 0.857
 
 
 def _entree_signal(fill: float, slip_pips: float, stop: float) -> float:
-    """🔑 La REGLE arbitre, pas le signe du slippage (stocke sans signe)."""
-    candidats = (fill + slip_pips / 100.0, fill - slip_pips / 100.0)
-    return min(candidats, key=lambda e: abs(abs(stop - e) / e * 100 - 0.35))
+    """L'entree du SIGNAL, deduite du fill et du slippage.
+
+    ⛔ DEUX ERREURS CORRIGEES LE 2026-10-09, toutes deux de mon fait.
+
+    1. J'avais code **0,35** en dur comme pourcentage de reference. C'est
+       l'ANCIENNE regle : depuis le stop a 20 EUR le bon pourcentage vaut
+       ~0,536 %. L'heuristique choisissait donc systematiquement le MAUVAIS
+       des deux candidats, et mon suivi annonçait a Xavier que ses trades ne
+       portaient pas sa geometrie. Ils la portaient. Un seuil fige en dur
+       devient faux des que la regle change -- et ne le dit jamais.
+
+    2. J'avais ecrit que `slippage_pips` etait stocke SANS signe. C'est FAUX :
+       le trade #2012 porte **-363**. Le champ est signe, il suffit de
+       l'utiliser tel quel.
+
+    🔑 On essaie donc le signe tel quel, et on garde un repli sur les deux
+    candidats dont on retient celui qui tombe sur l'un des pourcentages de
+    regle CONNUS -- jamais un seul code en dur.
+    """
+    pcts = (0.35, 20.0 * 1.1235 / 4193.0 * 100)      # 0,35 % et ~0,536 %
+    candidats = (fill - slip_pips / 100.0,           # le signe TEL QUEL
+                 fill + slip_pips / 100.0)
+    def ecart(e):
+        if e <= 0:
+            return 1e9
+        p = abs(stop - e) / e * 100
+        return min(abs(p - x) for x in pcts)
+    return min(candidats, key=ecart)
 
 
 def main() -> int:
     c = sqlite3.connect("file:%s?mode=ro" % DB, uri=True)
+    # ⛔ Les ordres poses A LA MAIN par le pont portent `MANUEL` dans leur
+    # commentaire, qui atterrit dans `notes`. Ils sont `is_auto=1` comme les
+    # autres : sans cette exclusion ils entreraient dans la moyenne de
+    # l'experience alors qu'ils n'ont passe AUCUNE des 13 portes du radar, et
+    # la prediction de -0,80 EUR/trade deviendrait illisible.
     lignes = list(c.execute(
         "SELECT id,direction,entry_price,stop_loss,take_profit,slippage_pips,"
         "       signal_pattern,horizon,status,pnl,close_reason,created_at "
         "FROM personal_trades WHERE pair LIKE '%XAU%' AND created_at > ? "
-        "  AND is_auto = 1 ORDER BY id", (DEPUIS,)))
+        "  AND is_auto = 1 "
+        "  AND COALESCE(notes,'') NOT LIKE '%MANUEL%' ORDER BY id",
+        (DEPUIS,)))
 
     print("=== EXPERIENCE : TP DE L'OR A 2 EUR ===")
     print("    borne : %s   (trades AUTOMATIQUES de l'or uniquement)" % DEPUIS)

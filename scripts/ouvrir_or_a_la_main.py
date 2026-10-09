@@ -16,19 +16,33 @@ chaîne armée, verdict, risque par trade.
 plafond journalier du courtier, `MAX_LOT`, contrôle du risque réalisé — et je
 n'y touche pas.
 
-## 🔑 LA DIRECTION NE VIENT PAS DE MOI
+## 🔑 LA DIRECTION : au radar par défaut, à Xavier s'il la demande
 
-Elle est lue dans le **dernier signal d'or détecté par le radar** parmi les
-motifs autorisés sur la paire. Choisir moi-même le sens serait prendre une
-décision de marché à la place de Xavier ; là, c'est le système qui parle et
-l'outil ne fait que l'exécuter hors de sa fenêtre horaire.
+Sans argument, elle est lue dans le **dernier signal d'or détecté par le
+radar** parmi les motifs autorisés — je ne choisis pas le sens à sa place.
+
+Avec `--sens buy|sell`, **Xavier impose** la direction (ajouté le 2026-10-09
+à sa demande : *« pourquoi je n'ai pas le droit de faire des trades
+manuels ? »* — il en a le droit, et rien ne l'en empêchait).
+
+⚠️ Dans ce cas l'outil affiche **aussi ce que le radar pensait**, et dit
+`EN DÉSACCORD` le cas échéant : s'il va contre son propre système, il doit le
+voir **avant** d'envoyer, pas après.
+
+⛔ Un `--sens` illisible **lève** au lieu de retomber sur le radar : taper
+`--sens by` et voir partir une VENTE serait le pire des silences sur un ordre
+d'argent réel.
 
 ## 🔑 ÉTIQUETÉ pour ne PAS polluer la mesure
 
-Le commentaire porte `MANUEL-CLAUDE`. Le suivi de l'expérience du TP à 2 €
-compte les trades `is_auto=1` de l'or : un ordre posé ici entrerait dans cette
-moyenne comme s'il avait passé toutes les portes. L'étiquette permet de l'en
-exclure — sans elle, la prédiction de −0,80 €/trade deviendrait illisible.
+`MANUEL-RAD` quand le radar donne le sens, `MANUEL-XAV` quand Xavier
+l'impose. **La distinction compte** : relire dans un mois « MANUEL » sans
+savoir qui a décidé la direction rendrait l'analyse impossible.
+
+Le suivi de l'expérience compte les trades `is_auto=1` de l'or ; un ordre posé
+ici y entrerait comme s'il avait passé les 13 portes. Le préfixe `MANUEL`
+permet de l'exclure — sans lui, la prédiction de −0,80 €/trade deviendrait
+illisible.
 
 ## La géométrie est CELLE DE SA CONFIGURATION
 
@@ -48,7 +62,11 @@ CLE = (os.environ.get("MT5_BRIDGE_LIVE_API_KEY")
        or os.environ.get("MT5_BRIDGE_API_KEY") or "")
 PAIRE = "XAU/USD"
 LOT = 0.01
-ETIQUETTE = "MANUEL-CLAUDE"
+# 🔑 DEUX etiquettes, et la distinction compte. Quand Xavier choisit le sens,
+# la trace doit le dire : relire dans un mois << MANUEL >> sans savoir QUI a
+# decide la direction rendrait l'analyse impossible.
+ETIQUETTE_RADAR = "MANUEL-RAD"
+ETIQUETTE_XAVIER = "MANUEL-XAV"
 
 SL_EUR = float(os.environ.get("XAU_SL_FIXE_EUR", "20"))
 TP_EUR = float(os.environ.get("XAU_TP_FIXE_EUR", "2"))
@@ -117,10 +135,31 @@ def sens_du_radar() -> tuple[str, str] | None:
     return None
 
 
+def _sens_demande() -> str | None:
+    """Le sens passe en ligne de commande, ou ``None``.
+
+    ⛔ Un `--sens` illisible LEVE au lieu de retomber sur le radar : taper
+    `--sens by` par erreur et voir partir une VENTE serait le pire des
+    silences sur un ordre d'argent reel.
+    """
+    if "--sens" not in sys.argv:
+        return None
+    i = sys.argv.index("--sens")
+    if i + 1 >= len(sys.argv):
+        raise SystemExit("⛔ --sens attend une valeur : buy ou sell")
+    v = sys.argv[i + 1].strip().lower()
+    if v not in ("buy", "sell"):
+        raise SystemExit(f"⛔ --sens doit valoir buy ou sell, pas {v!r}")
+    return v
+
+
 def main() -> int:
     sec = "--vrai" in sys.argv
+    impose = _sens_demande()
     print("=== OUVRIR DE L'OR PAR LE PONT ===")
     print(f"    mode : {'ORDRE REEL' if sec else 'CONTROLE SEUL (aucun ordre)'}")
+    if impose:
+        print(f"    sens IMPOSE par Xavier : {impose.upper()}")
 
     tick, _ = _appel(f"/tick/{PAIRE}")
     if "ask" not in tick:
@@ -139,13 +178,27 @@ def main() -> int:
     print(f"    stop  {sl_usd:.3f} $ = {SL_EUR:.2f} EUR")
     print(f"    cible {tp_usd:.3f} $ = {TP_EUR:.2f} EUR")
 
-    choix = sens_du_radar()
-    if choix is None:
-        print("  ⛔ AUCUN signal d'or autorise recent : pas de direction.")
-        print("     Je n'en invente pas — un trade sans signal est un tirage.")
-        return 1
-    sens, origine = choix
-    print(f"    🔑 sens pris du RADAR : {sens.upper()}  ({origine})")
+    if impose:
+        sens, origine = impose, "choix de Xavier"
+        etiquette = ETIQUETTE_XAVIER
+        # ⚠️ On dit AUSSI ce que le radar pensait : si Xavier va contre son
+        # propre systeme, il doit le voir avant d'envoyer, pas apres.
+        vu = sens_du_radar()
+        if vu:
+            accord = "D'ACCORD" if vu[0] == sens else "EN DESACCORD"
+            print(f"    le radar dit {vu[0].upper()} ({vu[1]}) — {accord}")
+        else:
+            print("    le radar n'a AUCUN signal autorise recent")
+    else:
+        choix = sens_du_radar()
+        if choix is None:
+            print("  ⛔ AUCUN signal d'or autorise recent : pas de direction.")
+            print("     Je n'en invente pas — un trade sans signal est un")
+            print("     tirage. Utiliser --sens buy|sell pour decider.")
+            return 1
+        sens, origine = choix
+        etiquette = ETIQUETTE_RADAR
+        print(f"    🔑 sens pris du RADAR : {sens.upper()}  ({origine})")
 
     entree = ask if sens == "buy" else bid
     signe = 1 if sens == "buy" else -1
@@ -166,7 +219,7 @@ def main() -> int:
 
     charge = {"pair": PAIRE, "direction": sens, "entry": entree,
               "sl": sl, "tp": tp, "lots": LOT,
-              "comment": ETIQUETTE}
+              "comment": etiquette}
     if not sec:
         rep, code = _appel("/order_check", charge, "POST")
         print("")
@@ -174,6 +227,7 @@ def main() -> int:
         print("    " + json.dumps(rep, indent=1)[:900].replace("\n", "\n    "))
         print("")
         print("    (relancer avec --vrai pour envoyer l'ordre)")
+        print("    (--sens buy|sell pour imposer la direction)")
         return 0
 
     rep, code = _appel("/order", charge, "POST")
