@@ -841,6 +841,44 @@ async def ml_trading_cycle() -> None:
         logger.error(f"ML trading cycle failed: {e}", exc_info=True)
 
 
+def config_cycle_rapide() -> tuple[int, list[str]]:
+    """``(secondes, paires)`` du cycle rapide. ``(0, [])`` = desarme.
+
+    🔑 EXTRAITE POUR ETRE TESTABLE SANS EFFET DE BORD (2026-10-09). Mon
+    premier test appelait le vrai `start_scheduler()` pour lire les jobs
+    declares : il a ecrit dans `data/scalping.db`, bascule `EUR/USD buy` en
+    non-eligible, et fait tomber **30 tests** dans d'autres fichiers. Le code
+    de production n'y etait pour rien — c'etait le harnais qui etait invasif.
+
+    ⛔ La lecon : pour verifier une DECISION DE CONFIGURATION, on n'execute pas
+    le demarrage complet d'un ordonnanceur. On isole la decision.
+
+    ⛔ Et la liste VIDE est le piege a ne jamais laisser passer :
+    `run_analysis_cycle(univers_force=[])` rend `restreint = False`, donc un
+    cycle COMPLET — 54 paires et 24 s de travail toutes les 5 secondes.
+    L'appelant doit donc tester les DEUX valeurs, et c'est ce que la paire
+    rendue rend explicite.
+
+    Par defaut l'univers suit la liste blanche du compte REEL : si elle se
+    vide, le cycle rapide disparait. Une constante en dur aurait derive en
+    silence le jour ou elle change.
+    """
+    try:
+        secondes = int(os.getenv("CYCLE_RAPIDE_SEC", "5"))
+    except (TypeError, ValueError):
+        # ⚠️ Une valeur illisible DESARME plutot que de prendre le defaut : un
+        # `CYCLE_RAPIDE_SEC=cinq` ne doit pas armer un rythme que personne n'a
+        # demande. Cf. le `.env` tronque du 2026-10-02.
+        logger.warning("CYCLE_RAPIDE_SEC illisible (%r) — cycle rapide desarme",
+                       os.getenv("CYCLE_RAPIDE_SEC"))
+        return (0, [])
+    brut = os.getenv("CYCLE_RAPIDE_PAIRS")
+    if brut is None:
+        brut = os.getenv("MT5_BRIDGE_LIVE_WHITELIST_PAIRS", "")
+    paires = [p.strip() for p in brut.split(",") if p.strip()]
+    return (secondes, paires)
+
+
 def start_scheduler() -> AsyncIOScheduler:
     """Démarre le scheduler périodique."""
     global _scheduler
@@ -854,6 +892,75 @@ def start_scheduler() -> AsyncIOScheduler:
         name="Cycle d'analyse marché",
         replace_existing=True,
     )
+    # ─── Cycle RAPIDE sur l'or seul, 5 s (2026-10-09) ──────────────────
+    #
+    # Demande de Xavier : « je veux cycle d'analyse tourne aux 5 sec ».
+    #
+    # 🔑 CE QUE LA MESURE AUTORISE. Le cycle COMPLET analyse 54 paires et dure
+    # 23 a 25 s (cinq echantillons en production : 24,9 · 23,5 · 25,0 · 22,9 ·
+    # 23,2). Le mettre a 5 s le ferait se chevaucher CINQ fois lui-meme :
+    # impossible. Le cycle RESTREINT a l'or, lui, dure 0,47 a 0,93 s (quatre
+    # echantillons, relances du lanceur) :
+    #
+    #     13:23:21,185 -> 13:23:21,656   0,47 s
+    #     13:27:21,225 -> 13:27:21,940   0,72 s
+    #     13:31:11,193 -> 13:31:12,127   0,93 s
+    #     13:45:31,229 -> 13:45:31,852   0,62 s
+    #
+    # => 0,7 s toutes les 5 s = 14 % de charge, soit EXACTEMENT la charge
+    # actuelle du cycle complet (24 s / 180 s = 13 %). La demande est tenable,
+    # et seulement parce qu'elle porte sur l'or SEUL — la seule paire ouverte
+    # au reel.
+    #
+    # ⛔ LE PIEGE MORTEL, et c'est pourquoi la liste de paires est OBLIGATOIRE.
+    # `run_analysis_cycle(univers_force=[])` : une liste VIDE est FAUSSE en
+    # Python, donc `restreint = bool(univers_force)` vaut False et le cycle
+    # devient COMPLET. Un univers vide ferait tourner les 54 paires toutes les
+    # 5 secondes — 24 s de travail dans une fenetre de 5 s, l'empilement
+    # garanti, sur la machine qui est deja tombee une fois cette semaine faute
+    # de memoire. On ne s'enregistre donc PAS sans paire explicite.
+    #
+    # 🔑 L'UNIVERS SUIT LA REALITE AU LIEU DE LA RECOPIER : par defaut c'est la
+    # liste blanche du compte REEL. Si elle se vide, ce job disparait —
+    # fail-closed. Une constante en dur aurait derive en silence le jour ou
+    # Xavier change la liste.
+    #
+    # ⚠️ CE QUE CE JOB NE FAIT PAS, par construction de `run_analysis_cycle` :
+    # un cycle restreint n'ecrit AUCUN battement (`radar_cycle_heartbeat`), ne
+    # publie pas `_latest_overview` et ne touche pas `_last_cycle_at`. Sans
+    # cela, un lancement de l'or toutes les 5 s ferait passer un cycle complet
+    # BLOQUE pour vivant — une alerte de securite rendue muette par une
+    # optimisation de confort.
+    #
+    # ⚠️ ET SI L'OR DEVENAIT TROP LENT : le verrou de `run_analysis_cycle` fait
+    # SORTIR le cycle en trop au lieu de l'empiler, en journalisant
+    # « cycle restreint ignore : un cycle est deja en cours ». C'est la ligne a
+    # lire si ce job cesse de servir.
+    _cycle_rapide_sec, _cycle_rapide_paires = config_cycle_rapide()
+    if _cycle_rapide_sec > 0 and _cycle_rapide_paires:
+        _scheduler.add_job(
+            run_analysis_cycle,
+            "interval",
+            seconds=_cycle_rapide_sec,
+            args=[_cycle_rapide_paires],
+            id="cycle_rapide_or",
+            name=f"Cycle rapide {'/'.join(_cycle_rapide_paires)}",
+            replace_existing=True,
+            # ⛔ Les deux garde-fous qui empechent l'empilement : une seule
+            # instance a la fois, et un retard se RESORBE au lieu de se
+            # rattraper en rafale.
+            max_instances=1,
+            coalesce=True,
+        )
+        logger.info(
+            "cycle rapide ARME : %s toutes les %d s (mesure : 0,7 s par "
+            "passage sur l'or, soit ~14 %% de charge)",
+            ",".join(_cycle_rapide_paires), _cycle_rapide_sec)
+    else:
+        logger.info(
+            "cycle rapide DESARME (CYCLE_RAPIDE_SEC=%s, paires=%r) — le cycle "
+            "complet reste seul maitre du rythme",
+            _cycle_rapide_sec, _cycle_rapide_paires)
     # ─── Echelle de stop de l'or (2026-10-09) ──────────────────────────
     # Branchee sur le reel a la demande explicite de Xavier. Les paliers et
     # les gardes vivent dans `echelle_stop_or` ; INERTE sans
