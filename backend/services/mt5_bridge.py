@@ -1197,6 +1197,24 @@ def _check_rejection(setup, dest=None) -> str | None:
     dest_id_for_hours = getattr(dest, "destination_id", "") if dest is not None else ""
     if not is_market_open_for_destination(setup.pair, dest_id_for_hours):
         return "market_closed"
+    # ─── Fenetre HEBDOMADAIRE de Xavier (2026-10-09) ────────────────────
+    #
+    # << Je veux des horaires hebdomadaires, de 00h05 lundi a 22h40 vendredi >>.
+    #
+    # 🔑 HEURE DE PARIS, et c'est la mesure qui le dit : lundi 00h05 Paris vaut
+    # dimanche 22h05 UTC, soit 5 min APRES l'ouverture de l'or ; vendredi 22h40
+    # Paris vaut 20h40 UTC, soit 20 min AVANT sa cloture. Sa fenetre est donc
+    # un sous-ensemble STRICT de la seance, avec une marge de chaque cote. Lue
+    # en UTC elle n'aurait eu aucun sens.
+    #
+    # ⚠️ Elle S'AJOUTE a `is_market_open_for_destination` juste au-dessus : les
+    # deux repondent a la meme question (<< a-t-on le droit de trader
+    # MAINTENANT ? >>) et doivent se relire ensemble.
+    from backend.services import fenetre_hebdo
+    if not fenetre_hebdo.ouverte():
+        logger.info("mt5_bridge[%s]: %s — %s", dest_id, fenetre_hebdo.MOTIF,
+                    fenetre_hebdo.detail())
+        return fenetre_hebdo.MOTIF
     # No-weekend-hold energy : bloque les nouveaux pushes energy (WTI/Brent/NatGas)
     # vendredi après NO_FRIDAY_LATE_OPEN_ENERGY_HOUR_UTC (défaut 18h UTC = 20h Paris).
     # Motif : incident 2026-08-03 → 2 positions WTI Live tenues 3 nuits weekend, SL

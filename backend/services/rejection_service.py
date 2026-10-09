@@ -38,6 +38,11 @@ REASON_LABELS_FR = {
     "market_closed": "Marché fermé",
     "sl_too_close": "SL trop serré",
     "heure_spread_defavorable": "Heure où le spread coûte le double",
+    # Fenetre hebdomadaire dictee par Xavier le 2026-10-09 : lundi 00h05 ->
+    # vendredi 22h40, HEURE DE PARIS (5 min apres l'ouverture de l'or, 20 min
+    # avant sa cloture).
+    "hors_fenetre_hebdo":
+        "hors fenêtre hebdomadaire (lun 00h05 → ven 22h40, heure de Paris)",
     "below_confidence": "Confiance < seuil",
     "pattern_not_allowed": "Pattern hors whitelist",
     # REM-001 : distinct de `pattern_not_allowed`, qui etait indiscernable.
