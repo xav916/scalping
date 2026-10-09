@@ -59,6 +59,8 @@ REASON_LABELS_FR = {
     "bridge_error": "Bridge : erreur autre",
     "bridge_timeout": "Bridge injoignable",
     "fees_exceed_edge": "frais supérieurs à 30 % de l'edge",
+    "bridge_marge_insuffisante":
+        "marge libre sous le plancher du courtier (30 % de l'équité)",
     "risque_par_trade_excessif":
         "indimensionnable : même au lot minimum, > 5 % du capital",
     "horizon_not_allowed": "horizon non servi par cette route",

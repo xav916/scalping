@@ -2031,6 +2031,17 @@ def _categoriser_refus(status: int, corps: str) -> str:
         return "bridge_risque_incoherent"
     if "10016" in t or "INVALID_STOPS" in t:
         return "bridge_invalid_stops"
+    # ⛔ Ajoute le 2026-10-09, apres 10 refus ranges en
+    # `bridge_refus_indetermine` sur l'or : le pont refusait parce qu'un ordre
+    # de plus aurait laisse la marge libre SOUS son plancher de 30 %, et ce
+    # motif n'avait pas de nom. Message exact du pont :
+    #   « Marge libre apres ordre -30.27 < 159.03 (30.0% de 530.11) »
+    #
+    # 🔑 C'est la contrainte qui PLAFONNE REELLEMENT le nombre de positions
+    # d'or : 186,64 EUR de marge par position a 0,01 lot. La ranger sous
+    # « indetermine » la rendait invisible, alors que c'est elle qui decide.
+    if "Marge libre" in t:
+        return "bridge_marge_insuffisante"
     if status == 429:
         return "bridge_refus_indetermine"
     return "bridge_error"
