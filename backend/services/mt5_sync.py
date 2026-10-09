@@ -986,24 +986,52 @@ def _adopter_positions_du_courtier(
                 destination_id, p.get("symbol"), ticket,
             )
 
-        with sqlite3.connect(_db_path()) as c:
-            c.execute(
-                "INSERT INTO personal_trades "
-                " (user, pair, direction, entry_price, stop_loss, take_profit,"
-                "  size_lot, status, created_at, mt5_ticket, is_auto, notes,"
-                "  destination_id, fill_price) "
-                "VALUES (?,?,?,?,?,?,?,'OPEN',?,?,0,?,?,?)",
-                (
-                    user, paire, direction,
-                    _valeur_reelle(p.get("price_open"), 0.0),
-                    _valeur_reelle(p.get("sl")),
-                    _valeur_reelle(p.get("tp")),
-                    _valeur_reelle(p.get("volume"), 0.0),
-                    p.get("time") or datetime.now(timezone.utc).isoformat(),
-                    ticket, MARQUE_ADOPTION, destination_id,
-                    _valeur_reelle(p.get("price_open")),
-                ),
+        # ⛔ `0.0` ET NON `None` POUR LE STOP ET L'OBJECTIF (2026-10-09).
+        #
+        # `personal_trades.stop_loss` et `take_profit` sont **NOT NULL**. Or un
+        # trade a la main sans objectif est le cas NORMAL : sur les trois
+        # positions d'or du 09/10, DEUX n'en avaient pas. Ecrire `None` levait
+        # `IntegrityError` et le correctif n'adoptait qu'une position sur
+        # trois.
+        #
+        # 🔑 On garde donc le `0.0` du courtier, qui est SA facon de dire
+        # « absent » — pas une valeur inventee. Et aucun prix de sortie ne peut
+        # l'egaler par accident, donc `_derive_close_reason_from_exit` ne
+        # confondra pas un objectif absent avec un objectif atteint.
+        try:
+            with sqlite3.connect(_db_path()) as c:
+                c.execute(
+                    "INSERT INTO personal_trades "
+                    " (user, pair, direction, entry_price, stop_loss,"
+                    "  take_profit, size_lot, status, created_at, mt5_ticket,"
+                    "  is_auto, notes, destination_id, fill_price) "
+                    "VALUES (?,?,?,?,?,?,?,'OPEN',?,?,0,?,?,?)",
+                    (
+                        user, paire, direction,
+                        _valeur_reelle(p.get("price_open"), 0.0),
+                        _valeur_reelle(p.get("sl"), 0.0),
+                        _valeur_reelle(p.get("tp"), 0.0),
+                        _valeur_reelle(p.get("volume"), 0.0),
+                        p.get("time") or datetime.now(timezone.utc).isoformat(),
+                        ticket, MARQUE_ADOPTION, destination_id,
+                        _valeur_reelle(p.get("price_open")),
+                    ),
+                )
+        except Exception as e:  # noqa: BLE001
+            # ⛔ L'ECHEC EST LOCAL ET BRUYANT, et c'est le defaut qui a coute
+            # le plus cher le 09/10. Avant, une seule position mal formee
+            # faisait lever l'adoption ENTIERE ; le cycle la rattrapait dans
+            # son `try` et classait le pont comme « muet ». Trois degats pour
+            # une ligne : les positions suivantes perdues, aucune fermeture
+            # declaree, et un diagnostic qui accusait le reseau.
+            logger.warning(
+                "mt5_sync[%s]: position %s NON adoptee, l'ecriture a echoue "
+                "(%s: %s) — elle restera invisible aux comptes. Les autres "
+                "positions de ce cycle sont traitees normalement.",
+                destination_id, ticket, type(e).__name__, e,
             )
+            continue
+
         connus.add(ticket)
         cree += 1
         logger.info(

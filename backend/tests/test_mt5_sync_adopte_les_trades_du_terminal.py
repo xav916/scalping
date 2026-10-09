@@ -65,26 +65,79 @@ import pytest
 from backend.services import mt5_sync
 
 
+# ⛔ LE SCHEMA DE LA PRODUCTION, COPIE VERBATIM — et c'est une correction.
+#
+# Ma premiere version de ce fichier declarait un schema PERMISSIF
+# (`stop_loss REAL, take_profit REAL`, tous deux nullables). La production, elle,
+# les porte en **NOT NULL**. Les 19 tests passaient, et le correctif deploye
+# n'a adopte QU'UNE position sur deux : les deux autres n'avaient pas
+# d'objectif (`tp: 0.0` chez MT5), mon code ecrivait `None`, et SQLite levait
+# `IntegrityError`.
+#
+# 🔑 Un harnais plus permissif que la production ne teste pas la production.
+# C'est la meme maladie que le harnais qui FOURNIT un nom absent du source
+# (cf. `test_bridge_rates_tranches.py`, `timedelta` injecte le 2026-10-08) :
+# dans les deux cas les tests affirment sur un objet qui n'existe pas.
+#
+# Les colonnes NOT NULL sont donc reproduites a l'identique. Ne pas les
+# assouplir « pour simplifier le test » : c'est exactement ce qui a coute ce
+# defaut.
+_SCHEMA_PRODUCTION = """
+    CREATE TABLE personal_trades (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user TEXT NOT NULL DEFAULT 'anonymous',
+        pair TEXT NOT NULL,
+        direction TEXT NOT NULL,
+        entry_price REAL NOT NULL,
+        stop_loss REAL NOT NULL,
+        take_profit REAL NOT NULL,
+        size_lot REAL NOT NULL,
+        signal_pattern TEXT,
+        signal_confidence REAL,
+        checklist_passed INTEGER DEFAULT 0,
+        notes TEXT,
+        status TEXT DEFAULT 'OPEN',
+        exit_price REAL,
+        pnl REAL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        closed_at TEXT,
+        post_entry_sl INTEGER DEFAULT 0,
+        post_entry_tp INTEGER DEFAULT 0,
+        post_entry_size INTEGER DEFAULT 0,
+        post_entry_alarm INTEGER DEFAULT 0,
+        mt5_ticket INTEGER,
+        is_auto INTEGER DEFAULT 0,
+        context_macro TEXT,
+        signal_id INTEGER,
+        fill_price REAL,
+        slippage_pips REAL,
+        close_reason TEXT,
+        user_id INTEGER,
+        destination_id TEXT,
+        sl_at_close REAL,
+        tp_at_close REAL,
+        niveaux_source TEXT,
+        horizon TEXT,
+        source TEXT,
+        motif_interne TEXT,
+        motif_interne_detail TEXT
+    )
+"""
+
+# ⚠️ Et l'index UNIQUE de la production, qui porte sur (ticket, sens).
+_INDEX_PRODUCTION = (
+    "CREATE UNIQUE INDEX idx_pt_ticket_dir "
+    "ON personal_trades(mt5_ticket, direction)"
+)
+
+
 @pytest.fixture
 def temp_db(tmp_path, monkeypatch):
-    """DB SQLite temporaire au schéma de `personal_trades`."""
+    """DB SQLite temporaire au schéma EXACT de la production."""
     db_file = tmp_path / "trades.db"
     conn = sqlite3.connect(db_file)
-    conn.execute("""
-        CREATE TABLE personal_trades (
-            id INTEGER PRIMARY KEY,
-            user TEXT, pair TEXT, direction TEXT,
-            entry_price REAL, stop_loss REAL, take_profit REAL,
-            size_lot REAL, signal_pattern TEXT, signal_confidence REAL,
-            checklist_passed INTEGER, notes TEXT, status TEXT,
-            created_at TEXT, mt5_ticket INTEGER, is_auto INTEGER,
-            post_entry_sl INTEGER, post_entry_tp INTEGER, post_entry_size INTEGER,
-            context_macro TEXT, exit_price REAL, pnl REAL, closed_at TEXT,
-            signal_id INTEGER, fill_price REAL, slippage_pips REAL,
-            close_reason TEXT, sl_at_close REAL, tp_at_close REAL,
-            niveaux_source TEXT, destination_id TEXT
-        )
-    """)
+    conn.execute(_SCHEMA_PRODUCTION)
+    conn.execute(_INDEX_PRODUCTION)
     conn.commit()
     conn.close()
     monkeypatch.setattr(mt5_sync, "_db_path", lambda: str(db_file))
@@ -364,8 +417,9 @@ async def test_une_position_AUTO_n_est_pas_adoptee_en_double(
     with sqlite3.connect(temp_db) as c:
         c.execute(
             "INSERT INTO personal_trades (user, pair, direction, entry_price,"
-            " size_lot, status, created_at, mt5_ticket, is_auto) "
-            "VALUES ('u','XAU/USD','sell',4203.7,0.01,'OPEN',"
+            " stop_loss, take_profit, size_lot, status, created_at,"
+            " mt5_ticket, is_auto) "
+            "VALUES ('u','XAU/USD','sell',4203.7,4223.7,4201.46,0.01,'OPEN',"
             "'2026-10-09T05:30:00+00:00',1360999001,1)"
         )
 
@@ -460,8 +514,9 @@ async def test_un_pont_muet_INTERDIT_TOUJOURS_de_declarer_une_fermeture(
     with sqlite3.connect(temp_db) as c:
         c.execute(
             "INSERT INTO personal_trades (user, pair, direction, entry_price,"
-            " size_lot, status, created_at, mt5_ticket, is_auto) "
-            "VALUES ('u','EUR/USD','buy',1.1,0.1,'OPEN',"
+            " stop_loss, take_profit, size_lot, status, created_at,"
+            " mt5_ticket, is_auto) "
+            "VALUES ('u','EUR/USD','buy',1.1,1.09,1.12,0.1,'OPEN',"
             "'2026-10-09T05:00:00+00:00',999123,1)"
         )
 
@@ -517,8 +572,9 @@ async def test_les_deux_ponts_REPONDENT_la_fermeture_est_declaree(
     with sqlite3.connect(temp_db) as c:
         c.execute(
             "INSERT INTO personal_trades (user, pair, direction, entry_price,"
-            " size_lot, status, created_at, mt5_ticket, is_auto) "
-            "VALUES ('u','EUR/USD','buy',1.1,0.1,'OPEN',"
+            " stop_loss, take_profit, size_lot, status, created_at,"
+            " mt5_ticket, is_auto) "
+            "VALUES ('u','EUR/USD','buy',1.1,1.09,1.12,0.1,'OPEN',"
             "'2026-10-09T05:00:00+00:00',999123,1)"
         )
 
@@ -543,3 +599,115 @@ async def test_les_deux_ponts_REPONDENT_la_fermeture_est_declaree(
         ).fetchone()
     assert row[0] == "CLOSED"
     assert row[1] == pytest.approx(-8.0)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# ⛔ UNE POSITION SANS OBJECTIF (mesure en production, 2026-10-09)
+# ─────────────────────────────────────────────────────────────────────────
+
+# Les charges utiles REELLES des deux positions que le correctif deploye a
+# MANQUEES : ni l'une ni l'autre ne porte d'objectif.
+SANS_OBJECTIF = {
+    "ticket": 1360798623, "symbol": "XAUUSD", "type": "sell", "volume": 0.01,
+    "price_open": 4179.03, "price_current": 4181.70, "sl": 4220.82,
+    "tp": 0.0, "profit": -2.38, "comment": "",
+    "time": "2026-10-09T11:15:02+00:00",
+}
+
+
+def test_une_position_SANS_OBJECTIF_est_adoptee_quand_meme(temp_db):
+    """⛔ LE DEFAUT MESURE EN PRODUCTION. Sur trois positions d'or vivantes,
+    le correctif deploye n'en a adopte QU'UNE : les deux autres n'avaient pas
+    d'objectif.
+
+    `tp: 0.0` est la facon dont MT5 dit « aucun objectif » — et c'est le cas
+    NORMAL d'un trade a la main. Mon code traduisait ce 0,0 en `None`, mais la
+    colonne est **NOT NULL** en production : `IntegrityError`.
+
+    🔑 Et l'erreur etait AVALEE : levee dans l'adoption, elle remontait dans le
+    `try` du cycle, qui classait le pont reel comme « muet ». Un defaut
+    d'ecriture se faisait passer pour une panne de reseau.
+    """
+    n = mt5_sync._adopter_positions_du_courtier([SANS_OBJECTIF], "admin_live")
+
+    assert n == 1, "une position sans objectif n'a pas ete adoptee"
+    ligne = _lignes(temp_db)[0]
+    assert ligne["mt5_ticket"] == 1360798623
+    # 🔑 On garde le 0,0 du courtier : c'est SA facon de dire « absent », la
+    # colonne est NOT NULL, et aucun prix de sortie ne peut l'egaler par
+    # accident.
+    assert ligne["take_profit"] == 0.0
+    assert ligne["stop_loss"] == pytest.approx(4220.82)
+
+
+def test_les_DEUX_positions_du_09_10_sont_adoptees_ensemble(temp_db):
+    """🔑 Le cas exact de la production : une position AVEC objectif et une
+    SANS, dans la meme charge utile. Avant le correctif, la premiere passait et
+    la seconde faisait echouer tout le reste du cycle."""
+    n = mt5_sync._adopter_positions_du_courtier(
+        [POSITION_OR, SANS_OBJECTIF], "admin_live")
+
+    assert n == 2
+    assert len(_lignes(temp_db)) == 2
+
+
+def test_une_position_ILLISIBLE_ne_fait_pas_tomber_les_AUTRES(temp_db, caplog):
+    """⛔ L'erreur d'ecriture doit etre BRUYANTE et LOCALE.
+
+    Avant, une seule position mal formee faisait lever l'adoption entiere : le
+    cycle la rattrapait et declarait le pont « muet », donc (1) les positions
+    suivantes etaient perdues, (2) aucune fermeture n'etait declaree, et
+    (3) le diagnostic accusait le reseau. Trois degats pour une ligne.
+    """
+    # ⚠️ Un type que SQLite REFUSE de lier (`InterfaceError`), et non une
+    # valeur juste mal ecrite : `price_open="pas un prix"` retombe proprement
+    # sur 0,0 par `_valeur_reelle` — ma premiere version de ce test le croyait
+    # fatal, et c'est le TEST qui avait tort. Une date rendue comme objet est
+    # le cas plausible : une version du pont qui change la forme de `time`.
+    illisible = {**POSITION_OR, "ticket": 999001, "time": {"pas": "une date"}}
+
+    with caplog.at_level("WARNING"):
+        n = mt5_sync._adopter_positions_du_courtier(
+            [illisible, SANS_OBJECTIF], "admin_live")
+
+    assert n == 1, "la position saine n'a pas ete adoptee"
+    assert _lignes(temp_db)[0]["mt5_ticket"] == 1360798623
+    assert "999001" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_une_ecriture_qui_ECHOUE_ne_rend_pas_le_pont_muet(
+    temp_db, pont_configure
+):
+    """🔑 Le volet qui manquait : un echec d'ECRITURE ne doit pas se faire
+    passer pour un pont injoignable, sinon la fermeture des autres tickets est
+    suspendue par un defaut qui n'a rien a voir."""
+    with sqlite3.connect(temp_db) as c:
+        c.execute(
+            "INSERT INTO personal_trades (user, pair, direction, entry_price,"
+            " stop_loss, take_profit, size_lot, status, created_at,"
+            " mt5_ticket, is_auto) "
+            "VALUES ('u','EUR/USD','buy',1.1,1.09,1.12,0.1,'OPEN',"
+            "'2026-10-09T05:00:00+00:00',999123,1)"
+        )
+    illisible = {**POSITION_OR, "ticket": 999002, "time": {"pas": "une date"}}
+
+    responses = {
+        "http://bridge.test/positions": _FakeResponse(
+            200, {"positions": [illisible]}),
+        "http://bridge.test/deals?ticket=999123": _FakeResponse(200, {
+            "ticket": 999123, "closed": True, "exit_price": 1.09,
+            "pnl": -8.0, "closed_at": "2026-10-09T09:00:00+00:00",
+        }),
+    }
+    with patch("backend.services.mt5_sync.httpx.AsyncClient",
+               lambda *a, **kw: _FakeAsyncClient(responses)):
+        await mt5_sync._reconcile_open_trades()
+
+    with sqlite3.connect(temp_db) as c:
+        statut = c.execute(
+            "SELECT status FROM personal_trades WHERE mt5_ticket=999123"
+        ).fetchone()[0]
+    assert statut == "CLOSED", (
+        "un echec d'ecriture a suspendu la declaration des fermetures : il "
+        "s'est fait passer pour un pont muet")
