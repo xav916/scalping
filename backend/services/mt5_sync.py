@@ -1109,8 +1109,32 @@ async def _reconcile_open_trades() -> None:
     if live_url and live_key:
         bridges.append(("live", live_url.rstrip("/"), live_key))
 
+    # ⛔ CE BLOC A ETE RESTRUCTURE LE 2026-10-09, APRES MESURE EN PRODUCTION.
+    #
+    # Il y avait un `return` des qu'UN pont ne repondait pas. Or le pont demo
+    # rend `503 {"error":"MT5 not connected"}` depuis que son terminal est gele
+    # (07/10), et il est interroge EN PREMIER :
+    #
+    #     legacy -> 503 {"error":"MT5 not connected"}
+    #     live   -> 200 {"count":3, ...}      <- jamais lu
+    #
+    # ⇒ cette fonction etait ENTIEREMENT AVEUGLE AU COMPTE REEL, et l'adoption
+    # posee le meme jour en heritait : deployee, verifiee, et INERTE — zero
+    # ligne sur trois positions d'or vivantes.
+    #
+    # 🔑 LA DISTINCTION QUI MANQUAIT :
+    #   - ADOPTER a besoin de la PRESENCE d'une position. C'est additif : on
+    #     enregistre ce qu'un courtier DECLARE porter. Qu'un AUTRE courtier se
+    #     taise n'enleve rien a ce dire.
+    #   - DECLARER FERME a besoin de l'ABSENCE d'un ticket. C'est soustractif,
+    #     donc une detection par absence : la elle exige que TOUS les ponts
+    #     aient parle, et cette exigence ne bouge pas.
+    #     Cf. [[feedback_detection_par_absence]] et le defaut du 2026-08-13 ou
+    #     les 16 trades reels d'aout portaient tous une duree d'exactement
+    #     1 minute.
     live_tickets: set[int] = set()
     n_adoptees = 0
+    muets: list[str] = []
     for nom, base, key in bridges:
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
@@ -1118,8 +1142,13 @@ async def _reconcile_open_trades() -> None:
                     f"{base}/positions", headers={"X-API-Key": key}
                 )
                 if r.status_code != 200:
-                    logger.warning(f"mt5_sync: /positions {r.status_code} ({base})")
-                    return
+                    logger.warning(
+                        "mt5_sync: /positions %s (%s) — ce pont ne dit rien, "
+                        "aucune fermeture ne sera declaree ce cycle",
+                        r.status_code, base,
+                    )
+                    muets.append(nom)
+                    continue
                 positions = r.json().get("positions", []) or []
                 live_tickets |= {
                     int(p["ticket"]) for p in positions if "ticket" in p
@@ -1134,11 +1163,25 @@ async def _reconcile_open_trades() -> None:
                     positions, destination_id=f"admin_{nom}",
                 )
         except Exception as e:
-            # ⛔ Un bridge muet ne prouve RIEN. Poursuivre déclarerait fermés
-            # tous les tickets qu'il est seul à porter. Cf.
-            # [[feedback_detection_par_absence]].
             logger.debug(f"mt5_sync: /positions unreachable ({base}): {e}")
-            return
+            muets.append(nom)
+            continue
+
+    # ⛔ FAIL-CLOSED SUR LA SOUSTRACTION, ET SEULEMENT SUR ELLE. Un ticket
+    # absent des ponts qui ont parle peut etre porte par celui qui se tait.
+    if muets:
+        if n_adoptees:
+            logger.info(
+                "mt5_sync: %d position(s) adoptee(s) malgre le(s) pont(s) "
+                "muet(s) %s — adopter ne suppose rien, c'est le courtier qui "
+                "declare.", n_adoptees, ",".join(muets),
+            )
+        logger.debug(
+            "mt5_sync: pont(s) muet(s) %s — aucune fermeture declaree ce "
+            "cycle (detection par absence impossible sur un dire incomplet)",
+            ",".join(muets),
+        )
+        return
 
     # Les lignes adoptees doivent etre reconciliees comme les autres : sans
     # cela elles resteraient `OPEN` pour toujours et leur P&L n'entrerait

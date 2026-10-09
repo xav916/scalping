@@ -380,3 +380,166 @@ async def test_une_position_AUTO_n_est_pas_adoptee_en_double(
     lignes = _lignes(temp_db)
     assert len(lignes) == 1
     assert lignes[0]["is_auto"] == 1
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# ⛔ UN PONT MUET NE DOIT PAS AVEUGLER LES AUTRES (mesuré en production)
+# ─────────────────────────────────────────────────────────────────────────
+
+@pytest.fixture
+def deux_ponts(monkeypatch):
+    """Le démo ET le réel configurés, comme en production."""
+    monkeypatch.setattr(mt5_sync, "MT5_SYNC_ENABLED", True)
+    monkeypatch.setattr(mt5_sync, "MT5_BRIDGE_URL", "http://demo.test")
+    monkeypatch.setattr(mt5_sync, "MT5_BRIDGE_API_KEY", "key")
+    monkeypatch.setenv("MT5_BRIDGE_LIVE_URL", "http://live.test")
+    monkeypatch.setenv("MT5_BRIDGE_LIVE_API_KEY", "livekey")
+
+
+@pytest.mark.asyncio
+async def test_le_pont_DEMO_muet_n_empeche_pas_d_adopter_sur_le_REEL(
+    temp_db, deux_ponts
+):
+    """⛔ LE DÉFAUT MESURÉ EN PRODUCTION LE 2026-10-09, après déploiement.
+
+    Le pont démo répond **503 « MT5 not connected »** — son terminal est gelé
+    depuis le 07/10. La boucle faisait `return` sur le premier pont muet, donc
+    le pont RÉEL n'était **jamais interrogé** :
+
+    ```
+    legacy -> 503 {"error":"MT5 not connected"}
+    live   -> 200 {"count":3, ...}      <- jamais lu
+    ```
+
+    ⇒ `_reconcile_open_trades` était **entièrement aveugle au compte réel**
+    depuis que le démo est gelé, et mon adoption en héritait : déployée,
+    vérifiée, et **inerte**. Zéro ligne adoptée sur trois positions vivantes.
+
+    🔑 LA DISTINCTION QUI MANQUAIT, et c'est elle qui tranche :
+
+    | | a besoin de | un pont muet |
+    |---|---|---|
+    | **adopter** | la PRÉSENCE d'une position | ne prouve rien contre |
+    | **déclarer fermé** | l'ABSENCE d'un ticket | interdit de conclure |
+
+    Adopter est **additif** : on enregistre ce qu'un courtier DÉCLARE porter.
+    Aucune inférence par absence, donc aucune raison de se taire parce qu'un
+    AUTRE courtier ne répond pas. Déclarer fermé est **soustractif** : là,
+    l'exigence reste entière.
+    """
+    responses = {
+        "http://demo.test/positions": _FakeResponse(
+            503, {"error": "MT5 not connected"}),
+        "http://live.test/positions": _FakeResponse(
+            200, {"positions": [POSITION_OR]}),
+    }
+    with patch("backend.services.mt5_sync.httpx.AsyncClient",
+               lambda *a, **kw: _FakeAsyncClient(responses)):
+        await mt5_sync._reconcile_open_trades()
+
+    lignes = _lignes(temp_db)
+    assert len(lignes) == 1, (
+        "la position du pont REEL n'a pas ete adoptee : un pont muet aveugle "
+        "encore les autres")
+    assert lignes[0]["mt5_ticket"] == 1360999001
+    assert lignes[0]["destination_id"] == "admin_live"
+
+
+@pytest.mark.asyncio
+async def test_un_pont_muet_INTERDIT_TOUJOURS_de_declarer_une_fermeture(
+    temp_db, deux_ponts
+):
+    """🔑 L'AUTRE MOITIÉ, et elle ne bouge pas. Un ticket absent du pont réel
+    pourrait être porté par le démo, qui ne répond pas. Conclure « fermé »
+    serait une détection PAR ABSENCE sur un dire incomplet — le défaut du
+    2026-08-13, où les 16 trades réels d'août portaient tous une durée
+    d'exactement 1 minute.
+
+    ⇒ On adopte quand même (c'est additif), mais on ne ferme RIEN.
+    """
+    with sqlite3.connect(temp_db) as c:
+        c.execute(
+            "INSERT INTO personal_trades (user, pair, direction, entry_price,"
+            " size_lot, status, created_at, mt5_ticket, is_auto) "
+            "VALUES ('u','EUR/USD','buy',1.1,0.1,'OPEN',"
+            "'2026-10-09T05:00:00+00:00',999123,1)"
+        )
+
+    responses = {
+        "http://demo.test/positions": _FakeResponse(
+            503, {"error": "MT5 not connected"}),
+        "http://live.test/positions": _FakeResponse(
+            200, {"positions": [POSITION_OR]}),
+        # ⚠️ Volontairement fourni : si la fonction le demandait malgre le
+        # pont muet, le test le verrait passer au lieu d'echouer.
+        "http://live.test/deals?ticket=999123": _FakeResponse(200, {
+            "ticket": 999123, "closed": True,
+            "exit_price": 1.09, "pnl": -8.0,
+            "closed_at": "2026-10-09T09:00:00+00:00",
+        }),
+    }
+    with patch("backend.services.mt5_sync.httpx.AsyncClient",
+               lambda *a, **kw: _FakeAsyncClient(responses)):
+        await mt5_sync._reconcile_open_trades()
+
+    with sqlite3.connect(temp_db) as c:
+        statut = c.execute(
+            "SELECT status FROM personal_trades WHERE mt5_ticket=999123"
+        ).fetchone()[0]
+    assert statut == "OPEN", (
+        "un ticket a ete declare FERME alors qu'un pont ne repondait pas : "
+        "detection par absence sur un dire incomplet")
+    # …et l'adoption a quand meme eu lieu.
+    assert any(r["mt5_ticket"] == 1360999001 for r in _lignes(temp_db))
+
+
+@pytest.mark.asyncio
+async def test_les_DEUX_ponts_muets_n_adoptent_rien(temp_db, deux_ponts):
+    """Sans aucun dire, il n'y a rien à enregistrer."""
+    responses = {
+        "http://demo.test/positions": httpx.ConnectError("demo eteint"),
+        "http://live.test/positions": httpx.ConnectError("reel eteint"),
+    }
+    with patch("backend.services.mt5_sync.httpx.AsyncClient",
+               lambda *a, **kw: _FakeAsyncClient(responses)):
+        await mt5_sync._reconcile_open_trades()
+
+    assert _lignes(temp_db) == []
+
+
+@pytest.mark.asyncio
+async def test_les_deux_ponts_REPONDENT_la_fermeture_est_declaree(
+    temp_db, deux_ponts
+):
+    """🔑 Le contrôle positif : quand TOUS les ponts parlent, la fermeture se
+    déclare comme avant. Sans ce test, rendre la fonction prudente pourrait la
+    rendre inerte sans que rien ne le dise."""
+    with sqlite3.connect(temp_db) as c:
+        c.execute(
+            "INSERT INTO personal_trades (user, pair, direction, entry_price,"
+            " size_lot, status, created_at, mt5_ticket, is_auto) "
+            "VALUES ('u','EUR/USD','buy',1.1,0.1,'OPEN',"
+            "'2026-10-09T05:00:00+00:00',999123,1)"
+        )
+
+    responses = {
+        "http://demo.test/positions": _FakeResponse(200, {"positions": []}),
+        "http://live.test/positions": _FakeResponse(200, {"positions": []}),
+        "http://demo.test/deals?ticket=999123": _FakeResponse(200, {
+            "ticket": 999123, "closed": None, "message": "no deals found"}),
+        "http://live.test/deals?ticket=999123": _FakeResponse(200, {
+            "ticket": 999123, "closed": True,
+            "exit_price": 1.09, "pnl": -8.0,
+            "closed_at": "2026-10-09T09:00:00+00:00",
+        }),
+    }
+    with patch("backend.services.mt5_sync.httpx.AsyncClient",
+               lambda *a, **kw: _FakeAsyncClient(responses)):
+        await mt5_sync._reconcile_open_trades()
+
+    with sqlite3.connect(temp_db) as c:
+        row = c.execute(
+            "SELECT status, pnl FROM personal_trades WHERE mt5_ticket=999123"
+        ).fetchone()
+    assert row[0] == "CLOSED"
+    assert row[1] == pytest.approx(-8.0)
