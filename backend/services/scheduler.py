@@ -600,6 +600,26 @@ async def _run_analysis_cycle_verrouille(
 _shadow_reconcile_counter = 0  # toutes les N appels de cockpit, on tente reconcile
 
 
+async def _echelle_stop_cycle() -> None:
+    """Un passage de l'echelle de stop. Best-effort : ne tombe jamais.
+
+    ⛔ Silencieuse quand elle est desarmee ou qu'il n'y a rien a faire : a
+    15 s d'intervalle, journaliser chaque passage noierait les lignes qui
+    comptent. Les deplacements, eux, sont tous tracees par la boucle.
+    """
+    try:
+        from backend.services.echelle_stop_boucle import appliquer
+        b = await appliquer()
+        if b.get("deja_protege"):
+            logger.warning(
+                "echelle: %d position(s) NON deplacee(s) — le pont refuse. "
+                "SLTP_DEPLACEMENT_ENABLED est-il pose ?", b["deja_protege"])
+        if b.get("erreur"):
+            logger.info("echelle: %s", b["erreur"])
+    except Exception as e:  # noqa: BLE001
+        logger.warning("echelle: passage echoue (%s)", e)
+
+
 async def cockpit_broadcast_cycle() -> None:
     """Push periodique du snapshot cockpit (toutes les N secondes).
 
@@ -832,6 +852,24 @@ def start_scheduler() -> AsyncIOScheduler:
         seconds=MATAF_POLL_INTERVAL,
         id="analysis_cycle",
         name="Cycle d'analyse marché",
+        replace_existing=True,
+    )
+    # ─── Echelle de stop de l'or (2026-10-09) ──────────────────────────
+    # Branchee sur le reel a la demande explicite de Xavier. Les paliers et
+    # les gardes vivent dans `echelle_stop_or` ; INERTE sans
+    # `ECHELLE_STOP_OR=1`.
+    #
+    # 🔑 15 s, et c'est un compromis assume. L'echelle suit des paliers
+    # espaces de 0,25 EUR, soit ~0,28 $ sur l'or : entre deux sondages le
+    # prix peut franchir un palier ET revenir sans qu'on le voie. Plus court
+    # multiplierait les appels au pont sans jamais rendre le suivi continu --
+    # seule une logique cote MT5 le serait. Plus long raterait des paliers.
+    _scheduler.add_job(
+        _echelle_stop_cycle,
+        "interval",
+        seconds=int(os.getenv("ECHELLE_STOP_INTERVAL_SEC", "15")),
+        id="echelle_stop_or",
+        name="Echelle de stop de l'or",
         replace_existing=True,
     )
     # Check backtest toutes les 60s (independant du cycle d'analyse)

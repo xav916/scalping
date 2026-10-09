@@ -259,6 +259,22 @@ MAX_RISQUE_ENGAGE_OR_ARGENT_PCT = float(
 # marche et se fait sortir par le bruit — la mecanique exacte qui a coute
 # −0,329 R par trade sur l'or. 1,0 R = on ne touche qu'une position ayant
 # deja acquis l'equivalent de son propre risque.
+# ─── Deplacement d'un stop DEJA pose (2026-10-09) ─────────────────
+# `/position/sltp` etait un no-op des que `p.sl != 0` : elle est ecrite pour
+# proteger une position NUE. L'echelle de stop demandee par Xavier le
+# 2026-10-09 a besoin du second usage — deplacer un stop existant.
+#
+# ⛔ Reste REFUSE par defaut. Deplacer un stop est l'operation la plus
+# dangereuse de cette route : mal signee, elle place le stop du mauvais cote
+# et transforme une protection en sortie immediate. Et le client doit le
+# DEMANDER explicitement (`deplacer: true`) — un appel du garde-fou nu ne
+# doit jamais bouger un stop par effet de bord.
+#
+# 🔑 CLIQUET SERVEUR : meme demande, le stop ne recule jamais. Le radar a
+# deja le sien, mais un cliquet cote client seul laisse passer tout autre
+# appelant — et c'est ici que le mauvais sens coute de l'argent.
+SLTP_DEPLACEMENT_ENABLED = os.getenv(
+    "SLTP_DEPLACEMENT_ENABLED", "false").lower() == "true"
 EQUILIBRE_AUTO_ENABLED = os.getenv("EQUILIBRE_AUTO_ENABLED", "true").lower() == "true"
 EQUILIBRE_MARGE_R = float(os.getenv("EQUILIBRE_MARGE_R", "1.0"))
 
@@ -4173,15 +4189,39 @@ def set_position_sltp():
             "ok": False, "excluded": True, "reason": reason, "ticket": ticket,
         }), 403
 
-    if p.sl and float(p.sl) != 0.0:
-        logger.info(f"[SLTP GUARD] ticket={ticket} déjà protégé (sl={p.sl}), no-op")
+    # ⚠️ Une position deja protegee n'est PAS modifiee, sauf si l'appelant
+    # demande explicitement un deplacement ET que le drapeau l'autorise.
+    # C'est le comportement historique qui reste le defaut.
+    deplacer = bool(data.get("deplacer")) and SLTP_DEPLACEMENT_ENABLED
+    if p.sl and float(p.sl) != 0.0 and not deplacer:
+        motif = ("deplacement non demande" if not data.get("deplacer")
+                 else "SLTP_DEPLACEMENT_ENABLED=false")
+        logger.info(
+            f"[SLTP GUARD] ticket={ticket} déjà protégé (sl={p.sl}), "
+            f"no-op — {motif}")
         return jsonify({
             "ok": True, "already_protected": True, "ticket": ticket,
-            "sl": p.sl, "tp": p.tp,
+            "sl": p.sl, "tp": p.tp, "motif_no_op": motif,
         })
 
     is_buy = p.type == mt5.POSITION_TYPE_BUY
     new_sl = p.price_open - sl_dist if is_buy else p.price_open + sl_dist
+
+    # 🔑 LE CLIQUET, cote SERVEUR. Un stop ne recule jamais, meme si le
+    # client le demande. Le radar a deja le sien, mais un cliquet cote client
+    # SEUL laisse passer tout autre appelant — et reculer un stop est
+    # exactement le geste qui transforme une protection en perte elargie.
+    if deplacer and p.sl and float(p.sl) != 0.0:
+        ancien = float(p.sl)
+        recule = (new_sl < ancien) if is_buy else (new_sl > ancien)
+        if recule:
+            logger.warning(
+                f"[SLTP GUARD] ticket={ticket} REFUS: stop {new_sl} recule "
+                f"par rapport a {ancien} ({'buy' if is_buy else 'sell'})")
+            return jsonify({
+                "ok": False, "refus_cliquet": True, "ticket": ticket,
+                "sl_actuel": ancien, "sl_demande": new_sl,
+            }), 409
     new_tp = p.tp or 0.0  # préserve le TP existant tel quel (0 = pas de TP)
 
     info = mt5.symbol_info(p.symbol)
@@ -4204,7 +4244,7 @@ def set_position_sltp():
         symbol=p.symbol, ticket=ticket, sl=new_sl, tp=new_tp,
         retcode=result.get("retcode"),
         message=result.get("error") or "sltp-guard",
-        client_comment="sltp-guard",
+        client_comment="sltp-deplacement" if deplacer else "sltp-guard",
     )
     if result["ok"] is True:
         logger.warning(f"[SLTP GUARD] ✓ ticket={ticket} {p.symbol} SL posé à {new_sl}")
