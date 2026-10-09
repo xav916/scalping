@@ -2042,6 +2042,15 @@ def _categoriser_refus(status: int, corps: str) -> str:
     # « indetermine » la rendait invisible, alors que c'est elle qui decide.
     if "Marge libre" in t:
         return "bridge_marge_insuffisante"
+    # ⛔ Ajoute le 2026-10-09, apres NEUF refus caches dans `bridge_error`.
+    # Le refus du DIMENSIONNEMENT sort en HTTP 500 (et non 429), donc il
+    # tombait dans le fourre-tout :
+    #   500 {"message":"Marge insuffisante : marge_insuffisante_meme_au_lot_minimum"}
+    # 🔑 C'est de la marge, pas une panne : il doit porter le meme nom que son
+    # voisin. Meme maladie que `bridge_refus_indetermine` ce matin — un motif
+    # range sous une etiquette generique est un motif qu'on ne verra jamais.
+    if "marge insuffisante" in t.lower():
+        return "bridge_marge_insuffisante"
     if status == 429:
         return "bridge_refus_indetermine"
     return "bridge_error"

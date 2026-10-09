@@ -1320,14 +1320,132 @@ def _marge_libre() -> float | None:
         return None
 
 
-def _marge_requise(order_type, symbol: str, volume: float, price: float) -> float | None:
-    """Marge exigée par le courtier pour ce volume, ou None si incalculable."""
+def _marge_du_nouvel_ordre(mt5, mt5_symbol: str, direction: str,
+                           lots: float, entry: float,
+                           marge_actuelle: float | None):
+    """``(marge_supplementaire, source)`` pour UN ordre de plus.
+
+    ⛔ POURQUOI CETTE FONCTION EXISTE (2026-10-09). La porte utilisait
+    `mt5.order_calc_margin()`, qui chiffre une position **ISOLEE**. Sur un
+    compte en mode HEDGING, c'est faux des qu'une position de sens contraire
+    est deja ouverte. Mesure sur le compte reel, deux SELL d'or ouverts :
+
+        BUY  0,01 -> marge totale 373,61 contre 373,41 =   +0,20 EUR
+        SELL 0,01 -> marge totale 560,70 contre 373,41 = +187,29 EUR
+        (`order_calc_margin` repondait 186,70 dans LES DEUX cas)
+
+    Soit un facteur **933** sur le BUY. La porte refusait donc un ordre que le
+    courtier accepte (`retcode 0`, << Done >>) et pour lequel il ne demande
+    presque rien.
+
+    🔑 Ce n'est pas le SEUIL de la porte qui etait trop strict, c'est son
+    ENTREE qui etait fausse. Et la consequence etait vicieuse :
+    `141,07 - 186,70 = -45,63`, donc AUCUNE valeur positive du plancher ne
+    laissait passer -- << baisser le plancher >> et << desarmer la porte >>
+    devenaient le meme geste.
+
+    `mt5.order_check()` interroge le SERVEUR avec la meme requete
+    qu'`order_send`, sans rien placer : son champ `margin` porte la marge
+    TOTALE du compte apres l'ordre. Le supplement est donc l'ECART avec la
+    marge actuelle, et il tient compte du hedging parce que c'est le courtier
+    qui le calcule.
+
+    ⚠️ `None` veut dire INCALCULABLE, jamais zero : la porte est un garde-fou
+    secondaire et laisse alors passer en le signalant. Rendre `0` ferait
+    passer n'importe quel ordre pour gratuit -- le defaut repare ici, en pire.
+
+    ⚠️ La `source` est rendue pour que la porte DISE sur quoi elle s'est
+    prononcee : un refus calcule sur une estimation ne doit pas se presenter
+    comme un refus mesure.
+    """
+    # 1) Le courtier, quand il repond.
     try:
-        m = mt5.order_calc_margin(order_type, symbol, volume, price)
-        return float(m) if m is not None else None
-    except Exception as e:
-        logger.warning(f"_marge_requise indisponible ({symbol} {volume}): {e}")
+        req = {
+            "action": mt5.TRADE_ACTION_DEAL,
+            "symbol": mt5_symbol,
+            "volume": lots,
+            "type": (mt5.ORDER_TYPE_BUY if direction == "buy"
+                     else mt5.ORDER_TYPE_SELL),
+            "price": entry,
+            "deviation": DEVIATION_POINTS,
+            "magic": MAGIC_NUMBER,
+            "comment": "marge-check",
+            "type_time": mt5.ORDER_TIME_GTC,
+            "type_filling": _pick_filling_mode(mt5_symbol),
+        }
+        res = mt5.order_check(req)
+        totale = getattr(res, "margin", None) if res is not None else None
+        if totale is not None and marge_actuelle is not None:
+            # ⛔ Plafonne a zero : un ordre qui REDUIRAIT la marge totale ne
+            # doit pas CREDITER de la marge libre. Crediter ferait passer une
+            # porte sur un gain imaginaire.
+            return (max(float(totale) - float(marge_actuelle), 0.0), "courtier")
+    except Exception as e:  # noqa: BLE001 — garde-fou secondaire
+        logger.info(f"marge: order_check indisponible ({e}) — repli estimation")
+
+    # 2) Le repli, ETIQUETE comme tel.
+    try:
+        action = (mt5.ORDER_TYPE_BUY if direction == "buy"
+                  else mt5.ORDER_TYPE_SELL)
+        estimee = mt5.order_calc_margin(action, mt5_symbol, lots, entry)
+        if estimee is not None:
+            return (float(estimee), "estimation")
+    except Exception as e:  # noqa: BLE001
+        logger.info(f"marge du nouvel ordre incalculable ({e}) — porte passee")
+
+    return (None, "inconnue")
+
+
+def _marge_requise(order_type, symbol: str, volume: float, price: float,
+                   mt5=None, marge_actuelle: float | None = None) -> float | None:
+    """Marge SUPPLEMENTAIRE exigee pour ce volume, ou None si incalculable.
+
+    ⛔ MON CORRECTIF DU MATIN ETAIT INCOMPLET (2026-10-09). J'avais corrige
+    `_controle_marge_libre` pour qu'il demande au courtier la marge d'un ordre
+    qui COUVRE (0,20 EUR au lieu de 186,70 supposes) -- mais
+    `order_calc_margin` etait appele a DEUX endroits et je n'en avais vu qu'un.
+    Celui-ci est le chemin du DIMENSIONNEMENT DU LOT.
+
+    Mesure en production a 15h15, deux positions SELL ouvertes :
+
+        15:15:13  buy  status=500
+          {"message":"Marge insuffisante : marge_insuffisante_meme_au_lot_minimum"}
+
+    Un BUY couvre les deux SELL et ne coute reellement que 0,10 EUR. Estime a
+    186,70 contre un budget de ~124 (90 % de 137 libres), il etait refuse
+    << meme au lot minimum >>.
+
+    🔑 LA CONSEQUENCE ETAIT PIRE QU'UNE CADENCE REDUITE : l'automatique ne
+    pouvait plus que VENDRE. Une experience en cours sur de l'argent reel qui
+    ne prend qu'UN SEUL SENS ne mesure plus ce qu'elle croit mesurer.
+
+    ⚠️ FAIL-OPEN PRESERVE : `None` quand c'est incalculable, pour que
+    `_ajuster_volume_a_la_marge` laisse passer et que le courtier arbitre.
+    Rendre 0 ferait passer tout ordre pour gratuit ; rendre un grand nombre
+    arreterait le trading sur une panne de calcul.
+
+    ⚠️ `mt5` et `marge_actuelle` sont injectables pour que la regle soit
+    testable sans terminal. Par defaut : le module global et la marge lue sur
+    le compte.
+    """
+    module = mt5 if mt5 is not None else globals().get("mt5")
+    if module is None:
         return None
+
+    if marge_actuelle is None:
+        try:
+            info = module.account_info()
+            marge_actuelle = float(getattr(info, "margin", 0.0) or 0.0)
+        except Exception:  # noqa: BLE001 — on retombera sur l'estimation
+            marge_actuelle = None
+
+    direction = ("buy" if order_type == getattr(module, "ORDER_TYPE_BUY", 0)
+                 else "sell")
+    marge, _source = _marge_du_nouvel_ordre(
+        module, symbol, direction, volume, price, marge_actuelle)
+    if marge is None:
+        logger.warning(f"_marge_requise indisponible ({symbol} {volume})")
+    return marge
 
 
 def _send_market_order(
@@ -3661,82 +3779,6 @@ def _remonter_a_l_equilibre(retenus: list[dict], positions) -> list[dict]:
                     f"ecrit ({type(e).__name__}: {e}) — activation invisible "
                     f"pour la sonde")
     return faits
-
-
-def _marge_du_nouvel_ordre(mt5, mt5_symbol: str, direction: str,
-                           lots: float, entry: float,
-                           marge_actuelle: float | None):
-    """``(marge_supplementaire, source)`` pour UN ordre de plus.
-
-    ⛔ POURQUOI CETTE FONCTION EXISTE (2026-10-09). La porte utilisait
-    `mt5.order_calc_margin()`, qui chiffre une position **ISOLEE**. Sur un
-    compte en mode HEDGING, c'est faux des qu'une position de sens contraire
-    est deja ouverte. Mesure sur le compte reel, deux SELL d'or ouverts :
-
-        BUY  0,01 -> marge totale 373,61 contre 373,41 =   +0,20 EUR
-        SELL 0,01 -> marge totale 560,70 contre 373,41 = +187,29 EUR
-        (`order_calc_margin` repondait 186,70 dans LES DEUX cas)
-
-    Soit un facteur **933** sur le BUY. La porte refusait donc un ordre que le
-    courtier accepte (`retcode 0`, << Done >>) et pour lequel il ne demande
-    presque rien.
-
-    🔑 Ce n'est pas le SEUIL de la porte qui etait trop strict, c'est son
-    ENTREE qui etait fausse. Et la consequence etait vicieuse :
-    `141,07 - 186,70 = -45,63`, donc AUCUNE valeur positive du plancher ne
-    laissait passer -- << baisser le plancher >> et << desarmer la porte >>
-    devenaient le meme geste.
-
-    `mt5.order_check()` interroge le SERVEUR avec la meme requete
-    qu'`order_send`, sans rien placer : son champ `margin` porte la marge
-    TOTALE du compte apres l'ordre. Le supplement est donc l'ECART avec la
-    marge actuelle, et il tient compte du hedging parce que c'est le courtier
-    qui le calcule.
-
-    ⚠️ `None` veut dire INCALCULABLE, jamais zero : la porte est un garde-fou
-    secondaire et laisse alors passer en le signalant. Rendre `0` ferait
-    passer n'importe quel ordre pour gratuit -- le defaut repare ici, en pire.
-
-    ⚠️ La `source` est rendue pour que la porte DISE sur quoi elle s'est
-    prononcee : un refus calcule sur une estimation ne doit pas se presenter
-    comme un refus mesure.
-    """
-    # 1) Le courtier, quand il repond.
-    try:
-        req = {
-            "action": mt5.TRADE_ACTION_DEAL,
-            "symbol": mt5_symbol,
-            "volume": lots,
-            "type": (mt5.ORDER_TYPE_BUY if direction == "buy"
-                     else mt5.ORDER_TYPE_SELL),
-            "price": entry,
-            "deviation": DEVIATION_POINTS,
-            "magic": MAGIC_NUMBER,
-            "comment": "marge-check",
-            "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": _pick_filling_mode(mt5_symbol),
-        }
-        res = mt5.order_check(req)
-        totale = getattr(res, "margin", None) if res is not None else None
-        if totale is not None and marge_actuelle is not None:
-            # ⛔ Plafonne a zero : un ordre qui REDUIRAIT la marge totale ne
-            # doit pas CREDITER de la marge libre. Crediter ferait passer une
-            # porte sur un gain imaginaire.
-            return (max(float(totale) - float(marge_actuelle), 0.0), "courtier")
-    except Exception as e:  # noqa: BLE001 — garde-fou secondaire
-        logger.info(f"marge: order_check indisponible ({e}) — repli estimation")
-
-    # 2) Le repli, ETIQUETE comme tel.
-    try:
-        action = (mt5.ORDER_TYPE_BUY if direction == "buy"
-                  else mt5.ORDER_TYPE_SELL)
-        estimee = mt5.order_calc_margin(action, mt5_symbol, lots, entry)
-        if estimee is not None:
-            return (float(estimee), "estimation")
-    except Exception as e:  # noqa: BLE001
-        logger.info(f"marge du nouvel ordre incalculable ({e}) — porte passee")
-
-    return (None, "inconnue")
 
 
 def _controle_marge_libre(marge_libre: float | None, marge_nouvelle: float | None,

@@ -97,7 +97,11 @@ def b():
     """
     src = _SRC.read_text(encoding="utf-8")
     debut = src.index("def _marge_du_nouvel_ordre(")
-    fin = src.index("def _controle_marge_libre(")
+    # ⚠️ Borne mise a jour le 2026-10-09 : `_marge_du_nouvel_ordre` a ete
+    # DEPLACEE avant son premier usage (`_marge_requise`), pour que le
+    # fichier se lise de haut en bas. Son voisin n'est plus
+    # `_controle_marge_libre`.
+    fin = src.index("def _marge_requise(")
     mod = types.ModuleType("bridge_marge")
     mod.__dict__.update({
         "DEVIATION_POINTS": 20,
