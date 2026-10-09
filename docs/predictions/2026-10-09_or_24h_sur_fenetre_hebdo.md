@@ -33,32 +33,45 @@ déclare.
 Les plages ajoutées : **22h05→06h UTC** chaque nuit (8 h) et **20h→21h UTC**
 (1 h). 21h UTC reste fermé — le courtier n'y cote pas.
 
-## ⚠️ CE QUE JE RETIRE DE MES PROPRES AFFIRMATIONS
+## ⚠️ CE QUE JE RETIRE — ET CE QUI TIENT
 
-J'ai dit à Xavier, ce soir même, qu'élargir au-delà de 19h UTC « fera payer ce
-spread à chaque trade », en m'appuyant sur un « ×3,02 à 20h » noté la veille.
-**Mesuré à nouveau sur 35 720 bougies M5 du courtier / 180 jours, c'est faux
-comme généralité** : le ×3,02 portait sur la **moyenne**, tirée par la queue.
-
-    spread MÉDIAN par heure UTC : 0,050 $ à TOUTES les heures, 20h et 22h comprises
-
-Le profil fin, sur les heures ouvertes :
+J'ai dit à Xavier, ce soir, qu'élargir au-delà de 19h UTC « fera payer ce
+spread à chaque trade ». **C'est la GÉNÉRALISATION qui est fausse, pas le
+chiffre.** Remesuré sur **35 720 bougies M5 du courtier / 180 jours** :
 
 | h UTC | Paris | médiane | p75 | p90 | part > 0,10 $ | moyenne |
 |---|---|---|---|---|---|---|
 | **20h** | 22h | 0,050 | **0,400** | **0,400** | **33,1 %** | **0,1657** |
+| 21h | 23h | — | — | — | — | ⛔ aucune cotation |
 | 22h | 00h | 0,050 | 0,080 | 0,090 | 0,1 % | 0,0617 |
 | 23h | 01h | 0,050 | 0,050 | 0,060 | 0,2 % | 0,0524 |
-| 00h–05h | 02h–07h | 0,050 | 0,050 | 0,050-0,070 | 0,1–1,3 % | 0,051–0,054 |
+| 00h–05h | 02h–07h | 0,050 | 0,050 | 0,050–0,070 | 0,1–1,3 % | 0,051–0,054 |
 | *12h (référence)* | *14h* | *0,050* | *0,060* | *0,080* | *0,1 %* | *0,0570* |
 
-🔑 **Les nuits sont PROPRES.** De 22h à 05h UTC le spread est indiscernable de
-celui de midi. Les 8 h ajoutées chaque nuit ne coûtent **rien** de plus.
+✅ **Le ×3,02 à 20h UTC TIENT** : moyenne 0,1657 contre 0,0570 à midi, et un
+tiers des bougies au-dessus de 0,10 $. La mesure du 08/10 est **confirmée**.
 
-⚠️ **Une seule heure est sale : 20h UTC (22h Paris).** Un tiers des bougies
-au-dessus de 0,10 $, p75 et p90 à 0,400 $ — **8× le plancher**. Surcoût moyen
-~0,11 $ ≈ **0,10 € par trade** ouvert dans cette heure. Petit en absolu, mais
-réel, et c'est 1 h sur les 9 ajoutées.
+🔑 **Ce qui était faux, c'est d'étendre ce chiffre aux autres heures de nuit.**
+De 22h à 05h UTC le spread est **le plus BAS de la journée** — la mesure du
+08/10 le disait déjà, et je ne l'avais pas relue avant de parler. Les 8 h
+ajoutées chaque nuit ne coûtent **rien** de plus que midi. Une seule des
+9 heures ajoutées est chère : **20h UTC**, ~0,10 €/trade de surcoût.
+
+## ⛔ ET UN PIÈGE QUE J'AVAIS DOCUMENTÉ, PUIS FAILLI REFAIRE
+
+Mon premier passage de ce soir n'a regardé que la **médiane** : 0,050 $ à
+**toutes** les heures, rapport 1,00 partout. J'ai écrit, et dit à Xavier, que
+« la médiane est plate donc le ×3,02 était un artefact de moyenne ».
+
+**C'est exactement le piège n°1 de ma propre note du 08/10** : le courtier colle
+à 5 points la plupart du temps, le plancher est **quantifié**, et toute la
+variation vit dans la **QUEUE**. La médiane est l'instrument aveugle ici ; la
+moyenne, les percentiles et la part au-dessus du plancher sont les bons.
+
+⇒ Le p75/p90 à 0,400 et les 33,1 % au-dessus de 0,10 $ ont rattrapé l'erreur.
+Mais je l'ai annoncée à Xavier avant de la corriger : c'est la deuxième fois
+dans la session que je parle avant d'avoir relu ma propre mesure.
+→ [[feedback-citer-la-source-avant-d-affirmer]]
 
 ## 🔴 LA PRÉDICTION, chiffrée
 
