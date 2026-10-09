@@ -711,3 +711,141 @@ async def test_une_ecriture_qui_ECHOUE_ne_rend_pas_le_pont_muet(
     assert statut == "CLOSED", (
         "un echec d'ecriture a suspendu la declaration des fermetures : il "
         "s'est fait passer pour un pont muet")
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# ⛔ LE FAIL-CLOSED DOIT ETRE PAR DESTINATION, PAS GLOBAL
+# ─────────────────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_un_ticket_du_pont_REEL_se_ferme_meme_si_le_DEMO_se_tait(
+    temp_db, deux_ponts
+):
+    """⛔ LE TROU QUI RESTAIT, vu dans le journal de production le 09/10.
+
+    Le pont démo rend **503 à chaque cycle** (terminal gelé depuis le 07/10).
+    La règle « aucune fermeture tant qu'un pont se tait » était donc
+    permanente : les lignes adoptées resteraient `OPEN` **pour toujours**, et
+    leur P&L n'entrerait **jamais** dans le plafond journalier, qui ne somme
+    que les `CLOSED`.
+
+    ⇒ Adopter sans jamais pouvoir fermer ne boucherait que la moitié du trou,
+    et la moitié qui ne compte pas.
+
+    🔑 LA GRANULARITÉ ÉTAIT FAUSSE, pas le principe. L'interdiction vient de
+    ce qu'un ticket absent des ponts qui ont parlé *pourrait* être porté par
+    celui qui se tait. Mais une ligne porte sa `destination_id` : quand elle
+    dit `admin_live` et que le pont **live** a répondu, son silence n'a aucun
+    rapport — on SAIT que ce ticket n'est plus chez lui.
+
+    La prudence reste entière là où l'ignorance est réelle : un ticket sans
+    destination connue, ou dont le pont propriétaire se tait.
+    """
+    with sqlite3.connect(temp_db) as c:
+        c.execute(
+            "INSERT INTO personal_trades (user, pair, direction, entry_price,"
+            " stop_loss, take_profit, size_lot, status, created_at,"
+            " mt5_ticket, is_auto, notes, destination_id) "
+            "VALUES ('u','XAU/USD','sell',4179.03,4220.82,0.0,0.01,'OPEN',"
+            "'2026-10-09T11:15:02+00:00',1360798623,0,?,'admin_live')",
+            (mt5_sync.MARQUE_ADOPTION,),
+        )
+
+    responses = {
+        "http://demo.test/positions": _FakeResponse(
+            503, {"error": "MT5 not connected"}),
+        "http://live.test/positions": _FakeResponse(200, {"positions": []}),
+        "http://live.test/deals?ticket=1360798623": _FakeResponse(200, {
+            "ticket": 1360798623, "closed": True,
+            "exit_price": 4193.13, "pnl": -26.20, "reason": "MANUAL",
+            "closed_at": "2026-10-09T14:55:38+00:00",
+        }),
+    }
+    with patch("backend.services.mt5_sync.httpx.AsyncClient",
+               lambda *a, **kw: _FakeAsyncClient(responses)):
+        await mt5_sync._reconcile_open_trades()
+
+    with sqlite3.connect(temp_db) as c:
+        row = c.execute(
+            "SELECT status, pnl FROM personal_trades WHERE mt5_ticket=?",
+            (1360798623,),
+        ).fetchone()
+    assert row[0] == "CLOSED", (
+        "le ticket du pont REEL n'a pas ete ferme alors que SON pont a "
+        "repondu : le P&L n'entrera jamais dans le plafond")
+    assert row[1] == pytest.approx(-26.20)
+
+
+@pytest.mark.asyncio
+async def test_un_ticket_du_pont_MUET_reste_ouvert(temp_db, deux_ponts):
+    """🔑 La prudence là où l'ignorance est RÉELLE. Ce ticket appartient au
+    pont démo, et le pont démo ne répond pas : rien ne permet de dire s'il est
+    encore ouvert. On ne conclut pas."""
+    with sqlite3.connect(temp_db) as c:
+        c.execute(
+            "INSERT INTO personal_trades (user, pair, direction, entry_price,"
+            " stop_loss, take_profit, size_lot, status, created_at,"
+            " mt5_ticket, is_auto, destination_id) "
+            "VALUES ('u','EUR/USD','buy',1.1,1.09,1.12,0.1,'OPEN',"
+            "'2026-10-09T05:00:00+00:00',555001,1,'admin_legacy')"
+        )
+
+    responses = {
+        "http://demo.test/positions": _FakeResponse(
+            503, {"error": "MT5 not connected"}),
+        "http://live.test/positions": _FakeResponse(200, {"positions": []}),
+        # Fourni volontairement : si la fonction le demandait, le test le
+        # verrait passer au lieu d'echouer.
+        "http://live.test/deals?ticket=555001": _FakeResponse(200, {
+            "ticket": 555001, "closed": True, "exit_price": 1.09,
+            "pnl": -8.0, "closed_at": "2026-10-09T09:00:00+00:00",
+        }),
+    }
+    with patch("backend.services.mt5_sync.httpx.AsyncClient",
+               lambda *a, **kw: _FakeAsyncClient(responses)):
+        await mt5_sync._reconcile_open_trades()
+
+    with sqlite3.connect(temp_db) as c:
+        statut = c.execute(
+            "SELECT status FROM personal_trades WHERE mt5_ticket=555001"
+        ).fetchone()[0]
+    assert statut == "OPEN", (
+        "un ticket du pont MUET a ete declare ferme : detection par absence")
+
+
+@pytest.mark.asyncio
+async def test_un_ticket_SANS_destination_reste_ouvert_si_un_pont_se_tait(
+    temp_db, deux_ponts
+):
+    """⛔ Les lignes d'avant la migration du 2026-08-20 n'ont pas de
+    `destination_id`. On ne sait pas à qui elles appartiennent : la règle
+    STRICTE s'applique, comme avant. Deviner la destination serait rejouer le
+    défaut du 2026-08-13 (16 trades réels d'août, durée d'exactement
+    1 minute)."""
+    with sqlite3.connect(temp_db) as c:
+        c.execute(
+            "INSERT INTO personal_trades (user, pair, direction, entry_price,"
+            " stop_loss, take_profit, size_lot, status, created_at,"
+            " mt5_ticket, is_auto) "
+            "VALUES ('u','EUR/USD','buy',1.1,1.09,1.12,0.1,'OPEN',"
+            "'2026-10-09T05:00:00+00:00',555002,1)"
+        )
+
+    responses = {
+        "http://demo.test/positions": _FakeResponse(
+            503, {"error": "MT5 not connected"}),
+        "http://live.test/positions": _FakeResponse(200, {"positions": []}),
+        "http://live.test/deals?ticket=555002": _FakeResponse(200, {
+            "ticket": 555002, "closed": True, "exit_price": 1.09,
+            "pnl": -8.0, "closed_at": "2026-10-09T09:00:00+00:00",
+        }),
+    }
+    with patch("backend.services.mt5_sync.httpx.AsyncClient",
+               lambda *a, **kw: _FakeAsyncClient(responses)):
+        await mt5_sync._reconcile_open_trades()
+
+    with sqlite3.connect(temp_db) as c:
+        statut = c.execute(
+            "SELECT status FROM personal_trades WHERE mt5_ticket=555002"
+        ).fetchone()[0]
+    assert statut == "OPEN"

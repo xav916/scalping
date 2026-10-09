@@ -30,7 +30,12 @@ def temp_db(tmp_path, monkeypatch):
             post_entry_sl INTEGER, post_entry_tp INTEGER, post_entry_size INTEGER,
             context_macro TEXT, exit_price REAL, pnl REAL, closed_at TEXT,
             signal_id INTEGER, fill_price REAL, slippage_pips REAL, close_reason TEXT,
-            sl_at_close REAL, tp_at_close REAL, niveaux_source TEXT
+            sl_at_close REAL, tp_at_close REAL, niveaux_source TEXT,
+            -- ⚠️ Ajoutee le 2026-10-09 : la production la porte depuis la
+            -- migration du 2026-08-20, et `_destinations_des_tickets` la lit
+            -- pour un fail-closed PAR COMPTE. Son absence ici faisait tester
+            -- une table qui n existe nulle part.
+            destination_id TEXT
         )
     """)
     conn.commit()

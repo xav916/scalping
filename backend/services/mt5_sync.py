@@ -1073,6 +1073,51 @@ def _select_open_tickets_adoptes() -> set[int]:
     return tickets
 
 
+def _destinations_des_tickets(tickets: set[int]) -> dict[int, str | None]:
+    """``{ticket: destination_id}`` pour les tickets demandes.
+
+    🔑 C'est ce qui permet un fail-closed PAR COMPTE au lieu d'un fail-closed
+    global : si une ligne declare `admin_live` et que le pont live a repondu,
+    le silence du pont demo ne dit rien sur elle.
+
+    ⚠️ ``None`` pour les lignes anterieures a la migration du 2026-08-20, qui
+    ne portent pas la colonne. Une absence se dit, elle ne se devine pas — ces
+    lignes retombent sur la regle STRICTE.
+    """
+    if not tickets:
+        return {}
+    marques = ",".join("?" * len(tickets))
+    try:
+        with sqlite3.connect(_db_path()) as c:
+            rows = c.execute(
+                f"SELECT mt5_ticket, destination_id FROM personal_trades "
+                f"WHERE status='OPEN' AND mt5_ticket IN ({marques})",
+                tuple(tickets),
+            ).fetchall()
+    except sqlite3.OperationalError as e:
+        # ⛔ REPLI SUR LA REGLE STRICTE, ET IL EST BRUYANT. Sans la colonne,
+        # aucune destination n'est connue : tout devient indecidable, donc
+        # aucune fermeture n'est declaree quand un pont se tait — exactement
+        # le comportement d'avant. On degrade vers le PLUS prudent, jamais
+        # vers le plus permissif.
+        #
+        # ⚠️ En production la colonne existe (migration du 2026-08-20). Si ce
+        # message apparait la, c'est la base qui est anormale, pas ce code.
+        logger.warning(
+            "mt5_sync: destination_id illisible (%s) — toutes les "
+            "destinations passent pour INCONNUES, donc regle stricte : "
+            "aucune fermeture ne sera declaree si un pont se tait.", e,
+        )
+        return {}
+    sortie: dict[int, str | None] = {}
+    for ticket, dest in rows:
+        try:
+            sortie[int(ticket)] = dest or None
+        except (TypeError, ValueError):
+            continue
+    return sortie
+
+
 async def _apres_cloture(ticket: int, adoptee: bool) -> None:
     """Les effets de bord d'une clôture — et pour qui ils valent.
 
@@ -1195,21 +1240,12 @@ async def _reconcile_open_trades() -> None:
             muets.append(nom)
             continue
 
-    # ⛔ FAIL-CLOSED SUR LA SOUSTRACTION, ET SEULEMENT SUR ELLE. Un ticket
-    # absent des ponts qui ont parle peut etre porte par celui qui se tait.
-    if muets:
-        if n_adoptees:
-            logger.info(
-                "mt5_sync: %d position(s) adoptee(s) malgre le(s) pont(s) "
-                "muet(s) %s — adopter ne suppose rien, c'est le courtier qui "
-                "declare.", n_adoptees, ",".join(muets),
-            )
-        logger.debug(
-            "mt5_sync: pont(s) muet(s) %s — aucune fermeture declaree ce "
-            "cycle (detection par absence impossible sur un dire incomplet)",
-            ",".join(muets),
+    if muets and n_adoptees:
+        logger.info(
+            "mt5_sync: %d position(s) adoptee(s) malgre le(s) pont(s) "
+            "muet(s) %s — adopter ne suppose rien, c'est le courtier qui "
+            "declare.", n_adoptees, ",".join(muets),
         )
-        return
 
     # Les lignes adoptees doivent etre reconciliees comme les autres : sans
     # cela elles resteraient `OPEN` pour toujours et leur P&L n'entrerait
@@ -1217,6 +1253,50 @@ async def _reconcile_open_trades() -> None:
     # ⚠️ Elles sont `is_auto=0`, donc invisibles a `_select_open_auto_tickets`.
     tickets_adoptes = _select_open_tickets_adoptes()
     closed_tickets = (open_tickets | tickets_adoptes) - live_tickets
+
+    # ⛔ FAIL-CLOSED SUR LA SOUSTRACTION — MAIS PAR DESTINATION (2026-10-09).
+    #
+    # L'interdiction vient de ce qu'un ticket absent des ponts qui ont parle
+    # POURRAIT etre porte par celui qui se tait. Correct, mais la granularite
+    # etait fausse : elle suspendait TOUTES les fermetures des qu'UN pont se
+    # taisait.
+    #
+    # Or le pont demo rend 503 a CHAQUE cycle depuis que son terminal est gele
+    # (07/10). La regle etait donc permanente, et les lignes adoptees le matin
+    # meme seraient restees `OPEN` POUR TOUJOURS — leur P&L n'entrant jamais
+    # dans le plafond journalier, qui ne somme que les `CLOSED`. Adopter sans
+    # pouvoir fermer ne bouche que la moitie du trou, et la moitie qui ne
+    # compte pas.
+    #
+    # 🔑 Une ligne porte sa `destination_id`. Quand elle dit `admin_live` et
+    # que le pont live a repondu, le silence du demo n'a aucun rapport : on
+    # SAIT que ce ticket n'est plus chez son proprietaire.
+    #
+    # La prudence reste ENTIERE la ou l'ignorance est reelle :
+    #   - le ticket appartient a un pont muet          -> on ne conclut pas ;
+    #   - le ticket n'a pas de destination connue      -> on ne conclut pas
+    #     (lignes d'avant la migration du 2026-08-20 ; deviner rejouerait le
+    #     defaut du 2026-08-13, ou les 16 trades reels d'aout portaient tous
+    #     une duree d'exactement 1 minute).
+    if muets and closed_tickets:
+        proprietaires_muets = {f"admin_{nom}" for nom in muets}
+        destinations = _destinations_des_tickets(closed_tickets)
+        decidables = {
+            t for t in closed_tickets
+            if destinations.get(t)
+            and destinations[t] not in proprietaires_muets
+        }
+        indecidables = closed_tickets - decidables
+        if indecidables:
+            logger.info(
+                "mt5_sync: %d ticket(s) laisse(s) OUVERT(S) — pont(s) muet(s) "
+                "%s, et leur proprietaire est muet ou inconnu : on ne deduit "
+                "pas une fermeture d'un dire incomplet (%s)",
+                len(indecidables), ",".join(muets),
+                ",".join(str(t) for t in sorted(indecidables)),
+            )
+        closed_tickets = decidables
+
     if not closed_tickets:
         return
 
