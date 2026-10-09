@@ -61,6 +61,19 @@ MAX_TENTATIVES = 2
 FENETRE_OUVERTURE_MIN = int(os.environ.get("SONDES_P0_FENETRE_MIN", "20"))
 COOLDOWN_SEC = int(os.environ.get("SONDES_P0_COOLDOWN_SEC", "900"))
 
+# ⚠️ SEUIL D'ABSENCE DE RESULTAT. Les setups QUALIFIES arrivent ~33/jour, soit
+# un toutes les ~25 min : un creux de 40 min est NORMAL. Le seuil est donc
+# franchement au-dessus, sinon la sonde crierait a chaque respiration.
+SEUIL_SANS_ORDRE_MIN = int(os.environ.get("SONDES_P0_SEUIL_MIN", "90"))
+
+# 🔑 Les blocages dont la cause est CHEZ XAVIER. On ne les << repare >> pas :
+# fermer ses positions a sa place serait inacceptable. On les lui REND, nommes.
+_BLOCAGES_DE_XAVIER = {
+    "bridge_marge_insuffisante", "bridge_plafond_risque",
+    "max_positions_per_pair", "bridge_doublon", "bridge_position_sans_stop",
+    "bridge_perte_journaliere",
+}
+
 
 def _db_path() -> str:
     from backend.services.mt5_sync import _db_path as p
@@ -93,6 +106,75 @@ def _borne(minutes: float) -> str:
     la passe en parametre.
     """
     return (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat()
+
+
+# ─── Le COMPTE des trades en live, en permanence ─────────────────────────
+#
+# Reproche de Xavier le 2026-10-09 : << il faut que tu aies constamment le
+# nombre de trades en live >>. Il avait raison, et il visait juste : mes sondes
+# verifiaient que les MECANISMES marchent, pas que le RESULTAT arrive.
+
+def compter_live(positions: list[dict]) -> dict:
+    """``{total, radar, main}`` des positions d'or ouvertes.
+
+    🔑 LA SEPARATION EST LE POINT. Confondre les deux cacherait l'arret de
+    l'automatique derriere l'activite de Xavier -- exactement la situation du
+    2026-10-09 a 18h21 : DEUX positions live, et ZERO du radar.
+    """
+    from backend.services import echelle_stop_or as E
+
+    total = radar = 0
+    for p in positions or []:
+        sym = str(p.get("symbol") or "").upper()
+        if "XAU" not in sym and "GOLD" not in sym:
+            continue
+        total += 1
+        if E.MARQUE_RADAR in str(p.get("comment") or ""):
+            radar += 1
+    return {"total": total, "radar": radar, "main": total - radar}
+
+
+def inscrire_live(live: dict, ordres_60min: int) -> None:
+    """Une TRACE, pas un instantane perdu : << constamment >> veut dire qu'on
+    peut relire l'historique du compte."""
+    try:
+        with sqlite3.connect(_db_path()) as c:
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS trades_live_compte (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    vu_le        TEXT NOT NULL,
+                    total        INTEGER NOT NULL,
+                    radar        INTEGER NOT NULL,
+                    main         INTEGER NOT NULL,
+                    ordres_60min INTEGER
+                )
+            """)
+            c.execute("INSERT INTO trades_live_compte (vu_le, total, radar, "
+                      "main, ordres_60min) VALUES (?,?,?,?,?)",
+                      (_maintenant(), int(live["total"]), int(live["radar"]),
+                       int(live["main"]), int(ordres_60min)))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("sondes P0 : compte live non inscrit (%s)", e)
+
+
+def minutes_depuis_dernier_ordre() -> float | None:
+    """Depuis combien de minutes aucun ordre AUTO d'or n'est parti.
+
+    ⛔ ``None`` si la base ne porte aucun ordre : on ne transforme pas une
+    absence d'historique en alarme.
+    """
+    try:
+        with sqlite3.connect(_db_path()) as c:
+            r = c.execute(
+                "SELECT MAX(created_at) FROM personal_trades WHERE is_auto=1 "
+                "AND pair='XAU/USD'").fetchone()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("sondes P0 : dernier ordre illisible (%s)", e)
+        return None
+    if not r or not r[0]:
+        return None
+    age = _age(r[0])
+    return (age / 60.0) if age is not None else None
 
 
 # ─── Détection P0-1 : l'échelle de gains ─────────────────────────────────
@@ -232,7 +314,8 @@ _REFUS_NORMAUX = {
 
 
 def detecter_ouverture(etat_interrupteur: dict, refus_recents: dict,
-                       ordres_recents: int, setups_recents: int) -> list[dict]:
+                       ordres_recents: int, setups_recents: int,
+                       minutes_sans_ordre: float | None = None) -> list[dict]:
     """Des ordres partent-ils, et sinon : quelle porte refuse ?"""
     anos = []
 
@@ -264,8 +347,9 @@ def detecter_ouverture(etat_interrupteur: dict, refus_recents: dict,
                 "09/10. Il faut le NOMMER, donc du code."),
         })
 
-    if (etat_interrupteur or {}).get("decision") == "ALLOW" \
-            and ordres_recents == 0 and setups_recents > 0 and not refus_recents:
+    arme = (etat_interrupteur or {}).get("decision") == "ALLOW"
+
+    if arme and ordres_recents == 0 and setups_recents > 0 and not refus_recents:
         anos.append({
             "sonde": "P0-3", "code": "aucun_ordre_malgre_setups", "ticket": None,
             "reparable": True,
@@ -273,6 +357,54 @@ def detecter_ouverture(etat_interrupteur: dict, refus_recents: dict,
                 f"{setups_recents} setup(s) en {FENETRE_OUVERTURE_MIN} min, "
                 "interrupteur ARME, AUCUN refus enregistre et AUCUN ordre "
                 "parti. Les setups n'atteignent donc meme pas les portes."),
+        })
+
+    # ⛔ L'ABSENCE PROLONGEE DE RESULTAT, ET C'EST LA CORRECTION DE MON DEFAUT
+    # DE CONCEPTION (2026-10-09).
+    #
+    # Mes sondes verifiaient que les MECANISMES marchent, pas que le RESULTAT
+    # arrive. L'ancienne condition portait `not refus_recents` : des que les
+    # portes parlaient, la sonde se TAISAIT. Deux heures de refus a 100 % ne
+    # disaient donc RIEN -- tout << fonctionnait >>, et rien ne sortait.
+    #
+    # 🔑 Reproche de Xavier, mot pour mot : << tu dois te demander par toi-meme
+    # pourquoi je n'ai plus de trades de lances >>. Ce qui compte n'est pas que
+    # les portes parlent, c'est COMBIEN DE TRADES SONT VIVANTS.
+    #
+    # ⚠️ On n'alerte PAS quand l'execution est desarmee : l'absence d'ordre en
+    # DECOULE, et deux alertes pour une seule cause noieraient le fil.
+    if arme and minutes_sans_ordre is not None \
+            and minutes_sans_ordre >= SEUIL_SANS_ORDRE_MIN:
+        dominant, n_dominant = (None, 0)
+        if refus_recents:
+            dominant, n_dominant = max(refus_recents.items(), key=lambda x: x[1])
+
+        # 🔑 Le blocage dominant est NOMME : sans lui, << aucun trade >> n'est
+        # pas actionnable. Le 09/10 la reponse etait << tes deux positions a la
+        # main consomment la marge >>.
+        if dominant is None:
+            cause = ("AUCUN refus enregistre : le chemin d'analyse dort, il ne "
+                     "produit meme pas de verdict")
+            reparable = True
+        elif dominant in _BLOCAGES_DE_XAVIER:
+            cause = (f"blocage dominant `{dominant}` ({n_dominant} refus) — "
+                     "la cause est de TON cote (positions ouvertes, marge, "
+                     "risque engage, plafond). Je ne ferme pas tes positions a "
+                     "ta place : c'est ton arbitrage")
+            reparable = False
+        else:
+            cause = (f"blocage dominant `{dominant}` ({n_dominant} refus) — "
+                     "le tri normal des portes. Si cela dure, c'est le reglage "
+                     "qu'il faut revoir, pas une panne a reparer")
+            reparable = False
+
+        anos.append({
+            "sonde": "P0-3", "code": "aucun_resultat_prolonge", "ticket": None,
+            "reparable": reparable,
+            "detail": (
+                f"AUCUN ordre automatique d'or depuis {minutes_sans_ordre:.0f} "
+                f"min (seuil {SEUIL_SANS_ORDRE_MIN} min), interrupteur ARME. "
+                f"{cause}."),
         })
     return anos
 
@@ -775,16 +907,28 @@ def main() -> int:
     a_blanc = "--essai" in sys.argv
 
     positions, suivi, taux, etat, refus, ordres, setups = _collecter()
+
+    # 🔑 LE COMPTE, A CHAQUE PASSAGE ET QUOI QU'IL ARRIVE. C'est la demande
+    # explicite de Xavier, et c'est aussi ce qui rend l'absence de resultat
+    # relisible APRES coup plutot que devinee.
+    live = compter_live(positions)
+    sans_ordre = minutes_depuis_dernier_ordre()
+    inscrire_live(live, ordres_60min=ordres)
+    print(f"   trades LIVE : {live['total']} (radar {live['radar']}, "
+          f"main {live['main']})  |  {ordres} ordre(s) auto en "
+          f"{FENETRE_OUVERTURE_MIN} min"
+          + (f"  |  dernier ordre il y a {sans_ordre:.0f} min"
+             if sans_ordre is not None else "  |  aucun ordre en base"))
     if not taux:
         # ⛔ Sans le taux, les deux sondes de SL sont inconvertibles. On ne
         # devine pas, et on le DIT.
         logger.warning("sondes P0 : taux EUR/USD illisible — sondes de SL "
                        "suspendues ce passage")
-        anos = detecter_ouverture(etat, refus, ordres, setups)
+        anos = detecter_ouverture(etat, refus, ordres, setups, sans_ordre)
     else:
         anos = (detecter_echelle(positions, suivi, taux)
                 + detecter_protection(positions, suivi, taux)
-                + detecter_ouverture(etat, refus, ordres, setups))
+                + detecter_ouverture(etat, refus, ordres, setups, sans_ordre))
 
     b = traiter(anos, a_blanc=a_blanc)
     print(f"sondes P0{' [ESSAI]' if a_blanc else ''} : {len(anos)} anomalie(s) "

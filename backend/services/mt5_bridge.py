@@ -2051,6 +2051,14 @@ def _categoriser_refus(status: int, corps: str) -> str:
     # range sous une etiquette generique est un motif qu'on ne verra jamais.
     if "marge insuffisante" in t.lower():
         return "bridge_marge_insuffisante"
+    # ⛔ Ajoute le 2026-10-09, releve a 18h15:01 sous `bridge_refus_indetermine` :
+    #   "Position sans stop (tickets ['1360859402']) : risque non bornable,
+    #    ouverture refusee"
+    # 🔑 Refus parfaitement LEGITIME -- on n'ouvre pas tant qu'un risque n'est
+    # pas bornable -- mais sous un nom qui ne dit RIEN. Troisieme fois dans la
+    # journee qu'un motif se cache dans un fourre-tout.
+    if "sans stop" in t.lower() or "non bornable" in t.lower():
+        return "bridge_position_sans_stop"
     if status == 429:
         return "bridge_refus_indetermine"
     return "bridge_error"
