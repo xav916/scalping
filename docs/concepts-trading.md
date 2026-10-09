@@ -4165,3 +4165,78 @@ fois que ce dépôt le vérifie (`fvg_up` +2,47 → +0,101, `pin_bar_down`,
 
 ⇒ Le filtre de tendance est **clos**. L'idée de Xavier était testable, elle a
 été testée proprement, et elle ne tient pas.
+
+---
+
+## DÉCLARATION — ÉCHELLE DE STOP SUR L'OR (2026-10-09)
+
+> Xavier, après avoir lu la mesure contraire : *« lorsqu'on passe à 1 euro,
+> mettre le stop loss à 0,75. Lorsqu'on passe à 1,25, mettre le stop loss à 1.
+> Quand on passe à 1,75, mettre le stop loss à 1,50. Lorsqu'on passe à 2, le
+> trade est fermé parce qu'on a atteint le TP. »*
+
+⚠️ **Déclarée AVANT le code.** Les réserves lui ont été dites deux fois, il les
+a levées deux fois. C'est sa décision, et elle est tracée.
+
+### La règle, sans ambiguïté
+
+| profit atteint | stop porté à |
+|---|---|
+| +1,00 € | +0,75 € |
+| +1,25 € | +1,00 € |
+| +1,75 € | +1,50 € |
+| +2,00 € | la cible ferme le trade |
+
+Le stop suit **0,25 € derrière** le palier franchi. Le stop ne **redescend
+jamais** (cliquet). Or seul.
+
+### ⛔ CE QUE LA MESURE DIT, et qui ne change pas parce qu'on code
+
+Le pont porte déjà ce mécanisme (`equilibre_auto`, `/position/sltp`), **gardé à
+1,0 R de coussin**, et son commentaire chiffre pourquoi :
+
+> *« Sous ce coussin de profit, un stop posé à l'équilibre est collé au marché
+> et se fait sortir par le bruit — la mécanique exacte qui a coûté **−0,329 R
+> par trade** sur l'or. »*
+> *« À 0,24 σ on est au BE 0 %, la seule politique sans suiveur mesurée
+> significativement destructrice (**−0,099 R, t = −2,61**). »*
+
+```
+1 R = le stop = 22,47 $ = 20,00 EUR
+palier a +1,00 EUR  = 0,0500 R      <- 20x SOUS le garde-fou
+stop a   +0,75 EUR  = 0,0375 R
+distance prix -> stop   0,281 $
+moins le bid-ask        0,150 $
+=> distance REELLE      0,131 $     <- treize centimes
+```
+
+Et l'effet sur le seuil de rentabilité :
+
+```
+sortie a 2,00 EUR  ->  90,91 % requis
+sortie a 0,75 EUR  ->  96,39 % requis
+mesure sur un an   ->  86,20 %
+```
+
+### Prédictions, posées d'avance
+
+- **P1** L'échelle **dégrade** le R moyen : `avec − sans < 0`, `t ≤ −2,0`.
+- **P2** La part des trades sortis **au stop déplacé** (et non au TP) dépasse
+  **70 %** de ceux qui atteignent +1 €.
+- **P3** Le R moyen avec échelle reste **négatif**.
+
+> ⇒ Si les trois passent, la règle est confirmée **perdante** et je le dirai
+> sans détour. ⛔ **Si P1 échoue — si l'échelle AMÉLIORE** — alors c'est la
+> mesure du 23/08 qui ne s'applique pas à cette géométrie, et il faudra la
+> refaire. C'est l'issue que j'estime la moins probable, et c'est précisément
+> pour ça qu'elle est écrite ici.
+
+### ⚠️ UNE LIMITE D'IMPLÉMENTATION, dite d'avance
+
+Le radar **sonde** les positions ; il ne vit pas dans le marché. Entre deux
+sondages, le prix peut franchir un palier **et revenir** sans que l'échelle
+l'ait vu. ⇒ L'échelle réelle sera donc **moins réactive** que l'échelle
+simulée au banc, et l'écart grandit avec l'intervalle de sondage.
+
+🔑 Conséquence : le banc mesure une **borne optimiste** de la règle. Si elle
+perd au banc, elle perdra davantage en production.
