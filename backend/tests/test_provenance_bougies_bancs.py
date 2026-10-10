@@ -42,13 +42,27 @@ _DEMENTI = re.compile(r"pas du courtier|TWELVE|Twelve|note ci-dessous"
                       r"|dans leur en-tete")
 
 
+# ✅ EXEMPTION DE FOND, et non une liste de noms. Un fichier dont la CIBLE est
+# le magasin du courtier a parfaitement le droit de parler du courtier : c'est
+# lui qui le batit. Il ne mentionne `candles_5min.db` que pour l'opposer.
+#
+# ⚠️ Trouvee comme FAUX POSITIF de cette garde meme, le 2026-10-10 :
+# `batir_magasin_courtier.py` etait signale alors qu'il dit vrai. Exempter par
+# le nom aurait pourri a la premiere renommage ; exempter par la cible tient.
+MAGASIN_COURTIER = "candles_courtier.db"
+
+
 def _lecteurs_du_magasin() -> list[Path]:
     out = []
     for p in sorted(SCRIPTS.glob("*.py")):
         if p.name == ECRIVAIN:
             continue
-        if MAGASIN_TWELVE in p.read_text(encoding="utf-8"):
-            out.append(p)
+        texte = p.read_text(encoding="utf-8")
+        if MAGASIN_TWELVE not in texte:
+            continue
+        if MAGASIN_COURTIER in texte:
+            continue        # ✅ il travaille sur le magasin du courtier
+        out.append(p)
     return out
 
 

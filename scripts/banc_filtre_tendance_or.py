@@ -66,6 +66,21 @@ PAIRE = "XAU/USD"
 #   - un banc d'OBJECTIF ou de STOP : il ne l'est PAS, et son verdict doit
 #     etre refait sur des bougies du courtier avant d'etre tenu pour acquis.
 #
+#
+# ✅ MESURE COMPLEMENTAIRE DU 2026-10-10, a FENETRE EGALE (87 262 bougies
+# comparables, 2025-05 -> 2026-08, memes horodatages) : les LARGEURS de bougie
+# sont comparables. Amplitude mediane **3,690 $** chez le courtier contre
+# **3,095 $** chez Twelve Data, soit **1,19x** — et **76,3 %** contre
+# **65,5 %** des bougies M5 depassent l'objectif de 2,240 $ a elles seules
+# (facteur 1,16). ⇒ **Ce n'est PAS de quoi refaire un verdict de sortie.**
+# ⚠️ J'avais d'abord annonce un facteur 2 (3,730 contre 1,952) : c'etait un
+# artefact de FENETRE, l'or ayant ete plus agite en 2026.
+#
+# ⚠️ CE QUI RESTE VRAI quand meme : sur 15 mois a decalage unique, l'ecart des
+# CLOTURES vaut 3,807 $ de mediane (contre 0,53-0,76 $ sur cinq journees
+# alignees une a une). Les horodatages de Twelve Data ne sont donc pas
+# constamment decales, meme a l'interieur de 2025-2026 : ce magasin reste
+# inutilisable pour tout travail qui demande un instant PRECIS.
 # ⚠️ Et ce magasin porte deux defauts de plus, mesures le meme jour : DEUX
 # conventions horaires (coupure hebdo etiquetee samedi 06h55 en 2023-2024
 # contre samedi 23h55 en 2025-2026) et une annee 2026 TROUEE (1 seule coupure
