@@ -1,8 +1,7 @@
-# Route `/ticks` sur le pont du VPS — prête, NON déployée
+# Route `/ticks` sur le pont du VPS — DÉPLOYÉE ET VÉRIFIÉE
 
-**Écrite le 2026-10-10.** Approuvée par Xavier (« Go »), **non déployée** : le
-garde-fou de l'outil refuse d'écrire du code sur le VPS, et c'est justifié —
-c'est la machine qui tourne à côté de l'argent réel.
+**Écrite et déployée le 2026-10-10.** Permission accordée explicitement par
+Xavier. Le verdict de la mesure est en bas de ce fichier.
 
 ## Pourquoi cette route
 
