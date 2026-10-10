@@ -133,3 +133,75 @@ d'entrées plus large et moins sélectif que la production.
 ## Ma prédiction reste la même, pour les deux tests
 
 `A − B` **sous +0,20 € par trade**, contre +0,544 € en échantillon.
+
+---
+
+# VERDICT, le 2026-10-10
+
+## ✅ LA PORTE EST FRANCHIE — le simulateur est exact
+
+Avant tout verdict, la politique A rejouée sur la semaine du 05-09/10 :
+
+    attendu  +44,04 EUR (92 chemins, 75 TP)
+    obtenu   +44,03 EUR (92 chemins, 75 TP)   ⇒ ecart 0,0 %
+
+⛔ Il a fallu **trois tours** pour y arriver, et les deux premiers ont échoué
+cette même porte. Les défauts étaient les miens :
+
+1. **J'avais recousu 20 pages de `/rates`.** Le décalage serveur dérive à
+   chaque appel ; ma propre mémoire dit « un appel par jour, ne jamais
+   recoudre les pages ». Résultat : 17 des 92 chemins alignés.
+2. **Ma clé d'index mettait les secondes à zéro** alors que les horodatages du
+   courtier en portent (`…T00:00:32`) : **0 ancre sur tous les jours**.
+3. **Ma fenêtre `±1 jour` était trop courte.** Le décalage requis le 09/10 est
+   de **+1 334 min (+22,2 h)** — il faut regarder **en avant**. Mesuré :
+   `±1 j` → 1 ancre sur 75 ; `−1/+2 j` → **75 sur 75** ; `−3/+3 j` → tronqué à
+   5 000 bougies, 7 sur 75.
+
+## ⚖️ LES DEUX TESTS SE CONTREDISENT EN SIGNE
+
+| | n | jours | A | B | **A − B** | t (par jour) | jours + |
+|---|---|---|---|---|---|---|---|
+| **Test 1** trades réels hors échantillon | 79 | 25 | −0,1089 | −0,7574 | **+0,6485** | **+1,34** | 12/25 |
+| **Test 2** 16 motifs armés | 37 940 | 73 | −0,2844 | −0,0174 | **−0,2670** | **−7,04** | 16/73 |
+
+⇒ **Aucun des deux n'est RETENU.**
+
+- Test 1 échoue `|t| > 2` **et** `n ≥ 100`. **12 jours positifs sur 25** : c'est
+  une pièce de monnaie. Son +0,65 € n'est pas distinguable de zéro.
+- Test 2 passe quatre critères sur cinq et échoue **le premier** : l'avantage
+  est **négatif**. Laisser courir est **PIRE** de 0,27 € par trade, avec
+  `t = −7,04` et le signe stable sur les deux moitiés.
+
+## 🔑 ET VOICI POURQUOI, EN UNE LIGNE D'ARITHMÉTIQUE
+
+Politique A sur les 37 940 entrées : **32 761 objectifs contre 3 276 stops**,
+soit **90,91 %** de réussite.
+
+Le taux d'équilibre d'un objectif à 2 € contre un stop à 20 € est
+`20 / 22 = 90,91 %`.
+
+⇒ **Les deux chiffres sont identiques à la deuxième décimale.** « Laisser
+courir » est une pièce qui paie **exactement sa cote** — et le spread
+(0,045 €) la fait basculer du mauvais côté.
+
+🔑 La géométrie 2 €/20 € est **auto-neutralisante sur l'or**. Ce n'est pas un
+réglage à affiner : à ces bornes, il n'y a rien à gagner en laissant courir.
+
+## MA PRÉDICTION
+
+Posée d'avance : `A − B` sous **+0,20 € par trade**.
+
+- ✅ **TENUE** sur le test puissant (−0,267 €).
+- ⛔ **RÉFUTÉE** sur le test sous-puissant (+0,649 €), que j'avais annoncé
+  comme non concluant quel que soit son signe.
+
+## ⇒ ON N'ARME PAS
+
+Le +44,04 € de la semaine est **réel et reproduit au centime**. Il **ne
+généralise pas** : sur 73 autres jours et 37 940 entrées, la même politique
+perd. C'était exactement le risque que ce test devait écarter.
+
+⚠️ Et la limite déclarée reste entière : je ne simule pas le réemploi de la
+marge. Elle ne sauve pas l'hypothèse — elle jouerait en faveur de A, mais A
+perd de 0,27 € avec `t = −7,04`.
