@@ -78,3 +78,58 @@ est réfutée et l'expérience est justifiée.
 - Elle ne simule pas le **réemploi de la marge** : un trade qui se ferme tôt
   libère une place. Si « laisser courir » gagne, ce gain est **surestimé** de
   ce que les trades suivants auraient rapporté.
+
+---
+
+# AMENDEMENT, le 2026-10-10 — déclaré AVANT de mesurer
+
+## ⛔ Le test tel que pré-inscrit n'est PAS RÉALISABLE
+
+Comptage fait juste après la pré-inscription, avant toute mesure :
+
+    120 jours : 172 trades d'or reels sur 30 jours
+    dont 75 le 2026-10-09 SEUL (44 %) -- le jour qui a forme l'hypothese
+    hors echantillon (avant le 05/10) : 80 trades sur 26 jours
+
+⇒ **80 trades contre les 100 exigés.** Le critère que je venais d'écrire ne
+peut pas être satisfait.
+
+🔑 Je ne le relâche pas. J'ajoute un second test, qui a la puissance que le
+premier n'a pas — et je le déclare **avant de regarder**.
+
+## Les DEUX tests, maintenant
+
+### Test 1 — les trades RÉELS, sous-puissant et annoncé comme tel
+
+Les **80 trades hors échantillon**, comparaison appariée A contre B. Il
+**échoue d'avance** le critère `n ≥ 100` : son résultat est **indicatif**, et
+je ne pourrai pas le présenter comme un verdict, quel que soit son signe.
+
+### Test 2 — les entrées SIMULÉES, le test qui décide
+
+La question posée porte sur la **gestion de sortie**, pas sur les entrées. On
+peut donc l'éprouver sur beaucoup plus d'entrées : celles que produisent les
+**16 motifs armés sur l'or** (`MT5_BRIDGE_PATTERN_OVERRIDES["XAU/USD"]`),
+détectés sur les **120 jours de bougies M1 du courtier** déjà en main.
+
+Pour chaque détection : même entrée, même sens, même borne initiale, et on
+compare
+
+- **A** — laisser courir jusqu'à 2 € / −20 € ;
+- **B** — l'échelle de gains et la protection de perte de production.
+
+⇒ Critère de ce test 2, les **quatre** :
+
+1. `A − B` **> 0** ;
+2. **|t| > 2**, unité **LE JOUR** ;
+3. **n ≥ 1 000 entrées** et **≥ 40 jours** ;
+4. signe stable sur les **deux moitiés** de la période.
+
+⚠️ Ce que le test 2 ne reproduit pas : les entrées simulées ne subissent ni la
+porte d'admission, ni le plafond de positions, ni le score de confiance. Il
+mesure donc la **politique de sortie dans l'abstrait**, sur un échantillon
+d'entrées plus large et moins sélectif que la production.
+
+## Ma prédiction reste la même, pour les deux tests
+
+`A − B` **sous +0,20 € par trade**, contre +0,544 € en échantillon.
