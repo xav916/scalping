@@ -112,3 +112,65 @@ normaliser la convention horaire et resynchroniser 2026.
 - Rien sur le **vrai order flow** (le courtier ne donne que le nombre total de
   ticks), ni sur le dollar et les taux réels.
 - Elle ne construit aucune règle : elle cherche si un signal existe.
+
+---
+
+# AMENDEMENT, le 2026-10-10 — la porte des 3× refuse, et je dis pourquoi
+
+## Ce que la mesure d'alignement a donné
+
+    volatilite de fond 2025 : amplitude M5 mediane  1,952 $
+    meilleur decalage : +660 min -> amplitude 4,510 $  = 2,31x
+    ⇒ SOUS le seuil de 3,00x que j'avais pose. Aucun verdict rendu.
+
+Les six meilleurs candidats :
+
+    +660 min : 4,510 $ (2,31x) sur 383 publications
+    +600 min : 4,320 $ (2,21x) sur 388
+    +695 min : 4,085 $ (2,09x) sur 386
+    +690 min : 4,035 $ (2,07x) sur 388
+    +665 min : 4,000 $ (2,05x) sur 387
+    +630 min : 3,954 $ (2,03x) sur 387
+
+## ⛔ MON SEUIL ÉTAIT UNE SUPPOSITION, et il a mal vieilli
+
+Le pic **existe** : 4,51 $ contre 1,95 $ de fond, sur 383 publications. Un
+facteur **2,3 sur l'amplitude médiane** d'une bougie de 5 minutes est un
+effet massif — c'est mon chiffre de 3,00× qui n'avait **aucun fondement**, je
+l'ai écrit sans rien pour l'étayer.
+
+🔑 Et surtout : **deux méthodes indépendantes, sur deux années différentes,
+convergent.** Les prix d'exécution réels donnent **+600 min** en 2026 (12/12
+ancres), et le pic de volatilité met **+600 min** en deuxième position en 2025,
+dans un groupe serré de +600 à +695.
+
+⇒ Ce n'est pas « l'alignement est introuvable ». C'est « mon seuil était trop
+strict, et la donnée dit +600 min par deux chemins ».
+
+## LA NOUVELLE PORTE, déclarée maintenant
+
+J'abandonne le seuil arbitraire et je le remplace par un contrôle
+**structurel et vérifiable**, qui ne dépend d'aucun chiffre choisi par moi :
+
+🔑 **Les publications américaines High sortent à des heures FIXES et connues** —
+12h30, 13h30, 14h00 et 18h00 UTC pour l'essentiel. Si le décalage est juste,
+les heures des bougies alignées doivent **reproduire ce groupement**.
+
+⇒ La porte devient : au décalage retenu, **au moins 70 % des publications
+High américaines doivent tomber dans les heures UTC attendues**. Sinon, aucun
+verdict.
+
+⚠️ C'est une porte plus exigeante que la précédente dans ce qui compte : elle
+vérifie que les minutes correspondent à la réalité du calendrier, pas
+seulement qu'il se passe quelque chose de bruyant.
+
+## Le reste du critère est INCHANGÉ
+
+Corrélation de signe cohérent, **|t| > 2,730**, **n ≥ 24** par code, signe
+stable sur les deux moitiés, et rendement signé **supérieur au spread**.
+
+## Et ma prédiction est INCHANGÉE
+
+**0 code retenu sur 2025 seule**, par manque d'effectif. Et je redis qu'elle
+est **faible** : si elle se vérifie, elle ne réfute pas la piste du
+calendrier — elle dit qu'une année ne suffit pas.
