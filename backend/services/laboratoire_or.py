@@ -1636,6 +1636,37 @@ def _agreger_brut(bougies_m5: list, facteur: int, agreger) -> list:
     if facteur <= 1:
         return list(bougies_m5)
     pas = 5 * facteur
+    # ⛔ LE DÉFAUT DU 2026-10-10. `pas = 5 * facteur` encode que l'entrée est du
+    # M5 — c'est le nom du paramètre. En lui donnant du M1, cette fonction a
+    # rendu, sans lever quoi que ce soit :
+    #   facteur 3  -> pas 15 min, 15 bougies par seau => du M15 étiqueté M3
+    #   facteur 5  -> pas 25 min, et 25 ne divise PAS 60 => seaux
+    #                 0-24 / 25-49 / 50-59, aucun timeframe réel
+    #   facteur 15 -> pas 75 min, `minute // 75` vaut toujours 0 => UNE
+    #                 bougie par heure, étiquetée M15
+    # 🔑 Coût constaté : six signes inversés sur quinze dans le contrôle de
+    # cohérence, et des effectifs divergents d'un facteur 4,5. Une fonction qui
+    # rend des bougies imaginaires doit REFUSER, pas servir.
+    if 60 % pas:
+        raise ValueError(
+            f"pas={pas} min ne divise pas 60 : les seaux seraient irréguliers "
+            f"(facteur={facteur})")
+    # ⚠️ Sous trois bougies on ne peut pas mesurer l'espacement. Refuser ferait
+    # d'une série courte une erreur, alors que le labo les écarte déjà plus
+    # haut.
+    if len(bougies_m5) >= 3:
+        def _d(x):
+            v = x["t"]
+            return (v if isinstance(v, datetime)
+                    else datetime.fromisoformat(str(v).replace("Z", "+00:00")))
+        ecarts = sorted(int((_d(b) - _d(a)).total_seconds())
+                        for a, b in zip(bougies_m5, bougies_m5[1:]))
+        median = ecarts[len(ecarts) // 2]
+        if median != 300:
+            raise ValueError(
+                f"entrée attendue en M5, espacement médian mesuré "
+                f"{median} s : agréger ici fabriquerait des bougies qui "
+                f"n'existent chez aucun courtier")
     groupes: dict = {}
     for x in bougies_m5:
         d = x["t"]

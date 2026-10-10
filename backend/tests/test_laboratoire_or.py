@@ -295,3 +295,64 @@ def test_le_rendu_est_PUR():
     corps = src[debut:]
     for interdit in ("sqlite3", "urllib", "requests", "os.environ["):
         assert interdit not in corps, interdit
+
+
+# ── Le défaut du 2026-10-10 : une entrée qui n'est PAS du M5 ─────────
+
+def _bougies_minute(n, pas_min, depart=2000.0):
+    """Une série régulière au pas donné, en dicts — le format du pont."""
+    from datetime import datetime, timedelta, timezone
+    t0 = datetime(2026, 6, 1, tzinfo=timezone.utc)
+    return [{"t": t0 + timedelta(minutes=pas_min * i), "o": depart + i,
+             "h": depart + i + 2, "l": depart + i - 2,
+             "c": depart + i + 0.5, "tv": 10.0} for i in range(n)]
+
+
+def test_une_entree_qui_n_est_pas_du_M5_est_REFUSEE():
+    """⛔ LE DÉFAUT DU 2026-10-10, réinjecté.
+
+    `_agreger_brut` code en dur `pas = 5 * facteur` : son paramètre s'appelle
+    `bougies_m5`, elle SUPPOSE du M5. En lui donnant du M1 j'ai obtenu, sans
+    la moindre erreur :
+
+        facteur 3  -> pas 15 min, 15 bougies par seau => du M15 étiqueté M3
+        facteur 5  -> pas 25 min, et 25 ne divise PAS 60 => seaux
+                      0-24 / 25-49 / 50-59, aucun timeframe réel
+        facteur 15 -> pas 75 min, `minute // 75` vaut toujours 0 => UNE
+                      bougie par heure, étiquetée M15
+
+    🔑 Le coût : six signes inversés sur quinze dans mon contrôle de
+    cohérence, et des effectifs divergents d'un facteur 4,5. Une fonction qui
+    rend des bougies imaginaires doit REFUSER, pas servir.
+    """
+    import pytest
+    from backend.services.echelle_agregee import agreger
+    with pytest.raises(ValueError, match="M5"):
+        labo._agreger_brut(_bougies_minute(60, 1), 3, agreger)
+
+
+def test_un_pas_qui_ne_divise_pas_60_est_REFUSE():
+    """⛔ `minute // 25` fabrique des seaux 0-24 / 25-49 / 50-59 : trois
+    bougies par heure dont une de 10 minutes. Elle n'existe chez aucun
+    courtier."""
+    import pytest
+    from backend.services.echelle_agregee import agreger
+    with pytest.raises(ValueError, match="60"):
+        labo._agreger_brut(_bougies(60), 5, agreger)
+
+
+def test_le_M5_normal_passe_toujours():
+    """✅ La garde ne doit rien casser de l'usage légitime."""
+    from backend.services.echelle_agregee import agreger
+    for facteur in (1, 2, 3, 6, 12):
+        a = labo._agreger_brut(_bougies(120), facteur, agreger)
+        assert a, f"facteur {facteur} ne rend rien"
+
+
+def test_une_serie_TROP_COURTE_pour_juger_le_pas_passe():
+    """⚠️ Avec une ou deux bougies on ne peut pas mesurer le pas. Refuser
+    serait transformer une série courte en erreur — le labo écarte déjà les
+    séries courtes plus haut."""
+    from backend.services.echelle_agregee import agreger
+    labo._agreger_brut(_bougies(1), 3, agreger)
+    labo._agreger_brut([], 3, agreger)
