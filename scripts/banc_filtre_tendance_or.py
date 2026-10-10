@@ -50,6 +50,26 @@ sys.path.insert(0, "/app")
 from backend.services import laboratoire_or as labo   # noqa: E402
 
 PAIRE = "XAU/USD"
+# ⛔ LA SOURCE DE `candles_5min.db` EST **TWELVE DATA**, PAS LE COURTIER.
+# Trouve le 2026-10-10 : ce magasin est ecrit par
+# `scripts/ml_fetch_candles_5min.py`, dont la premiere ligne dit << Recupere
+# l'historique 5 min de Twelve Data >>. Trois bancs affirmaient pourtant
+# << bougies DU COURTIER >> dans leur en-tete.
+#
+# 🔑 ECART MESURE sur l'or, au meilleur alignement mutuel des deux sources :
+# **0,53 a 0,76 $ de mediane** sur les clotures, et seulement **7 a 10 %** des
+# clotures a moins de 0,10 $. En relatif c'est 0,015 % d'un cours a 4 100 $ —
+# mais c'est **22 a 34 % d'un objectif de 2,24 $**.
+#
+# ⚠️ CONSEQUENCE, selon ce que le banc teste :
+#   - un banc de DIRECTION ou de TENDANCE : l'ecart est negligeable ;
+#   - un banc d'OBJECTIF ou de STOP : il ne l'est PAS, et son verdict doit
+#     etre refait sur des bougies du courtier avant d'etre tenu pour acquis.
+#
+# ⚠️ Et ce magasin porte deux defauts de plus, mesures le meme jour : DEUX
+# conventions horaires (coupure hebdo etiquetee samedi 06h55 en 2023-2024
+# contre samedi 23h55 en 2025-2026) et une annee 2026 TROUEE (1 seule coupure
+# hebdomadaire detectee sur 7 mois, contre 53 et 54 les annees pleines).
 ARCHIVE = "/app/data/candles_5min.db"
 
 SL_PCT = 0.35 / 100
@@ -189,7 +209,7 @@ def main() -> int:
     print(f"    geometrie : stop {SL_PCT*100:.2f} %, cible {TP_USD:.2f} $ "
           f"= {TP_USD/TAUX:.2f} EUR")
     bgs = bougies(debut, fin)
-    print(f"    bougies 5 min du COURTIER : {len(bgs)}")
+    print(f"    bougies 5 min TWELVE DATA : {len(bgs)}")
     if len(bgs) < labo.FENETRE + 300:
         print("    pas assez de bougies")
         return 1

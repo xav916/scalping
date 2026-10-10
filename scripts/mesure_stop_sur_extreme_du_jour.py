@@ -37,6 +37,15 @@ from collections import defaultdict
 from pathlib import Path
 
 PAIRE = "XAU/USD"
+# ⛔ LA SOURCE DE `candles_5min.db` EST **TWELVE DATA**, PAS LE COURTIER.
+# Trouve le 2026-10-10, et par une GARDE de test, pas a l'oeil : ce magasin est
+# ecrit par `scripts/ml_fetch_candles_5min.py` (<< Recupere l'historique 5 min
+# de Twelve Data >>). Ecart mesure sur l'or au meilleur alignement mutuel :
+# **0,53 a 0,76 $** de mediane sur les clotures, 7 a 10 % seulement a moins de
+# 0,10 $ — soit **22 a 34 % d'un objectif de 2,24 $**.
+#
+# ⚠️ Ce banc mesure un STOP : l'ecart n'y est donc PAS negligeable, et son
+# verdict doit etre refait sur des bougies du courtier avant d'etre acquis.
 ARCHIVE = "/app/data/candles_5min.db"
 DEBUT, FIN = "2025-08-08", "2026-08-08"      # la fenêtre figée des bancs
 
@@ -58,7 +67,7 @@ def bougies():
 def main() -> int:
     lignes = bougies()
     print("=== STOP AU-DELA DE L'EXTREME DU JOUR — ce que ca coute ===")
-    print(f"    {PAIRE}, bougies du COURTIER, {DEBUT} -> {FIN}")
+    print(f"    {PAIRE}, bougies de TWELVE DATA (⛔ pas du courtier), {DEBUT} -> {FIN}")
     print(f"    {len(lignes)} bougies 5 min")
     print(f"    marge « +5 » lue en EUROS : {MARGE_USD:.2f} $")
     if len(lignes) < 1000:
