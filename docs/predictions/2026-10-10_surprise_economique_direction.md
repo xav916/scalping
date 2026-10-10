@@ -270,3 +270,81 @@ franchissable autrement que par hasard.
 
 ⚠️ Je ne l'entreprends pas sans décision : c'est un chantier de données, pas
 une mesure, et il touche un magasin que la production lit.
+
+---
+
+# SECOND PASSAGE, sur un magasin RÉPARÉ — le 2026-10-10
+
+## ✅ LA RÉPARATION A MARCHÉ, et elle se vérifie par le calendrier du marché
+
+Le décalage du pont s'est révélé **déterministe** :
+
+    décalage = −decalage_serveur_sec / 60 + 180        (180 min = GMT+3)
+
+Vérifié sur **21 jours sur 21** et **154 ancres d'exécution**, dont 75/75 le
+09/10. 🔑 Elle fait **mieux que la recherche empirique**, qui se trompait les
+jours à une ou deux ancres (+930 et −1 933 au lieu de +1 427).
+
+⚠️ Et le champ **dérive** : −69 256 à 20h, −74 831 à 21h — 93 minutes d'écart.
+Il doit être lu **dans la même réponse** que les bougies, jamais mémorisé.
+
+`scripts/batir_magasin_courtier.py` bâtit `/app/data/candles_courtier.db`
+(99 750 bougies M5) et se contrôle lui-même :
+
+| vérification | résultat |
+|---|---|
+| prix d'exécution réels dans leur bougie | **97/97 = 100 %** |
+| coupure hebdomadaire | **vendredi 20h55 → dimanche 22h00**, identique en 2025 et 2026 |
+| une seule convention horaire | ✅ |
+| pic de volatilité **sans aucun décalage** | **2,53×** (9,425 $ contre 3,730 $, 528 publications) |
+
+🔑 La deuxième ligne est la plus forte : `vendredi 20h55 → dimanche 22h00` est
+**l'horaire réel du marché de l'or**. La correction ne fait pas que se tenir,
+elle **reproduit le calendrier du marché** — ce que l'ancien magasin ne faisait
+pas (samedi 06h55 en 2023-2024, samedi 23h55 en 2025-2026).
+
+## ⛔ DEUX DÉFAUTS DE MON PREMIER JET, attrapés par mes propres vérifications
+
+1. **Erreur de signe.** Ce que j'avais vérifié est : un trade à l'instant réel
+   `T` a sa bougie à l'étiquette **brute** `T + 1 427`. Donc étiquette = réel +
+   décalage, et il faut **soustraire** pour revenir au temps réel. J'avais
+   ajouté. Résultat : **0 ancre sur 172**, et la coupure déplacée de deux jours.
+2. **Secondes réintroduites.** `+1 428,7 min` vaut 1 428 min 42 s : ajouter un
+   décalage non entier remet des secondes dans l'étiquette
+   (`2025-05-16T22:30:33`), et toute recherche par égalité échoue.
+
+## LE VERDICT, avec le plafond calculé sur le VRAI nombre de cellules
+
+    evenements avec surprise sur la fenetre : 11 031   (contre 8 513 au 1er tour)
+    codes avec n >= 24 : 73 sur 493
+    cellules examinees : 363
+    plafond du hasard a 363 cellules : |t| > 3,153
+
+    meilleures cellules :
+      participation-rate            15 min   n= 28   -4,585 $   t -3,05
+      ppi-yy                        30 min   n=131   -2,744 $   t -2,98
+      participation-rate            30 min   n= 28   -6,793 $   t -2,95
+      eia-crude-oil-imports-change  30 min   n= 70   -3,337 $   t -2,52
+
+⇒ **0 cellule retenue sur 363.** Personne ne franchit 3,153.
+
+🔑 **Et c'est un résultat plus propre que le premier tour** : j'y avais appliqué
+le plafond de 96 cellules à 305 cellules et annoncé « 3 retenues ». Avec le
+plafond juste, sur **30 % d'événements en plus** et des prix **fiables**, il
+n'en reste **aucune**.
+
+## ⓘ LA LIMITE QUI RESTE, et elle n'est pas réparable
+
+L'historique **M5 du courtier s'arrête à 2025-05-14**. Réparer la source ne
+débloque donc pas cinq ans mais **17 mois**. Les **51 666** surprises de
+2021-2026 restent hors de portée : y accéder demanderait une **troisième
+source**, ce qui réintroduit exactement le problème de divergence qu'on vient
+de retirer.
+
+## ⚠️ UN COROLLAIRE À VÉRIFIER SÉPARÉMENT
+
+L'amplitude M5 médiane vaut **3,730 $** chez le courtier contre **1,952 $**
+chez Twelve Data. Les fenêtres ne sont pas identiques (l'or a été plus agité en
+2026), donc ce n'est pas encore une conclusion — mais si l'écart tient à
+fenêtre égale, alors **tous les tests d'objectif et de stop faits sur Twelve
+Data étaient optimistes**, ses bougies étant deux fois moins larges.
