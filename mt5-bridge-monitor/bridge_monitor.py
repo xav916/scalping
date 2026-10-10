@@ -1238,33 +1238,33 @@ def formater_diagnostic(live, blocages, minutes_dernier, portes=None):
     # masque la cause evidente.
     p = portes or {}
     if p.get("marche") is not None:
-        L.append("• Marche de l'or : *%s*"
+        L.append("• Marche de l'or : %s"
                  % ("ouvert" if p["marche"] else "FERME chez le courtier"))
     if p.get("fenetre") is not None:
-        L.append("• Ta fenetre hebdo : *%s*"
+        L.append("• Ta fenetre hebdo : %s"
                  % ("ouverte" if p["fenetre"] else "FERMEE"))
     if p.get("prochaine"):
-        L.append("• Prochaine ouverture : *%s*" % p["prochaine"])
+        L.append("• Prochaine ouverture : %s" % p["prochaine"])
     tot = (live or {}).get("total")
     if tot is None:
-        L.append("\u2022 Positions en vie : *illisibles*")
+        L.append("\u2022 Positions en vie : illisibles")
     else:
-        L.append("\u2022 Positions en vie : *%s* (radar %s \u00b7 a la main %s)"
+        L.append("\u2022 Positions en vie : %s (radar %s \u00b7 a la main %s)"
                  % (tot, (live or {}).get("radar", "?"),
                     (live or {}).get("main", "?")))
     if minutes_dernier is None:
-        L.append("\u2022 Dernier ordre du radar : *aucun* enregistre")
+        L.append("\u2022 Dernier ordre du radar : aucun enregistre")
     elif minutes_dernier < 60:
-        L.append("\u2022 Dernier ordre du radar : il y a *%d min*"
+        L.append("\u2022 Dernier ordre du radar : il y a %d min"
                  % round(minutes_dernier))
     else:
-        L.append("\u2022 Dernier ordre du radar : il y a *%.1f h*"
+        L.append("\u2022 Dernier ordre du radar : il y a %.1f h"
                  % (minutes_dernier / 60.0))
     if not blocages:
         L.append("\u2022 Aucun refus dans les 30 dernieres minutes.")
     else:
         code, n = blocages[0]
-        L.append("\u2022 Blocage dominant (30 min) : *%s* \u2014 %s, %s fois"
+        L.append("\u2022 Blocage dominant (30 min) : %s \u2014 %s, %s fois"
                  % (code, _MOTIFS_FR.get(code, "motif non traduit"), n))
         if len(blocages) > 1:
             L.append("  puis " + ", ".join("%s (%s)" % (c, k)
@@ -1387,14 +1387,14 @@ def declencher_analyse_or(paire):
         # ⚠️ << l'ordre est parti >> n'a AUCUN sens marche ferme : le dire
         # quand meme laisserait croire qu'un ordre a pu sortir.
         if portes.get("marche") is False or portes.get("fenetre") is False:
-            fin = ("_Aucun ordre ne peut sortir tant qu'une des deux portes "
-                   "ci-dessus est fermee._")
+            fin = ("Aucun ordre ne peut sortir tant qu'une des deux portes "
+                   "ci-dessus est fermee.")
         else:
-            fin = "_S'il y avait un setup qualifie, l'ordre est parti._"
+            fin = "S'il y avait un setup qualifie, l'ordre est parti."
         if d.get("lance"):
-            return True, ("✅ *Analyse de l'or lancee* sur `%s`\n\n%s\n\n%s"
+            return True, ("✅ Analyse de l'or lancee sur %s\n\n%s\n\n%s"
                           % (d.get("paire"), diag, fin))
-        return False, ("🚫 *Refuse* — %s\n\n%s"
+        return False, ("🚫 Refuse — %s\n\n%s"
                        % (d.get("motif", "motif inconnu"), diag))
     err = (p.stderr or "").strip().splitlines()
     return False, ("❌ Le radar n'a rien rendu de lisible.\n`%s`"
@@ -1412,8 +1412,12 @@ def tg_send_trades(text):
     try:
         r = requests.post(
             "https://api.telegram.org/bot%s/sendMessage" % TRADES_BOT_TOKEN,
-            json={"chat_id": TRADES_CHAT_ID, "text": text,
-                  "parse_mode": "Markdown"},
+            # ⛔ AUCUN parse_mode. Les codes de refus portent des
+            # underscores (`verdict_blocker`) que le Markdown de Telegram lit
+            # comme une italique OUVERTE : l'envoi rendait 400 "Can't find end
+            # of the entity" et Xavier ne recevait RIEN. Du texte brut ne peut
+            # pas echouer la-dessus.
+            json={"chat_id": TRADES_CHAT_ID, "text": text},
             timeout=15,
         )
         return bool(r.ok)
@@ -1507,15 +1511,14 @@ def telegram_listener_thread():
                 chat_id = str((msg.get("chat") or {}).get("id", ""))
                 if chat_id != TELEGRAM_CHAT_ID:
                     continue
-                cible = parse_commande_trade(text)
-                if cible is not None:
-                    if cible.startswith("REFUS:"):
-                        tg_send("🚫 " + cible[len("REFUS:"):].strip())
-                    else:
-                        tg_send("⏳ J'analyse l'or maintenant...")
-                        ok, reponse = declencher_analyse_or(cible)
-                        tg_send(reponse)
-                    continue
+                # ⛔ /trade N'EST PLUS TRAITE ICI. Deux raisons :
+                #   1. Xavier le tape dans le fil des TRADES, pas dans celui de
+                #      l'infra — c'est `trades_listener_thread` qui l'ecoute ;
+                #   2. `tg_send` envoie en Markdown, et les codes de refus
+                #      portent des underscores (`verdict_blocker`) que Telegram
+                #      lit comme une italique OUVERTE : l'envoi rendait 400
+                #      "Can't find end of the entity" et Xavier ne recevait
+                #      RIEN. Une commande, un fil, un seul envoi.
                 if text.lower().startswith("/status"):
                     tg_send(tg_build_status_reply())
                 elif text.lower().startswith("/start"):

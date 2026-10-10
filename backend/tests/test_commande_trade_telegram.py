@@ -159,7 +159,43 @@ def test_il_compte_les_positions_RADAR_et_MAIN_separement(F):
     """🔑 Les mélanger masquerait le signal : sa main gagne, le radar perd."""
     t = F({"total": 3, "radar": 2, "main": 1}, [], 12.0)
 
-    assert "*3*" in t and "radar 2" in t and "main 1" in t
+    assert "3" in t and "radar 2" in t and "main 1" in t
+
+
+def test_le_texte_ne_contient_AUCUNE_emphase_Markdown(F):
+    """⛔ LE DEFAUT QUI A FAIT QUE XAVIER N'A RIEN RECU. Les codes de refus
+    portent des underscores (`verdict_blocker`,
+    `max_positions_per_pair_indecidable`) que le Markdown de Telegram lit comme
+    une italique OUVERTE. L'envoi rendait :
+
+        400 Bad Request: can't parse entities: Can't find end of the entity
+            starting at byte offset 451
+
+    ⇒ le message etait construit, l'envoi refuse, et il ne recevait RIEN.
+    Le diagnostic est donc du TEXTE BRUT, et l'envoi se fait sans parse_mode.
+    """
+    t = F({"total": 3, "radar": 2, "main": 1},
+          [("max_positions_per_pair_indecidable", 593),
+           ("verdict_blocker", 122)], 12.0,
+          {"marche": False, "fenetre": False})
+
+    assert "*" not in t, t
+    assert "_" in t, "les codes de refus doivent rester LISIBLES tels quels"
+
+
+def test_l_envoi_sur_le_fil_TRADES_se_fait_SANS_parse_mode():
+    """⛔ Le pendant du test ci-dessus, cote envoi : un `parse_mode` remis un
+    jour ramenerait le 400."""
+    src = _SRC.read_text(encoding="utf-8")
+    debut = src.index("def tg_send_trades(")
+    fin = src.index("\ndef ", debut + 10)
+    bloc = src[debut:fin]
+
+    # ⚠️ On cherche la CLE du dictionnaire, entre guillemets — pas le mot :
+    # mon premier jet attrapait `parse_mode` dans le commentaire qui explique
+    # justement pourquoi il n'y en a pas.
+    assert '"parse_mode"' not in bloc, bloc
+    assert "'parse_mode'" not in bloc, bloc
 
 
 def test_un_courtier_ILLISIBLE_se_DIT_au_lieu_de_valoir_zero(F):
@@ -169,12 +205,12 @@ def test_un_courtier_ILLISIBLE_se_DIT_au_lieu_de_valoir_zero(F):
     t = F({}, [], None)
 
     assert "illisibles" in t.lower(), t
-    assert "*0*" not in t
+    assert "en vie : 0" not in t
 
 
 def test_le_dernier_ordre_est_dit_en_MINUTES_puis_en_HEURES(F):
-    assert "il y a *12 min*" in F({"total": 0}, [], 12.4)
-    assert "il y a *3.0 h*" in F({"total": 0}, [], 180.0)
+    assert "il y a 12 min" in F({"total": 0}, [], 12.4)
+    assert "il y a 3.0 h" in F({"total": 0}, [], 180.0)
     assert "aucun" in F({"total": 0}, [], None).lower()
 
 
@@ -206,6 +242,7 @@ def test_le_diagnostic_dit_D_ABORD_si_le_marche_est_FERME(F):
     lignes = t.splitlines()
     assert "FERME" in lignes[0], lignes
     assert "FERMEE" in lignes[1], lignes
+    assert "*" not in t, "emphase Markdown : l'envoi echouerait en 400"
 
 
 def test_marche_OUVERT_se_dit_aussi(F):
