@@ -2557,6 +2557,40 @@ async def _push_to_destination(setup, dest) -> None:
         )
 
 
+def _dire_les_exceptions_avalees(resultats, etiquettes) -> None:
+    """Journalise ce que `gather(return_exceptions=True)` a avalé.
+
+    ## ⛔ POURQUOI (2026-10-09)
+
+    Les deux `gather` de ce module avalent **toute** exception levée dans la
+    chaîne d'admission ou dans le push : aucun ordre, aucun refus enregistré,
+    **aucune ligne de journal**. C'est ainsi qu'un `UnboundLocalError` a vécu
+    deux heures dans la porte de la fenêtre hebdomadaire sans laisser de
+    trace — trouvé seulement parce qu'un test d'un autre sujet est tombé.
+
+    ⚠️ **On ne change PAS le flot.** `return_exceptions=True` reste : une
+    destination qui échoue ne doit pas empêcher les autres ni faire tomber le
+    cycle. On ajoute uniquement la parole.
+
+    ⚠️ Et `CancelledError` n'est pas une anomalie — l'annulation est normale à
+    l'arrêt du processus. La journaliser en `ERROR` noierait les vraies dans du
+    bruit, et un journal bruyant ne se lit plus : autant être muet.
+    """
+    for resultat, quoi in zip(resultats, etiquettes):
+        if not isinstance(resultat, BaseException):
+            continue
+        if isinstance(resultat, asyncio.CancelledError):
+            logger.debug("mt5_bridge: %s annule", quoi)
+            continue
+        logger.error(
+            "mt5_bridge: %s a leve %s: %s — AUCUN ordre, AUCUN refus "
+            "enregistre. Cette exception etait avalee en silence avant le "
+            "2026-10-09.",
+            quoi, type(resultat).__name__, resultat,
+            exc_info=(type(resultat), resultat, resultat.__traceback__),
+        )
+
+
 async def send_setup(setup) -> None:
     """Push un trade_setup vers chaque destination active.
 
@@ -2569,9 +2603,14 @@ async def send_setup(setup) -> None:
     destinations = resolve_destinations(setup)
     if not destinations:
         return
-    await asyncio.gather(
+    resultats = await asyncio.gather(
         *(_push_to_destination(setup, dest) for dest in destinations),
         return_exceptions=True,
+    )
+    _dire_les_exceptions_avalees(
+        resultats,
+        [f"push {getattr(setup, 'pair', '?')} vers "
+         f"{getattr(d, 'destination_id', '?')}" for d in destinations],
     )
 
 
@@ -2613,7 +2652,14 @@ async def send_setups(setups: list) -> None:
             "pont: %d setup(s) de chaine recus : %s", len(_chaines),
             [f"{getattr(s, 'chaine', None)}|{_pattern_value(s)}"
              f"|{s.pair}|{getattr(s, 'horizon', None)}" for s in _chaines])
-    await asyncio.gather(*(send_setup(s) for s in setups), return_exceptions=True)
+    # 🔑 LE SECOND `gather` qui avale, un etage plus haut : il attrape ce qui
+    # echappe a `send_setup` lui-meme (par exemple `resolve_destinations` qui
+    # leve). Deux `gather`, deux silences — j'en avais vu un seul.
+    resultats = await asyncio.gather(
+        *(send_setup(s) for s in setups), return_exceptions=True)
+    _dire_les_exceptions_avalees(
+        resultats,
+        [f"send_setup {getattr(s, 'pair', '?')}" for s in setups])
 
 
 async def get_account() -> dict:
