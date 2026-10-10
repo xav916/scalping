@@ -1401,8 +1401,25 @@ def declencher_analyse_or(paire):
                    % (err[-1][:300] if err else "aucune sortie"))
 
 
-TRADES_BOT_TOKEN = os.environ.get("TRADES_TELEGRAM_BOT_TOKEN", "").strip()
-TRADES_CHAT_ID = os.environ.get("TRADES_TELEGRAM_CHAT_ID", "").strip()
+# ⛔ LE FIL DE /trade : CELUI DE L'ARGENT REEL, DONC IC MARKETS.
+#
+# 🔑 ET C'EST UN PIEGE DE NOMMAGE QUE LE DEPOT DOCUMENTE DEJA. Dans
+# `canaux_telegram.py` :
+#     admin_live  ->  ic_markets  ->  SALES_TELEGRAM_BOT_TOKEN   (<< IC MARKETS Trades >>)
+#     admin_kraken ->  kraken     ->  TRADES_TELEGRAM_BOT_TOKEN  (<< KRAKEN Trades >>)
+# et son en-tete precise que la confusion << s'est deja produite >>.
+#
+# ⛔ J'y suis tombe quand meme : j'avais cable /trade sur `TRADES_*` en me
+# fiant au NOM de la variable. Or le bot `TRADES_*` s'appelle
+# << KRAKEN Trades >>, et l'or du compte reel vit sur << IC MARKETS Trades >>,
+# c'est-a-dire `SALES_*`. Xavier a tape /trade la, et rien ne repondait.
+#
+# ⚠️ Le nom du bot est ANNONCE au demarrage (getMe) : un mauvais cablage doit
+# se LIRE dans le journal, pas se deviner.
+TRADES_BOT_TOKEN = (os.environ.get("TRADE_CMD_BOT_TOKEN", "").strip()
+                    or os.environ.get("SALES_TELEGRAM_BOT_TOKEN", "").strip())
+TRADES_CHAT_ID = (os.environ.get("TRADE_CMD_CHAT_ID", "").strip()
+                  or os.environ.get("SALES_TELEGRAM_CHAT_ID", "").strip())
 
 
 def tg_send_trades(text):
@@ -1444,7 +1461,17 @@ def trades_listener_thread():
         log.info("trades listener non demarre (meme bot que l'infra)")
         return
     offset = None
-    log.info("trades listener starting (/trade)")
+    nom = "?"
+    try:
+        r = requests.get(
+            "https://api.telegram.org/bot%s/getMe" % TRADES_BOT_TOKEN,
+            timeout=15)
+        if r.ok:
+            nom = (r.json().get("result") or {}).get("first_name") or "?"
+    except Exception as e:  # noqa: BLE001
+        log.warning("getMe du bot /trade: %s", e)
+    log.info("trades listener starting (/trade) -> bot %r chat %s",
+             nom, TRADES_CHAT_ID)
     while not _stop_evt.is_set():
         try:
             params = {"timeout": 25}

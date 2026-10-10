@@ -259,3 +259,37 @@ def test_des_portes_ILLISIBLES_se_TAISENT_au_lieu_d_inventer(F):
     assert "Marche de l'or" not in t
     t2 = F({"total": 0}, [], None, None)
     assert "fenetre hebdo" not in t2
+
+
+def test_le_fil_de_trade_est_celui_de_L_ARGENT_REEL():
+    """⛔ LE DEFAUT QUI A FAIT QUE XAVIER N'AVAIT TOUJOURS RIEN.
+
+    `canaux_telegram.py` dit, et son en-tête precise que la confusion
+    « s'est deja produite » :
+
+        admin_live    -> ic_markets -> SALES_TELEGRAM_BOT_TOKEN   « IC MARKETS Trades »
+        admin_kraken  -> kraken     -> TRADES_TELEGRAM_BOT_TOKEN  « KRAKEN Trades »
+
+    J'avais cable `/trade` sur `TRADES_*` en me fiant au NOM de la variable.
+    L'or du compte reel vit sur « IC MARKETS Trades », soit `SALES_*`.
+    """
+    src = _SRC.read_text(encoding="utf-8")
+    debut = src.index("TRADES_BOT_TOKEN = ")
+    bloc = src[debut:debut + 420]
+
+    assert "SALES_TELEGRAM_BOT_TOKEN" in bloc, bloc
+    assert "TRADES_TELEGRAM_BOT_TOKEN" not in bloc, (
+        "/trade pointe sur le bot KRAKEN, pas sur IC MARKETS")
+
+
+def test_le_nom_du_bot_est_ANNONCE_au_demarrage():
+    """🔑 Un mauvais cablage doit se LIRE dans le journal. Sans cette ligne,
+    il a fallu interroger `getMe` a la main pour decouvrir que le bot
+    `TRADES_*` s'appelle « KRAKEN Trades »."""
+    src = _SRC.read_text(encoding="utf-8")
+    debut = src.index("def trades_listener_thread(")
+    fin = src.index("\ndef telegram_listener_thread(", debut)
+    bloc = src[debut:fin]
+
+    assert "getMe" in bloc, "le nom du bot n'est pas verifie au demarrage"
+    assert "bot %r" in bloc or "bot %s" in bloc, bloc
