@@ -118,3 +118,68 @@ Un seul appel en `resume=1` sur une heure de cotation suffit à trancher :
 rend le sens **sans valeur** (49,83 % de réussite implicite à bornes
 symétriques, sur 64 062 détections). Même un order flow informatif ne serait
 exploitable **qu'avec un autre couple objectif/stop**.
+
+---
+
+# DÉPLOYÉ ET VÉRIFIÉ — le 2026-10-10 à 21h53 UTC
+
+Permission accordée explicitement par Xavier. Procédure suivie étape par
+étape, chacune vérifiée avant la suivante.
+
+| étape | résultat |
+|---|---|
+| 1. pont récupéré du VPS | `b85ec3b0…0309`, 214 112 o — **identique** à ma copie |
+| 2. route transférée | 7 986 o, `7892dfbb…` — **même hash** qu'en local |
+| 3. patch sur l'EC2 | `29F0C6E2…` — **même hash** que mon patch local |
+| 4. sauvegarde VPS | `bridge.py.bak-20261010-avant-ticks`, 214 112 o |
+| 5. dépôt sur le VPS | `29F0C6E2…`, 222 098 o — **vérifié sur place** |
+| 6. redémarrage | `schtasks /End` + `/Run` sur `ScalpingBridge_Live` |
+| 7. `/health` | **200**, `demarre_a = 2026-10-10T21:53:31` ⇒ a bien redémarré |
+| 8. `/rates` | **200**, n = 12 ⇒ **l'existant est intact** |
+| 9. `/ticks` | **200**, 893 ticks sur 5 minutes |
+
+🔑 Identité au bit près de ma machine → EC2 → VPS, vérifiée à trois reprises.
+
+## ⛔ ET LA RÉPONSE À LA QUESTION, SANS AMBIGUÏTÉ
+
+    893 ticks sur 5 minutes (XAU/USD, 09/10 12h00-12h05 UTC)
+
+    drapeaux :  bid 892   ask 887   buy 0   sell 0   last 0   volume 0
+    sens_reel_disponible : FALSE
+    imbalance_drapeaux   : null
+    imbalance_bid        : +0,0281   (458 hausses, 433 baisses, 1 égal)
+
+⇒ **`buy = 0`, `sell = 0`, `last = 0`, `volume = 0` sur 893 ticks.**
+L'information **acheteur / vendeur n'existe pas** sur ce CFD : le flux ne porte
+que des mises à jour de **bid** et d'**ask**.
+
+🔑 Le `TickImbalance` du §9, tel que le document le définit — compter des
+**transactions** — est donc **impossible à éprouver sur ce compte**. Ce n'est
+pas « réfuté » : c'est **inapplicable**, et il faut le dire ainsi.
+
+🔑 Et ce qui reste disponible est exactement le **substitut** que j'avais déjà
+construit et mesuré le matin même (position de la clôture dans le range), qui
+échouait partout : −0,15 à +0,18, aucun |t| > 2. **La boucle est fermée.**
+
+## ⓘ CE QUE LA ROUTE APPORTE QUAND MÊME
+
+Deux choses qui n'existaient pas avant :
+
+1. **la densité réelle du flux** — 893 ticks en 5 minutes, soit ~3 ticks par
+   seconde sur l'or ;
+2. **un imbalance calculé sur les VRAIS ticks** (+0,0281 ici), et non sur la
+   position de la clôture dans une bougie. C'est un **meilleur** substitut que
+   celui que j'ai mesuré le matin.
+
+⇒ La seule chose encore testable sur cette piste : **refaire la mesure du §9
+avec l'imbalance des vrais ticks**. ⚠️ Mais le rappel tient — la géométrie
+2 €/20 € rend le sens sans valeur (49,83 % à bornes symétriques sur 64 062
+détections), donc même un imbalance informatif ne serait exploitable qu'avec
+un autre couple objectif/stop.
+
+## Le retour en arrière reste disponible
+
+```bash
+ssh -i ~/.ssh/vps_bridge Administrator@100.74.160.72 \
+  'copy /Y C:\Scalping\mt5-bridge-live\bridge.py.bak-20261010-avant-ticks C:\Scalping\mt5-bridge-live\bridge.py && schtasks /End /TN ScalpingBridge_Live && schtasks /Run /TN ScalpingBridge_Live'
+```
