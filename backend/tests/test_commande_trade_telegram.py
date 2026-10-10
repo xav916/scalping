@@ -192,3 +192,33 @@ def test_un_motif_INCONNU_ne_fait_pas_LEVER(F):
 
     assert "un_motif_tout_neuf" in t
     assert "non traduit" in t
+
+
+def test_le_diagnostic_dit_D_ABORD_si_le_marche_est_FERME(F):
+    """⛔ LE DEFAUT. Lance un samedi, le diagnostic remontait `verdict_blocker`
+    — un blocage ANTERIEUR dans la chaine — alors que la seule chose a savoir
+    etait << le marche est ferme >>. Les deux faits les plus basiques passent
+    donc EN PREMIER."""
+    t = F({"total": 0, "radar": 0, "main": 0},
+          [("verdict_blocker", 122)], None,
+          {"marche": False, "fenetre": False})
+
+    lignes = t.splitlines()
+    assert "FERME" in lignes[0], lignes
+    assert "FERMEE" in lignes[1], lignes
+
+
+def test_marche_OUVERT_se_dit_aussi(F):
+    t = F({"total": 1, "radar": 1, "main": 0}, [], 3.0,
+          {"marche": True, "fenetre": True})
+    assert "ouvert" in t.splitlines()[0]
+    assert "ouverte" in t.splitlines()[1]
+
+
+def test_des_portes_ILLISIBLES_se_TAISENT_au_lieu_d_inventer(F):
+    """⚠️ Un dict vide ne doit pas produire << marche : ouvert >> par defaut :
+    affirmer l'inverse de la realite est pire que de se taire."""
+    t = F({"total": 0}, [], None, {})
+    assert "Marche de l'or" not in t
+    t2 = F({"total": 0}, [], None, None)
+    assert "fenetre hebdo" not in t2

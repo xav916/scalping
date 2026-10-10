@@ -1224,7 +1224,7 @@ _MOTIFS_FR = {
 }
 
 
-def formater_diagnostic(live, blocages, minutes_dernier):
+def formater_diagnostic(live, blocages, minutes_dernier, portes=None):
     """Le texte du diagnostic. PUR : c'est lui qu'on teste.
 
     🔑 Xavier a pose TROIS FOIS la question << pourquoi je n'ai plus de
@@ -1232,6 +1232,19 @@ def formater_diagnostic(live, blocages, minutes_dernier):
     celui-ci y repond en NOMMANT le blocage dominant.
     """
     L = []
+    # ⛔ LES DEUX FAITS LES PLUS BASIQUES, EN PREMIER. Sans eux le diagnostic
+    # remontait `verdict_blocker` un samedi, alors que la seule chose a savoir
+    # etait << le marche est ferme >>. Un blocage anterieur dans la chaine
+    # masque la cause evidente.
+    p = portes or {}
+    if p.get("marche") is not None:
+        L.append("• Marche de l'or : *%s*"
+                 % ("ouvert" if p["marche"] else "FERME chez le courtier"))
+    if p.get("fenetre") is not None:
+        L.append("• Ta fenetre hebdo : *%s*"
+                 % ("ouverte" if p["fenetre"] else "FERMEE"))
+    if p.get("prochaine"):
+        L.append("• Prochaine ouverture : *%s*" % p["prochaine"])
     tot = (live or {}).get("total")
     if tot is None:
         L.append("\u2022 Positions en vie : *illisibles*")
@@ -1307,6 +1320,40 @@ def lire_diagnostic_or():
     return live, blocages, minutes
 
 
+def lire_portes_or():
+    """L'etat des deux portes horaires, demande AU RADAR.
+
+    🔑 On ne recalcule pas les horaires ici : `market_hours` et
+    `fenetre_hebdo` sont la source de verite, et une seconde implementation
+    dans le moniteur derivererait. Ce depot a deja paye ce piege.
+    """
+    code = (
+        "import json;"
+        "from datetime import datetime, timezone;"
+        "from backend.services.market_hours import is_market_open_for as M;"
+        "from backend.services import fenetre_hebdo as F;"
+        "u = datetime.now(timezone.utc);"
+        "print(json.dumps({'marche': bool(M('XAU/USD', u)),"
+        " 'fenetre': bool(F.ouverte())}))"
+    )
+    try:
+        p = subprocess.run(
+            ["docker", "exec", "-w", "/app", "-e", "PYTHONPATH=/app",
+             "scalping-radar", "python", "-c", code],
+            capture_output=True, text=True, timeout=30,
+        )
+        for ligne in reversed((p.stdout or "").strip().splitlines()):
+            try:
+                return json.loads(ligne)
+            except Exception:  # noqa: BLE001
+                continue
+    except Exception as e:  # noqa: BLE001
+        log.warning("portes or illisibles: %s", e)
+    # ⚠️ Illisible rend un dict VIDE, pas des valeurs inventees : le
+    # diagnostic taira ces lignes plutot que d'affirmer n'importe quoi.
+    return {}
+
+
 def declencher_analyse_or(paire):
     """Declenche le cycle de production sur `paire`, via `docker exec`.
 
@@ -1335,11 +1382,18 @@ def declencher_analyse_or(paire):
         except Exception:  # noqa: BLE001
             continue
         live, blocages, minutes = lire_diagnostic_or()
-        diag = formater_diagnostic(live, blocages, minutes)
+        portes = lire_portes_or()
+        diag = formater_diagnostic(live, blocages, minutes, portes)
+        # ⚠️ << l'ordre est parti >> n'a AUCUN sens marche ferme : le dire
+        # quand meme laisserait croire qu'un ordre a pu sortir.
+        if portes.get("marche") is False or portes.get("fenetre") is False:
+            fin = ("_Aucun ordre ne peut sortir tant qu'une des deux portes "
+                   "ci-dessus est fermee._")
+        else:
+            fin = "_S'il y avait un setup qualifie, l'ordre est parti._"
         if d.get("lance"):
-            return True, ("✅ *Analyse de l'or lancee* sur `%s`\n\n%s\n\n"
-                          "_S'il y avait un setup qualifie, l'ordre est parti._"
-                          % (d.get("paire"), diag))
+            return True, ("✅ *Analyse de l'or lancee* sur `%s`\n\n%s\n\n%s"
+                          % (d.get("paire"), diag, fin))
         return False, ("🚫 *Refuse* — %s\n\n%s"
                        % (d.get("motif", "motif inconnu"), diag))
     err = (p.stderr or "").strip().splitlines()
