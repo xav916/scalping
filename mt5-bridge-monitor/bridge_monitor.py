@@ -1200,6 +1200,113 @@ def parse_commande_trade(texte):
     return "XAU/USD"
 
 
+_MOTIFS_FR = {
+    "heure_spread_defavorable": "hors des heures autorisees pour la paire",
+    "pattern_not_allowed": "motif detecte non autorise sur cet horizon",
+    "horizon_not_allowed": "horizon non autorise",
+    "pair_not_whitelisted": "paire hors liste blanche du reel",
+    "max_positions_per_pair": "plafond de positions atteint",
+    "max_positions_per_pair_indecidable": "positions du courtier ILLISIBLES "
+                                          "(defaut, pas un plafond)",
+    "execution_globale_fermee": "execution desarmee (REM-002)",
+    "below_confidence": "score sous le seuil",
+    "market_closed": "marche ferme chez le courtier",
+    "hors_fenetre_hebdo": "hors de ta fenetre hebdomadaire",
+    "bridge_marge_insuffisante": "marge insuffisante chez le courtier",
+    "bridge_plafond_risque": "plafond de risque du pont",
+    "sl_too_close": "stop trop proche du cours",
+    "price_divergence": "divergence de prix entre les sources",
+    "pair_auto_paused": "paire mise en pause automatiquement",
+    "chaine_non_armee": "chaine non armee",
+    "verdict_blocker": "verdict de la chaine d'admission",
+    "energy_pre_weekend_freeze": "gel energie avant le week-end",
+    "bridge_doublon": "ordre en doublon",
+}
+
+
+def formater_diagnostic(live, blocages, minutes_dernier):
+    """Le texte du diagnostic. PUR : c'est lui qu'on teste.
+
+    🔑 Xavier a pose TROIS FOIS la question << pourquoi je n'ai plus de
+    trades >>. Un `/trade` qui repond << rien ne s'est passe >> la contourne ;
+    celui-ci y repond en NOMMANT le blocage dominant.
+    """
+    L = []
+    tot = (live or {}).get("total")
+    if tot is None:
+        L.append("\u2022 Positions en vie : *illisibles*")
+    else:
+        L.append("\u2022 Positions en vie : *%s* (radar %s \u00b7 a la main %s)"
+                 % (tot, (live or {}).get("radar", "?"),
+                    (live or {}).get("main", "?")))
+    if minutes_dernier is None:
+        L.append("\u2022 Dernier ordre du radar : *aucun* enregistre")
+    elif minutes_dernier < 60:
+        L.append("\u2022 Dernier ordre du radar : il y a *%d min*"
+                 % round(minutes_dernier))
+    else:
+        L.append("\u2022 Dernier ordre du radar : il y a *%.1f h*"
+                 % (minutes_dernier / 60.0))
+    if not blocages:
+        L.append("\u2022 Aucun refus dans les 30 dernieres minutes.")
+    else:
+        code, n = blocages[0]
+        L.append("\u2022 Blocage dominant (30 min) : *%s* \u2014 %s, %s fois"
+                 % (code, _MOTIFS_FR.get(code, "motif non traduit"), n))
+        if len(blocages) > 1:
+            L.append("  puis " + ", ".join("%s (%s)" % (c, k)
+                                           for c, k in blocages[1:3]))
+    return chr(10).join(L)
+
+
+def lire_diagnostic_or():
+    """Lit la base pour le diagnostic. Rend `(live, blocages, minutes)`.
+
+    ⚠️ Le moniteur lit DEJA cette base (cf. `probe_radar_cycle`) : on reste
+    dans le meme acces, on n'ouvre pas un second chemin vers les donnees.
+    """
+    live = {}
+    blocages = []
+    minutes = None
+    try:
+        con = sqlite3.connect("file:%s?mode=ro" % TRADES_DB_PATH, uri=True,
+                              timeout=3)
+        try:
+            r = con.execute(
+                "SELECT SUM(CASE WHEN COALESCE(notes,'') = 'MANUEL-TERM' "
+                "            THEN 0 ELSE 1 END), "
+                "       SUM(CASE WHEN COALESCE(notes,'') = 'MANUEL-TERM' "
+                "            THEN 1 ELSE 0 END), COUNT(*) "
+                "FROM personal_trades WHERE closed_at IS NULL "
+                "  AND destination_id = 'admin_live' AND pair = 'XAU/USD'"
+            ).fetchone()
+            if r:
+                live = {"radar": int(r[0] or 0), "main": int(r[1] or 0),
+                        "total": int(r[2] or 0)}
+            # ⛔ Borne calculee en PYTHON : `created_at` est de l'ISO AVEC
+            # fuseau, le comparer a datetime('now') ne filtrerait RIEN. Ce
+            # depot a deja paye ce piege (`test_fenetres_sqlite`).
+            borne = (datetime.now(timezone.utc)
+                     - timedelta(minutes=30)).isoformat()
+            blocages = [(str(a), int(b)) for a, b in con.execute(
+                "SELECT reason_code, COUNT(*) n FROM signal_rejections "
+                "WHERE pair = 'XAU/USD' AND created_at >= ? "
+                "GROUP BY reason_code ORDER BY n DESC LIMIT 4", (borne,))]
+            r = con.execute(
+                "SELECT MAX(created_at) FROM personal_trades "
+                "WHERE destination_id = 'admin_live' AND pair = 'XAU/USD' "
+                "  AND COALESCE(notes,'') <> 'MANUEL-TERM'").fetchone()
+            if r and r[0]:
+                t = datetime.fromisoformat(str(r[0]).replace("Z", "+00:00"))
+                minutes = (datetime.now(timezone.utc)
+                           - t).total_seconds() / 60.0
+        finally:
+            con.close()
+    except Exception as e:  # noqa: BLE001
+        log.warning("diagnostic or illisible: %s", e)
+    return live, blocages, minutes
+
+
 def declencher_analyse_or(paire):
     """Declenche le cycle de production sur `paire`, via `docker exec`.
 
@@ -1227,17 +1334,95 @@ def declencher_analyse_or(paire):
             d = json.loads(ligne)
         except Exception:  # noqa: BLE001
             continue
+        live, blocages, minutes = lire_diagnostic_or()
+        diag = formater_diagnostic(live, blocages, minutes)
         if d.get("lance"):
-            return True, ("✅ *Analyse de l'or lancee*\n\n"
-                          "Le cycle de production a tourne sur `%s` avec toutes "
-                          "ses portes. S'il y avait un setup qualifie, l'ordre "
-                          "est parti ; sinon rien ne s'est passe, et c'est "
-                          "voulu : `/trade` supprime une attente, il ne "
-                          "fabrique pas de signal." % d.get("paire"))
-        return False, "🚫 *Refuse* — %s" % d.get("motif", "motif inconnu")
+            return True, ("✅ *Analyse de l'or lancee* sur `%s`\n\n%s\n\n"
+                          "_S'il y avait un setup qualifie, l'ordre est parti._"
+                          % (d.get("paire"), diag))
+        return False, ("🚫 *Refuse* — %s\n\n%s"
+                       % (d.get("motif", "motif inconnu"), diag))
     err = (p.stderr or "").strip().splitlines()
     return False, ("❌ Le radar n'a rien rendu de lisible.\n`%s`"
                    % (err[-1][:300] if err else "aucune sortie"))
+
+
+TRADES_BOT_TOKEN = os.environ.get("TRADES_TELEGRAM_BOT_TOKEN", "").strip()
+TRADES_CHAT_ID = os.environ.get("TRADES_TELEGRAM_CHAT_ID", "").strip()
+
+
+def tg_send_trades(text):
+    """Repond SUR LE FIL DES TRADES. Ne leve jamais."""
+    if not TRADES_BOT_TOKEN or not TRADES_CHAT_ID:
+        return False
+    try:
+        r = requests.post(
+            "https://api.telegram.org/bot%s/sendMessage" % TRADES_BOT_TOKEN,
+            json={"chat_id": TRADES_CHAT_ID, "text": text,
+                  "parse_mode": "Markdown"},
+            timeout=15,
+        )
+        return bool(r.ok)
+    except Exception as e:  # noqa: BLE001
+        log.warning("tg_send_trades: %s", e)
+        return False
+
+
+def trades_listener_thread():
+    """Ecoute `/trade` sur le fil des TRADES, pas sur celui de l'infra.
+
+    ⛔ LE DEFAUT QUE CECI CORRIGE. Les << fils >> Telegram de ce systeme sont
+    des BOTS DIFFERENTS qui ecrivent au MEME chat. Or `getUpdates` est par
+    BOT : un `/trade` tape dans << IC MARKETS Trades >> (bot 8667345434)
+    n'arrivait JAMAIS au moniteur, qui n'ecoute que le bot d'infra
+    (8676823164). Xavier l'aurait tape la et aurait conclu que c'etait casse.
+    """
+    if not TRADES_BOT_TOKEN or not TRADES_CHAT_ID:
+        log.info("trades listener non demarre (jeton ou chat absent)")
+        return
+    if TRADES_BOT_TOKEN == TELEGRAM_BOT_TOKEN:
+        # ⚠️ Meme bot : deux boucles `getUpdates` sur un meme jeton se VOLENT
+        # les messages (Telegram ne garde qu'un offset par bot). Une seule.
+        log.info("trades listener non demarre (meme bot que l'infra)")
+        return
+    offset = None
+    log.info("trades listener starting (/trade)")
+    while not _stop_evt.is_set():
+        try:
+            params = {"timeout": 25}
+            if offset is not None:
+                params["offset"] = offset
+            r = requests.get(
+                "https://api.telegram.org/bot%s/getUpdates" % TRADES_BOT_TOKEN,
+                params=params, timeout=30,
+            )
+            if not r.ok:
+                log.warning("trades getUpdates http=%s", r.status_code)
+                _stop_evt.wait(5)
+                continue
+            for upd in r.json().get("result", []):
+                offset = upd["update_id"] + 1
+                msg = upd.get("message") or upd.get("channel_post") or {}
+                text = (msg.get("text") or "").strip()
+                chat_id = str((msg.get("chat") or {}).get("id", ""))
+                if chat_id != TRADES_CHAT_ID:
+                    continue
+                cible = parse_commande_trade(text)
+                if cible is None:
+                    continue
+                if cible.startswith("REFUS:"):
+                    tg_send_trades("\U0001f6ab " + cible[len("REFUS:"):].strip())
+                    continue
+                tg_send_trades("\u23f3 J'analyse l'or maintenant...")
+                _ok, reponse = declencher_analyse_or(cible)
+                tg_send_trades(reponse)
+        except requests.RequestException as e:
+            log.warning("trades poll error: %s", e)
+            _stop_evt.wait(5)
+        except Exception as e:  # noqa: BLE001
+            log.exception("trades listener error: %s", e)
+            _stop_evt.wait(5)
+    log.info("trades listener stopped")
 
 
 def telegram_listener_thread():
@@ -1330,6 +1515,11 @@ def main() -> int:
     t_poll = threading.Thread(target=poller_thread, name="poller", daemon=True)
     t_poll.start()
     threads.append(t_poll)
+
+    t_trades = threading.Thread(target=trades_listener_thread,
+                                name="trades-listener", daemon=True)
+    t_trades.start()
+    threads.append(t_trades)
 
     t_web = threading.Thread(target=dashboard_thread, name="dashboard", daemon=True)
     t_web.start()

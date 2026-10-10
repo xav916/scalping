@@ -120,3 +120,75 @@ def test_une_AUTRE_paire_est_refusee(M):
     produirait un cycle qui ne peut rien faire, et un silence inexplicable."""
     r = M["parse_commande_trade"]("/trade EURUSD")
     assert r is None or (isinstance(r, str) and r.startswith("REFUS:")), r
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# LE DIAGNOSTIC — 2026-10-10
+# ═══════════════════════════════════════════════════════════════════════
+#
+# 🔑 Xavier a posé TROIS FOIS la question « pourquoi je n'ai plus de trades ».
+# Un `/trade` qui répond « rien ne s'est passé » la contourne. Celui-ci NOMME
+# le blocage dominant, compte les positions en vie et dit quand le dernier
+# ordre est parti.
+
+@pytest.fixture(scope="module")
+def F():
+    """La fonction de formatage, extraite comme la précédente."""
+    src = _SRC.read_text(encoding="utf-8")
+    debut = src.index("_MOTIFS_FR = {")
+    fin = src.index("\ndef lire_diagnostic_or(", debut)
+    ns: dict = {}
+    exec(compile(src[debut:fin], str(_SRC), "exec"), ns)  # noqa: S102
+    assert "formater_diagnostic" in ns
+    return ns["formater_diagnostic"]
+
+
+def test_il_NOMME_le_blocage_dominant_en_francais(F):
+    """⛔ `heure_spread_defavorable` ne veut rien dire pour qui n'a pas écrit
+    le code. Un diagnostic illisible n'est pas un diagnostic."""
+    t = F({"total": 0, "radar": 0, "main": 0},
+          [("heure_spread_defavorable", 2377), ("pattern_not_allowed", 1565)],
+          None)
+
+    assert "heure_spread_defavorable" in t
+    assert "hors des heures" in t, t
+    assert "2377" in t
+
+
+def test_il_compte_les_positions_RADAR_et_MAIN_separement(F):
+    """🔑 Les mélanger masquerait le signal : sa main gagne, le radar perd."""
+    t = F({"total": 3, "radar": 2, "main": 1}, [], 12.0)
+
+    assert "*3*" in t and "radar 2" in t and "main 1" in t
+
+
+def test_un_courtier_ILLISIBLE_se_DIT_au_lieu_de_valoir_zero(F):
+    """⛔ Le défaut nommé le 09/10 : `max_positions_per_pair_indecidable` a
+    refusé 593 signaux parce qu'on ne POUVAIT PAS compter. Afficher « 0 » dans
+    ce cas ferait croire que la place est libre."""
+    t = F({}, [], None)
+
+    assert "illisibles" in t.lower(), t
+    assert "*0*" not in t
+
+
+def test_le_dernier_ordre_est_dit_en_MINUTES_puis_en_HEURES(F):
+    assert "il y a *12 min*" in F({"total": 0}, [], 12.4)
+    assert "il y a *3.0 h*" in F({"total": 0}, [], 180.0)
+    assert "aucun" in F({"total": 0}, [], None).lower()
+
+
+def test_AUCUN_refus_est_une_information_aussi(F):
+    """⚠️ Un silence sur les refus se lirait comme une panne du diagnostic."""
+    t = F({"total": 1, "radar": 1, "main": 0}, [], 5.0)
+
+    assert "aucun refus" in t.lower(), t
+
+
+def test_un_motif_INCONNU_ne_fait_pas_LEVER(F):
+    """⚠️ Un code de refus ajouté demain ne doit pas rendre le diagnostic
+    muet : il s'affiche brut, avec la mention qu'il n'est pas traduit."""
+    t = F({"total": 0}, [("un_motif_tout_neuf", 7)], None)
+
+    assert "un_motif_tout_neuf" in t
+    assert "non traduit" in t
