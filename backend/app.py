@@ -3420,6 +3420,48 @@ async def api_telegram_sales_webhook(request: Request):
 
     mot = text.lower().strip()
 
+    # ─── /trade : « regarde l'or maintenant, et dis-moi où ça bloque » ───
+    #
+    # Demandé par Xavier le 2026-10-10.
+    #
+    # ⛔ POURQUOI ICI, ET PAS DANS UN getUpdates. Le bot « IC MARKETS Trades »
+    # porte DÉJÀ ce webhook, et Telegram refuse `getUpdates` tant qu'un
+    # webhook est actif : « 409 Conflict: can't use getUpdates method while
+    # webhook is active ». Un écouteur posé dans le moniteur ne pouvait RIEN
+    # recevoir, et journalisait une erreur toutes les 5 s. Les messages de
+    # Xavier arrivent ICI.
+    #
+    # ⛔ ET LE SENS N'EST PAS PRIS EN COMPTE. Mesure du 2026-10-10 sur 5 jours
+    # (n=59, horizons 1 à 60 min, permutation des sens et instants au hasard) :
+    # aucune p-valeur sous 0,27, réussite 42-54 % ⇒ la direction est
+    # INDISCERNABLE DU HASARD. `/trade buy` est donc refusé AVEC son motif,
+    # jamais traité en silence comme `/trade`.
+    from backend.services import declencheur_manuel as _dm
+    from backend.services import diagnostic_or as _diag
+
+    _cible, _refus = _dm.parse_commande(text)
+    if _refus is not None:
+        await send_sales_text(_refus, parse_mode=None)
+        return {"ok": True, "command": "trade", "refuse": _refus[:40]}
+    if _cible is not None:
+        r = await _dm.declencher(_cible)
+        diag = _diag.texte()
+        if r.get("lance"):
+            fin = ("Aucun ordre ne peut sortir tant qu'une des portes "
+                   "ci-dessus est fermee."
+                   if ("FERME" in diag or "DESARMEE" in diag)
+                   else "S'il y avait un setup qualifie, l'ordre est parti.")
+            corps = "Analyse de l'or lancee sur XAU/USD\n\n" + diag + "\n\n" + fin
+        else:
+            corps = ("Refuse - " + str(r.get("motif", "motif inconnu"))
+                     + "\n\n" + diag)
+        # ⛔ parse_mode=None : les codes de refus sont en snake_case et le
+        # Markdown de Telegram lit un « _ » comme une italique OUVERTE.
+        # L'envoi rendait 400 et Xavier ne recevait RIEN.
+        sent = await send_sales_text(corps, parse_mode=None)
+        return {"ok": True, "command": "trade",
+                "lance": bool(r.get("lance")), "sent": bool(sent)}
+
     if mot in ("recap", "/recap"):
         recap_text = await _build_sales_recap_text()
         sent = await send_sales_text(recap_text)

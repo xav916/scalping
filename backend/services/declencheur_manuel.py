@@ -85,6 +85,50 @@ def _cooldown_sec() -> float:
     return max(v, 0.0)
 
 
+_NOMS_OR = {"", "OR", "GOLD", "XAU", "XAUUSD", "XAU/USD"}
+_SENS = {"BUY", "SELL", "ACHAT", "VENTE", "LONG", "SHORT"}
+
+
+def parse_commande(texte: str | None) -> tuple[str | None, str | None]:
+    """`"/trade ..."` → `(paire, refus)`. **Fonction pure.**
+
+    - `(None, None)` : ce n'est pas la commande, on ignore ;
+    - `(None, "…")` : c'est la commande, mais on la refuse, et voici pourquoi ;
+    - `("XAU/USD", None)` : on déclenche.
+
+    ⛔ Les trois cas sont distincts. Confondre « pas la commande » et « refus »
+    laisserait Xavier **sans réponse**, ce qui est exactement ce qui s'est
+    produit trois fois le 2026-10-10.
+
+    ⛔ Égalité STRICTE sur `/trade` : accepter tout ce qui *commence* par
+    `/trade` volerait le nom de commandes futures (`/trades`, `/tradeur`).
+    """
+    t = (texte or "").strip()
+    if not t.startswith("/") and t.strip().lower() != "trade":
+        return None, None
+    mot, _, reste = t.partition(" ")
+    mot = mot.split("@", 1)[0].strip().lower()      # /trade@mon_bot -> /trade
+    if mot not in ("/trade", "trade"):
+        return None, None
+    arg = reste.strip().upper()
+    if arg in _SENS:
+        # 🔑 Le refus EXPLIQUE. Lui laisser croire que son sens a ete pris en
+        # compte serait pire que de refuser.
+        return None, ("Le sens n'est pas pris en compte. Mesure du 10/10 sur "
+                      "5 jours (n=59, horizons 1 a 60 min) : la direction est "
+                      "indiscernable du hasard, aucune p-valeur sous 0,27. "
+                      "Tape /trade tout court - le radar regarde l'or avec "
+                      "ses propres criteres.")
+    if arg not in _NOMS_OR:
+        # ⚠️ PAS de nom de variable d'environnement ici : il porterait des
+        # underscores, et un `parse_mode` remis un jour ferait echouer l'envoi
+        # en 400 -- le refus deviendrait MUET. Les messages restent libres de
+        # tout metacaractere Markdown, par ceinture et bretelles.
+        return None, ("%s n'est pas ouverte au reel. Seul XAU/USD l'est."
+                      % arg)
+    return "XAU/USD", None
+
+
 def motif_de_refus(pair: str | None) -> str | None:
     """Le motif, en clair, ou ``None`` si on peut déclencher."""
     if not arme():
