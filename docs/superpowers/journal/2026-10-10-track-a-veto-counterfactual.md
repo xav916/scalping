@@ -1,11 +1,6 @@
-# 2026-10-10 — Track A × veto contrefactuel (auto)
-
-**Sample :** 971 réconciliés (INSUFFISANT — observer mais ne pas trancher)
-**Verdict :** insufficient
-
 # Track A × Veto géopolitique — analyse contrefactuelle
 
-**Généré :** 2026-10-10T06:08:38+00:00
+**Généré :** 2026-10-10T07:05:45+00:00
 **Source :** `shadow_setups` filtre `outcome IS NOT NULL AND geopolitical_features_json IS NOT NULL`
 **Échantillon :** 971 setups réconciliés
 **Groupe décisif (would VETO) :** 29 setups
@@ -102,3 +97,4 @@ Ces paires gagnent (ou perdent) **100 % du temps**, alors que l'ensemble gagne 5
 - Outcome `TIMEOUT` est compté dans `n_total` mais exclu du PF (pas de gain ni perte franche).
 - Track A reste **lecture seule** — le veto n'affecte ni les setups loggés ni les outcomes ; cette analyse est purement contrefactuelle.
 - Pour décision gate S6 (2026-06-06), viser `n ≥ 100` sur l'ensemble des systèmes Track A.
+
