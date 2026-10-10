@@ -148,10 +148,96 @@ def test_taux_ILLISIBLE_bloque_tout(monkeypatch):
     assert b.get("erreur") == "taux illisible"
 
 
-def test_une_position_A_LA_MAIN_n_est_jamais_touchee(monkeypatch):
+def test_une_position_A_LA_MAIN_n_est_pas_touchee_SANS_ARMEMENT(monkeypatch):
+    """⚠️ `EQUIPER_TRADES_MAIN` absent : le comportement d'avant le 2026-10-10
+    est EXACTEMENT conserve."""
+    monkeypatch.delenv("EQUIPER_TRADES_MAIN", raising=False)
     appels = _brancher(monkeypatch, [_pos(comment="")], {"ok": True})
     b = asyncio.run(B.appliquer())
     assert appels == [] and b["deplaces"] == []
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# EQUIPER LES TRADES A LA MAIN — 2026-10-10
+# ═══════════════════════════════════════════════════════════════════════
+#
+# 🔑 Mesure du 09/10 : 40 des 43 trades que Xavier ouvre dans le terminal MT5
+# n'ont NI stop NI objectif chez le courtier. Ses trois pires (258 min,
+# 296 min, 19 min) font -41,72 EUR a eux seuls ; sans eux la main finissait a
+# +19,34 EUR. La boucle qui lit deja les positions et appelle `/position/sltp`
+# les EQUIPE, plutot qu'une seconde boucle qui ferait la meme lecture.
+
+
+def _arme_equipeur(monkeypatch):
+    monkeypatch.setenv("EQUIPER_TRADES_MAIN", "1")
+    monkeypatch.setenv("XAU_SL_FIXE_EUR", "20")
+    monkeypatch.setenv("XAU_TP_FIXE_EUR", "2")
+
+
+def test_une_position_NUE_a_la_main_recoit_STOP_et_OBJECTIF(monkeypatch):
+    """🔑 Le cas qui motive tout : 40 trades sur 43."""
+    _arme_equipeur(monkeypatch)
+    nue = _pos(comment="", sl=0.0, tp=0.0, price_current=4200.0)
+    appels = _brancher(monkeypatch, [nue], {"ok": True})
+
+    b = asyncio.run(B.appliquer())
+
+    assert len(appels) == 1, b
+    a = appels[0]
+    assert a["ticket"] == 777
+    assert a["sl"] == pytest.approx(4200.0 - 20 * TAUX, abs=0.02)
+    assert a["tp"] == pytest.approx(4200.0 + 2 * TAUX, abs=0.02)
+    assert b["equipes"], b
+
+
+def test_un_STOP_deja_franchi_n_est_pas_pose_mais_l_OBJECTIF_l_est(monkeypatch):
+    """⛔ Poser un stop du mauvais cote du cours FERMERAIT la position, et le
+    cas doit se LIRE dans le bilan.
+
+    ⚠️ Mais l'OBJECTIF, lui, reste DEVANT le cours meme sur une position a
+    -25 EUR : le refuser aussi laisserait la position sans aucune borne, ce
+    qui est exactement le defaut qu'on repare. Les deux cotes se decident
+    SEPAREMENT — c'est la correction d'une premiere version de ce test qui
+    exigeait << rien du tout >>.
+    """
+    _arme_equipeur(monkeypatch)
+    perdante = _pos(comment="", sl=0.0, tp=0.0,
+                    price_current=4200.0 - 25 * TAUX)      # -25 EUR
+    appels = _brancher(monkeypatch, [perdante], {"ok": True})
+
+    b = asyncio.run(B.appliquer())
+
+    assert len(appels) == 1, b
+    assert appels[0]["sl"] is None, "il a pose un stop deja franchi"
+    assert appels[0]["tp"] == pytest.approx(4200.0 + 2 * TAUX, abs=0.02)
+    assert b["alertes"], "le stop franchi n'est pas DIT dans le bilan"
+    assert "franchi" in b["alertes"][0]["alerte"]
+
+
+def test_l_equipeur_tourne_meme_si_l_ECHELLE_est_desarmee(monkeypatch):
+    """⛔ Sinon equiper dependrait d'un reglage qui n'a rien a voir : un
+    `ECHELLE_STOP_OR=0` laisserait les trades a la main nus sans que personne
+    ne comprenne pourquoi."""
+    monkeypatch.delenv("ECHELLE_STOP_OR", raising=False)
+    _arme_equipeur(monkeypatch)
+    nue = _pos(comment="", sl=0.0, tp=0.0, price_current=4200.0)
+    appels = _brancher(monkeypatch, [nue], {"ok": True})
+
+    b = asyncio.run(B.appliquer())
+
+    assert len(appels) == 1, b
+
+
+def test_une_position_DU_RADAR_reste_du_ressort_de_l_ECHELLE(monkeypatch):
+    """⚠️ Deux autorites sur le meme stop seraient un conflit silencieux :
+    l'equipeur ne touche QUE ce que le radar n'a pas ouvert."""
+    _arme_equipeur(monkeypatch)
+    du_radar = _pos(sl=0.0, tp=0.0, price_current=4200.0)   # commentaire radar
+    appels = _brancher(monkeypatch, [du_radar], {"ok": True})
+
+    b = asyncio.run(B.appliquer())
+
+    assert not b.get("equipes"), b
 
 
 # ─── Le PONT : ce que le patch du 2026-10-09 garantit ───────────────────

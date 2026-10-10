@@ -153,10 +153,25 @@ def stop_vise_prix(position: dict, taux_eur_usd: float | None,
         sym = str(position.get("symbol") or "").upper()
         if "XAU" not in sym and "GOLD" not in sym:
             return None
-        # ⛔ Trades du RADAR seulement (decision de Xavier). On reutilise la
-        # marque de l'echelle plutot que d'en recopier une.
+        # ⛔ Trades du RADAR seulement (decision de Xavier du 2026-10-09). On
+        # reutilise la marque de l'echelle plutot que d'en recopier une.
+        #
+        # 🔑 EXCEPTION ARMEE PAR XAVIER le 2026-10-10 (`EQUIPER_TRADES_MAIN`).
+        # Mesure du 09/10 : ses trois pires trades du terminal (258 min,
+        # 296 min, 19 min) font -41,72 EUR a eux seuls -- exactement le profil
+        # que cette protection attrape. Sans cette adoption, les equiper d'un
+        # stop initial ne servirait qu'a moitie : il ne se resserrerait jamais.
+        #
+        # ⚠️ Desarme, le comportement d'avant est EXACTEMENT conserve.
         if E.MARQUE_RADAR not in str(position.get("comment") or ""):
-            return None
+            try:
+                from backend.services import equiper_trades_main as _eq
+                if not _eq.concerne(position):
+                    return None
+            except Exception:  # noqa: BLE001
+                # ⛔ Un import qui echoue ne doit pas ELARGIR la portee : on
+                # retombe sur le comportement strict.
+                return None
 
         sens = str(position.get("type") or "").lower()
         if sens not in ("buy", "sell"):

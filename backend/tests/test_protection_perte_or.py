@@ -297,3 +297,41 @@ def test_le_PLANCHER_et_le_CLIQUET_se_recouvrent_a_dessein(p):
         assert p.nouveau_stop_eur(stop, 5.0, 2.0) is None, stop
     # …et juste au-dessus, ca resserre bien.
     assert p.nouveau_stop_eur(7.01, 5.0, 2.0) == pytest.approx(7.0)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# ADOPTION DES TRADES A LA MAIN — 2026-10-10
+# ═══════════════════════════════════════════════════════════════════════
+#
+# 🔑 Mesure du 09/10 : les trois pires trades que Xavier a ouverts dans le
+# terminal MT5 (258 min, 296 min, 19 min) font **-41,72 EUR** a eux seuls, et
+# sans eux sa main finissait a +19,34 EUR. C'est exactement le profil que cette
+# protection attrape — mais elle ne les voyait pas.
+
+def test_un_trade_A_LA_MAIN_est_protege_QUAND_C_EST_ARME(p, monkeypatch):
+    """⛔ Sans cette adoption, leur equiper un stop initial ne servirait qu'a
+    moitie : il ne se resserrerait jamais."""
+    monkeypatch.setenv("EQUIPER_TRADES_MAIN", "1")
+
+    prix = p.stop_vise_prix(_pos(comment=""), TAUX)
+
+    assert prix is not None, "la protection ignore encore les trades a la main"
+
+
+def test_un_trade_A_LA_MAIN_est_IGNORE_sans_armement(p, monkeypatch):
+    """⚠️ Le pendant : desarme, le comportement d'avant est EXACTEMENT
+    conserve."""
+    monkeypatch.delenv("EQUIPER_TRADES_MAIN", raising=False)
+
+    assert p.stop_vise_prix(_pos(comment=""), TAUX) is None
+
+
+def test_un_trade_DU_RADAR_reste_protege_dans_les_deux_cas(p, monkeypatch):
+    """⚠️ L'adoption ELARGIT, elle ne remplace pas : ce qui etait protege doit
+    le rester."""
+    for arme in ("1", None):
+        if arme:
+            monkeypatch.setenv("EQUIPER_TRADES_MAIN", arme)
+        else:
+            monkeypatch.delenv("EQUIPER_TRADES_MAIN", raising=False)
+        assert p.stop_vise_prix(_pos(), TAUX) is not None, arme

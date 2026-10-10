@@ -239,9 +239,22 @@ def decision(position: dict, taux_eur_usd: float,
         if "XAU" not in sym and "GOLD" not in sym:
             return None
         # ⛔ Les positions ouvertes A LA MAIN dans le terminal ne portent pas
-        # notre marque. Elles ne sont pas les notres : on n'y touche pas.
+        # notre marque. Par defaut, elles ne sont pas les notres : on n'y
+        # touche pas.
+        #
+        # 🔑 EXCEPTION ARMEE PAR XAVIER le 2026-10-10 (`EQUIPER_TRADES_MAIN`).
+        # Mesure du 09/10 : 40 de ses 43 trades du terminal n'avaient NI stop
+        # NI objectif, donc aucun garde-fou ne les voyait, et ses trois pires
+        # (258 min, 296 min, 19 min) faisaient -41,72 EUR a eux seuls.
+        # `equiper_trades_main` leur pose des bornes ; sans cette adoption ici,
+        # le stop serait pose UNE FOIS et ne suivrait jamais le gain — tout
+        # l'interet disparaitrait.
+        #
+        # ⚠️ Desarme, le comportement d'avant est EXACTEMENT conserve.
         if MARQUE_RADAR not in str(position.get("comment") or ""):
-            return None
+            from backend.services import equiper_trades_main as _eq
+            if not _eq.concerne(position):
+                return None
         sens = str(position.get("type") or "").lower()
         if sens not in ("buy", "sell"):
             return None

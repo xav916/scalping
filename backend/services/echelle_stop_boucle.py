@@ -29,6 +29,7 @@ import os
 import httpx
 
 from backend.services import echelle_stop_or as E
+from backend.services import equiper_trades_main as EQ
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +100,11 @@ async def _poser(base: str, cle: str, ticket: int, sl: float,
 
 async def appliquer() -> dict:
     """Un passage. Rend un bilan lisible, ne lève jamais."""
-    if not E.arme():
+    # ⛔ L'EQUIPEUR NE DOIT PAS DEPENDRE DE L'ECHELLE (2026-10-10). Un
+    # `ECHELLE_STOP_OR=0` laisserait sinon les trades a la main NUS, sans que
+    # personne ne comprenne pourquoi : deux dispositifs distincts, deux
+    # interrupteurs distincts.
+    if not E.arme() and not EQ.arme():
         return {"arme": False}
     base = os.getenv("MT5_BRIDGE_LIVE_URL", "")
     cle = os.getenv("MT5_BRIDGE_LIVE_API_KEY", "")
@@ -118,8 +123,45 @@ async def appliquer() -> dict:
         return {"arme": True, "erreur": "positions illisibles"}
 
     bilan = {"arme": True, "positions": len(positions), "deplaces": [],
-             "deja_protege": 0, "refus_cliquet": 0, "echecs": []}
+             "deja_protege": 0, "refus_cliquet": 0, "echecs": [],
+             # 2026-10-10 : les trades ouverts A LA MAIN qu'on vient de borner,
+             # et ceux dont une borne etait DEJA FRANCHIE — ce dernier cas doit
+             # se LIRE, pas disparaitre.
+             "equipes": [], "alertes": []}
     for p in positions:
+        # ─── Equiper les trades A LA MAIN (2026-10-10) ──────────────────
+        #
+        # 🔑 Mesure du 09/10 : 40 des 43 trades que Xavier ouvre dans le
+        # terminal MT5 n'ont NI stop NI objectif chez le courtier, donc aucun
+        # garde-fou ne les voit. Ses trois pires (258 min, 296 min, 19 min)
+        # font -41,72 EUR a eux seuls.
+        #
+        # ⚠️ C'est fait ICI et non dans une seconde boucle : celle-ci lit deja
+        # les positions et sait appeler `/position/sltp`. Un second sondeur
+        # aurait double la lecture et derive.
+        eq = EQ.decision(p, taux)
+        if eq is not None:
+            if eq.get("alerte"):
+                bilan["alertes"].append(
+                    {"ticket": eq["ticket"], "alerte": eq["alerte"],
+                     "profit_eur": eq.get("profit_eur")})
+            if eq.get("sl") or eq.get("tp"):
+                r = await _poser(base, cle, eq["ticket"], eq.get("sl"),
+                                 eq.get("tp"))
+                if r.get("ok"):
+                    bilan["equipes"].append(
+                        {"ticket": eq["ticket"], "sl": eq.get("sl"),
+                         "tp": eq.get("tp"), "motif": eq["motif"]})
+                else:
+                    bilan["echecs"].append(
+                        {"ticket": eq["ticket"], "etape": "equipement",
+                         "reponse": r})
+                # 🔑 On ne passe PAS a l'echelle dans le meme tour : la
+                # position vient d'etre bornee, l'echelle la verra au tour
+                # suivant avec ses vraies bornes. Enchainer les deux ferait
+                # deux ordres de modification pour le meme ticket.
+                continue
+
         d = E.decision(p, taux)
         if d is None:
             continue

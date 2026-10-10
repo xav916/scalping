@@ -1148,6 +1148,98 @@ def tg_build_status_reply() -> str:
         return "\n".join(lines)
 
 
+# ─── La commande /trade (2026-10-10) ────────────────────────────────────
+#
+# Demandee par Xavier : << lancer un trade par Telegram >>.
+#
+# ⛔ CE QU'ELLE NE FAIT PAS : elle ne choisit pas le sens, et elle ne construit
+# aucun setup. Elle declenche le CYCLE DE PRODUCTION restreint a l'or
+# (`declencheur_manuel`), qui applique toutes les portes habituelles.
+#
+# 🔑 POURQUOI PAS LE SENS. Mesure du 2026-10-10 : la direction du radar est
+# indiscernable du hasard (5 jours, n=59, horizons 1 a 60 min, aucune p-valeur
+# sous 0,27, reussite 42-54 %), et celle de Xavier n'est mesurable que sur un
+# jour, ou elle ne bat pas un biais acheteur constant. Aucune base pour ouvrir
+# un chemin dedie vers l'argent reel.
+#
+# ⛔ Et l'entree officielle des signaux externes est barree par conception :
+#     bridge_destinations.py :  if externe:  # n'atteint JAMAIS l'argent reel
+#
+# ⚠️ On passe par `docker exec`, comme TOUS les autres jobs de cet hote
+# (`/opt/scalping/jobs/*.sh`) : aucun rebuild, et REM-002 reste intact.
+
+_TRADE_OR = {"", "OR", "GOLD", "XAUUSD", "XAU/USD", "XAU"}
+_TRADE_SENS = {"BUY", "SELL", "ACHAT", "VENTE", "LONG", "SHORT"}
+
+
+def parse_commande_trade(texte):
+    """Rend `"XAU/USD"`, `None`, ou `"REFUS: <motif>"`.
+
+    ⛔ `None` veut dire << ce n'est pas la commande >> ; `REFUS:` veut dire
+    << c'est la commande, mais je ne la fais pas, et voici pourquoi >>. Les
+    confondre laisserait Xavier sans reponse.
+    """
+    t = (texte or "").strip()
+    if not t.startswith("/"):
+        return None
+    mot, _, reste = t.partition(" ")
+    mot = mot.split("@", 1)[0].lower()      # /trade@mon_bot -> /trade
+    # ⛔ Egalite STRICTE : accepter tout ce qui commence par /trade volerait
+    # le nom de commandes futures (/trades, /tradeur).
+    if mot != "/trade":
+        return None
+    arg = reste.strip().upper()
+    if arg in _TRADE_SENS:
+        return ("REFUS: le sens n'est pas pris en compte. Mesure du 10/10 sur "
+                "5 jours (n=59) : la direction est indiscernable du hasard, "
+                "aucune p-valeur sous 0,27. `/trade` tout court demande au "
+                "radar de regarder l'or maintenant, avec ses propres criteres.")
+    if arg not in _TRADE_OR:
+        return ("REFUS: " + arg + " n'est pas ouverte au reel. Seul XAU/USD "
+                "l'est (MT5_BRIDGE_LIVE_WHITELIST_PAIRS).")
+    return "XAU/USD"
+
+
+def declencher_analyse_or(paire):
+    """Declenche le cycle de production sur `paire`, via `docker exec`.
+
+    Rend `(ok, texte)`. Ne leve jamais : appele depuis le fil Telegram.
+    """
+    code = (
+        "import asyncio, json;"
+        "from backend.services import declencheur_manuel as D;"
+        "print(json.dumps(asyncio.run(D.declencher(%r))))" % paire
+    )
+    try:
+        p = subprocess.run(
+            ["docker", "exec", "-w", "/app", "-e", "PYTHONPATH=/app",
+             "scalping-radar", "python", "-c", code],
+            capture_output=True, text=True, timeout=120,
+        )
+    except subprocess.TimeoutExpired:
+        return False, ("⏱️ Le cycle n'a pas repondu en 120 s. Il tourne "
+                       "peut-etre encore : regarde les ordres dans un instant.")
+    except Exception as e:  # noqa: BLE001
+        return False, "❌ Impossible de joindre le radar : %s" % e
+    sortie = (p.stdout or "").strip().splitlines()
+    for ligne in reversed(sortie):
+        try:
+            d = json.loads(ligne)
+        except Exception:  # noqa: BLE001
+            continue
+        if d.get("lance"):
+            return True, ("✅ *Analyse de l'or lancee*\n\n"
+                          "Le cycle de production a tourne sur `%s` avec toutes "
+                          "ses portes. S'il y avait un setup qualifie, l'ordre "
+                          "est parti ; sinon rien ne s'est passe, et c'est "
+                          "voulu : `/trade` supprime une attente, il ne "
+                          "fabrique pas de signal." % d.get("paire"))
+        return False, "🚫 *Refuse* — %s" % d.get("motif", "motif inconnu")
+    err = (p.stderr or "").strip().splitlines()
+    return False, ("❌ Le radar n'a rien rendu de lisible.\n`%s`"
+                   % (err[-1][:300] if err else "aucune sortie"))
+
+
 def telegram_listener_thread():
     if not TELEGRAM_ENABLED:
         log.info("telegram disabled, /status listener not started")
@@ -1176,13 +1268,26 @@ def telegram_listener_thread():
                 chat_id = str((msg.get("chat") or {}).get("id", ""))
                 if chat_id != TELEGRAM_CHAT_ID:
                     continue
+                cible = parse_commande_trade(text)
+                if cible is not None:
+                    if cible.startswith("REFUS:"):
+                        tg_send("🚫 " + cible[len("REFUS:"):].strip())
+                    else:
+                        tg_send("⏳ J'analyse l'or maintenant...")
+                        ok, reponse = declencher_analyse_or(cible)
+                        tg_send(reponse)
+                    continue
                 if text.lower().startswith("/status"):
                     tg_send(tg_build_status_reply())
                 elif text.lower().startswith("/start"):
                     tg_send(
                         "👋 *Surveillance infra active*\n\n"
                         "Envoie `/status` à tout moment pour voir l'état des composants "
-                        "(bridges, disque, réseau, radar).\n\n"
+                        "(bridges, disque, réseau, radar).\n"
+                        "Envoie `/trade` pour que le radar regarde l'or tout de suite "
+                        "— avec toutes ses portes. Il choisit le sens : la mesure du "
+                        "10/10 a montré qu'aucune direction, ni la sienne ni la tienne, "
+                        "ne se distingue du hasard.\n\n"
                         "ℹ️ Tu reçois automatiquement une alerte ici dès qu'un composant tombe "
                         "en panne ou se rétablit."
                     )
