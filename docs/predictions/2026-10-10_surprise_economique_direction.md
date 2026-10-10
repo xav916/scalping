@@ -174,3 +174,99 @@ stable sur les deux moitiés, et rendement signé **supérieur au spread**.
 **0 code retenu sur 2025 seule**, par manque d'effectif. Et je redis qu'elle
 est **faible** : si elle se vérifie, elle ne réfute pas la piste du
 calendrier — elle dit qu'une année ne suffit pas.
+
+---
+
+# VERDICT, le 2026-10-10
+
+## ✅ LE PREMIER FAIT POSITIF DE LA JOURNÉE : l'or RÉAGIT, et fort
+
+    volatilite de fond 2025 : amplitude M5 mediane  1,952 $
+    a l'instant d'une publication High americaine :  4,510 $
+    ⇒ 2,31x, sur 383 publications
+
+Ce n'est pas un signal directionnel, mais c'est un **mécanisme réel et
+massif** : l'amplitude d'une bougie de 5 minutes **plus que double** à la
+publication. Rien de ce que j'ai mesuré aujourd'hui sur les motifs n'approche
+cet ordre de grandeur.
+
+## ✅ ET LES HORODATAGES DES ÉVÉNEMENTS SONT SAINS
+
+    sans aucun decalage, ts_utc brut : 85,7 % dans les heures attendues
+    les 6 plus frequentes : 12h30 (143x), 13h30 (63), 14h00 (56),
+                            15h00 (31), 14h30 (31), 13h45 (22)
+
+🔑 **`ts_utc` est du vrai UTC.** C'est le calendrier des publications
+américaines, reconnaissable à l'œil. Le côté **événements** de cette piste est
+donc fiable.
+
+## ⛔ MAIS MA PORTE STRUCTURELLE ÉTAIT MAL CONÇUE
+
+Je l'avais codée en décalant **les événements** puis en regardant leurs heures.
+C'est circulaire et vide de sens : décaler un événement de +600 min déplace
+forcément son heure hors des heures attendues (0,0 %). Elle ne testait **pas**
+l'alignement du magasin.
+
+⇒ Ce qui corrobore le **+600 min** reste donc deux méthodes, pas trois :
+les prix d'exécution de 2026 (12/12) et le pic de volatilité de 2025 (+600
+dans le groupe de tête). C'est moins que ce que j'avais annoncé.
+
+## ⛔ ET J'AI APPLIQUÉ MON PROPRE PLAFOND AU MAUVAIS NOMBRE DE CELLULES
+
+J'avais écrit « |t| > 2,730, le plafond pour ~96 cellules ». La mesure en a
+examiné **305** (61 codes × 5 horizons).
+
+La table simulée du laboratoire donne **3,043 à 256 cellules** — donc au-delà
+de **3,08** pour 305. Avec le bon plafond :
+
+| cellule | h | n | rendement signé | t | avec plafond 2,730 | avec le VRAI plafond |
+|---|---|---|---|---|---|---|
+| `current-account-nsa` | 120 | 32 | +5,750 $ | **+3,23** | retenu | **retenu, de justesse** |
+| `michigan-consumer-sentiment` | 15 | 24 | −4,161 $ | −2,95 | retenu | ⛔ **recalé** |
+| `foreign-exchange-reserves` | 15 | 77 | −1,097 $ | −2,75 | retenu | ⛔ **recalé** |
+
+⇒ **Une cellule sur 305**, et non trois. Et « une cellule qui passe » est
+exactement ce que le plafond est calibré pour produire **sous l'hypothèse
+nulle** — le même constat que le test de direction deux heures plus tôt.
+
+⚠️ `current-account-nsa` n'a par ailleurs **aucun mécanisme plausible** sur
+l'or à 2 heures, et n = 32. Je ne la présente pas comme une trouvaille.
+
+⚠️ Et le critère « signe cohérent avec la mécanique macro » que j'avais
+pré-inscrit n'a **jamais été implémenté**. Je ne peux donc pas dire que les
+signes observés sont cohérents : je ne les ai pas confrontés.
+
+## MA PRÉDICTION
+
+Posée d'avance : **0 code retenu sur 2025 seule**, par manque d'effectif.
+
+- ⛔ **Réfutée à la lettre** : une cellule franchit le plafond corrigé.
+- ✅ **Mais le motif que j'avais annoncé est le bon** : 61 codes sur 493
+  atteignent n ≥ 24. **432 codes sont écartés faute d'effectif** — exactement
+  ce que je prédisais, et la raison de fond pour laquelle une année ne tranche
+  rien.
+
+## ⇒ CE QUI BLOQUE N'EST PAS L'IDÉE, C'EST LE MAGASIN DE BOUGIES
+
+| | disponible | exploité ici |
+|---|---|---|
+| événements avec surprise | **51 666** (2021→2026) | 8 513 (2025) |
+| codes avec n ≥ 24 | — | 61 sur 493 |
+| bougies intrajournalières | 2023-08 → 2026-08 | **2025 seulement** |
+
+Les trois défauts du magasin, mesurés aujourd'hui :
+
+1. **deux conventions horaires** (coupure hebdo samedi 06h55 en 2023-2024,
+   samedi 23h55 en 2025-2026) ;
+2. **2026 troué** — 1 seule coupure hebdomadaire détectée sur 7 mois ;
+3. **décalage de +600 min** non documenté, et vérifiable seulement sur 2026
+   faute de trades d'or antérieurs.
+
+⇒ **Le chantier qui débloquerait cette piste n'est pas une mesure, c'est une
+réparation de données** : normaliser la convention, resynchroniser 2026,
+étendre vers 2021. Avec 51 666 événements au lieu de 8 513, les codes
+mensuels passeraient de 12 à ~70 observations, et le plafond deviendrait
+franchissable autrement que par hasard.
+
+⚠️ Je ne l'entreprends pas sans décision : c'est un chantier de données, pas
+une mesure, et il touche un magasin que la production lit.
