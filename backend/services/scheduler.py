@@ -629,8 +629,17 @@ async def _protection_perte_cycle() -> None:
     alors de faire le travail, a l'identique.
     """
     try:
+        import asyncio as _aio
+
         from scripts.protection_perte_or import appliquer
-        b = appliquer()
+        # ⛔ DEFAUT CORRIGE LE JOUR MEME : `appliquer` est SYNCHRONE et parle au
+        # pont avec `httpx` bloquant (timeouts de l'ordre de 10-15 s). L'appeler
+        # directement dans un travail async GELE TOUTE LA BOUCLE pendant ce
+        # temps -- donc aussi le cycle d'analyse a 5 s et l'echelle a 1 s.
+        # 🔑 A 60 s de cadence le cout moyen serait negligeable (~20 ms), mais
+        # ce n'est pas la moyenne qui compte : c'est le jour ou le pont ne
+        # repond pas. On le pousse donc dans un THREAD.
+        b = await _aio.get_running_loop().run_in_executor(None, appliquer)
         if b.get("resserres"):
             logger.info("protection perte : %d resserre(s)", b["resserres"])
         if b.get("echecs"):

@@ -78,3 +78,47 @@ def test_la_cadence_se_lit(monkeypatch, valeur, attendu):
     monkeypatch.setenv("PROTECTION_PERTE_INTERVAL_SEC", valeur)
     lu = os.getenv("PROTECTION_PERTE_INTERVAL_SEC", "0")
     assert int(lu or "0") == attendu
+
+
+@pytest.mark.asyncio
+async def test_il_ne_BLOQUE_PAS_la_boucle_quand_le_pont_traine(monkeypatch):
+    """⛔ LE DEFAUT QUE J'AI LIVRE PUIS CORRIGE LE JOUR MEME.
+
+    `appliquer` est SYNCHRONE et parle au pont avec `httpx` bloquant. Appele
+    directement dans un travail async, il gelait toute la boucle -- donc le
+    cycle d'analyse a 5 s et l'echelle a 1 s avec lui.
+
+    Ce test le prouve : pendant que la protection dort 0,3 s, une autre tache
+    doit AVANCER. Sans l'executor, elle n'avance pas.
+    """
+    import asyncio
+    import time
+
+    import scripts.protection_perte_or as P
+
+    def qui_traine(a_blanc: bool = False):
+        time.sleep(0.3)                     # le pont qui ne repond pas
+        return {"resserres": 0, "ecartes": 0, "echecs": 0}
+
+    monkeypatch.setattr(P, "appliquer", qui_traine)
+
+    temoin = {"tours": 0}
+
+    async def autre_tache():
+        for _ in range(100):
+            temoin["tours"] += 1
+            await asyncio.sleep(0.005)
+
+    # ⛔ MA PREMIERE VERSION DE CE TEST ETAIT VACUEUSE, et la reinjection l'a
+    # dit : un `gather` laisse l'autre tache FINIR apres le deblocage, donc le
+    # compte final etait le meme dans les deux cas. Ce qu'il faut mesurer, c'est
+    # ce qui a avance PENDANT la fenetre de blocage.
+    tache = asyncio.ensure_future(autre_tache())
+    await asyncio.sleep(0)                  # laisse la tache demarrer
+    depart = temoin["tours"]
+    await S._protection_perte_cycle()       # 0,3 s de pont qui traine
+    pendant = temoin["tours"] - depart
+    tache.cancel()
+    # 🔑 Avec l'executor, l'autre tache tourne pendant les 0,3 s (~60 tours).
+    # Sans lui, elle est GELEE et n'en fait aucun.
+    assert pendant >= 10, pendant
