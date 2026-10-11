@@ -78,3 +78,65 @@ permettrait. Je publie la **durée** pour que ce coût caché soit visible.
 
 ⇒ Donc ma réponse attendue à « est-ce plus viable ? » est : **oui sur le
 risque, non sur le rendement** — et je le dirai avec les deux chiffres.
+
+
+---
+
+# VERDICT — 2026-10-11
+
+`scripts/banc_regle_xavier_9eur.py`. 6 668 trades aveugles, 99 999 bougies M1
+du courtier, six strategies en parallele, palier arme sur la cloture.
+
+| | EUR/trade | ecart-type | pire journee | reussite | duree |
+|---|---|---|---|---|---|
+| **X sa regle (TP fixe)** | −0,0844 | 2,44 | **−1,43** | 55,74 % | 5,7 min |
+| **X+ sa regle, TP MOBILE** | **−0,0287** | 2,54 | −1,30 | 55,58 % | 6,1 min |
+| A1 la production | −0,0677 | 5,84 | −4,03 | 92,19 % | 28,9 min |
+| A2 production + protection | −0,0247 | 2,99 | −2,15 | 72,89 % | 8,5 min |
+| B2 stop −2 | −0,0714 | 2,00 | **−0,12** | 49,75 % | 5,3 min |
+| T temoin | −0,1479 | 6,44 | −3,56 | 90,45 % | 36,4 min |
+
+Issues de sa regle : TP 2 660, PROTECTION 1 617, POINT MORT 1 261, ECHELLE
+1 057, **SL de depart 72** (contre 516 pour la production).
+🔑 Son stop de depart a −9 € n'est touche que **1,1 % du temps** : la
+protection le ramene avant.
+
+## ⇒ EST-CE PLUS VIABLE ? OUI SUR LE RISQUE, NON SUR LE RENDEMENT
+
+    contre la production (A1)   ecart -0,1023 EUR/jour   t **-1,06**   signe INVERSE
+    contre A2                   ecart -0,0386            t **-1,00**   stable
+    contre B2 (stop -2)         ecart -0,0210            t **-0,60**   signe INVERSE
+    contre le temoin            ecart -0,0431            t **-0,44**   stable
+
+⇒ **Aucun ecart de rendement n'est etabli** : ma prediction 1 tient.
+✅ Mais sur la queue, c'est net : **ecart-type 5,84 → 2,44 (÷2,4)** et **pire
+journee −4,03 → −1,43 €** contre la production.
+
+## 🔑 LE SEUL RESULTAT SIGNIFICATIF DE LA JOURNEE : GARDEZ L'OBJECTIF MOBILE
+
+    sa regle a TP FIXE  contre  la meme a TP MOBILE
+    ecart **-0,0563 EUR/trade**   **t = -8,18**   signe STABLE   ***
+
+Sa description ne mentionnait pas d'objectif mobile ; le code, lui, releve le
+TP a `palier + 2 €`. **Le garder vaut 0,0563 € par trade**, et c'est le `t` le
+plus franc de tous les bancs du jour.
+
+⇒ Avec l'objectif mobile, sa regle passe de **−0,0844 a −0,0287 EUR/trade** —
+soit la **meilleure des six**, a egalite avec A2 (−0,0247).
+
+## MES PREDICTIONS
+
+1. ✅ « aucun |t| > 2,5 contre A1, A2 ou B2 » : **juste** (−1,06 / −1,00 / −0,60).
+2. ⚠️ « pire journee entre −0,3 et −1,2 € » : **presque** — mesuree **−1,43 €**,
+   donc hors de ma bande, et je le dis plutot que d'arrondir.
+3. ⚠️ « tres proche de B2 » : juste sur l'ecart-type (2,44 contre 2,00),
+   **faux sur la queue** — la pire journee de B2 est **12 fois** meilleure
+   (−0,12 contre −1,43).
+4. ✅ « son TP fixe fera moins bien que le TP mobile » : **juste, et c'est le
+   resultat le plus solide du banc**.
+
+## ⚠️ LA LIMITE, inchangee
+
+Duree **5,7 min contre 28,9** pour la production ⇒ **5 fois plus de rotation**,
+donc 5 fois plus de spread **si on recycle la place liberee**. Ce banc ne le lui
+fait pas payer : les entrees sont fixes.
