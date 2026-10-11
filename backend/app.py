@@ -3016,6 +3016,56 @@ async def api_admin_notify_infra_telegram(
         #
         # 🔑 La marque est donc posee apres un 200 confirme, plus bas.
 
+    # ── TROIS ETAGES sur le fil de Xavier (2026-10-11) ────────────────
+    #
+    # Sa demande : « rationaliser les messages qui me sont envoyes par
+    # Telegram sur le fil IC Markets ». La regle qu'il a choisie : un message
+    # reste immediat seulement s'il change ce qu'il FAIT maintenant ; les
+    # mesures attendent le bilan du jour ; ce qui ne parle pas de son argent
+    # part sur infra.
+    #
+    # 🔑 L'ACCROCHE EST ICI, APRES LE COOLDOWN, et ce n'est pas indifferent :
+    # place avant, le bilan rangerait tous les doublons que le cooldown
+    # ecarte deja — un bilan de mille lignes dont neuf cent nonante sont le
+    # meme fait.
+    #
+    # ⛔ INERTE sans `ETAGES_NOTIFICATION` : `router` rend alors le canal
+    # d'origine, et il JOURNALISE ce que l'armement ferait. On peut donc lire
+    # la decision avant de la prendre.
+    try:
+        from backend.services import etages_notification as _et
+        canal_etage, _differer, _niveau = _et.router(channel_norm, dedup_key)
+        if _differer:
+            from backend.services import digest_telegram as _dg
+            _id = _dg.ranger(channel_norm, dedup_key, title, body)
+            if _id:
+                return {"sent": False, "differe": "bilan_du_jour",
+                        "dedup_key": dedup_key, "etage": _niveau, "id": _id}
+            # ⛔ Le magasin n'a pas pris le message : on ENVOIE plutot que de
+            # le perdre. Rationaliser un fil en jetant des messages serait le
+            # pire des deux.
+            logger.warning(
+                "etages_notification: bilan indisponible pour %r — envoi "
+                "immediat plutot que perte", dedup_key)
+        elif canal_etage != channel_norm:
+            # Vers infra : il faut RE-RESOUDRE le jeton et le salon, sinon le
+            # message partirait sur l'ancien fil avec une decision de routage
+            # qui dit le contraire.
+            channel_norm = canal_etage
+            bot_token = getattr(_cfg, "INFRA_TELEGRAM_BOT_TOKEN", "")
+            chat_id = getattr(_cfg, "INFRA_TELEGRAM_CHAT_ID", "")
+            if not bot_token or not chat_id:
+                raise HTTPException(
+                    status_code=503,
+                    detail="infra telegram not configured on backend")
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        # ⛔ Un etage indecidable ne doit pas faire disparaitre le message :
+        # on part comme avant, et on le DIT.
+        logger.warning("etages_notification: routage impossible (%s) — envoi "
+                       "sur %s comme avant", e, channel_norm)
+
     # HTML depuis 2026-05-13 : Markdown legacy cassait dès qu'un body
     # contenait un underscore (88 HTTP 400 / 96h observés). html.escape
     # neutralise les <>& du contenu fourni par le caller, et HTML ignore
