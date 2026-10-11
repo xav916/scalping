@@ -88,3 +88,61 @@ sur les deux moitiés**.
 
 ⇒ Si le live bat le close avec les trois conditions, j'ai tort sur le moment de
 la décision, et l'entrée doit passer aux ticks.
+
+
+---
+
+# VERDICT — 2026-10-11
+
+`scripts/banc_detection_live_ticks.py`. **3 298 970 ticks**, 15 jours,
+**4 116 bougies M5 reconstruites depuis les ticks**, **228 413 instants
+d'évaluation** (toutes les 5 s).
+
+| vue | n | bon sens | mauvais | écart | t |
+|---|---|---|---|---|---|
+| **CLOSE** production (la prod) | 6 909 | **+0,0550** | +0,0297 | **+0,0300** | +0,59 |
+| CLOSE symétrique | 6 909 | −0,0767 | −0,0779 | +0,0089 | +0,13 |
+| **LIVE BRUT** production | **14 739** | +0,0276 | +0,0249 | +0,0079 | +0,26 |
+| LIVE BRUT symétrique | 14 739 | −0,0698 | −0,0986 | +0,0357 | +0,71 |
+| **LIVE CONFIRMÉ** production | 10 324 | +0,0163 | +0,0014 | +0,0185 | +0,36 |
+| LIVE CONFIRMÉ symétrique | 10 324 | −0,0864 | −0,0800 | +0,0035 | +0,05 |
+
+## ⇒ 0 VUE RETENUE SUR 4. Tous les |t| ≤ 0,71.
+
+## ✅ CE QUE XAVIER AVAIT RAISON DE DIRE
+
+**Le live voit 2,13 fois plus de motifs** : 14 739 contre 6 909. Il y a donc
+bien **7 830 détections que la clôture rate entièrement** — des figures formées
+et défaites à l'intérieur d'une bougie. Sa critique de l'existant était
+**mécaniquement juste**.
+
+## ⛔ ET CE QUE LA MESURE AJOUTE
+
+**Aucune de ces détections supplémentaires ne porte de direction.** L'écart
+`bon sens − mauvais sens` ne bouge pas : **+0,0079** en live brut contre
+**+0,0300** à la clôture, et les deux sont indistinguables de zéro (t +0,26 et
++0,59).
+
+🔑 **La latence de la bougie n'est donc pas le problème.** Le problème est
+qu'il n'y a pas de direction à capturer — **ni tôt, ni tard**. Voir le motif
+cinq minutes plus tôt ne sert à rien quand le motif ne dit rien.
+
+⚠️ Et sur ces 15 jours, **la clôture a le MEILLEUR écart** (+0,0300) : attendre
+n'est pas un handicap mesurable, c'est même légèrement mieux. Mais t = +0,59,
+donc ce n'est pas établi non plus — je ne le présente pas comme un argument
+pour la clôture.
+
+## MES QUATRE PRÉDICTIONS
+
+1. ✅ « le live ne battra pas le close » : **juste** (0 sur 4).
+2. ⛔ « le LIVE BRUT produira 5 à 20 fois plus d'entrées » : **FAUX**. C'est
+   **×2,13**, et le confirmé ×1,49. Le repeignage est réel mais **bien plus
+   faible** que je l'annonçais.
+3. ⛔ « le LIVE BRUT sera le pire en euros » : **faux** aussi. L'ordre est
+   CLOSE (+0,0550) > LIVE BRUT (+0,0276) > **LIVE CONFIRMÉ (+0,0163)** — c'est
+   la version *confirmée* qui est la plus basse, pas la brute.
+4. ✅ « le live verra des motifs que le close rate » : **juste**, 7 830 de plus.
+
+⇒ **Sixième zéro indépendant sur la direction**, et le premier qui porte sur le
+**MOMENT de la décision** plutôt que sur l'échelle ou la géométrie. La question
+est close : ni les motifs, ni l'échelle, ni l'instant ne portent de direction.

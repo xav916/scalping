@@ -64,45 +64,36 @@ def charger():
     return ts, bid, ask
 
 
-def bougies_depuis_ticks(ts, mid, i, fin_exclue=False):
-    """Les N_BOUGIES dernieres bougies M5 vues depuis le tick `i`.
+def precalculer_seaux(ts, mid):
+    """Les bougies M5, calculees en UN SEUL passage.
 
-    🔑 La derniere est PARTIELLE : de sa frontiere de 5 min jusqu'au tick `i`.
-    Avec `fin_exclue`, on la retire — c'est la vue de la production, qui
-    n'attend que des bougies CLOSES.
+    DEFAUT CORRIGE : ma premiere version reconstruisait les 50 bougies DEPUIS
+    ZERO a chaque instant d'evaluation -- ~73 000 ticks remontes, 228 413 fois,
+    soit seize milliards d'operations. Le banc n'aurait jamais fini.
+    Un seul passage suffit, et l'etat de la bougie EN COURS se maintient au fil
+    de l'eau dans la boucle principale.
     """
-    t_fin = ts[i]
-    base = int(t_fin // PAS_M5) * PAS_M5
-    debut = base - (N_BOUGIES - 1) * PAS_M5
-    # recule jusqu'au premier tick de la fenetre
-    j = i
-    while j > 0 and ts[j] >= debut:
-        j -= 1
-    seaux = {}
-    for k in range(j, i + 1):
-        b = int(ts[k] // PAS_M5) * PAS_M5
-        if b < debut:
-            continue
-        s = seaux.get(b)
-        p = mid[k]
+    bornes = []
+    ohlc = {}
+    for i in range(len(ts)):
+        b = int(ts[i] // PAS_M5) * PAS_M5
+        p = mid[i]
+        s = ohlc.get(b)
         if s is None:
-            seaux[b] = [p, p, p, p]
+            ohlc[b] = [p, p, p, p]
+            bornes.append(b)
         else:
             if p > s[1]:
                 s[1] = p
             if p < s[2]:
                 s[2] = p
             s[3] = p
-    bornes = sorted(seaux)
-    if fin_exclue and bornes and bornes[-1] == base:
-        bornes = bornes[:-1]
-    out = []
-    for b in bornes:
-        o, h, l, c = seaux[b]
-        out.append(Candle(
-            timestamp=dt.datetime.fromtimestamp(b, dt.timezone.utc),
-            open=o, high=h, low=l, close=c, volume=0))
-    return out
+    return bornes, ohlc
+
+
+def _candle(b, o, h, l, c):
+    return Candle(timestamp=dt.datetime.fromtimestamp(b, dt.timezone.utc),
+                  open=o, high=h, low=l, close=c, volume=0)
 
 
 def rejouer(ts, bid, ask, i, achat, borne):
@@ -165,24 +156,46 @@ def main():
           % (len(instants), CADENCE_SEC))
 
     # --- detection, trois facons de regarder ---
+    bornes, ohlc = precalculer_seaux(ts, mid)
+    index_borne = {b: n for n, b in enumerate(bornes)}
+    print("bougies M5 reconstruites depuis les ticks : %d" % len(bornes))
     vues = {"CLOSE": [], "LIVE BRUT": [], "LIVE CONFIRME": []}
     repos = {"CLOSE": {}, "LIVE BRUT": {}, "LIVE CONFIRME": {}}
     vu_depuis = {}            # motif -> instant de premiere apparition en live
     derniere_cloture = None
+    part_base = None          # la bougie EN COURS, maintenue au fil de l'eau
+    part = None
+    curseur = 0
     for compte, i in enumerate(instants):
-        base = int(ts[i] // PAS_M5) * PAS_M5
+        while curseur <= i:
+            b = int(ts[curseur] // PAS_M5) * PAS_M5
+            p = mid[curseur]
+            if b != part_base:
+                part_base, part = b, [p, p, p, p]
+            else:
+                if p > part[1]:
+                    part[1] = p
+                if p < part[2]:
+                    part[2] = p
+                part[3] = p
+            curseur += 1
+        base = part_base
+        k = index_borne.get(base, -1)
+        if k < N_BOUGIES:
+            continue
         # ---- CLOSE : une seule evaluation par bougie close ----
         if base != derniere_cloture:
             derniere_cloture = base
-            cs = bougies_depuis_ticks(ts, mid, i, fin_exclue=True)
+            cs = [_candle(b, *ohlc[b]) for b in bornes[k - N_BOUGIES:k]]
             if len(cs) >= 20:
                 for p in detect_patterns(cs):
                     nom = p.pattern.value
                     if ts[i] - repos["CLOSE"].get(nom, -1e18) >= REPOS_SEC:
                         repos["CLOSE"][nom] = ts[i]
                         vues["CLOSE"].append((i, _est_un_achat(p.pattern), nom))
-        # ---- LIVE : sur la bougie EN COURS ----
-        cs = bougies_depuis_ticks(ts, mid, i, fin_exclue=False)
+        # ---- LIVE : avec la bougie EN COURS, encore ouverte ----
+        cs = [_candle(b, *ohlc[b]) for b in bornes[k - N_BOUGIES + 1:k]]
+        cs.append(_candle(base, *part))
         if len(cs) >= 20:
             presents = set()
             for p in detect_patterns(cs):
