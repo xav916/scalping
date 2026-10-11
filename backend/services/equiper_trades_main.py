@@ -46,6 +46,15 @@ sens. Ce module **borne le risque de ce qu'il ouvre lui-même**, point.
 `XAU_SL_FIXE_EUR` et `XAU_TP_FIXE_EUR` — exactement ceux du chemin
 automatique. Écrire 20 et 2 dans ce fichier aurait créé une seconde source de
 vérité, qui dérive le jour où l'une des deux bouge.
+
+⚠️ **Et quand `XAU_SL_FIXE_EUR` vaut 0, le stop retombe sur `_distance_sl_or`**
+— la fonction même du chemin automatique, appelée et non recopiée. Sans ce
+repli, passer l'automatique au pourcentage **éteignait** l'équipement des
+trades à la main en silence, et le trou était du côté de la PERTE : la
+protection exige un stop existant pour le resserrer, donc un trade à la main
+restait sans aucun plancher. C'est arrivé le 2026-10-11, et ça a duré une
+heure sur l'argent réel.
+→ `project_le_neuf_euros_de_xavier_2026_10_11`
 → `feedback_router_une_source_en_laisser_deux`
 
 ⛔ Et un réglage **illisible rend le module muet** au lieu de retomber sur une
@@ -76,6 +85,33 @@ def arme() -> bool:
         "1", "true", "on", "yes", "oui")
 
 
+# Les quatre etats d'un reglage en euros. ⛔ ILLISIBLE et INERTE ne sont PAS
+# la meme chose, et les confondre a coute une heure de trades a la main sans
+# plancher le 2026-10-11 : vide ou 0 est une DECISION (<< le pourcentage
+# gouverne >>), une valeur negative ou non numerique est une ERREUR.
+_ABSENT, _INERTE, _ILLISIBLE, _POSE = "absent", "inerte", "illisible", "pose"
+
+
+def _classer(nom: str) -> tuple[str, float | None]:
+    """``(etat, valeur)`` d'un reglage en euros. Voir les quatre etats ci-dessus."""
+    brut = (os.getenv(nom) or "").strip()
+    if not brut:
+        return (_ABSENT, None)
+    try:
+        v = float(brut.replace(",", "."))
+    except (TypeError, ValueError):
+        logger.warning("equiper_trades_main: %s illisible (%r) — rien ne sera "
+                       "pose, et on ne retombe PAS sur un defaut", nom, brut)
+        return (_ILLISIBLE, None)
+    if v == 0:
+        return (_INERTE, None)
+    if v < 0:
+        logger.warning("equiper_trades_main: %s = %s, negatif — rien ne sera "
+                       "pose, et on ne retombe PAS sur un defaut", nom, v)
+        return (_ILLISIBLE, None)
+    return (_POSE, v)
+
+
 def _reglage(nom: str) -> float | None:
     """Un réglage en euros, strictement positif, ou ``None``.
 
@@ -98,8 +134,63 @@ def _reglage(nom: str) -> float | None:
     return v
 
 
-def stop_eur() -> float | None:
-    return _reglage("XAU_SL_FIXE_EUR")
+def stop_eur(prix: float | None = None,
+             taux_eur_usd: float | None = None) -> float | None:
+    """La distance de stop a poser, en euros, ou ``None``.
+
+    🔑 LE DEFAUT QUE CE REPLI REPARE, et il a vecu une heure sur l'argent reel.
+    `XAU_SL_FIXE_EUR` sert DEUX chemins qui lui donnent des sens OPPOSES :
+
+        chemin AUTOMATIQUE   0 = inerte, c'est `XAU_SL_PCT` qui gouverne
+        chemin A LA MAIN     0 = ne pose RIEN  (seule source du stop)
+
+    Le 2026-10-11 a 18h33, en le passant de 20 a 0 pour donner a Xavier son
+    stop au POURCENTAGE, j'ai eteint l'equipement des trades a la main sans le
+    voir. Le journal le disait pourtant mot pour mot :
+    << XAU_SL_FIXE_EUR = 0.0, non strictement positif — rien ne sera pose >>.
+
+    ⛔ ET LE TROU ETAIT DANS LE NEGATIF, le plus mauvais cote : un trade a la
+    main sans stop restait sans PLANCHER, parce que `protection_perte_or`
+    exige un stop EXISTANT pour le resserrer (`sl is None` ⇒ elle s'abstient).
+    En profit il etait couvert — le trainage pose le stop des +0,50 EUR — mais
+    en perte, rien, jusqu'a l'appel de marge.
+
+    ⇒ On retombe sur `_distance_sl_or`, c'est-a-dire EXACTEMENT la fonction du
+    chemin automatique. Pas une copie du calcul : l'appel. Ecrire `prix * 0,35
+    / 100` ici creerait la seconde source de verite que l'en-tete de ce module
+    interdit explicitement.
+
+    `prix` ou `taux_eur_usd` manquants ⇒ ``None``, donc rien de pose. On ne
+    DEVINE pas un stop sur de l'argent reel.
+    """
+    etat, fixe = _classer("XAU_SL_FIXE_EUR")
+    if etat == _POSE:
+        return fixe
+    if etat == _ILLISIBLE:
+        # ⛔ ET LA DISTINCTION COMPTE. `""` et `"0"` sont la convention
+        # << inerte >> de ce depot : quelqu'un a DECIDE que le pourcentage
+        # gouverne, et le repli est alors exactement ce qu'il veut. Mais
+        # `"zero"` ou `"-5"` sont des ERREURS de configuration : quelqu'un a
+        # voulu poser une valeur et s'est trompe. Retomber en silence
+        # masquerait sa faute, et c'est le contrat que
+        # `test_un_reglage_ILLISIBLE_rend_le_module_MUET` protege depuis le
+        # 2026-10-10. On reste donc MUET, et on le dit.
+        return None
+
+    if not prix or not taux_eur_usd or taux_eur_usd <= 0:
+        return None
+    try:
+        from backend.services.pattern_detector import _distance_sl_or
+        distance_usd = _distance_sl_or(float(prix))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("equiper_trades_main: distance de stop illisible (%s) "
+                       "— rien ne sera pose", e)
+        return None
+    if distance_usd is None or distance_usd <= 0:
+        logger.warning("equiper_trades_main: aucune distance de stop pour un "
+                       "or a %s — rien ne sera pose", prix)
+        return None
+    return distance_usd / float(taux_eur_usd)
 
 
 def objectif_eur() -> float | None:
@@ -157,7 +248,11 @@ def decision(position: dict, taux_eur_usd: float) -> dict | None:
     # Le profit courant, en euros, du point de vue de la position.
     profit_eur = signe * (courant - entree) / taux
 
-    d_sl, d_tp = stop_eur(), objectif_eur()
+    # 🔑 `entree`, pas `courant` : le stop se mesure depuis le PRIX
+    # D'ENTREE, comme sur le chemin automatique. Le mesurer depuis le
+    # cours courant ferait un stop qui bouge avec le marche avant meme
+    # d'etre pose.
+    d_sl, d_tp = stop_eur(entree, taux), objectif_eur()
     sl = tp = None
     alerte = None
 

@@ -194,11 +194,19 @@ def test_les_bornes_suivent_les_REGLAGES_du_radar(monkeypatch):
     assert d["tp"] == pytest.approx(4190.0 + 3 * TAUX, abs=0.01)
 
 
-@pytest.mark.parametrize("mauvais", ["", "zero", "-5", "0"])
+@pytest.mark.parametrize("mauvais", ["zero", "-5", "pas un nombre", "1,2,3"])
 def test_un_reglage_ILLISIBLE_rend_le_module_MUET(monkeypatch, mauvais):
     """⛔ Ici le repli n'est PAS une valeur par défaut : un stop calculé sur un
     réglage illisible serait posé sur de l'argent réel. On préfère ne rien
-    poser et le dire."""
+    poser et le dire.
+
+    🔑 ÉLARGI LE 2026-10-11, et la nuance a coûté cher. Ce test couvrait aussi
+    `""` et `"0"`, qui sont la **convention « inerte »** de ce dépôt : dans ce
+    cas quelqu'un a DÉCIDÉ que `XAU_SL_PCT` gouverne, et le stop retombe
+    dessus — voir le test suivant. Ne gardent leur mutisme que les valeurs
+    qui trahissent une **erreur** : non numérique, ou négative.
+    ⛔ Les confondre a laissé les trades à la main **sans aucun plancher**
+    pendant une heure sur l'argent réel."""
     monkeypatch.setenv("EQUIPER_TRADES_MAIN", "1")
     monkeypatch.setenv("XAU_SL_FIXE_EUR", mauvais)
     monkeypatch.setenv("XAU_TP_FIXE_EUR", "2")
@@ -207,6 +215,28 @@ def test_un_reglage_ILLISIBLE_rend_le_module_MUET(monkeypatch, mauvais):
 
     d = mod.decision(_pos(), TAUX)
     assert d is None or d["sl"] is None
+
+
+@pytest.mark.parametrize("inerte", ["", "0", "0.0"])
+def test_un_reglage_INERTE_retombe_sur_le_POURCENTAGE(monkeypatch, inerte):
+    """✅ L'autre moitié de la distinction : vide ou zéro est une DÉCISION, pas
+    une erreur. Le stop retombe alors sur `XAU_SL_PCT`, exactement comme le
+    chemin automatique — et le trade à la main reçoit le MÊME stop que celui
+    que le radar aurait posé.
+
+    > Xavier, 2026-10-11 : « si j'ouvre un trade à la main qui n'a ni TP ni SL,
+    > est-ce que le SL à 13 va se mettre ? » — il faut que la réponse soit oui."""
+    monkeypatch.setenv("EQUIPER_TRADES_MAIN", "1")
+    monkeypatch.setenv("XAU_SL_FIXE_EUR", inerte)
+    monkeypatch.setenv("XAU_TP_FIXE_EUR", "0")
+    monkeypatch.setenv("XAU_SL_PCT", "0.35")
+    from backend.services import equiper_trades_main as mod
+    importlib.reload(mod)
+
+    d = mod.decision(_pos(), TAUX)
+    assert d is not None and d["sl"] is not None, (
+        "rien n'est posé : le trade à la main reste sans plancher")
+    assert d["tp"] is None, "un objectif a été posé alors qu'on n'en veut plus"
 
 
 # ─────────────────────────────────────────────────────────────────────────
