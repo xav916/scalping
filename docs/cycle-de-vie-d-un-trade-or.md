@@ -16,7 +16,8 @@ Chaque étape porte son état :
 
 ## ① LA DÉTECTION
 
-🔵 **La boucle légère.** Elle lit `/tick/XAU-USD` chez IC Markets toutes les
+🟡 **La boucle légère.** `backend/services/boucle_legere.py`, 31 tests,
+4 défauts réinjectés. Elle lit `/tick/XAU-USD` chez IC Markets toutes les
 ~200 ms (**5,8 ms** mesurées par appel), met à jour **en mémoire** la bougie M5
 **en cours**, et appelle `detect_patterns` (**1,40 ms**). Budget total d'un
 passage : **≈ 7 ms**, soit **3,5 %** de charge à 200 ms. ⇒ On voit la figure
@@ -32,8 +33,11 @@ prise sur une source qui s'écarte du courtier de **0,53 à 0,76 $**.
 plus **31 bougies M5** (2 h 35) ; `poc_return` est le seul à lire les 50.
 En dessous de **20 bougies**, `detect_patterns` ne rend **rien**.
 
-🔵 **Le réveil.** Sur un motif **nouveau dans cette bougie** — et seulement là —
-la boucle légère réveille la chaîne lourde (0,5 à 1,9 s pour l'or seul).
+🟡 **Le réveil.** Sur un motif **nouveau dans cette bougie** — et seulement là —
+la boucle légère réveille la chaîne lourde (0,5 à 1,9 s pour l'or seul), avec
+un **repos de 2 s** pour ne jamais lancer deux chaînes concurrentes.
+⚠️ L'armer **désarme** le cycle rapide : les deux relanceraient la chaîne lourde
+sur les mêmes paires, et laquelle gagne dépendrait de l'ordonnancement.
 
 ---
 
@@ -52,16 +56,22 @@ Et deux qui portent sur **les bornes** :
 
 - **`sl_too_close`** (431 refus) — le stop d'ouverture doit être à **≥ 0,05 %**
   du prix, soit **2,075 $** ;
-- **`fees_exceed_edge`** (1 238 refus) — plancher de viabilité **13,83 $**.
-  ⚠️ C'est lui qui interdit un départ à −9 € : 9 € vaut **10,09 $**, sous le
-  plancher. L'or a déjà été **muet trois jours** pour cette raison.
+- **`fees_exceed_edge`** (1 238 refus) — plancher de viabilité **13,83 $**,
+  qui est exactement `prix / 300` (la porte exige `coût_r ≤ 0,30 × edge_r`).
+  ⚠️ C'est lui qui interdit un départ à −9 € : 9 € vaut **10,08 $**, soit
+  **27 % sous** le plancher. L'or a déjà été **muet trois jours** pour cette
+  raison. Le minimum qui passe aujourd'hui est **12,35 €**.
 
 ---
 
 ## ③ L'OUVERTURE
 
 🟢 **Le stop** : **0,35 % du prix**, soit **≈ 14,5 $ ≈ 13 €** à un or à 4 150 $.
-Au-dessus des deux planchers. Lot **0,01**.
+Au-dessus des deux planchers, et **invariant d'échelle** — c'est tout l'intérêt
+du pourcentage : un montant fixe en euros se resserre *relativement* quand l'or
+monte et referme la porte des frais tout seul.
+🔑 **Le 9 € demandé par Xavier n'est pas atteignable ICI** (27 % sous le
+plancher), mais il l'est à l'étape ④. Lot **0,01**.
 
 🟡 **Aucun objectif.** `take_profit = 0.0` — la convention MT5 pour « pas de
 cible », exactement ce que portaient 2 des 3 positions ouvertes à la main le
@@ -73,11 +83,26 @@ le traînage ait la parole.
 
 ## ④ LA VIE, CÔTÉ NÉGATIF — 🟡
 
-1. **Rien pendant 60 secondes** (âge minimal).
+1. **Rien pendant 60 secondes** — l'âge minimal. ⚠️ « Rien » veut dire *aucun
+   resserrage* : le stop d'ouverture, lui, est posé **chez le courtier dès la
+   première milliseconde**. Le trade n'est jamais nu.
 2. Il faut être **négatif depuis 30 secondes** consécutives.
-3. Puis, **toutes les 60 secondes** : `stop = (stop + perte) / 2`, **plancher
-   absolu −2 €**, **cliquet seul** (jamais de desserrage).
-4. Exemple depuis 13 € avec 3 € de perte : **8 → 5,5 → 4,25 → …** jusqu'à −2 €.
+3. Puis, **toutes les 60 secondes** : `stop = (stop + perte) / 2`, **plafond de
+   largeur 9 €**, **plancher absolu −2 €**, **cliquet seul** (jamais de
+   desserrage).
+4. 🔑 **LE PLAFOND DE 9 €, c'est la demande de Xavier honorée**. Sans lui,
+   depuis 13 € avec 6 € de perte, le point milieu donne 9,50 € et il faut
+   **trois** passages pour descendre sous 9. Avec lui : **9 € au premier
+   passage**.
+5. Exemple depuis 13 € avec 3 € de perte : **8 → 5,5 → 4,25 → …** ⚠️ et ça
+   converge vers **la perte** (3 €), pas vers le plancher de 2 € — un stop ne
+   peut pas être plus serré que le cours. Le plancher de 2 € ne mord que pour
+   une perte **inférieure** à lui.
+
+⚠️ **Ce que le plafond ne promet pas** : que la perte soit bornée à 9 € par les
+mathématiques. Deux fuites subsistent — l'**âge minimal** (avant lui, seul le
+stop d'ouverture protège) et un **saut de cours** entre deux passages. Il dit
+« la perte ne croît plus au-delà de 9 € **une fois qu'on l'a vue** ».
 
 ⛔ Aujourd'hui : cron **toutes les 5 minutes**, avec 5 min d'âge et 2 min 30 de
 négativité. Mesuré : passer à la minute fait tomber la pire journée de
@@ -88,7 +113,9 @@ un écart de rendement **indistinguable de zéro** (t ≤ 0,37).
 
 ## ⑤ LA VIE, CÔTÉ POSITIF — 🟡
 
-1. **Rien sous +0,50 €** de profit.
+1. **Rien sous +0,50 €** de profit. 🔑 **Et aucune attente de 60 secondes de ce
+   côté-ci** : le traînage est sondé à **1 seconde** et s'arme au premier
+   profit de +0,50 €, quel que soit l'âge du trade.
 2. À **+0,50 €** : le stop passe à **0** — le trade ne peut plus perdre.
 3. Ensuite **en continu et SANS PLAFOND** : `stop = profit − 0,50 €`.
    1,90 → **1,40** · 3,10 → **2,60** · 30 → **29,50** · 41 → **40,50**.
