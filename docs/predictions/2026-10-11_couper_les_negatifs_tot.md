@@ -80,3 +80,67 @@ La règle est retenue si, pour au moins un k, elle réunit **les quatre** :
   supplémentaires que la coupure permettrait. ⚠️ Et cela joue **en faveur** de
   la coupure dans mon tableau, puisque je ne lui fais pas payer le spread des
   trades qu'elle rendrait possibles.
+
+---
+
+# VERDICT — 2026-10-11
+
+`scripts/banc_couper_les_negatifs.py`. Magasin M1 **du courtier** rebâti en un
+seul passage : **99 999 bougies, 2026-07-01 → 2026-10-09 20h55** (cette
+dernière étant la clôture réelle du vendredi). 3 333 entrées aveugles toutes
+les 30 minutes, **deux sens** ⇒ **6 666 trades**, bornes TP 2 € / SL 20 €.
+
+ⓘ Ancres d'exécution : 149/171 (87,1 %), le reste à ±1 minute — résidu de la
+dérive du champ de décalage entre les 21 pages. Mesure **à la minute**, dit.
+
+## ⇒ 0 DÉLAI RETENU SUR 5. Mes prédictions 2 et 3 tiennent toutes les deux.
+
+    k      n neg   part    TENIR $    COUPER $     ecart       t    neg -> TP
+    1       3510   52,7%   -0,1655    -0,1207    -0,0438   -0,41      86,5 %
+    2       3464   52,0%   -0,1655    -0,2184    -0,0746   -0,68      85,3 %
+    3       3431   51,5%   -0,1655    -0,3083    -0,1998   -1,88      84,6 %
+    5       3414   51,2%   -0,1655    -0,4113    **-0,3165  -2,96**   83,4 %
+    10      3387   50,8%   -0,1655    -0,7303    **-0,6691  -6,03**   82,2 %
+
+🔑 **LE CHIFFRE QUI DÉCIDE EST LA DERNIÈRE COLONNE.** Parmi les trades négatifs
+à la minute k, **82 à 86 % atteignent QUAND MÊME l'objectif**. Couper jette
+donc environ **cinq gagnants sur six**.
+
+⇒ Et à k=5 et k=10, la dégradation est elle-même **significative** — |t| au-delà
+du plafond pré-inscrit de 2,241, mais **dans le mauvais sens**. Ce n'est pas
+« couper n'aide pas » : c'est **couper nuit, et de plus en plus tard on coupe**.
+
+## ✅ CE QUE COUPER ACHÈTE RÉELLEMENT (prédiction 3, confirmée)
+
+    ecart-type par trade   TENIR 7,2132  ->  COUPER 3,60 a 3,97   (÷ ~2)
+    pire journee           TENIR -3,9918 ->  COUPER -1,14 a -1,72
+
+⇒ La règle **divise la variance par deux** et **améliore nettement la pire
+journée**. C'est une règle d'**assurance**, pas de rendement : elle coûte
+0,32 $ par trade à k=5 pour acheter cette tranquillité.
+
+## ⛔ ET ELLE TUE LA LECTURE DE VENDREDI
+
+Vendredi 09/10, sur 75 trades réels, j'ai mesuré « négatif à +5 min ⇒ **40 %**
+finissent au stop ». Sur 3,5 mois et 3 414 cas, le taux réel est
+**16,6 %** (100 − 83,4). ⇒ **Vendredi était 2,4 fois pire que la normale.**
+
+🔑 Un seul jour, et un jour dont **42 clôtures sur 75 étaient de la main de
+Xavier**, ne généralise pas. C'est exactement ce que ce test pré-inscrit
+existait pour trancher, et il tranche **contre** la lecture de vendredi.
+
+## ⚠️ UNE INCOHÉRENCE APPARENTE, dite plutôt que lissée
+
+À **k=1**, la moyenne globale dit couper légèrement MEILLEUR (−0,1207 contre
+−0,1655) alors que l'écart par **JOUR** — l'unité pré-inscrite — dit
+−0,0438. Les deux ne peuvent pas être égaux : la moyenne par jour pèse chaque
+journée pareil, la moyenne globale pèse chaque trade pareil. Avec `t = −0,41`,
+k=1 est de toute façon du **bruit** dans les deux lectures.
+
+## Le témoin de fond
+
+    TENIR seul : 6 029 TP, 631 SL, 6 sorties par le temps
+    ⇒ 90,52 % de reussite contre ~91,11 % requis, soit **-0,1655 $/trade**
+
+Cohérent avec le gros test M1 de septembre (90,39 % contre 91,11 %) : la
+géométrie 2/20 paie sa cote et le spread la fait basculer.
