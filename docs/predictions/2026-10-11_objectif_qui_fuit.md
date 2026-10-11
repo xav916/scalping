@@ -76,3 +76,80 @@ et **signe stable sur les deux moitiés**.
 ⇒ Si Y bat X+ avec |t| > 2,5, j'ai tort et laisser courir paie enfin sur cette
 géométrie — alors que « laisser courir » a déjà été réfuté le 10/10 sur la
 géométrie 2/20 (A−B = −0,27 €, t = −7,04).
+
+
+---
+
+# VERDICT — 2026-10-11
+
+`scripts/banc_objectif_qui_fuit.py`. 6 668 trades aveugles, 99 999 bougies M1
+du courtier, six strategies en parallele.
+
+| | EUR/trade | ecart-type | pire jour | reussite | duree | gain moyen | **plus gros gain** |
+|---|---|---|---|---|---|---|---|
+| **Y** sa nouvelle regle (2p+1) | −0,0334 | 2,53 | −1,30 | 55,74 % | 6,0 min | +1,642 | **+11,46** |
+| **Y0** AUCUN objectif | **+0,0014** | 2,62 | **−0,99** | 55,49 % | 6,2 min | +1,713 | **+13,46** |
+| **Y2** objectif p+1 (lent) | −0,0715 | 2,45 | −1,43 | 55,74 % | 5,7 min | +1,574 | +3,46 |
+| **X+** sa regle precedente | −0,0227 | 2,54 | −1,30 | 55,58 % | 6,0 min | +1,667 | +7,46 |
+| **A2** production + protection | −0,0247 | 2,99 | −2,15 | 72,89 % | 8,5 min | +1,616 | +3,96 |
+| **B2** stop −2 sec | −0,0714 | 2,00 | **−0,12** | 49,75 % | 5,3 min | +1,938 | +1,96 |
+
+## ⛔ MA PREDICTION 1 EST FAUSSE, et la raison est instructive
+
+J'annonçais **zero sortie par objectif** pour sa regle. Mesure : **1 948**.
+
+🔑 Pourquoi : l'objectif ne part a 3 € qu'une fois qu'une **cloture** a
+enregistre 1 € de profit. Une bougie rapide peut franchir les 2 € **avant**
+qu'aucune cloture ne soit tombee dans la bande [1 ; 1,5[. L'objectif initial a
+2 € reste donc atteignable — il ne devient inatteignable qu'**apres** le
+premier palier. Mon « jamais » etait trop fort.
+
+⇒ L'effet reel de son objectif fuyant : il **retire 616 sorties par objectif**
+(2 564 pour Y2, 1 948 pour Y) et les convertit en sorties par stop suiveur.
+
+## ✅ ET SON INTUITION EST JUSTE, de facon MONOTONE et SIGNIFICATIVE
+
+    objectif p+1 (monte lentement)      **-0,0715 EUR/trade**   max +3,46
+    objectif palier+2 (la production)    -0,0227               max +7,46
+    objectif 2p+1 (le sien)              -0,0334               max **+11,46**
+    AUCUN objectif                      **+0,0014**            max **+13,46**
+
+    sa regle contre l'objectif LENT (p+1)   +0,0427 EUR/jour   **t +6,43  ***
+    sa regle contre AUCUN objectif          -0,0311            **t -2,72  ***
+    sa regle contre X+ (palier+2)           -0,0111             t -2,25 (sous la barre)
+
+🔑 **Plus on laisse l'objectif s'eloigner, mieux c'est** — et le bout du
+raisonnement est de **le supprimer**. `Y0` est la **seule strategie de toute la
+journee dont l'esperance soit positive** : **+0,0014 EUR/trade**.
+
+⚠️ Et il faut le dire tout de suite : **+0,0014 €/trade est zero**. Ce n'est pas
+un avantage, c'est l'**absence de cout** — la premiere fois qu'une geometrie de
+ce projet ne perd pas. La difference avec sa regle, elle, est **etablie**
+(t −2,72, signe stable sur les deux moities).
+
+## Son autre intuition, verifiee : le stop finit POSITIF souvent
+
+    sorties par stop SUIVEUR (stop au-dessus de l'entree)  1 769 (Y) / 2 447 (Y0)
+    sorties au POINT MORT (stop a l'entree)                1 261 / 1 278
+    ⇒ **environ 45 % des trades sortent a zero ou mieux par le stop**
+
+## MES QUATRE PREDICTIONS
+
+1. ⛔ « zero sortie par objectif » : **FAUSSE** (1 948), raison ci-dessus.
+2. ⚠️ « Y moins bon que X+ » : juste de sens (−0,0334 contre −0,0227) mais
+   **t −2,25, sous la barre de 2,5** ⇒ **non etabli**.
+3. ✅ « son plus gros gain sera nettement superieur » : **JUSTE** — +11,46 €
+   contre +7,46 pour X+ et +1,96 pour un stop sec.
+4. ⛔ « duree nettement plus longue » : **FAUSSE** — 6,0 min contre 6,0 min
+   pour X+, et **une seule** sortie par le plafond de 24 h.
+
+## ⇒ CE QUE JE RECOMMANDE, mesure en main
+
+**Supprimer l'objectif**, et garder tout le reste de sa regle : depart −9 €,
+point milieu cote perte avec plancher −2 €, et le stop suiveur a 0,50 € derriere
+le profit a partir de 0,50 €. C'est la meilleure des six, la seule non
+negative, et elle bat sa version a objectif fuyant de facon etablie.
+
+⚠️ La limite de toujours : duree 6 min contre 28,9 pour la production ⇒ **5 fois
+plus de rotation**, donc 5 fois plus de spread **si on recycle la place**. Ce
+banc ne le lui fait pas payer.
