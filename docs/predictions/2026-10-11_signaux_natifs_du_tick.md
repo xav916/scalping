@@ -98,3 +98,66 @@ moitiés** de la période.
 ⇒ Si une cellule passe, c'est **la première information directionnelle établie
 de tout ce projet**, et Xavier aura eu raison contre moi sur l'échelle de
 détection.
+
+
+---
+
+# VERDICT — 2026-10-11
+
+`scripts/banc_signaux_du_tick.py`. **3 298 970 ticks** du courtier,
+**15 jours** de cotation (2026-09-21 → 2026-10-09 23:56 UTC).
+
+## ⇒ 0 CELLULE RETENUE SUR 16. Ma prédiction 1 tient.
+
+Plafond par permutation (200 tirages appariés sur l'heure) : **2,260**.
+
+    signal        N s  geometrie      n      bon sens   mauvais    ecart      t
+    tick_rate      10  symetrique   1392     -0,1868    +0,0230   -0,2861  **-2,24**
+    tick_rate      10  production   1392     -0,0316    +0,1308   -0,2070   -2,03
+    vitesse        60  production   2819     +0,0765    +0,0065   +0,0696   +1,39
+    tick_rate      60  production    543     +0,1014    +0,1763   -0,1597   -1,26
+    vitesse        10  symetrique   3556     -0,1014    -0,0520   -0,0504   -1,06
+    acceleration   60  production   2969     +0,0311    -0,0010   +0,0306   +0,77
+    ... les dix autres : |t| <= 0,77
+
+## 🔑 LA SEULE CELLULE QUI APPROCHE LA BARRE DIT L'INVERSE DE L'INTUITION
+
+`tick_rate` à 10 s, bornes symétriques : **|t| = 2,24 contre un plafond de
+2,260** — elle manque de **0,02**. Et son signe est **NÉGATIF** : quand le flux
+est dense, entrer **dans le sens** du mouvement **perd** (−0,1868 contre
++0,0230 pour le mauvais sens).
+
+⚠️ Je n'en fais pas une trouvaille : c'est le **maximum de 16 cellules**, et le
+plafond est construit exactement pour ça. Manquer la barre de 0,02 n'est pas
+la franchir. Mais la **direction** du résultat est intéressante — une rafale de
+ticks ressemble à un **épuisement**, pas à une impulsion.
+
+## MES QUATRE PRÉDICTIONS
+
+1. ✅ « 0 cellule retenue sur 16 » : **juste**.
+2. ⚠️ « la vitesse paraîtra prédictive par auto-corrélation, le contrôle apparié
+   devrait l'absorber » : à moitié. `vitesse 60 s` est bien le meilleur positif
+   (bon sens **+0,0765** contre **+0,0065**), donc le contrôle ne l'absorbe
+   **pas** entièrement — mais `t = +1,39` reste loin sous la barre. À 10 s elle
+   est plate (t −0,24).
+3. ⚠️ « le tick rate sera le plus informatif, sur la DURÉE et non la
+   direction » : **à moitié faux**. Il est bien le plus informatif — mais **sur
+   la direction**, et **à l'envers**. ⛔ Et je n'ai pas mesuré la durée dans ce
+   banc : la prédiction reste donc **non vérifiée** sur sa seconde moitié.
+4. ⚠️ « les bornes symétriques donneront des |t| plus grands » : **mitigé**.
+   Vrai pour le tick rate (2,24 contre 2,03), **faux** pour la vitesse à 60 s
+   (0,68 contre 1,39).
+
+## ⇒ CE QUE ÇA FERME, ET CE QUE ÇA N'INTERDIT PAS
+
+C'est le **cinquième zéro indépendant** sur la direction, et le premier obtenu
+**au tick** — donc la question de l'échelle de détection est traitée, et Xavier
+avait raison d'exiger qu'elle le soit.
+
+⛔ Ce banc **n'épuise pas** les signaux de tick : il en teste quatre, sur deux
+fenêtres. Il ne dit rien d'un signal composé (par exemple tick rate **plus**
+accélération), ni d'une fenêtre très courte (1 s), ni du carnet — qui n'existe
+pas sur ce CFD.
+🔑 Et la piste que ce banc **ouvre malgré lui** est le **retour à la moyenne sur
+rafale de ticks**, puisque c'est le signe qui est ressorti. Ce serait une
+question neuve, à pré-inscrire à part.

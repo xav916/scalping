@@ -37,7 +37,7 @@ PAIRE = "XAU/USD"
 CIBLE = os.getenv("TICKS_CIBLE", "/app/data/ticks_courtier.db")
 DEBUT = dt.datetime.fromisoformat(os.getenv("TICKS_DEBUT", "2026-10-07T00:00:00"))
 FIN = dt.datetime.fromisoformat(os.getenv("TICKS_FIN", "2026-10-09T21:00:00"))
-PAS_MIN = int(os.getenv("TICKS_PAS_MIN", "30"))     # taille d'une tranche
+PAS_MIN = int(os.getenv("TICKS_PAS_MIN", "10"))     # taille d'une tranche
 PAUSE = 0.2
 
 base = os.environ["MT5_BRIDGE_LIVE_URL"].rstrip("/")
@@ -83,15 +83,38 @@ def tranche(debut_reel: dt.datetime, fin_reel: dt.datetime):
         return [], None
     # 🔑 le decalage de CETTE reponse, pas celui du premier appel
     dec2 = dt.timedelta(minutes=int(round(-float(ds2) / 60.0 + 180)))
-    lot = o2.get("ticks") or []
     rows = []
-    for t in lot:
-        brut = dt.datetime.fromisoformat(t["t"])
-        if brut.tzinfo:
-            brut = brut.replace(tzinfo=None)
-        vrai = brut - dec2
-        rows.append((PAIRE, vrai.isoformat(), int(t.get("ms") or 0),
-                     float(t["bid"]), float(t["ask"])))
+    pages = 0
+    # ⛔ LA ROUTE TRONQUE A 20 000 TICKS PAR APPEL. Mesure : une tranche de
+    # 30 min du 01/09 rendait EXACTEMENT 20 000 ticks -- donc tronquee, et mon
+    # premier constructeur l'ignorait : il perdait des ticks EN SILENCE sur
+    # toutes les tranches chargees. On suit `suite_from` jusqu'a ce que
+    # `tronque` retombe a faux.
+    while True:
+        lot = o2.get("ticks") or []
+        for t in lot:
+            brut = dt.datetime.fromisoformat(t["t"])
+            if brut.tzinfo:
+                brut = brut.replace(tzinfo=None)
+            vrai = brut - dec2
+            rows.append((PAIRE, vrai.isoformat(), int(t.get("ms") or 0),
+                         float(t["bid"]), float(t["ask"])))
+        pages += 1
+        sf = o2.get("suite_from")
+        if not o2.get("tronque") or not sf or pages >= 40:
+            if o2.get("tronque") and pages >= 40:
+                print("   ⛔ %s : encore tronque apres 40 pages — tranche "
+                      "INCOMPLETE, et c'est dit" % debut_reel)
+            break
+        q3 = urllib.parse.urlencode({"pair": PAIRE, "from": sf,
+                                     "to": (fin_reel + dec).isoformat()})
+        rq3 = urllib.request.Request(base + "/ticks?" + q3,
+                                     headers={"X-API-Key": cle})
+        o2 = json.loads(urllib.request.urlopen(rq3, timeout=180).read())
+        ds3 = o2.get("decalage_serveur_sec")
+        if ds3 is not None:
+            dec2 = dt.timedelta(minutes=int(round(-float(ds3) / 60.0 + 180)))
+        time.sleep(0.1)
     return rows, dec2
 
 
