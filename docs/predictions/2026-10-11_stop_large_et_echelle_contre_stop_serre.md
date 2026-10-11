@@ -83,3 +83,88 @@ Une stratégie est déclarée **meilleure** qu'une autre si :
 
 ⇒ Si une paire franchit les trois critères, j'ai tort et c'est la première
 différence de rendement établie entre deux géométries de ce projet.
+
+
+---
+
+# VERDICT — 2026-10-11
+
+`scripts/banc_stop_large_contre_serre.py`. 6 668 trades aveugles, 99 999
+bougies M1 du courtier, les six strategies avancant en parallele sur un seul
+parcours.
+
+## 🔑 LE RESULTAT PRINCIPAL EST UN ENCADREMENT, PAS UN CLASSEMENT
+
+Mon premier passage armait un palier sur **l'extreme** de la bougie. Defaut :
+si le prix touche +1,00 EUR puis retombe a +0,50, le stop etait pose a +0,75,
+donc **AU-DESSUS du cours**, et je creditais +0,75 pour une sortie qui aurait
+eu lieu plus bas. La production refuse exactement cela (« poser un stop du
+mauvais cote du cours FERME la position »).
+
+J'ai donc refait le banc avec le palier arme sur la **cloture** de la minute,
+et je publie **les deux**, parce que la realite est entre les deux : la boucle
+de production interroge les prix toutes les quelques secondes, donc elle
+attrape une partie des extremes, pas tous.
+
+    A1 (la production)      optimiste **+0,1570 EUR/trade**
+                            pessimiste **-0,0677 EUR/trade**
+    ⇒ encadrement **0,225 EUR/trade**, plus GRAND que tout effet mesure ce jour
+
+⛔ **Tout l'avantage apparent de l'echelle vient donc de l'hypothese sur la
+vitesse de pose du stop, pas de la strategie.** C'est la meme lecon que
+l'encadrement de convention du matin, cette fois sur un dispositif **ARME EN
+PRODUCTION**.
+
+## LE TABLEAU, version PESSIMISTE (palier arme sur la cloture)
+
+| | EUR/trade | ecart-type | pire journee | reussite | duree |
+|---|---|---|---|---|---|
+| **T** temoin SL−20/TP2 | −0,1479 | 6,44 | −3,56 | 90,45 % | 36,4 min |
+| **A1** la production | −0,0677 | 5,84 | −4,03 | 92,19 % | 28,9 min |
+| **A2** + protection | −0,0247 | 2,99 | −2,15 | 72,89 % | 8,5 min |
+| **B1** stop −1 | −0,0424 | **1,42** | −0,46 | 33,97 % | 3,2 min |
+| **B2** stop −2 | −0,0714 | 2,00 | **−0,12** | 49,75 % | 5,3 min |
+| **B3** stop −2 + echelle | −0,0285 | 1,91 | −0,36 | 55,43 % | 4,6 min |
+
+⇒ **Une seule paire sur quinze** franchit le critere pre-inscrit :
+**B3 contre B2**, `+0,0476 EUR/trade, t −3,07`, signe stable.
+🔑 Autrement dit : **si on met un stop serre, il faut garder l'echelle.**
+
+En version optimiste, 6 paires franchissent et A1 bat le temoin a t +3,80.
+⚠️ Je ne retiens pas ce classement : il repose sur le defaut corrige ci-dessus.
+
+## CE QUI EST ROBUSTE DANS LES DEUX VERSIONS
+
+1. **Aucune strategie ne RAPPORTE.** Les six sont entre −0,15 et −0,02
+   EUR/trade. Le choix n'est pas un choix de rendement.
+2. **La queue**, elle, change enormement :
+
+       pire journee   T **−3,56 EUR**  ->  B2 **−0,12 EUR**   (÷30)
+       ecart-type     T **6,44**       ->  B1 **1,42**        (÷4,5)
+
+3. **La protection des PERTES (A2), aujourd'hui DESARMEE**, ramene le nombre de
+   stops touches de 631 (temoin) a **1 sur 6 668**, pour un cout non
+   significatif. C'est le dispositif le plus efficace du lot sur la queue.
+4. **La duree** : B2 se resout en 5,3 min contre 36,4 min pour le temoin.
+
+## ⚠️ LE PIEGE DU RECYCLAGE, deja declare avant la mesure
+
+Les entrees sont **fixes** dans ce banc. Or un stop serre libere la place
+**7 fois plus vite** ⇒ a nombre d'heures egal il permet 7 fois plus de trades,
+donc **7 fois plus de spread**. Ce banc ne le lui fait pas payer.
+
+⇒ Donc : **a rythme d'entrees inchange**, le stop serre est strictement
+meilleur sur le risque pour un rendement equivalent. **Si on recycle la place
+liberee**, il devient nettement pire. La reponse depend de ce reglage-la, pas
+du stop.
+
+## MES PREDICTIONS
+
+1. ⛔ « aucune paire ne franchira le critere » : **refutee** en version
+   optimiste (6 paires), tenue en version pessimiste (1 paire).
+2. ⛔ « l'echelle sera legerement PIRE que le temoin » : **refutee dans les
+   deux versions** — elle est legerement meilleure (+0,059 EUR/trade en
+   pessimiste, non significatif ; +0,305 en optimiste).
+3. ✅ « B1/B2 gagneront massivement sur la variance » : **juste**, facteur 4,5
+   sur l'ecart-type et 30 sur la pire journee.
+4. ✅ « le choix est un choix de variance, pas de rendement » : **juste**.
