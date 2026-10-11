@@ -81,6 +81,55 @@ def _db_path() -> str:
 
 # ─── La regle, en fonctions PURES ────────────────────────────────────────
 
+def _largeur_max_eur() -> float | None:
+    """Le PLAFOND de largeur du stop, en euros, ou ``None``.
+
+    🔑 DEMANDE DE XAVIER, deux fois, le 2026-10-11 : « je voulais que le stop
+    loss de depart soit a moins 9 euros ». Son 9 EUR est INATTEIGNABLE a
+    l'OUVERTURE, et c'est de l'arithmetique, pas une preference :
+
+        la porte des frais exige  cout_r <= 0,30 x edge_r
+        ce qui impose un stop     >= prix / 300
+        a un or a 4 150 $         >= 13,83 $  =  12,35 EUR
+        son 9 EUR vaut              10,08 $   =  27 % SOUS le plancher
+
+    ⛔ Et la consequence est MESUREE, pas supposee : avec un stop fixe de
+    10 EUR, l'or est reste MUET TROIS JOURS en octobre 2026, refuse par
+    `fees_exceed_edge` (1 238 refus). Un stop de 9 EUR rouvrirait ce trou.
+
+    ✅ MAIS son 9 EUR est atteignable ICI, du cote de la PERTE : le trade
+    OUVRE a 0,35 % du prix (~13 EUR), et des le premier passage eligible le
+    stop est ramene a 9 EUR au plus. L'ouverture satisfait le courtier, la
+    vie du trade satisfait Xavier.
+
+    ⚠️ CE QUE CE PLAFOND NE PROMET PAS, et il faut le dire : il ne borne pas
+    la perte a 9 EUR par les mathematiques. Deux fuites restent, toutes deux
+    chiffrees ailleurs :
+      - l'age minimal (`FENETRE_SEC`) : avant lui, le stop d'ouverture est le
+        seul filet ;
+      - un saut de cours entre deux passages, qui franchit le stop sans
+        s'arreter dessus.
+    Le plafond dit « la perte ne CROIT plus au-dela de 9 EUR une fois qu'on
+    l'a vue », ce qui n'est pas la meme phrase.
+
+    ⛔ Absent ou illisible ⇒ ``None``, donc le comportement d'avant, a
+    l'identique. Une valeur <= 0 est refusee : elle demanderait un stop a
+    l'entree ou au-dela, ce qui n'est plus une protection.
+    """
+    brut = os.environ.get("PROTECTION_PERTE_LARGEUR_MAX_EUR", "").strip()
+    if not brut:
+        return None
+    try:
+        v = float(brut)
+        if v <= 0:
+            raise ValueError(f"largeur max {v} <= 0")
+        return v
+    except Exception as e:  # noqa: BLE001
+        print(f"⚠️ PROTECTION_PERTE_LARGEUR_MAX_EUR illisible ({e}) — aucun "
+              f"plafond de largeur")
+        return None
+
+
 def _plancher_absolu_eur() -> float | None:
     """Le plancher ABSOLU du stop, en euros, ou ``None``.
 
@@ -152,6 +201,28 @@ def nouveau_stop_eur(stop_eur: float, perte_eur: float,
     # Le plancher mord : on s'y arrete plutot que de le franchir.
     if vise < plancher:
         vise = plancher
+
+    # 🔑 LE PLAFOND DE LARGEUR — le 9 EUR de Xavier, place la ou il est
+    # atteignable. Il court-circuite le point milieu : au lieu de descendre
+    # 13 -> 11 -> 10 -> 9,5, le stop tombe a 9 des le premier passage.
+    #
+    # ⛔ ET IL NE PASSE JAMAIS DU MAUVAIS COTE DU COURS. Quand la perte a
+    # deja depasse le plafond (perte 10 EUR, plafond 9), poser le stop a 9
+    # le mettrait DERRIERE le prix : le courtier fermerait au marche, et la
+    # perte realisee serait de toute facon 10. On se contente alors de
+    # coller au cours (`perte + marge`), ce qui est le plus serre qui soit
+    # POSABLE. Le `max()` ci-dessous est donc tout sauf decoratif, et le
+    # test `test_le_plafond_ne_passe_jamais_derriere_le_cours` le prouve en
+    # le retirant.
+    # ⛔ ET IL NE DESSERRE JAMAIS. Mon premier jet ecrivait
+    # `vise = max(plafond, perte + marge)` : a une perte de 10 EUR pour un
+    # plafond de 9, il rendait 12 la ou le point milieu donnait 11,5 — un
+    # plafond qui ELARGIT le stop. Le `min(vise, ...)` est la garde, et le
+    # test `test_le_plafond_n_elargit_jamais` rejoue exactement ce cas.
+    largeur_max = _largeur_max_eur()
+    if largeur_max is not None:
+        vise = min(vise, max(largeur_max, perte_eur + marge_min_eur))
+
     # Garde du cliquet, meme apres le clampage.
     if vise >= stop_eur:
         return None
