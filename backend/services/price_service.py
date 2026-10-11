@@ -232,6 +232,32 @@ async def fetch_candles_sans_cache(
     return await _fetch_depuis_source(pair, interval, outputsize)
 
 
+def _pont_sans_cache() -> bool:
+    """`True` si les bougies venues du PONT ne doivent pas etre mises en cache.
+
+    ⛔ LE DEFAUT QUE CA CORRIGE, mesure le 2026-10-11. Le cycle de l'or tourne
+    toutes les **5 secondes**, mais `fetch_candles` lit d'abord un cache dont
+    le TTL vaut **200 secondes** : la detection relisait donc les MEMES bougies
+    pendant plus de trois minutes. Les 5 s du cycle rapide ne servaient qu'a
+    redecider sur une photo perimee.
+
+    🔑 Demande de Xavier : « mettre de la detection sur le live, sur les ticks
+    du live, et pas sur les bougies M1 ou M5 qui n'ont plus aucun sens ». Son
+    reproche portait : la detection n'etait pas live du tout.
+
+    ⚠️ POURQUOI SEULEMENT LE PONT, et pas tout le monde : les autres paires
+    viennent de Twelve Data, dont le quota a deja saute une fois (954 refus
+    429). Raccourcir leur cache multiplierait leurs appels par quarante. Le
+    pont, lui, repond en **5 ms** (mesure, 12 appels a `/positions`) et ne
+    coute rien : un appel toutes les 5 s fait 86 secondes de pont par jour.
+
+    ⛔ INERTE par defaut : sans `BOUGIES_PONT_SANS_CACHE`, le cache s'applique
+    comme avant, a l'identique.
+    """
+    return os.getenv("BOUGIES_PONT_SANS_CACHE", "0").strip().lower() in (
+        "1", "true", "on", "yes")
+
+
 async def _fetch_depuis_source(
     pair: str,
     interval: str,
@@ -255,7 +281,7 @@ async def _fetch_depuis_source(
     from backend.services import bougies_du_pont
     if bougies_du_pont.paire_du_pont(pair):
         candles = await bougies_du_pont.fetch_candles(pair, interval, outputsize)
-        if candles:
+        if candles and not _pont_sans_cache():
             _cache_store_candles(pair, interval, candles)
         # ⛔ Pas de repli sur Twelve Data meme a vide : il reintroduirait en
         # silence la divergence qu'on corrige, et la porte refuserait quand
