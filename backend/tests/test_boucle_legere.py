@@ -86,20 +86,6 @@ def test_une_liste_explicite_prime(monkeypatch):
 
 # ─── ② L'étiquette vient de la dernière fermée ───────────────────────────
 
-def test_le_seau_suit_la_derniere_fermee():
-    derniere = dt.datetime(2026, 10, 9, 12, 25, tzinfo=dt.timezone.utc)
-    assert BL.seau_en_cours(derniere, "5min") == dt.datetime(
-        2026, 10, 9, 12, 30, tzinfo=dt.timezone.utc)
-    assert BL.seau_en_cours(derniere, "1min") == dt.datetime(
-        2026, 10, 9, 12, 26, tzinfo=dt.timezone.utc)
-
-
-def test_une_echelle_inconnue_ne_fabrique_aucun_seau():
-    """⛔ On ne DEVINE pas une durée de seau."""
-    assert BL.seau_en_cours(dt.datetime(2026, 10, 9, tzinfo=dt.timezone.utc),
-                            "3min") is None
-
-
 def test_la_bougie_en_cours_est_batie_des_ticks():
     etiq = dt.datetime(2026, 10, 9, 12, 30, tzinfo=dt.timezone.utc)
     b = BL.bougie_en_cours(etiq, [4150.0, 4153.0, 4148.0, 4151.0])
@@ -565,3 +551,70 @@ def test_une_detection_sans_motif_est_ignoree_sans_lever():
         pass
     assert BL.cle_motif(_Rien()) is None
     assert BL.motifs_nouveaux([_Rien()], set()) == set()
+
+
+# ─── ⑪ Le pont rend la bougie EN COURS comme dernier élément ──────────────
+
+@pytest.mark.asyncio
+async def test_l_etiquette_courante_EST_la_derniere_rendue_par_le_pont(
+        monkeypatch):
+    """⛔ LE DÉFAUT, mesuré en production le 2026-10-11. `/rates` rend la
+    bougie **EN COURS** comme dernier élément — vérifié marché fermé, deux
+    appels à 70 s d'intervalle rendant tous deux `18:20:00`, soit le seau en
+    formation. Je dérivais pourtant le seau à `dernière + 1 intervalle` :
+    ma bougie était étiquetée **cinq minutes dans le futur**.
+
+    🔑 Et aucun de mes 42 tests ne l'a vu, parce qu'ils vérifiaient un ÉCART
+    de 5 min entre les deux dernières — vrai dans les deux conceptions. Un
+    test insensible au défaut ne prouve pas la propriété qu'il nomme."""
+    faux = _Faux(_serie(50), prix=4199.0)
+    vues = {}
+    from backend.services import bougies_du_pont as BP
+    monkeypatch.setattr(BP, "fetch_candles", faux.fetch_candles)
+    monkeypatch.setattr(BP, "prix_courant", faux.prix_courant)
+    import backend.services.pattern_detector as PD
+    monkeypatch.setattr(PD, "detect_patterns",
+                        lambda serie, pair: vues.update(serie=serie) or [])
+    etat = BL.EtatPaire()
+    await BL.un_passage("XAU/USD", etat, "5min", 50, 0.0)
+
+    derniere_du_pont = faux.fermees[-1].timestamp
+    serie = vues["serie"]
+    assert serie[-1].timestamp == derniere_du_pont, (
+        f"la bougie en cours est étiquetée {serie[-1].timestamp}, le pont a "
+        f"rendu {derniere_du_pont} — un seau dérivé est un seau supposé")
+    assert etat.etiquette == derniere_du_pont
+
+
+@pytest.mark.asyncio
+async def test_la_bougie_en_formation_n_apparait_PAS_DEUX_FOIS(monkeypatch):
+    """⛔ L'autre moitié du même défaut : la vraie bougie en formation restait
+    dans la série COMME SI elle était fermée, donc `detect_patterns` la voyait
+    deux fois — une fois partielle, une fois bâtie des ticks."""
+    faux = _Faux(_serie(50), prix=4199.0)
+    vues = {}
+    from backend.services import bougies_du_pont as BP
+    monkeypatch.setattr(BP, "fetch_candles", faux.fetch_candles)
+    monkeypatch.setattr(BP, "prix_courant", faux.prix_courant)
+    import backend.services.pattern_detector as PD
+    monkeypatch.setattr(PD, "detect_patterns",
+                        lambda serie, pair: vues.update(serie=serie) or [])
+    etat = BL.EtatPaire()
+    await BL.un_passage("XAU/USD", etat, "5min", 50, 0.0)
+
+    horodatages = [c.timestamp for c in vues["serie"]]
+    assert len(horodatages) == len(set(horodatages)), (
+        "un horodatage apparaît deux fois dans la série")
+    # et les étiquettes restent sur la grille, sans trou
+    for a, b in zip(horodatages, horodatages[1:]):
+        assert b - a == dt.timedelta(minutes=5), f"trou entre {a} et {b}"
+
+
+@pytest.mark.asyncio
+async def test_un_pont_qui_ne_rend_QU_UNE_bougie_ne_detecte_rien(monkeypatch):
+    """Si le pont ne rend que le seau courant, il ne reste aucune fermée —
+    et on ne décide pas sur rien."""
+    faux = _Faux(_serie(1))
+    _brancher(monkeypatch, faux)
+    etat = BL.EtatPaire()
+    assert await BL.un_passage("XAU/USD", etat, "5min", 50, 0.0) == set()

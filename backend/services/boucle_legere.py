@@ -30,14 +30,21 @@ sur une photo de plus de trois minutes, prise ailleurs qu'a l'execution.
 FIGURES. Sur l'or, les setups qualifies arrivent 33 fois par jour (un toutes
 les ~25 min), la ou l'ancien cycle lançait 17 280 passages quotidiens.
 
-## 🔑 LES 49 FERMEES NE SONT RELUES QU'UNE FOIS PAR BOUGIE
+## 🔑 LE SEAU COURANT EST CELUI QUE LE PONT REND EN DERNIER
 
-Et le seau de la bougie EN COURS est derive de l'ETIQUETTE DE LA DERNIERE
-FERMEE, jamais de l'horloge murale. C'est deliberé : les etiquettes du pont
-portent un decalage serveur qui DERIVE (93 min en une heure, mesure le
-2026-10-10), donc tout calcul partant de `utcnow()` se desynchroniserait des
-bougies qu'il complete. En partant de la derniere fermee, la question ne se
-pose pas.
+`/rates` rend la bougie **EN COURS** comme dernier element — mesure le
+2026-10-11, marche ferme, deux appels a 70 s d'intervalle rendant tous deux
+`18:20:00`. On retire donc ce dernier element des << fermees >> et on garde
+son ETIQUETTE pour la bougie qu'on batit des ticks.
+
+⛔ AUCUNE DERIVATION, et c'est le point. Mon premier jet calculait le seau a
+`derniere + 1 intervalle` : la bougie sortait etiquetee CINQ MINUTES DANS LE
+FUTUR, et la vraie bougie en formation restait dans la serie comme si elle
+etait fermee — vue DEUX FOIS par `detect_patterns`.
+⚠️ Et surtout : jamais `utcnow()`. Les etiquettes du pont portent un decalage
+serveur qui DERIVE de 93 min en une heure (mesure le 2026-10-10), donc tout
+calcul parti de l'horloge murale se desynchroniserait des bougies qu'il
+complete.
 
 ## ⛔ CE QU'ELLE NE FAIT PAS : creer un avantage
 
@@ -70,11 +77,6 @@ import os
 from backend.models.schemas import Candle
 
 logger = logging.getLogger(__name__)
-
-# Minutes par echelle, pour deriver le seau de la bougie en cours.
-_MINUTES = {"1min": 1, "5min": 5, "15min": 15, "30min": 30, "1h": 60,
-            "4h": 240, "1day": 1440}
-
 
 # ─── La configuration, en fonctions PURES ────────────────────────────────
 
@@ -114,30 +116,7 @@ def config() -> tuple[float, list[str]]:
     return (secondes, paires)
 
 
-# ─── Le seau de la bougie EN COURS ───────────────────────────────────────
-
-def seau_en_cours(derniere_fermee: dt.datetime, interval: str,
-                  ) -> dt.datetime | None:
-    """L'etiquette du seau qui SUIT la derniere bougie fermee.
-
-    🔑 On part de l'ETIQUETTE, pas de l'horloge. Les etiquettes du pont
-    portent un decalage serveur qui derive (93 min en une heure, mesure le
-    2026-10-10) : un seau calcule depuis `utcnow()` tomberait a cote des
-    bougies qu'il est censé completer, et `detect_patterns` verrait un trou
-    ou un doublon sans qu'une seule erreur ne remonte.
-
-    ``None`` si l'echelle est inconnue — on ne DEVINE pas une duree de seau.
-    """
-    minutes = _MINUTES.get(str(interval))
-    if minutes is None:
-        logger.warning("boucle_legere: echelle %r inconnue — pas de bougie en "
-                       "cours", interval)
-        return None
-    try:
-        return derniere_fermee + dt.timedelta(minutes=minutes)
-    except (TypeError, AttributeError):
-        return None
-
+# ─── La bougie EN COURS ──────────────────────────────────────────────────
 
 def bougie_en_cours(etiquette: dt.datetime, prix) -> Candle | None:
     """La bougie EN COURS, a partir des prix vus depuis le debut du seau.
@@ -354,9 +333,29 @@ async def un_passage(pair: str, etat: EtatPaire, interval: str,
         # Mais elle ne le rajeunit pas non plus, et c'est pourquoi la
         # peremption ci-dessous est mesuree sur `dernier_rates`.
 
-    derniere = etat.fermees[-1].timestamp
-    etiquette = seau_en_cours(derniere, interval)
-    if etiquette is None:
+    # 🔑 LE PONT REND LA BOUGIE EN COURS COMME DERNIER ELEMENT, et je l'avais
+    # suppose du contraire. Mesure en production le 2026-10-11, marche FERME,
+    # deux appels a 70 s d'intervalle : la derniere etiquette rendue etait
+    # `18:20:00` — c'est-a-dire le seau EN FORMATION, pas la derniere fermee.
+    # Et je l'avais pourtant ecrit moi-meme ce matin, en corrigeant le cache :
+    # << le retard ne venait pas de la cloture — /rates rend la bougie EN
+    # COURS — mais du CACHE >>.
+    #
+    # ⛔ CE QUE MON ERREUR COUTAIT, et ce n'etait pas benin :
+    #   - je derivais le seau courant a `derniere + 1 intervalle`, donc ma
+    #     bougie etait etiquetee CINQ MINUTES DANS LE FUTUR ;
+    #   - et la vraie bougie en formation restait dans la serie COMME SI elle
+    #     etait fermee ⇒ `detect_patterns` la voyait DEUX FOIS, une fois
+    #     partielle et une fois batie des ticks.
+    #
+    # ⇒ Le dernier element EST le seau courant. On le retire des fermees et on
+    # garde son ETIQUETTE : plus aucune derivation, donc plus rien a supposer.
+    # ⚠️ Et si ce dernier element etait en realite deja clos, le remplacer par
+    # notre version batie des ticks du MEME courtier ne degrade rien — c'est
+    # la meme bougie, mesuree plus finement.
+    etiquette = etat.fermees[-1].timestamp
+    fermees = etat.fermees[:-1]
+    if not fermees:
         return set()
     if etat.etiquette != etiquette:
         etat.nouveau_seau(etiquette)
@@ -374,7 +373,10 @@ async def un_passage(pair: str, etat: EtatPaire, interval: str,
     courante = bougie_en_cours(etiquette, etat.prix)
     if courante is None:
         return set()
-    serie = list(etat.fermees[-(combien - 1):]) + [courante]
+    # ⛔ `fermees` (le local), pas `etat.fermees` : le dernier element de
+    # l'etat EST le seau courant, et l'inclure ferait voir la bougie en
+    # formation DEUX FOIS a `detect_patterns`.
+    serie = list(fermees[-(combien - 1):]) + [courante]
 
     from backend.services.pattern_detector import detect_patterns
     detections = detect_patterns(serie, pair)
