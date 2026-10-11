@@ -30,6 +30,7 @@ from backend.services.mt5_bridge import (
     health_check as mt5_bridge_health_check,
     send_setups as mt5_bridge_send_setups,
 )
+from backend.services import boucle_legere
 from backend.services.pattern_detector import calculate_trade_setup, detect_patterns
 from backend.services.price_service import fetch_candles
 from backend.services.shadow_v2_core_long import SHADOW_PAIRS as _SHADOW_PAIRS
@@ -927,6 +928,54 @@ def config_cycle_rapide() -> tuple[int, list[str]]:
     return (secondes, paires)
 
 
+def arbitrer_les_boucles(legere_sec: float, legere_paires: list[str],
+                         rapide_sec: int, rapide_paires: list[str],
+                         ) -> tuple[int, list[str]]:
+    """Ce qu'il reste du cycle rapide quand la boucle legere est armee.
+
+    ⛔ LES DEUX NE DOIVENT PAS TOURNER ENSEMBLE, et la raison n'est pas le
+    cout. Le cycle rapide relance la chaine LOURDE a l'horloge ; la boucle
+    legere la relance sur REVEIL. Les deux armes, l'or recevrait deux chaines
+    concurrentes et le verrou de `run_analysis_cycle` en jetterait une — mais
+    laquelle depend de l'ordonnancement, donc le comportement cesse d'etre
+    reproductible, et une mesure sur un systeme irreproductible ne vaut rien.
+
+    🔑 EXTRAITE POUR ETRE TESTABLE SANS DEMARRER L'ORDONNANCEUR, pour la meme
+    raison que `config_cycle_rapide` : mon premier test de cette famille
+    appelait le vrai `start_scheduler()`, ecrivait dans `data/scalping.db` et
+    faisait tomber 30 tests ailleurs.
+    """
+    if legere_sec > 0 and legere_paires:
+        if rapide_sec > 0 and rapide_paires:
+            logger.warning(
+                "boucle legere ARMEE : le cycle rapide (%s aux %s s) est "
+                "DESARME pour ne pas lancer deux chaines lourdes "
+                "concurrentes sur les memes paires",
+                ",".join(rapide_paires), rapide_sec)
+        return (0, [])
+    return (rapide_sec, rapide_paires)
+
+
+async def _boucle_legere_job(pair: str, periode: float) -> None:
+    """Fait tourner la boucle legere d'une paire. Ne rend jamais la main.
+
+    ⛔ Le reveil appelle `run_analysis_cycle(univers_force=[pair])`, et la
+    LISTE A UN ELEMENT compte : `univers_force=[]` serait FAUSSE en Python,
+    donc `restreint = bool(univers_force)` vaudrait False et on lancerait un
+    cycle COMPLET — 54 paires et 24 s de travail, sur un reveil de 200 ms.
+    C'est le piege documente dans `config_cycle_rapide`, et il est ici aussi.
+    """
+    from config.settings import CANDLE_COUNT, CANDLE_INTERVAL
+
+    async def reveiller(p: str, motifs: set[str]) -> None:
+        logger.info("boucle legere: chaine lourde sur %s (motifs %s)", p,
+                    sorted(motifs))
+        await run_analysis_cycle(univers_force=[p])
+
+    await boucle_legere.boucle(pair, CANDLE_INTERVAL, CANDLE_COUNT, periode,
+                               reveiller)
+
+
 def start_scheduler() -> AsyncIOScheduler:
     """Démarre le scheduler périodique."""
     global _scheduler
@@ -985,6 +1034,45 @@ def start_scheduler() -> AsyncIOScheduler:
     # « cycle restreint ignore : un cycle est deja en cours ». C'est la ligne a
     # lire si ce job cesse de servir.
     _cycle_rapide_sec, _cycle_rapide_paires = config_cycle_rapide()
+
+    # ─── La BOUCLE LEGERE (2026-10-11), et elle REMPLACE le cycle rapide ──
+    #
+    # Xavier : « Separe en deux boucles. » La legere lit le tick du courtier
+    # aux ~200 ms, bâtit la bougie en cours EN MEMOIRE, detecte, et ne
+    # reveille la chaine lourde que sur un motif NOUVEAU.
+    #
+    # ⛔ LES DEUX NE DOIVENT PAS TOURNER ENSEMBLE. Le cycle rapide relance la
+    # chaine LOURDE a l'horloge ; la boucle legere la relance sur reveil. Les
+    # deux armes, l'or recevrait deux chaines concurrentes et le verrou de
+    # `run_analysis_cycle` en jetterait une au hasard — un comportement qui
+    # depend de l'ordonnancement, donc irreproductible. On DESARME donc le
+    # cycle rapide des que la boucle legere est armee, et on le DIT.
+    from datetime import timedelta as _td
+
+    _legere_sec, _legere_paires = boucle_legere.config()
+    _cycle_rapide_sec, _cycle_rapide_paires = arbitrer_les_boucles(
+        _legere_sec, _legere_paires, _cycle_rapide_sec, _cycle_rapide_paires)
+    if _legere_sec > 0 and _legere_paires:
+        for _p in _legere_paires:
+            _scheduler.add_job(
+                _boucle_legere_job,
+                "date",
+                run_date=datetime.now(timezone.utc) + _td(seconds=5),
+                args=[_p, _legere_sec],
+                id=f"boucle_legere_{_p.replace('/', '_')}",
+                name=f"Boucle legere {_p}",
+                replace_existing=True,
+            )
+        logger.info(
+            "boucle legere ARMEE : %s aux %.0f ms (budget mesure ~7,2 ms par "
+            "passage, soit %.1f %% de charge) — la chaine lourde ne tourne "
+            "plus qu'au REVEIL",
+            ",".join(_legere_paires), _legere_sec * 1000,
+            100 * 0.0072 / _legere_sec)
+    else:
+        logger.info("boucle legere DESARMEE (BOUCLE_LEGERE_SEC=%s, paires=%r)",
+                    _legere_sec, _legere_paires)
+
     if _cycle_rapide_sec > 0 and _cycle_rapide_paires:
         _scheduler.add_job(
             run_analysis_cycle,
