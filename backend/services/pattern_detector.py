@@ -1122,6 +1122,29 @@ XAU_SL_PCT = float(os.getenv("XAU_SL_PCT", "0.35"))
 XAU_TP_FIXE_EUR = float(os.getenv("XAU_TP_FIXE_EUR", "0"))
 
 
+# ⛔ AUCUN OBJECTIF SUR L'OR — decision de Xavier le 2026-10-11 :
+# « nous n'allons pas mettre de TP a l'ouverture du trade et nous n'allons en
+# fait jamais en mettre. Le stop loss guidera la sortie dans tous les cas. »
+#
+# 🔑 POURQUOI UN DRAPEAU ICI ET PAS SEULEMENT DANS L'ECHELLE : l'objectif
+# d'ouverture vit sur un chemin TOTALEMENT distinct de `echelle_stop_or`.
+# `ECHELLE_STOP_OR_SANS_OBJECTIF` ne l'aurait pas touche, et le trade serait
+# sorti a +2 EUR avant que le trainage n'ait rien a dire.
+# ⛔ Et mettre `XAU_TP_FIXE_EUR=0` ne suffit pas non plus : l'appelant retombe
+# alors sur l'objectif ORDINAIRE (`risque x 1,8 R`), soit ~23 EUR. Il faut donc
+# dire explicitement << aucun >>.
+#
+# Mesure qui le justifie, 6 668 trades aveugles sur 99 999 bougies M1 du
+# courtier : un objectif fixe a 2 EUR coute **-0,1015 EUR/jour (t -6,85)**
+# contre pas d'objectif du tout ; un objectif qui fuit, -0,0311 (t -2,72).
+# Un objectif PLAFONNE : il ne peut gagner que la largeur du trainage et perd
+# tout ce que le mouvement depasse.
+#
+# ⚠️ 0 = INERTE : sans ce reglage, l'objectif d'avant est pose a l'identique.
+XAU_SANS_OBJECTIF = os.getenv("XAU_SANS_OBJECTIF", "0").strip().lower() in (
+    "1", "true", "on", "yes")
+
+
 def _distance_tp_or(prix: float | None) -> float | None:
     """La distance de PRIX qui vaut `XAU_TP_FIXE_EUR` au lot minimum.
 
@@ -1378,6 +1401,15 @@ def calculate_trade_setup(
     else:
         take_profit_1 = round(entry - risk * PATTERN_TP1_RR, decimals)
         take_profit_2 = round(entry - risk * PATTERN_TP2_RR, decimals)
+
+    # ⛔ AUCUN OBJECTIF. `0.0` est la facon dont MT5 dit « aucune cible » —
+    # c'est exactement ce que portaient 2 des 3 positions que Xavier avait
+    # ouvertes a la main le 09/10, et le courtier les tenait sans broncher.
+    # 🔑 Le stop devient alors la SEULE sortie : stop de depart, stop resserre
+    # par la protection, point mort, ou stop suiveur devenu positif.
+    if XAU_SANS_OBJECTIF and _est_de_l_or(pair):
+        take_profit_1 = 0.0
+        take_profit_2 = 0.0
 
     if risk <= 0:
         return None

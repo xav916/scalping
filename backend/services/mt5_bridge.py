@@ -1974,8 +1974,13 @@ def _build_order_payload(setup, sz: dict, dest=None) -> dict:
         # Distances relatives (EA v1.05+). Positives en unités de prix.
         # L'EA calculera : SL = fill_price ± sl_dist, TP = fill_price ± tp_dist.
         "sl_dist": abs(entry - sl),
-        "tp_dist": abs(entry - tp1),
-        "tp2_dist": abs(entry - tp2) if tp2 is not None else None,
+        # ⛔ UN OBJECTIF NUL RESTE NUL, il ne devient pas une distance geante.
+        # Sans cette garde, `abs(entry - 0)` vaut le PRIX DE L'OR (~4 150 $) :
+        # l'EA v1.05+ poserait un objectif a 4 150 $ du fill, et le payload
+        # mentirait sur l'intention. `0` est la convention MT5 pour « aucune
+        # cible » — on la transmet telle quelle.
+        "tp_dist": abs(entry - tp1) if tp1 else 0.0,
+        "tp2_dist": (abs(entry - tp2) if (tp2 is not None and tp2) else None),
         "risk_money": sz["risk_money"],
         "comment": f"scalping-radar-{date.today().isoformat()}",
         # Le pourcentage EFFECTIF de la destination, pas le global : depuis le
