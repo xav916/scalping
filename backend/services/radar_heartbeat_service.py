@@ -82,35 +82,3 @@ def record_cycle(
         logger.warning("radar_heartbeat: record_cycle failed (non-bloquant): %s", e)
 
 
-def trim_old_heartbeats(keep_days: int = 14) -> int:
-    """Retention : garde keep_days jours de heartbeats. Retourne le count supprimé.
-
-    À appeler depuis un job scheduler hebdo. Best-effort.
-    """
-    try:
-        _ensure_schema()
-        with sqlite3.connect(_db_path()) as c:
-            cur = c.execute(
-                """
-                -- ⛔ `replace(...,'T',' ')` : stockage ISO avec `T`,
-                -- `datetime('now',...)` avec une ESPACE, et `T` > espace en
-                -- comparaison de chaines.
-                --
-                -- ⚠️ La severite depend de la LONGUEUR de la fenetre, et je
-                -- l'avais d'abord surestimee. Pour une borne a -7 jours, les
-                -- dates plus anciennes se comparent correctement par leur
-                -- prefixe : seules les lignes du JOUR DE LA BORNE echappaient
-                -- a la purge (366 sur 49 259 mesurees le 08/09).
-                --
-                -- 🔑 C'est sur les fenetres COURTES que le defaut est total :
-                -- la borne tombe aujourd'hui, et toutes les lignes du jour la
-                -- depassent. Une fenetre de 20 minutes rendait la journee.
-                DELETE FROM radar_cycle_heartbeat
-                WHERE replace(cycle_completed_at,'T',' ') < datetime('now', ?)
-                """,
-                (f"-{keep_days} days",),
-            )
-            return cur.rowcount
-    except Exception as e:
-        logger.warning("radar_heartbeat: trim failed: %s", e)
-        return 0

@@ -29,10 +29,3 @@ def correlated_pairs(pair: str) -> set[str]:
     return result
 
 
-def has_open_correlation(pair: str, direction: str, open_trades: list[dict]) -> list[dict]:
-    """Retourne les trades ouverts correles au signal (meme direction sur paire liee)."""
-    corr = correlated_pairs(pair)
-    return [
-        t for t in open_trades
-        if t.get("pair") in corr and t.get("direction") == direction
-    ]

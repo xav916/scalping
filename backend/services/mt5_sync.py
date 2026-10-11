@@ -90,11 +90,6 @@ def horizon_et_motif_du_push(ticket) -> tuple[str | None, str | None]:
         logger.debug(f"mt5_sync: horizon_et_motif_du_push({ticket}) failed: {e}")
         return (None, None)
 
-def _load_last_synced_id() -> int:
-    """Compat legacy : retourne last_id du bridge admin_legacy uniquement."""
-    return _load_state().get("bridges", {}).get("legacy", 0)
-
-
 def _save_last_synced_id(last_id: int) -> None:
     """Compat legacy : écrit last_id pour admin_legacy uniquement."""
     state = _load_state()

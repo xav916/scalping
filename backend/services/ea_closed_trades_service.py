@@ -187,12 +187,3 @@ def get_last_n_for_pair(user_id: int, pair: str, n: int) -> list[dict[str, Any]]
     return [dict(r) for r in rows]
 
 
-def get_distinct_pairs_for_user(user_id: int) -> list[str]:
-    """Retourne les pairs sur lesquels le user a déjà des trades fermés."""
-    _ensure_schema()
-    with sqlite3.connect(_db_path()) as c:
-        rows = c.execute(
-            "SELECT DISTINCT pair FROM ea_closed_trades WHERE user_id = ?",
-            (user_id,),
-        ).fetchall()
-    return [r[0] for r in rows]

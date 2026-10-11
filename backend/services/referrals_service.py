@@ -161,23 +161,6 @@ def track_signup(code: str, referred_user_id: int, referred_email: str) -> bool:
         return True
 
 
-def on_conversion(referred_user_id: int, paid_amount_eur: float) -> None:
-    """Crédite le parrain (20% sur 6 premiers mois). Manuel par admin pour V1."""
-    init_referrals_schema()
-    commission = round(paid_amount_eur * 0.20, 2)
-    with sqlite3.connect(DB_PATH) as c:
-        c.execute(
-            """
-            UPDATE referral_signups
-               SET converted_at = CURRENT_TIMESTAMP,
-                   commission_eur = commission_eur + ?
-             WHERE referred_user_id = ?
-            """,
-            (commission, referred_user_id),
-        )
-        logger.info(f"referral conversion: user {referred_user_id} → commission +{commission}€")
-
-
 def get_my_stats(user_id: int) -> dict:
     """Stats parrainage du user : code, signups, commissions earned/paid."""
     init_referrals_schema()

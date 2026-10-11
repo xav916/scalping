@@ -622,5 +622,3 @@ def arbitrage_actif_pour(destination_id: str | None) -> dict | None:
 
 
 # Backward compat
-def silent_mode_active() -> bool:
-    return silent_mode_active_any_user()

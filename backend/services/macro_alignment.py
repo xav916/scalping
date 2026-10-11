@@ -60,10 +60,6 @@ def _pair_parts(pair: str) -> tuple[str, str]:
     return pair.upper(), ""
 
 
-def _is_strong(direction: MacroDirection) -> bool:
-    return direction in (MacroDirection.STRONG_UP, MacroDirection.STRONG_DOWN)
-
-
 def _is_up(direction: MacroDirection) -> bool:
     return direction in (MacroDirection.UP, MacroDirection.STRONG_UP)
 

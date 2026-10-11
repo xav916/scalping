@@ -63,10 +63,10 @@ if r:
     age_min = (datetime.now(timezone.utc) - datetime.fromisoformat(r[0])).total_seconds()/60
     out["cycle_hb_min"] = round(age_min, 1)
 # 5c Rafale verdict_blocker dernière heure
-n = con.execute("SELECT COUNT(*) FROM signal_rejections WHERE created_at >= datetime('now','-1 hour') AND reason_code='verdict_blocker'").fetchone()[0]
+n = con.execute("SELECT COUNT(*) FROM signal_rejections WHERE replace(created_at,'T',' ') >= datetime('now','-1 hour') AND reason_code='verdict_blocker'").fetchone()[0]
 out["verdict_blocker_1h"] = n
 # 5d Pushes count dernière heure (info, pas une alerte weekend)
-n = con.execute("SELECT COUNT(*) FROM mt5_pushes WHERE pushed_at >= datetime('now','-1 hour')").fetchone()[0]
+n = con.execute("SELECT COUNT(*) FROM mt5_pushes WHERE replace(pushed_at,'T',' ') >= datetime('now','-1 hour')").fetchone()[0]
 out["pushes_1h"] = n
 # 5e EXTRA_PAIRS_GLOBAL loaded
 import os

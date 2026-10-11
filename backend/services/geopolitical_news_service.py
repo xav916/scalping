@@ -278,15 +278,6 @@ def get_current() -> Optional[dict]:
     return asdict(_cache)
 
 
-def is_high_stress() -> bool:
-    """Raccourci pour les modules qui veulent juste savoir si on est en
-    régime tendu (utile pour veto futur)."""
-    snap = get_current()
-    if not snap:
-        return False
-    return snap.get("overall_stress") == "high"
-
-
 # --- Persistence (SQLite) ---------------------------------------------------
 
 

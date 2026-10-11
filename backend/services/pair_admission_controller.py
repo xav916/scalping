@@ -2015,25 +2015,3 @@ def backfill_initial_states() -> dict[str, Any]:
             "refuses": len(refusees), "paires_refusees": refusees}
 
 
-def get_recent_transitions(pair: str, limit: int = 10) -> list[dict[str, Any]]:
-    """Historique des N dernières transitions d'un pair (pour audit/dashboard)."""
-    _ensure_schema()
-    with sqlite3.connect(_db_path()) as c:
-        c.row_factory = sqlite3.Row
-        rows = c.execute(
-            """
-            SELECT * FROM pair_admission_state
-             WHERE pair = ? ORDER BY state_since DESC LIMIT ?
-            """,
-            (pair, limit),
-        ).fetchall()
-    result = []
-    for r in rows:
-        d = dict(r)
-        if d.get("score_snapshot"):
-            try:
-                d["score_snapshot"] = json.loads(d["score_snapshot"])
-            except (json.JSONDecodeError, TypeError):
-                pass
-        result.append(d)
-    return result

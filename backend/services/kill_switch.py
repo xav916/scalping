@@ -271,29 +271,6 @@ def is_pair_rafale_paused(pair: str) -> tuple[bool, dict | None]:
     return _is_pause_info_active_now(info)
 
 
-def consume_expired_pair_rafale_pauses() -> dict[str, dict]:
-    """Itère toutes les pairs en pause, clear celles expirées, retourne dict
-    {pair: info_snapshot} pour notifications. Idempotent.
-    """
-    state = _load_state()
-    expired: dict[str, dict] = {}
-    paused = state.get("rafale_paused_pairs", {})
-    for pair, info in list(paused.items()):
-        active_now, _ = _is_pause_info_active_now(info)
-        if not info.get("active"):
-            # Already cleared somehow
-            continue
-        if not active_now:
-            expired[pair] = dict(info)
-            del paused[pair]
-    if expired:
-        state["rafale_paused_pairs"] = paused
-        _save_state(state)
-        for pair in expired:
-            logger.warning(f"kill_switch: PAIR rafale_pause expired pair={pair!r} → cleared")
-    return expired
-
-
 def list_paused_pairs() -> dict[str, dict]:
     """Retourne dict {pair: info} des pairs actuellement en pause non expirée
     (utilisé par /api/status pour l'UI : on n'affiche que les pauses qui
