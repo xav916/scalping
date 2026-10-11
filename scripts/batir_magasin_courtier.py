@@ -46,14 +46,18 @@ import urllib.request
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 
-PAIRE = "XAU/USD"
-TF = "M5"
-PAS_MIN = 5
+PAIRE = os.getenv("MAGASIN_PAIRE", "XAU/USD")
+# ⚠️ Parametre par l'environnement le 2026-10-11, pour batir un magasin M1 sans
+# toucher au comportement M5 deja verifie. Sans variable, rien ne change.
+TF = os.getenv("MAGASIN_TF", "M5")
+PAS_MIN = int(os.getenv("MAGASIN_PAS_MIN", "5"))
 # ⓘ Profondeur REELLE du courtier en M5, mesuree : 2025-05-16.
 # Demander 2021 ne la rallonge pas, le pont rend ce qu'il a.
-DEBUT = datetime(2021, 1, 1, tzinfo=timezone.utc)
-FIN = datetime(2026, 10, 10, tzinfo=timezone.utc)
-CIBLE = "/app/data/candles_courtier.db"
+DEBUT = datetime.fromisoformat(
+    os.getenv("MAGASIN_DEBUT", "2021-01-01")).replace(tzinfo=timezone.utc)
+FIN = datetime.fromisoformat(
+    os.getenv("MAGASIN_FIN", "2026-10-10")).replace(tzinfo=timezone.utc)
+CIBLE = os.getenv("MAGASIN_CIBLE", "/app/data/candles_courtier.db")
 SERVEUR_MIN = 180.0
 PAUSE = 0.4
 
