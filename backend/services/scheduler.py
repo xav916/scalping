@@ -600,6 +600,45 @@ async def _run_analysis_cycle_verrouille(
 _shadow_reconcile_counter = 0  # toutes les N appels de cockpit, on tente reconcile
 
 
+async def _protection_perte_cycle() -> None:
+    """Un passage de la protection des pertes. Best-effort : ne tombe jamais.
+
+    🔑 POURQUOI DANS LA BOUCLE ET PLUS SEULEMENT DANS LE CRON. Demande de
+    Xavier le 2026-10-11 : « lancez l'algo toutes les 20 secondes pour le
+    resserrage du SL ». **Un cron ne descend pas sous la minute** — il fallait
+    donc un travail cadence, comme l'echelle.
+
+    Mesure qui le justifie, 6 668 trades aveugles sur 99 999 bougies M1 du
+    courtier, meme configuration (depart 13 EUR, trainage 0,50, aucun
+    objectif) :
+
+        cadence         EUR/trade   pire journee   stop de depart touche
+        aucune            +0,0570      -2,58            598 / 6 668
+        5 min (le cron)   +0,0546      -1,75             20
+        2 min             +0,0514      -0,87              2
+        1 min             +0,0488      **-0,60**          **1**
+
+    ⇒ **Aucun ecart de rendement etabli** (|t| <= 0,94, signes inverses entre
+    les deux moities) et la pire journee divisee par ~3 en descendant a la
+    minute. C'est une **assurance qui ne coute rien de mesurable**.
+    ⚠️ Son prix visible est ailleurs : 11 952 resserrages contre 5 030, donc
+    **2,4 fois plus d'ordres** au courtier, et une reussite qui passe de
+    77,3 % a 67,2 % (plus de trades coupes petits).
+
+    ⛔ INERTE sans `PROTECTION_PERTE_INTERVAL_SEC` : le cron d'avant continue
+    alors de faire le travail, a l'identique.
+    """
+    try:
+        from scripts.protection_perte_or import appliquer
+        b = appliquer()
+        if b.get("resserres"):
+            logger.info("protection perte : %d resserre(s)", b["resserres"])
+        if b.get("echecs"):
+            logger.warning("protection perte : %d echec(s)", b["echecs"])
+    except Exception as e:  # noqa: BLE001
+        logger.warning("protection perte : passage echoue (%s)", e)
+
+
 async def _echelle_stop_cycle() -> None:
     """Un passage de l'echelle de stop. Best-effort : ne tombe jamais.
 
@@ -979,6 +1018,24 @@ def start_scheduler() -> AsyncIOScheduler:
         name="Echelle de stop de l'or",
         replace_existing=True,
     )
+    # ⛔ INERTE par defaut : sans `PROTECTION_PERTE_INTERVAL_SEC`, c'est le
+    # cron `*/5` qui continue seul, a l'identique. Avec, la boucle prend le
+    # relais a la cadence demandee — et il faut alors RETIRER la ligne de cron,
+    # sinon les deux sondent le pont pour rien.
+    _intervalle_protection = int(
+        os.getenv("PROTECTION_PERTE_INTERVAL_SEC", "0"))
+    if _intervalle_protection > 0:
+        _scheduler.add_job(
+            _protection_perte_cycle,
+            "interval",
+            seconds=_intervalle_protection,
+            id="protection_perte_or",
+            name="Protection des pertes de l'or",
+            replace_existing=True,
+        )
+        logger.info("protection perte : boucle armee a %d s",
+                    _intervalle_protection)
+
     # Check backtest toutes les 60s (independant du cycle d'analyse)
     _scheduler.add_job(
         backtest_check_cycle,
