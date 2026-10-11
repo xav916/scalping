@@ -68,3 +68,60 @@ permutations, avec **n ≥ 200** et un **signe stable sur les deux moitiés**.
 
 ⇒ Si le retournement passe, Xavier a trouvé le premier signal directionnel du
 projet, et la détection doit passer aux séries de ticks.
+
+
+---
+
+# VERDICT — 2026-10-11
+
+`scripts/banc_series_de_ticks.py`. **3 298 970 ticks**, 15 jours. Plafond par
+permutation : **2,123**.
+
+## La distribution des séries, d'abord
+
+    >= 2 variations consecutives : 59,923 %
+    >= 3                         : 37,137 %
+    >= 5                         : 14,496 %
+    >= 8                         :  3,629 %
+    >= 12                        :  0,602 %
+    >= 16                        :  0,101 %
+
+## ⇒ 0 CELLULE RETENUE SUR 16. Tous les |t| ≤ 1,39.
+
+    k   moment          geometrie       n     le sens  l'inverse   ecart      t
+    3   au k-ieme       symetrique    4087    -0,0083    -0,1242  +0,1148  +1,29
+    3   au k-ieme       production    4087    +0,0867    +0,0240  +0,0611  +1,23
+    5   a la cassure    symetrique    4002    -0,1129    -0,0299  -0,0827  -1,39
+    8   a la cassure    production    3675    +0,0465    -0,0074  +0,0533  +0,96
+    8   a la cassure    symetrique    3675    -0,0225    -0,1060  +0,0829  +0,96
+    12  au k-ieme       production    2433    +0,0304    +0,0241  +0,0071  +0,15
+    ... les dix autres : |t| <= 0,80
+
+## ⛔ TROIS DE MES QUATRE PRÉDICTIONS SONT FAUSSES
+
+1. ✅ « 0 cellule retenue sur 16 » : **juste**. Septième zéro annoncé, septième
+   zéro obtenu.
+2. ⛔ « si une cellule passe, ce sera le RETOURNEMENT sur les séries longues » :
+   **faux**. Les deux plus gros |t| sont la **CONTINUATION sur les séries
+   COURTES** (k = 3, t +1,29 et +1,23). Le retournement sur k ≥ 8 fait +0,96.
+3. ⛔ « les séries longues seront rares, n pourrait tomber sous 200 » : **faux**.
+   k = 12 garde **2 433 entrées** — le repos de 5 minutes les espace, donc
+   l'effectif ne s'effondre pas. Aucune cellule n'a été disqualifiée par manque
+   d'effectif.
+4. ⛔ « la continuation sera clairement négative » : **faux, et à l'envers**.
+   C'est la continuation sur séries courtes qui donne les **meilleurs** écarts
+   (+0,1148 et +0,0611).
+
+🔑 Ce qui reste de la journée : **sur sept bancs dont j'avais annoncé le
+résultat, j'ai eu raison sept fois sur le ZÉRO, et faux la plupart du temps sur
+le MÉCANISME.** Le zéro est robuste ; mes explications ne le sont pas.
+
+## ⇒ CE QUE ÇA FERME
+
+La figure de Xavier — « ça monte, donc ça va descendre » — est mesurée à
+l'échelle du tick, dans les deux sens, à quatre longueurs, sur 3,3 millions de
+ticks : **elle ne porte pas de direction**. C'est le **septième zéro
+indépendant**, et il couvre désormais :
+
+    les motifs (0/22, 0/28, 2/30 anti-predictifs) · l'echelle jusqu'au tick
+    (0/16) · l'instant de la decision (0/4) · et la microstructure (0/16)
