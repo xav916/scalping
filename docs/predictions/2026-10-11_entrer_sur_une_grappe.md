@@ -49,3 +49,45 @@ Retenu si, pour au moins un couple :
 
 ⇒ Si un couple passe, c'est la première fois qu'un mécanisme du projet devient
 de l'argent.
+
+
+---
+
+# VERDICT — 2026-10-11
+
+`scripts/banc_entrer_sur_grappe.py`. **215 instants de grappe** (≥5
+publications USD dans ±5 min dont une High) dans la fenetre du magasin M5 du
+courtier, 15 000 bougies propres comme univers de controle, 200 tirages
+appaires (heure × jour).
+
+## ⇒ 0 COUPLE RETENU SUR 5. Ma prediction 1 tient.
+
+    couple      GRAPPE $   TEMOIN $     ecart        t     plafond
+    TP2/SL20     -0,4211    -0,2473   **-0,1738**   -0,48    16,71
+    TP2/SL2      -0,7048    -0,2769   **-0,4280**   -5,81    16,71
+    TP5/SL5      -0,2708    -0,1418     -0,1290     -1,79    16,71
+    TP10/SL10    -0,1949    -0,1107     -0,0841     -0,92    16,71
+    TP20/SL20    -0,0646    -0,0781     +0,0135    +10,18    16,71
+
+⇒ Quatre ecarts sur cinq sont **negatifs** : entrer sur une grappe est **pire**
+que d'entrer au hasard a la meme heure. Le seul positif (TP20/SL20, +0,0135 $)
+reste loin sous le plafond de permutation.
+
+## ✅ ET MA PREDICTION 2 EST JUSTE — l'amplitude fait UNE chose, et une seule
+
+Duree moyenne jusqu'a une borne, en bougies M5 :
+
+    TP2/SL20    grappe **6,5**   temoin 10,8    ÷ 1,66
+    TP2/SL2     grappe   1,3     temoin  2,2    ÷ 1,69
+    TP5/SL5     grappe   3,5     temoin  8,5    **÷ 2,43**
+    TP10/SL10   grappe  15,3     temoin 25,8    ÷ 1,69
+    TP20/SL20   grappe  49,5     temoin 62,9    ÷ 1,27
+
+🔑 Le ×1,523 d'amplitude est **reel** et il se traduit exactement en **vitesse
+de resolution** : les trades se denouent **1,3 a 2,4 fois plus vite**. Il ne se
+traduit **pas** en argent — ce qui est l'arithmetique annoncee : atteindre
+`+a` avant `−b` vaut `b/(a+b)` quelle que soit la volatilite.
+
+⇒ Le seul usage defendable de ce mecanisme serait donc **le temps**, pas le
+rendement : liberer une place plus vite. Et la valeur de cette place est
+elle-meme nulle tant qu'aucune entree n'a d'avantage.

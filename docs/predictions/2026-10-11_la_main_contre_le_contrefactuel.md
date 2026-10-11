@@ -68,3 +68,52 @@ sur 1 530) — le reste vient du stock et vaut moins.
 
 ⇒ Si les quatre passent, sa main est le premier avantage établi du projet, et
 le système doit être « il ouvre et ferme, la machine garde ».
+
+
+---
+
+# VERDICT — 2026-10-11
+
+`scripts/banc_la_main_contrefactuel.py`. **80 trades** ou il est intervenu
+(XAU, juillet → 9 octobre 2026), **tous a argent verifie chez le courtier**,
+contrefactuel calcule sur les 99 999 bougies M1 du courtier.
+
+## ⛔ MA PREDICTION 1 EST REFUTEE : sa main NE BAT PAS le fait de ne rien faire
+
+    LUI    **+2,26 EUR/trade**   total **+180,85 EUR**
+    RIEN   **+5,89 EUR/trade**   total **+470,94 EUR**
+    ecart par JOUR  -12,44 EUR   t **-0,91**   (20 jours)
+
+⇒ **Ne rien faire aurait rapporte +290 EUR de plus** sur ces 80 trades.
+
+Les quatre criteres : **1 echoue** (LUI < RIEN), **2 echoue** (|t| 0,91 < 2,5),
+**3 echoue** (n = 80 < 100), 4 passe. ⇒ **SA MAIN N'EST PAS RETENUE.**
+
+⚠️ Et il faut le dire proprement : avec t = −0,91, « sa main nuit » n'est **pas
+etabli** non plus. Le resultat est **INDECIDABLE**, avec une estimation
+ponctuelle clairement contre elle.
+
+## ✅ MA PREDICTION 3 EST JUSTE, ET C'EST LE MECANISME
+
+Issues qu'auraient eues ses trades s'il n'avait rien fait :
+
+    objectif atteint   **45 sur 80  (56 %)**
+    sa cloture         23
+    stop touche        **12 sur 80  (15 %)**
+
+🔑 **Seules 15 % de ses sorties evitaient un stop ; 56 % auraient atteint
+l'objectif.** Sa main n'est donc pas un garde-fou : c'est de l'**argent laisse
+sur la table**.
+
+⚠️ Le dommage est concentre sur la **premiere moitie** (−36,07 EUR/jour contre
+−0,02 ensuite), et un seul trade y pese lourd : une vente du 05/08 tenue
+**six jours** a travers une hausse de 308 $, soldee **−265,11 EUR**, dont le
+stop declare etait a 6,89 $.
+
+## Ce que ca dit du semi-automatique
+
+Sa proposition etait « je lance, tu arretes » ; puis j'ai propose l'inverse,
+« il ouvre, la machine garde ». ⇒ La mesure soutient le **second** sur un point
+precis : ce sont les **bornes** qui gagnent, pas les sorties humaines. Mais
+elle ne soutient PAS l'idee que sa main apporte quoi que ce soit, et c'est
+contre ma propre prediction.
