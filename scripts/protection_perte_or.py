@@ -67,6 +67,10 @@ FENETRE_SEC = int(os.environ.get("PROTECTION_PERTE_FENETRE_SEC", "300"))
 MOITIE_SEC = FENETRE_SEC / 2.0
 # Plancher decide par Xavier apres la mesure de convergence.
 MARGE_MIN_EUR = float(os.environ.get("PROTECTION_PERTE_MARGE_MIN_EUR", "2.0"))
+# ⚠️ Marge minimale pour qu'un stop reste du BON cote du cours. Partagee
+# d'intention avec `equiper_trades_main.MARGE_FRANCHIE_EUR`.
+MARGE_FRANCHIE_EUR = float(
+    os.environ.get("PROTECTION_PERTE_MARGE_FRANCHIE_EUR", "0.10"))
 ARME = os.environ.get("PROTECTION_PERTE_OR", "0").strip() in ("1", "true", "on")
 
 
@@ -76,6 +80,28 @@ def _db_path() -> str:
 
 
 # ─── La regle, en fonctions PURES ────────────────────────────────────────
+
+def _plancher_absolu_eur() -> float | None:
+    """Le plancher ABSOLU du stop, en euros, ou ``None``.
+
+    ⛔ Absent ou illisible ⇒ ``None``, donc le plancher d'avant
+    (`perte + marge`), a l'identique. Une valeur <= 0 est refusee : elle
+    autoriserait un stop a l'entree ou au-dela, ce qui n'est plus une
+    protection.
+    """
+    brut = os.environ.get("PROTECTION_PERTE_PLANCHER_EUR", "").strip()
+    if not brut:
+        return None
+    try:
+        v = float(brut)
+        if v <= 0:
+            raise ValueError(f"plancher {v} <= 0")
+        return v
+    except Exception as e:  # noqa: BLE001
+        print(f"⚠️ PROTECTION_PERTE_PLANCHER_EUR illisible ({e}) — repli sur "
+              f"le plancher perte + marge")
+        return None
+
 
 def nouveau_stop_eur(stop_eur: float, perte_eur: float,
                      marge_min_eur: float = MARGE_MIN_EUR) -> float | None:
@@ -99,7 +125,25 @@ def nouveau_stop_eur(stop_eur: float, perte_eur: float,
     except (TypeError, ValueError):
         return None
 
+    # 🔑 PLANCHER ABSOLU, demande de Xavier le 2026-10-11 : « lorsqu'on sera a
+    # -2 euros, on arretera les reductions ». Le stop ne devient donc jamais
+    # plus serre que cette distance.
+    # ⛔ Absent ou illisible ⇒ comportement d'avant, a l'identique.
+    #
+    # ⚠️ PAS DE GARDE << MAUVAIS COTE DU COURS >> ICI, ET C'EST DEMONTRABLE.
+    # J'en avais ajoute une (`max(perte + 0,10, absolu)`) : une REINJECTION a
+    # montre qu'elle ne changeait AUCUN resultat, donc qu'elle etait morte.
+    # La preuve : le point milieu vaut `(stop + perte) / 2`, et la fonction ne
+    # va plus loin que si `stop > plancher >= 0`, donc avec `stop > perte` le
+    # milieu est STRICTEMENT superieur a `perte`. Et `vise` n'est jamais plus
+    # petit que ce milieu (on prend le plus grand des deux). Le stop reste donc
+    # toujours du bon cote du cours, sans garde supplementaire.
+    # 🔑 Un `max()` qui ne mord jamais est du code mort : il se maintient, il
+    # se lit, et il fait croire a une protection qui n'existe pas.
     plancher = perte_eur + marge_min_eur
+    absolu = _plancher_absolu_eur()
+    if absolu is not None:
+        plancher = absolu
     # Deja au plancher (ou plus serre) : rien a faire, et surtout pas desserrer.
     if stop_eur <= plancher:
         return None

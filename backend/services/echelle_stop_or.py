@@ -119,12 +119,66 @@ def echelle() -> tuple[tuple[float, float], ...]:
         return ECHELLE_DEFAUT
 
 
+def trainage_eur() -> float | None:
+    """La largeur du traînage CONTINU, ou ``None`` si l'on reste aux paliers.
+
+    Demande de Xavier le 2026-10-11 : « si le cours augmente jusqu'à 30 euros,
+    tu mets le stop à 29,5 ; s'il monte à 41, tu poses le stop à 40,5 ».
+    ⇒ **Aucun plafond** : le stop suit le profit indéfiniment, à cette largeur
+    derrière lui.
+
+    ⛔ Absent ou illisible ⇒ `None`, donc les paliers d'avant, à l'identique.
+    Un réglage illisible ne doit pas changer en silence la façon dont l'argent
+    réel est protégé.
+    ⛔ Et une largeur nulle ou négative est REFUSÉE : elle collerait le stop au
+    cours, et un stop collé au cours ferme la position.
+    """
+    brut = os.getenv("ECHELLE_STOP_OR_TRAINAGE_EUR", "").strip()
+    if not brut:
+        return None
+    try:
+        v = float(brut)
+        if v <= 0:
+            raise ValueError(f"largeur {v} <= 0")
+        return v
+    except Exception as e:  # noqa: BLE001
+        logger.warning("ECHELLE_STOP_OR_TRAINAGE_EUR illisible (%s) — repli "
+                       "sur les paliers", e)
+        return None
+
+
+def sans_objectif() -> bool:
+    """`True` si aucun objectif ne doit être posé.
+
+    Mesure du 2026-10-11 : un objectif **plafonne**. Face à un stop suiveur de
+    largeur `w`, il ne peut gagner que `+w` au mieux (si le maximum tombe pile
+    dessus) et il perd tout ce que le mouvement dépasse. Le retirer a gagné à
+    `t = -3,12` puis `t = -6,85` sur 6 668 trades.
+
+    ⚠️ Décision de Xavier : « jamais de take profit, juste un stop loss qui
+    fait sortir le trade ».
+    """
+    return os.getenv("ECHELLE_STOP_OR_SANS_OBJECTIF", "0").strip().lower() in (
+        "1", "true", "on", "yes")
+
+
 def palier_atteint(profit_eur: float) -> float | None:
     """Le stop à poser, en euros de profit, pour ce profit atteint.
 
     Rend `None` sous le premier palier. 🔑 On prend le palier le PLUS HAUT
     franchi, pas le premier : à +1,80 € le stop va à +1,50 €, pas à +0,75 €.
+
+    🔑 EN MODE TRAÎNAGE (`ECHELLE_STOP_OR_TRAINAGE_EUR`), il n'y a plus de
+    palier : le stop vaut `profit - largeur`, **sans plafond**. À +30 € il vaut
+    +29,50 ; à +41 €, +40,50.
     """
+    largeur = trainage_eur()
+    if largeur is not None:
+        # ⛔ Sous la largeur, le stop serait SOUS l'entree : on ne pose rien.
+        # A exactement la largeur, il vaut 0 — le point mort.
+        if profit_eur < largeur - _TOLERANCE:
+            return None
+        return round(profit_eur - largeur, 2)
     retenu = None
     for seuil, cible in echelle():
         if profit_eur >= seuil - _TOLERANCE:
@@ -176,6 +230,14 @@ def tp_vise_eur(profit_eur: float) -> float | None:
     # seuil de 1,00) : l'objectif en aurait valu 2,75 au lieu des 3,00 que
     # Xavier a dictes. Son exemple est sans ambiguite -- << quand 1 euro est
     # atteint, TP:3 >> -- donc l'ecart se compte depuis le NIVEAU ATTEINT.
+    # ⛔ Decision de Xavier le 2026-10-11 : plus d'objectif du tout.
+    if sans_objectif():
+        return None
+    # 🔑 En mode trainage il n'y a pas de palier : l'objectif suivrait le
+    # profit, donc il fuirait. On refuse de le poser plutot que de poser une
+    # cible que le prix ne rattrape jamais.
+    if trainage_eur() is not None:
+        return None
     seuil = seuil_atteint(profit_eur)
     if seuil is None:
         return None
