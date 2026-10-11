@@ -956,6 +956,11 @@ def arbitrer_les_boucles(legere_sec: float, legere_paires: list[str],
     return (rapide_sec, rapide_paires)
 
 
+# Les paires dont la boucle legere tourne DEJA. Un `set` et non un drapeau :
+# la boucle est par paire.
+_boucles_legeres_en_vol: set[str] = set()
+
+
 async def _boucle_legere_job(pair: str, periode: float) -> None:
     """Fait tourner la boucle legere d'une paire. Ne rend jamais la main.
 
@@ -964,7 +969,27 @@ async def _boucle_legere_job(pair: str, periode: float) -> None:
     donc `restreint = bool(univers_force)` vaudrait False et on lancerait un
     cycle COMPLET — 54 paires et 24 s de travail, sur un reveil de 200 ms.
     C'est le piege documente dans `config_cycle_rapide`, et il est ici aussi.
+
+    🔑 POURQUOI UN TRAVAIL PERIODIQUE ET UN VERROU, ET PAS UN `date` A +5 s.
+    Mon premier cablage posait un travail `date` a `maintenant + 5 s`, calcule
+    DANS `start_scheduler()`. Mesure en production le 2026-10-11 : il s'ecoule
+    **19 secondes** entre ce calcul et le demarrage effectif de
+    l'ordonnanceur — l'heure etait donc deja passee, APScheduler a jete le
+    travail pour retard, et le journal n'a montre qu'un
+    << Added job >> suivi d'un << Removed job >> **13 ms plus tard**.
+    ⛔ La boucle n'a JAMAIS tourne, et rien ne disait qu'elle ne tournait pas.
+
+    ⇒ Un travail `interval` reessaie, donc un retard ne le tue pas. Et le
+    verrou rend la relance GRATUITE : tant que la boucle vit, le travail rend
+    la main immediatement ; le jour ou elle meurt, le tour suivant la relance
+    et le DIT. C'est plus robuste que ce que j'avais ecrit, pas seulement
+    repare.
+    ⛔ Le verrou remplace aussi `max_instances=1` : celui-ci journaliserait un
+    avertissement << execution skipped >> a chaque tour, soit du bruit
+    permanent sur un fonctionnement NORMAL.
     """
+    if pair in _boucles_legeres_en_vol:
+        return                      # elle tourne : rien a faire, et en silence
     from config.settings import CANDLE_COUNT, CANDLE_INTERVAL
 
     async def reveiller(p: str, motifs: set[str]) -> None:
@@ -972,8 +997,17 @@ async def _boucle_legere_job(pair: str, periode: float) -> None:
                     sorted(motifs))
         await run_analysis_cycle(univers_force=[p])
 
-    await boucle_legere.boucle(pair, CANDLE_INTERVAL, CANDLE_COUNT, periode,
-                               reveiller)
+    _boucles_legeres_en_vol.add(pair)
+    try:
+        await boucle_legere.boucle(pair, CANDLE_INTERVAL, CANDLE_COUNT,
+                                   periode, reveiller)
+    finally:
+        _boucles_legeres_en_vol.discard(pair)
+        # ⚠️ Au niveau ALERTE : une boucle qui sort est une detection ARRETEE.
+        # `boucle()` avale ses exceptions passage par passage, donc en sortir
+        # veut dire qu'elle a ete annulee ou que l'impensable est arrive.
+        logger.warning("boucle_legere: %s est SORTIE — relance au prochain "
+                       "tour du travail periodique", pair)
 
 
 def start_scheduler() -> AsyncIOScheduler:
@@ -1047,8 +1081,6 @@ def start_scheduler() -> AsyncIOScheduler:
     # `run_analysis_cycle` en jetterait une au hasard — un comportement qui
     # depend de l'ordonnancement, donc irreproductible. On DESARME donc le
     # cycle rapide des que la boucle legere est armee, et on le DIT.
-    from datetime import timedelta as _td
-
     _legere_sec, _legere_paires = boucle_legere.config()
     _cycle_rapide_sec, _cycle_rapide_paires = arbitrer_les_boucles(
         _legere_sec, _legere_paires, _cycle_rapide_sec, _cycle_rapide_paires)
@@ -1056,12 +1088,19 @@ def start_scheduler() -> AsyncIOScheduler:
         for _p in _legere_paires:
             _scheduler.add_job(
                 _boucle_legere_job,
-                "date",
-                run_date=datetime.now(timezone.utc) + _td(seconds=5),
+                "interval",
+                # ⛔ PAS un travail `date` : voir `_boucle_legere_job`. Un
+                # `date` a +5 s est jete pour retard, parce qu'il s'ecoule
+                # 19 s entre ce calcul et le demarrage de l'ordonnanceur.
+                seconds=60,
+                next_run_time=datetime.now(timezone.utc),
                 args=[_p, _legere_sec],
                 id=f"boucle_legere_{_p.replace('/', '_')}",
                 name=f"Boucle legere {_p}",
                 replace_existing=True,
+                # Le verrou de `_boucle_legere_job` fait le travail de
+                # `max_instances` SANS journaliser un avertissement par tour.
+                coalesce=True,
             )
         logger.info(
             "boucle legere ARMEE : %s aux %.0f ms (budget mesure ~7,2 ms par "

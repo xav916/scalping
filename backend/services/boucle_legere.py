@@ -139,17 +139,68 @@ def seau_en_cours(derniere_fermee: dt.datetime, interval: str,
         return None
 
 
-def bougie_en_cours(etiquette: dt.datetime, prix: list[float]) -> Candle | None:
-    """La bougie EN COURS, batie des prix vus depuis le debut du seau.
+def bougie_en_cours(etiquette: dt.datetime, prix) -> Candle | None:
+    """La bougie EN COURS, a partir des prix vus depuis le debut du seau.
+
+    `prix` est soit un AGREGAT (`Agregat`), soit une liste de prix — la liste
+    reste acceptee parce qu'elle est lisible dans un test et qu'un banc peut
+    rejouer une serie connue.
 
     ``None`` si aucun prix : une bougie sans prix n'existe pas, et en fabriquer
     une a partir de la derniere cloture ferait voir a `detect_patterns` une
     bougie DOJI qui n'a jamais eu lieu.
     """
+    if isinstance(prix, Agregat):
+        return prix.bougie(etiquette)
     if not prix:
         return None
     return Candle(timestamp=etiquette, open=prix[0], high=max(prix),
                   low=min(prix), close=prix[-1], volume=0.0)
+
+
+class Agregat:
+    """Ouverture, haut, bas, cloture — tenus EN COURANT, sans garder les prix.
+
+    ⛔ POURQUOI PAS UNE LISTE, et le defaut est serieux. Mon premier jet
+    empilait chaque prix dans `etat.prix` et recalculait `max()`/`min()` sur
+    toute la liste a chaque passage. A 5 releves par seconde c'est 1 500
+    entrees par bougie de 5 min — supportable — SAUF que le seau n'avance que
+    quand une bougie FERME. Marche ferme (un week-end fait ~50 h), la
+    derniere bougie close ne change plus, le seau ne tourne jamais, et la
+    liste grimpe a **900 000 entrees** avec un `max()` dessus cinq fois par
+    seconde.
+
+    ⇒ Trois flottants et un compteur. O(1) par passage, memoire CONSTANTE, et
+    exactement la meme bougie en sortie.
+    """
+
+    __slots__ = ("ouvert", "haut", "bas", "dernier", "n")
+
+    def __init__(self) -> None:
+        self.ouvert: float | None = None
+        self.haut: float = float("-inf")
+        self.bas: float = float("inf")
+        self.dernier: float | None = None
+        self.n: int = 0
+
+    def ajouter(self, p: float) -> None:
+        if self.ouvert is None:
+            self.ouvert = p
+        if p > self.haut:
+            self.haut = p
+        if p < self.bas:
+            self.bas = p
+        self.dernier = p
+        self.n += 1
+
+    def vide(self) -> bool:
+        return self.n == 0
+
+    def bougie(self, etiquette: dt.datetime) -> Candle | None:
+        if self.vide() or self.ouvert is None or self.dernier is None:
+            return None
+        return Candle(timestamp=etiquette, open=self.ouvert, high=self.haut,
+                      low=self.bas, close=self.dernier, volume=0.0)
 
 
 # ─── Le reveil ───────────────────────────────────────────────────────────
@@ -189,7 +240,7 @@ class EtatPaire:
     def __init__(self) -> None:
         self.fermees: list[Candle] = []
         self.etiquette: dt.datetime | None = None
-        self.prix: list[float] = []
+        self.prix = Agregat()
         self.vus: set[str] = set()
         self.dernier_reveil: float = 0.0
         self.dernier_rates: float = float("-inf")
@@ -201,7 +252,7 @@ class EtatPaire:
         pour le reste de la session sur toute figure deja vue une fois.
         """
         self.etiquette = etiquette
-        self.prix = []
+        self.prix = Agregat()
         self.vus = set()
 
 
@@ -294,7 +345,7 @@ async def un_passage(pair: str, etat: EtatPaire, interval: str,
         # bougie qui n'avance plus ressemble a un marche calme, et ce
         # mensonge-la ne remonte nulle part.
         return set()
-    etat.prix.append(float(prix))
+    etat.prix.ajouter(float(prix))
 
     # ③ La bougie en cours, et la detection.
     courante = bougie_en_cours(etiquette, etat.prix)
