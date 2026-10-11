@@ -168,3 +168,66 @@ du stop.
 3. ✅ « B1/B2 gagneront massivement sur la variance » : **juste**, facteur 4,5
    sur l'ecart-type et 30 sur la pire journee.
 4. ✅ « le choix est un choix de variance, pas de rendement » : **juste**.
+
+
+---
+
+# ANNEXE — 2026-10-11 : a quelle DISTANCE resserrer ? (question de Xavier)
+
+Question : « si on commence a −20 € et qu'au bout d'une minute le cours est a
+−5, qu'est-ce qui se passe si la regle resserre le stop a −1 ? Est-ce que le
+trade est cloture ? Ou peut-on mettre une regle a l'entier inferieur ? »
+
+## LA REPONSE MECANIQUE : oui, ça fermerait — et la production le refuse deja
+
+A −5 € de perte, le niveau « −1 € » est **du mauvais cote du cours** (pour un
+achat, c'est un prix PLUS HAUT que le prix courant). MT5 refuse un tel ordre,
+et s'il passait il se declencherait **immediatement** : on encaisserait les
+**−5 €**, pas les −1 €. Fermer n'est pas proteger.
+
+Deux gardes existent deja dans le code :
+
+    equiper_trades_main   MARGE_FRANCHIE_EUR = 0,10 : une borne deja franchie
+                          est SIGNALEE, jamais posee
+    protection_perte_or   plancher `perte + 2 €` : le stop n'est jamais pose a
+                          moins de 2 € du cours
+
+⇒ Et a −5 € avec un stop a −20 €, la regle d'aujourd'hui ne va PAS a −1 € :
+elle calcule le **point milieu** `(20 + 5) / 2` et pose le stop a **−12,50 €**,
+en laissant 7,50 € de respiration.
+
+## SA PROPOSITION, MESUREE — `scripts/banc_marge_protection.py`
+
+« Entier inferieur » = stop a `−(floor(perte) + 1)`, donc −6 € a −5,3 € de
+perte. Memes 6 668 trades, depart SL −20 / TP 2, echelle armee sur la cloture.
+
+| variante | EUR/trade | ecart-type | pire journee | reussite | resserrages |
+|---|---|---|---|---|---|
+| **P2 marge 2 € (aujourd'hui)** | −0,0247 | 2,99 | −2,15 | 72,89 % | 12 275 |
+| P1 marge 1 € | −0,0337 | 2,85 | −1,67 | 69,30 % | 12 450 |
+| **PENT entier inferieur** | −0,0289 | 2,81 | **−1,61** | 68,33 % | 12 538 |
+| P05 marge 0,50 € | −0,0317 | 2,81 | −1,63 | 68,15 % | 12 633 |
+| **SANS protection** | −0,0677 | **5,84** | **−4,03** | 92,19 % | 0 |
+
+Chaque variante contre la regle d'aujourd'hui :
+
+    P1    -0,0162 EUR/jour   t -0,89   signe INVERSE entre les moities
+    PENT  -0,0148            t -0,63   signe INVERSE
+    P05   -0,0232            t -0,86   signe INVERSE
+
+⇒ **Sa proposition est INDISTINGUABLE de la regle actuelle** en esperance, avec
+une pire journee legerement meilleure (−1,61 contre −2,15). Resserrer la marge
+de 2 € a moins d'un euro ne casse donc **pas** les trades par le bruit — mais
+ne rapporte rien non plus.
+
+## 🔑 LE VRAI ECART EST AILLEURS
+
+    stop de depart touche :  **1 fois sur 6 668** avec protection
+                             **516 fois** sans
+    ecart-type :   5,84  ->  2,81 a 2,99   (÷ 2)
+    pire journee : -4,03 ->  -1,61 a -2,15
+
+Pour un cout de **0,064 €/trade, non significatif** (t +0,65).
+
+⇒ La question n'est pas « quelle marge », c'est **« armer ou non la protection
+des pertes »** — et elle est **DESARMEE** aujourd'hui.
