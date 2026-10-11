@@ -275,16 +275,51 @@ def stop_vise(entree: float, sens: str, profit_eur: float,
     return entree + signe * cible_eur * taux_eur_usd
 
 
-def _mieux(nouveau: float, actuel: float | None, sens: str) -> bool:
+def pas_mini_eur() -> float:
+    """Le gain minimal, en euros, pour qu'un deplacement de stop soit envoye.
+
+    Demande de Xavier le 2026-10-11 : suivre les trades « en temps reel, ou le
+    plus proche du temps reel ». Le pont repond en **5 ms** (mesure, 12 appels
+    a `/positions`), donc rien n'empeche de sonder a la seconde — sauf le
+    NOMBRE D'ORDRES envoyes au courtier.
+
+    🔑 Sans pas minimal, le cliquet envoie un ordre des que le stop gagne un
+    MILLIEME d'euro : a un sondage par seconde, un trade qui monte six minutes
+    produirait jusqu'a **360 modifications**. Avec un pas de 0,10 EUR, on garde
+    la meme reactivite et on divise les ordres par ~10.
+
+    ⛔ Zero ou illisible ⇒ comportement d'avant : le moindre gain declenche.
+    """
+    brut = os.getenv("ECHELLE_STOP_OR_PAS_MINI_EUR", "").strip()
+    if not brut:
+        return 0.0
+    try:
+        v = float(brut)
+        if v < 0:
+            raise ValueError(f"pas {v} < 0")
+        return v
+    except Exception as e:  # noqa: BLE001
+        logger.warning("ECHELLE_STOP_OR_PAS_MINI_EUR illisible (%s) — repli "
+                       "sur 0 (tout gain declenche)", e)
+        return 0.0
+
+
+def _mieux(nouveau: float, actuel: float | None, sens: str,
+           pas_mini_prix: float = 0.0) -> bool:
     """🔑 LE CLIQUET. Un stop ne remonte que dans le sens du profit.
 
     Sans cette comparaison, un sondage pendant un repli ferait REDESCENDRE le
     stop — l'inverse exact d'une protection, et le genre de défaut qui ne se
     voit qu'une fois qu'il a coûté.
+
+    `pas_mini_prix` exige en plus un gain MINIMAL, en prix, pour eviter un
+    ordre par milli-euro quand on sonde a la seconde.
     """
     if actuel is None or actuel == 0:
         return True
-    return nouveau > actuel if str(sens).lower() == "buy" else nouveau < actuel
+    if str(sens).lower() == "buy":
+        return nouveau > actuel + pas_mini_prix
+    return nouveau < actuel - pas_mini_prix
 
 
 def decision(position: dict, taux_eur_usd: float,
@@ -341,7 +376,8 @@ def decision(position: dict, taux_eur_usd: float,
             return None
         actuel = position.get("sl")
         actuel = float(actuel) if actuel else None
-        if not _mieux(sl, actuel, sens):
+        pas_prix = pas_mini_eur() * taux_eur_usd
+        if not _mieux(sl, actuel, sens, pas_prix):
             return None
         # ⛔ Un stop du mauvais cote du prix serait refuse par le courtier, et
         # masquerait un defaut de signe derriere une erreur reseau.

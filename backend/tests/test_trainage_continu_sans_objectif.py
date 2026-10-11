@@ -36,6 +36,7 @@ def _env_propre(monkeypatch):
     monkeypatch.delenv("ECHELLE_STOP_OR_TRAINAGE_EUR", raising=False)
     monkeypatch.delenv("ECHELLE_STOP_OR_SANS_OBJECTIF", raising=False)
     monkeypatch.delenv("ECHELLE_STOP_OR_PALIERS", raising=False)
+    monkeypatch.delenv("ECHELLE_STOP_OR_PAS_MINI_EUR", raising=False)
     yield
 
 
@@ -200,3 +201,61 @@ def test_sans_le_drapeau_la_protection_est_inchangee(monkeypatch):
     assert P.nouveau_stop_eur(4.0, 1.0) == pytest.approx(3.0)
     # a 3,0 de stop et 1,0 de perte, le milieu (2,0) touche le plancher (3,0)
     assert P.nouveau_stop_eur(3.0, 1.0) is None
+
+
+# ─── Le PAS MINIMAL, pour sonder a la seconde sans inonder le courtier ────
+
+def test_sans_pas_mini_un_petit_gain_declenche_quand_meme(monkeypatch):
+    """⚠️ Mon premier test visait un gain d'un MILLI-euro : il echouait, et la
+    source avait raison. Le stop est arrondi au centime (`round(sl, 2)`), donc
+    un mouvement d'un milli-dollar rend le MEME prix et le cliquet le refuse
+    deja. Le pas minimal ne sert donc pas contre les milli-euros — il sert
+    contre les gains de quelques CENTIMES, qui changent bien le prix arrondi.
+    """
+    monkeypatch.setenv("ECHELLE_STOP_OR", "1")
+    monkeypatch.setenv("ECHELLE_STOP_OR_TRAINAGE_EUR", "0.50")
+    assert E.pas_mini_eur() == 0.0
+    p = _position(entree=4000.0, courant=4040.0)
+    d1 = E.decision(p, 1.1198)
+    assert d1 is not None
+    p["sl"] = d1["sl"]
+    # +0,05 EUR : assez pour changer le prix arrondi, donc l'ordre part
+    p["price_current"] = 4040.0 + 0.05 * 1.1198
+    assert E.decision(p, 1.1198) is not None
+
+
+def test_le_pas_mini_retient_les_deplacements_minuscules(monkeypatch):
+    monkeypatch.setenv("ECHELLE_STOP_OR", "1")
+    monkeypatch.setenv("ECHELLE_STOP_OR_TRAINAGE_EUR", "0.50")
+    monkeypatch.setenv("ECHELLE_STOP_OR_PAS_MINI_EUR", "0.10")
+    assert E.pas_mini_eur() == pytest.approx(0.10)
+    p = _position(entree=4000.0, courant=4040.0)
+    d1 = E.decision(p, 1.1198)
+    assert d1 is not None
+    p["sl"] = d1["sl"]
+    # +0,05 EUR : le prix arrondi change, mais c'est SOUS le pas de 0,10
+    p["price_current"] = 4040.0 + 0.05 * 1.1198
+    assert E.decision(p, 1.1198) is None
+    # +0,20 EUR de plus : au-dela du pas, l'ordre part
+    p["price_current"] = 4040.0 + 0.20 * 1.1198
+    assert E.decision(p, 1.1198) is not None
+
+
+def test_le_pas_mini_vaut_aussi_pour_une_VENTE(monkeypatch):
+    monkeypatch.setenv("ECHELLE_STOP_OR", "1")
+    monkeypatch.setenv("ECHELLE_STOP_OR_TRAINAGE_EUR", "0.50")
+    monkeypatch.setenv("ECHELLE_STOP_OR_PAS_MINI_EUR", "0.10")
+    p = _position(entree=4000.0, courant=3960.0, sens="sell")
+    d1 = E.decision(p, 1.1198)
+    assert d1 is not None
+    p["sl"] = d1["sl"]
+    p["price_current"] = 3960.0 - 0.05 * 1.1198   # +0,05 EUR, sous le pas
+    assert E.decision(p, 1.1198) is None
+    p["price_current"] = 3960.0 - 0.20 * 1.1198
+    assert E.decision(p, 1.1198) is not None
+
+
+def test_un_pas_illisible_ou_negatif_retombe_sur_zero(monkeypatch):
+    for mauvais in ("dix centimes", "-0.10"):
+        monkeypatch.setenv("ECHELLE_STOP_OR_PAS_MINI_EUR", mauvais)
+        assert E.pas_mini_eur() == 0.0, mauvais
