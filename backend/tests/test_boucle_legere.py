@@ -510,3 +510,58 @@ async def test_mille_passages_marche_ferme_ne_font_pas_grossir_l_etat(
     assert etat.prix.n == 1000
     assert sys.getsizeof(etat.prix) == taille, "l'état a grossi sur 1 000 passages"
     assert len(etat.fermees) == 50, "les fermées se sont accumulées"
+
+
+# ─── ⑩ Le VRAI type, pas une doublure ────────────────────────────────────
+
+def _vraie_detection(valeur_du_motif):
+    """Une `PatternDetection` RÉELLE — celle que `detect_patterns` rend."""
+    from backend.models.schemas import PatternDetection, PatternType
+    return PatternDetection(
+        pattern=PatternType(valeur_du_motif), confidence=0.7,
+        description="test", detected_at=dt.datetime(2026, 10, 9, 12, 30,
+                                                    tzinfo=dt.timezone.utc))
+
+
+def test_la_cle_du_VRAI_type_ne_contient_pas_de_None():
+    """⛔ LE DÉFAUT, vu dans le journal de production avant que je le trouve :
+
+        boucle legere: chaine lourde sur XAU/USD (motifs
+        ['PatternType.GAP_RETRACE_UP:None'])
+
+    Je lisais un champ `direction` qui **n'existe pas** sur
+    `PatternDetection` — son seul champ est `pattern: PatternType`, et le sens
+    est **dans le nom** (`gap_retrace_up`). Mes tests précédents « prouvaient »
+    le contraire avec un objet FACTICE qui, lui, portait `.direction`.
+    🔑 Une doublure qui ne ressemble pas au vrai type ne prouve rien."""
+    cle = BL.cle_motif(_vraie_detection("gap_retrace_up"))
+    assert cle == "gap_retrace_up", f"clé inattendue : {cle!r}"
+    assert "None" not in cle
+    assert "PatternType" not in cle, "le repr de l'enum a fui dans la clé"
+
+
+def test_le_sens_distingue_bien_les_motifs_du_VRAI_type():
+    """`pin_bar_up` et `pin_bar_down` doivent rester DEUX événements — et ça
+    marche parce que le sens est dans le nom, pas à côté."""
+    haut = _vraie_detection("pin_bar_up")
+    bas = _vraie_detection("pin_bar_down")
+    assert BL.cle_motif(haut) != BL.cle_motif(bas)
+    assert BL.motifs_nouveaux([haut, bas], set()) == {"pin_bar_up",
+                                                     "pin_bar_down"}
+    assert BL.motifs_nouveaux([haut, bas], {"pin_bar_up"}) == {"pin_bar_down"}
+
+
+def test_toutes_les_valeurs_de_l_enum_donnent_une_cle_lisible():
+    """Les 38 motifs, sans exception : une clé en snake_case, jamais de
+    `None`, jamais le repr de l'enum."""
+    from backend.models.schemas import PatternType
+    for e in PatternType:
+        cle = BL.cle_motif(_vraie_detection(e.value))
+        assert cle == e.value, f"{e.value} -> {cle!r}"
+
+
+def test_une_detection_sans_motif_est_ignoree_sans_lever():
+    class _Rien:
+        pass
+    assert BL.cle_motif(_Rien()) is None
+    assert BL.motifs_nouveaux([_Rien()], set()) == set()

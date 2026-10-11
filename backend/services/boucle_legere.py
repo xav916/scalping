@@ -205,22 +205,45 @@ class Agregat:
 
 # ─── Le reveil ───────────────────────────────────────────────────────────
 
+def cle_motif(d) -> str | None:
+    """La cle d'une detection, ou ``None`` si on ne sait pas la nommer.
+
+    🔑 LE SENS EST DANS LE NOM, et je l'avais suppose ailleurs. `PatternDetection`
+    n'a **aucun** champ de direction : son seul champ est `pattern: PatternType`,
+    et les 38 valeurs de cet enum portent le sens dans leur nom —
+    `breakout_up`, `pin_bar_down`, `range_bounce_up`. La cle est donc le nom,
+    et il suffit.
+
+    ⛔ MON ERREUR, et le journal de production l'a dite avant moi. Je lisais un
+    champ `direction` qui n'existe pas, et la cle sortait en
+    `PatternType.GAP_RETRACE_UP:None` : le `None` etait la trace d'une
+    hypothese fausse sur le type. Un test l'avait pourtant << prouvee >> —
+    avec un objet FACTICE qui, lui, portait `.direction`. Une doublure qui ne
+    ressemble pas au vrai type ne prouve rien.
+
+    🔑 Et `.value`, pas `str()` : `str(PatternType.BREAKOUT_UP)` rend
+    `"PatternType.BREAKOUT_UP"`, illisible dans un journal et dependant de la
+    version de Python.
+    """
+    brut = getattr(d, "pattern", None)
+    if brut is None:
+        brut = getattr(d, "pattern_type", None)
+    if brut is None:
+        return None
+    nom = getattr(brut, "value", None) or str(brut)
+    # Un sens explicite, quand une doublure ou un type futur en porte un.
+    sens = getattr(d, "direction", None) or getattr(d, "side", None)
+    return f"{nom}:{sens}" if sens else str(nom)
+
+
 def motifs_nouveaux(detections, deja_vus: set[str]) -> set[str]:
     """Les motifs de `detections` qui ne sont PAS dans `deja_vus`.
 
-    🔑 La cle est `(nom, sens)` : `pin_bar_down` et `pin_bar_up` sur le meme
-    seau sont deux evenements, pas un. Mais le MEME motif revu au passage
-    suivant n'en est qu'un seul — sinon la chaine lourde serait reveillee
-    cinq fois par seconde tant que la figure dure, soit exactement le
-    gaspillage qu'on retire.
+    Le MEME motif revu au passage suivant n'est pas un evenement neuf — sinon
+    la chaine lourde serait reveillee cinq fois par seconde tant que la figure
+    dure, soit exactement le gaspillage qu'on retire.
     """
-    vus = set()
-    for d in (detections or []):
-        nom = getattr(d, "pattern_type", None) or getattr(d, "pattern", None)
-        sens = getattr(d, "direction", None) or getattr(d, "side", None)
-        if nom is None:
-            continue
-        vus.add(f"{nom}:{sens}")
+    vus = {c for c in (cle_motif(d) for d in (detections or [])) if c}
     return vus - set(deja_vus or ())
 
 
