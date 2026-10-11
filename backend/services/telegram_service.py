@@ -1530,6 +1530,26 @@ async def _etat_risque_hors_boucle(destination_id: str | None) -> dict:
         return {"lisible": False, "motif": "lecture trop lente ou en échec"}
 
 
+def _tracer_trade(issue: str, canal: str, quoi: str, detail: str | None,
+                  octets: int | None) -> None:
+    """Trace un message d'OUVERTURE ou de FERMETURE de trade dans le journal
+    des envois.
+
+    🔑 POURQUOI ICI, ET PAS SEULEMENT DANS LA ROUTE. `telegram_service` parle a
+    Telegram EN DIRECT : ces messages ne traversent jamais
+    `/api/admin/notify-infra-telegram`. Un journal pose uniquement sur la
+    route manquerait donc **exactement** les messages que Xavier a demande de
+    garder -- et on en conclurait qu'il ne recoit aucun message de trade.
+
+    ⛔ Ne leve jamais : un trade notifie vaut plus que sa trace.
+    """
+    try:
+        from backend.services import journal_envois_telegram as _j
+        _j.tracer(issue, canal, canal, quoi, "agir", quoi, detail, octets)
+    except Exception as e:  # noqa: BLE001
+        logger.debug("journal des envois indisponible (%s)", e)
+
+
 def _canal_trade(destination_id: str | None) -> tuple[str, list]:
     """Rend ``(jeton_bot, destinataires)`` pour une notification de trade.
 
@@ -1653,6 +1673,11 @@ async def send_close(trade: dict, destination_id: str | None = None,
     jeton, destinataires = _canal_trade(dest_close)
     if not destinataires:
         return
+    # Le nom du fil, pour le journal des envois. `_canal_trade` ne rend que le
+    # jeton et les destinataires : on le redemande a la seule fonction qui
+    # decide d'un fil (`canal_pour`), plutot que de le deviner du jeton.
+    from backend.services import canaux_telegram as _ct_trace
+    _canal_trace = _ct_trace.canal_pour(dest_close)
     url = TELEGRAM_API.format(token=jeton)
     for user, chat_id in destinataires:
         if user != "__any__" and trade_log_service.silent_mode_active_for_user(user):
@@ -1667,10 +1692,17 @@ async def send_close(trade: dict, destination_id: str | None = None,
                 })
                 if response.status_code != 200:
                     logger.warning(f"Telegram close erreur {response.status_code} pour {user}: {response.text[:200]}")
+                    _tracer_trade("echec", _canal_trace, "trade_ferme",
+                                  "telegram %s" % response.status_code,
+                                  len(text))
                 else:
                     logger.info(f"Close Telegram envoye a {user} pour {pair} ticket={ticket}")
+                    _tracer_trade("envoye", _canal_trace, "trade_ferme",
+                                  f"{pair} ticket={ticket}", len(text))
         except Exception as e:
             logger.warning(f"Erreur envoi close Telegram {user}: {e}")
+            _tracer_trade("echec", _canal_trace, "trade_ferme",
+                          "reseau : %s" % e, len(text))
 
 
 # ─── Refonte notifs user (2026-06-10) ────────────────────────────────
@@ -1981,6 +2013,8 @@ async def send_trade_opened(
             etat_risque=etat_risque,
         )
         jeton, destinataires = _canal_trade(destination_id)
+        from backend.services import canaux_telegram as _ct_trace
+        _canal_trace = _ct_trace.canal_pour(destination_id)
         url = TELEGRAM_API.format(token=jeton)
         for user, chat_id in destinataires:
             try:
@@ -1991,8 +2025,15 @@ async def send_trade_opened(
                     })
                     if r.status_code != 200:
                         logger.warning(f"Telegram trade_opened {r.status_code}: {r.text[:200]}")
+                        _tracer_trade("echec", _canal_trace, "trade_ouvert",
+                                      "telegram %s" % r.status_code, len(text))
+                    else:
+                        _tracer_trade("envoye", _canal_trace, "trade_ouvert",
+                                      f"{pair} {direction}", len(text))
             except Exception as e:
                 logger.warning(f"Erreur envoi trade_opened {user}: {e}")
+                _tracer_trade("echec", _canal_trace, "trade_ouvert",
+                              "reseau : %s" % e, len(text))
     except Exception as e:
         logger.warning(f"send_trade_opened error: {e}")
 

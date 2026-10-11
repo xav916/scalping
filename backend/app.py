@@ -2887,6 +2887,25 @@ async def api_ml_generate_signals(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _tracer_envoi(issue: str, canal_demande: str, canal_effectif: str,
+                  dedup_key: str, titre: str, detail: str | None,
+                  octets: int | None) -> None:
+    """Relais vers le journal des envois — il ne doit JAMAIS faire tomber la
+    route.
+
+    🔑 UNE SEULE ENVELOPPE pour les cinq issues, et pas cinq `try/except`
+    recopies : un correctif ne se propage pas tout seul a quatre copies, et ce
+    depot a deja paye cette lecon sur les stops Kraken, poses au prix du signal
+    alors que la route MT5 etait corrigee.
+    """
+    try:
+        from backend.services import journal_envois_telegram as _j
+        _j.tracer(issue, canal_demande, canal_effectif, dedup_key, None,
+                  titre, detail, octets)
+    except Exception as e:  # noqa: BLE001
+        logger.debug("journal des envois indisponible (%s)", e)
+
+
 @app.post("/api/admin/notify-infra-telegram")
 async def api_admin_notify_infra_telegram(
     payload: dict,
@@ -2999,6 +3018,16 @@ async def api_admin_notify_infra_telegram(
         if last is not None:
             elapsed = (now - last).total_seconds()
             if elapsed < cooldown_seconds:
+                # 🔑 ON TRACE L'ETOUFFEMENT. Un cooldown qui tait une alerte se
+                # lirait sinon comme une absence d'alerte -- et c'est
+                # exactement ce qu'on cherche a pouvoir compter.
+                try:
+                    from backend.services import journal_envois_telegram as _j
+                    _j.tracer("cooldown", channel, channel_norm, dedup_key,
+                              None, title, "reste %ds" % int(
+                                  cooldown_seconds - elapsed))
+                except Exception:  # noqa: BLE001
+                    pass
                 return {
                     "sent": False,
                     "skipped": "cooldown",
@@ -3039,6 +3068,12 @@ async def api_admin_notify_infra_telegram(
             from backend.services import digest_telegram as _dg
             _id = _dg.ranger(channel_norm, dedup_key, title, body)
             if _id:
+                try:
+                    from backend.services import journal_envois_telegram as _j
+                    _j.tracer("differe", channel, channel_norm, dedup_key,
+                              _niveau, title, "bilan du jour")
+                except Exception:  # noqa: BLE001
+                    pass
                 return {"sent": False, "differe": "bilan_du_jour",
                         "dedup_key": dedup_key, "etage": _niveau, "id": _id}
             # ⛔ Le magasin n'a pas pris le message : on ENVOIE plutot que de
@@ -3051,6 +3086,12 @@ async def api_admin_notify_infra_telegram(
             # Vers infra : il faut RE-RESOUDRE le jeton et le salon, sinon le
             # message partirait sur l'ancien fil avec une decision de routage
             # qui dit le contraire.
+            try:
+                from backend.services import journal_envois_telegram as _j
+                _j.tracer("reroute", channel, canal_etage, dedup_key,
+                          _niveau, title, "quitte le fil de Xavier")
+            except Exception:  # noqa: BLE001
+                pass
             channel_norm = canal_etage
             bot_token = getattr(_cfg, "INFRA_TELEGRAM_BOT_TOKEN", "")
             chat_id = getattr(_cfg, "INFRA_TELEGRAM_CHAT_ID", "")
@@ -3086,11 +3127,18 @@ async def api_admin_notify_infra_telegram(
                 "disable_web_page_preview": True,
             })
         if response.status_code != 200:
+            _tracer_envoi("echec", channel, channel_norm, dedup_key, title,
+                          "telegram %s" % response.status_code, len(text))
             raise HTTPException(
                 status_code=502,
                 detail=f"telegram api {response.status_code}: {response.text[:200]}",
             )
     except httpx.HTTPError as e:
+        # ⛔ L'ECHEC EST TRACE AUSSI, et c'est la moitie du but. Ne tracer que
+        # les succes ferait lire un emetteur qui echoue mille fois par jour
+        # comme un emetteur MUET.
+        _tracer_envoi("echec", channel, channel_norm, dedup_key, title,
+                      "reseau : %s" % e, len(text))
         raise HTTPException(status_code=502, detail=f"telegram api error: {e}")
 
     # 🔑 Ici, et seulement ici : Telegram a repondu 200. Un echec plus haut a
@@ -3098,6 +3146,8 @@ async def api_admin_notify_infra_telegram(
     if dedup_key and cooldown_seconds > 0:
         _INFRA_ALERT_LAST_SENT[dedup_key] = datetime.now(timezone.utc)
 
+    _tracer_envoi("envoye", channel, channel_norm, dedup_key, title, None,
+                  len(text))
     return {"sent": True, "chars": len(text)}
 
 

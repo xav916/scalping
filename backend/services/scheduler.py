@@ -890,6 +890,55 @@ async def ml_trading_cycle() -> None:
         logger.error(f"ML trading cycle failed: {e}", exc_info=True)
 
 
+def intervalle_sec(nom: str, defaut: int) -> int:
+    """Une cadence en secondes, lue sans jamais faire TOMBER l'ordonnanceur.
+
+    🔑 LE DEFAUT QUE CETTE FONCTION FERME, et il a coute dix minutes de
+    production le 2026-10-11. `start_scheduler()` ecrivait trois fois :
+
+        seconds=int(os.getenv("ECHELLE_STOP_INTERVAL_SEC", "15"))
+
+    Une valeur illisible leve `ValueError` — et comme l'appel est DANS
+    `start_scheduler`, la fonction entiere s'arrete : **aucun travail declare
+    apres cette ligne**. Ce jour-la, un `.env` dont une ligne s'etait collee a
+    la precedente a donne `ECHELLE_STOP_INTERVAL_SEC=1FENETRE_HEBDO_DEBUT=lun
+    00:00`, et l'echelle de stop ET la boucle legere ont disparu. Le conteneur
+    restait `active`, `systemctl` disait << tout va bien >>, et l'ordonnanceur
+    etait mort.
+
+    ⇒ Une cadence illisible ne doit couter QUE sa cadence.
+
+    ## ⚠️ POURQUOI ON RETOMBE SUR LE DEFAUT, et pas sur un desarmement
+
+    `config_cycle_rapide` desarme quand sa valeur est illisible, et c'est le
+    bon choix LA : elle decide s'il faut armer un rythme que personne n'a
+    demande. Ici, non — le travail est deja arme par son propre drapeau
+    (`ECHELLE_STOP_OR=1`), et seule sa CADENCE est abimee. Desarmer ferait
+    perdre le trainage du stop, c'est-a-dire une protection, pour une faute de
+    frappe. On garde donc le travail, a sa cadence declaree, et on CRIE.
+
+    ⛔ Au niveau ALERTE, et pas INFO : une cadence qui n'est pas celle qu'on
+    croit est exactement le genre de chose qui se lit six mois trop tard.
+    """
+    brut = (os.getenv(nom) or "").strip()
+    if not brut:
+        return defaut
+    try:
+        v = int(brut)
+    except (TypeError, ValueError):
+        logger.error(
+            "%s illisible (%r) — cadence ramenee a son defaut de %d s. Le "
+            "travail TOURNE, mais pas au rythme demande : corriger le .env.",
+            nom, brut, defaut)
+        return defaut
+    if v <= 0:
+        logger.error(
+            "%s = %d, non strictement positif — cadence ramenee a son defaut "
+            "de %d s.", nom, v, defaut)
+        return defaut
+    return v
+
+
 def config_cycle_rapide() -> tuple[int, list[str]]:
     """``(secondes, paires)`` du cycle rapide. ``(0, [])`` = desarme.
 
@@ -1149,7 +1198,7 @@ def start_scheduler() -> AsyncIOScheduler:
     _scheduler.add_job(
         _echelle_stop_cycle,
         "interval",
-        seconds=int(os.getenv("ECHELLE_STOP_INTERVAL_SEC", "15")),
+        seconds=intervalle_sec("ECHELLE_STOP_INTERVAL_SEC", 15),
         id="echelle_stop_or",
         name="Echelle de stop de l'or",
         replace_existing=True,
@@ -1280,7 +1329,7 @@ def start_scheduler() -> AsyncIOScheduler:
     _scheduler.add_job(
         _kraken_reconcile_cycle,
         "interval",
-        seconds=int(os.getenv("KRAKEN_SYNC_INTERVAL_SEC", "120")),
+        seconds=intervalle_sec("KRAKEN_SYNC_INTERVAL_SEC", 120),
         id="kraken_sync",
         name="Réconciliation clôtures Kraken",
         replace_existing=True,
@@ -1744,7 +1793,7 @@ def start_scheduler() -> AsyncIOScheduler:
     # ML trading cycle (optionnel, désactivé par défaut)
     ml_trading_enabled = os.getenv("ML_TRADING_CYCLE_ENABLED", "false").lower() == "true"
     if ml_trading_enabled:
-        ml_trading_interval = int(os.getenv("ML_TRADING_INTERVAL_SEC", "300"))
+        ml_trading_interval = intervalle_sec("ML_TRADING_INTERVAL_SEC", 300)
         _scheduler.add_job(
             ml_trading_cycle,
             "interval",
