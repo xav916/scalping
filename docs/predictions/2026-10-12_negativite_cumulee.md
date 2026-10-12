@@ -95,3 +95,14 @@ mesurée.
 
 ⇒ Si mes prédictions 2, 3 et 5 tiennent ensemble, la recommandation sera de
 passer à B — ou de supprimer la condition, ce qui serait plus simple encore.
+
+---
+
+# VERDICT, le 2026-10-12 — 0 retenue sur 4
+
+Aucune relaxation de la règle « négatif depuis 30 s CONSÉCUTIVES » ne passe le
+critère. Le témoin C (négativité cumulée au lieu de consécutive) fait **aussi
+mal que retirer la règle**, ce qui montre que c'est bien la CONSÉCUTIVITÉ qui
+porte le gain, et non le simple fait d'attendre.
+
+⇒ **La production reste inchangée sur ce point.**

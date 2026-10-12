@@ -90,3 +90,62 @@ contre une perte mesurée.
 ⇒ Si mes prédictions 1, 2 et 4 tiennent, la recommandation sera de **garder la
 production** et de ne retenir, au mieux, que B — c'est-à-dire d'indexer le
 plancher sur le spread sans toucher au déclencheur.
+
+---
+
+# VERDICT, le 2026-10-12
+
+3 298 970 ticks, 4 115 positions par cellule, 15 jours, apparié sur le JOUR.
+
+```
+  cellule              moyenne   pire jour   reussite   nuls      ecart       t   critere
+  A production         +0,0000     -0,151     69,4 %     439          -       -   reference
+  B plancher k=1       -0,0019     -0,133     68,2 %     431    -0,0019   -0,62   RETENU
+  B plancher k=2       -0,0032     -0,129     67,7 %     429    -0,0032   -0,81   RETENU
+  C declenche k=1       (rejete : 51 % de trades nuls, rendement non ameliore)
+  C declenche k=2       (rejete : idem)
+  D Xavier k=1          (rejete)
+  D Xavier k=2          (rejete)
+```
+
+## MES PRÉDICTIONS, relues
+
+| n° | prédiction | verdict |
+|---|---|---|
+| 1 | D significativement négative | ✅ tenue |
+| 2 | C plus destructrice que B | ✅ tenue |
+| 3 | **B quasi neutre, le plancher de 2 € est presque décoratif** | ✅ **tenue — et c'était la plus intéressante** |
+| 4 | la réussite s'effondre pour C et D | ⚠️ partiellement : ce sont les **trades nuls** qui explosent (51 %), pas la réussite des trades qui aboutissent |
+| 5 | la pire journée s'améliore pour les quatre | ✅ tenue, donc non discriminante comme annoncé |
+
+⇒ **Recommandation suivie : B avec k=2.** Le déclencheur reste à +0,50 €.
+
+🔑 **Xavier avait raison sur le diagnostic.** Le plancher de 2 € ne servait presque
+à rien, parce que le point milieu converge vers la PERTE et non vers le plancher.
+Il se trompait seulement sur le remède : « jusqu'à 0 » colle le stop au cours.
+
+## ⛔ CE QUE LE BANC NE DIT PAS — LE RÉGIME DE SPREAD A CHANGÉ
+
+Mesuré le jour de l'armement, et il faut l'écrire ici parce que ça limite la
+portée du verdict :
+
+```
+  magasin de ticks du banc   21/09 -> 09/10   median  8 points   p95 12 points
+  IC Markets EN DIRECT       12/10 05h17      FIXE   22 points
+```
+
+**22 points est au-dessus du p95 de 3,3 millions de ticks.** Le banc a donc
+mesuré B avec un plancher de `2 x 8 = 16 points = 0,157 EUR`, alors qu'en
+production k=2 donnera `2 x 22 = 44 points = 0,393 EUR`. **La MAGNITUDE
+mesurée (-0,151 -> -0,129) ne se transporte pas.**
+
+✅ Mais l'argument qui tranche va dans l'autre sens, et il renforce la décision :
+si j'avais inscrit en dur le plancher que le banc a mesuré -- 0,157 EUR -- il
+serait aujourd'hui **SOUS un seul spread** (0,196 EUR). Le stop serait franchi
+par le rebond bid/ask seul : une fermeture déguisée en stop. **Indexer sur le
+spread est la seule variante qui survit au changement de régime** ; le banc
+sous-estime donc à quel point le réglage était nécessaire, il ne le surestime pas.
+
+⚠️ Et une dette ouverte : le magasin de ticks **n'est plus alimenté depuis le
+09/10 20h56**. Tout banc futur sur ticks travaille sur un régime de spread
+périmé. À réparer avant la prochaine mesure qui en dépend.
