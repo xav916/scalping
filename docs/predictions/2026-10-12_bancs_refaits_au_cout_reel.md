@@ -190,3 +190,42 @@ spread) : au coût réel son rendement est **indistinguable** de A (`t = −0,18
 et sa **pire journée est MEILLEURE** (−0,204 contre −0,228). Seuls ses trades
 nuls restent hauts (11,0 % contre 7,3 %) — ce que j'avais déjà dit avant de
 l'armer. **Rien de nouveau contre elle.**
+
+---
+
+# 🔴 DÉCISION DE XAVIER, le 2026-10-12 : GARDER le plancher au spread
+
+J'ai recommandé de désarmer `PROTECTION_PERTE_PLANCHER_SPREAD_K` parce que la
+condition 2 de mon critère pré-inscrit ne tient plus au coût réel. Xavier :
+**« Garder armé. »**
+
+⇒ **Le réglage reste en vigueur. Décision prise contre ma recommandation**, et
+elle est défendable : l'écart n'est **pas significatif** (`t = −0,83`) et mon
+banc rejoue des entrées **synthétiques**, pas ses setups.
+
+## Ce qui remplace le critère : une surveillance FALSIFIABLE sur le réel
+
+Mon banc ne pouvait pas trancher. Ses vrais trades, eux, peuvent — à condition
+de dire **d'avance** ce qui compterait comme un échec.
+
+🔑 Le mécanisme suspecté est précis : un plancher à `2 × spread` (~0,39 €)
+place le stop si près du prix qu'il est touché par le bruit, coupant des
+trades qui allaient gagner. Sur le banc, 3 trades du 05/10 passaient de
+**+1,17 € à −1,47 €**.
+
+**Ce qui le prouverait sur le réel** — les trades dont le stop a été resserré
+par la protection **jusqu'au plancher** (et non au point milieu) :
+
+| | seuil fixé d'avance |
+|---|---|
+| ⛔ échec | ≥ 10 trades plancher-liés, et leur P&L moyen est inférieur de plus de **0,30 €** à celui des trades resserrés au point milieu |
+| ✅ succès | ≥ 10 trades plancher-liés, et leur P&L moyen n'est **pas** inférieur |
+| ⏳ indécidable | moins de 10 trades plancher-liés |
+
+⚠️ **Et la limite de cette surveillance, écrite maintenant** : elle compare
+des trades que la protection a traités différemment **parce qu'ils étaient
+différents** — ce n'est pas un contrôle apparié. Elle peut donc **signaler**
+un problème, pas l'établir. Un signalement déclenchera un banc apparié sur
+les setups réels, pas un désarmement direct.
+
+⇒ Relevé à faire quand le compteur atteint 10 trades plancher-liés.
