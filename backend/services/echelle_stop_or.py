@@ -119,7 +119,51 @@ def echelle() -> tuple[tuple[float, float], ...]:
         return ECHELLE_DEFAUT
 
 
-def trainage_eur() -> float | None:
+def trainage_spread_k() -> float | None:
+    """Le multiple du SPREAD qui sert de largeur de trainage, ou ``None``.
+
+    Demande de Xavier le 2026-10-12 : « des qu'on passe 0 plus le spread, on
+    doit ramener le SL a cette valeur-la ».
+
+    🔑 Comme `palier_atteint` ne pose rien sous la largeur, indexer la largeur
+    indexe DU MEME COUP le declencheur : a `k x spread` de profit le stop vaut
+    exactement 0. C'est litteralement sa regle.
+
+    ⛔ UN k INFERIEUR A 1 EST REFUSE, et ce refus n'est pas defensif. La
+    largeur est la distance entre le stop et le cours : a k < 1 le stop se
+    poserait a MOINS d'un spread du prix, donc il serait franchi par le seul
+    rebond bid/ask. << Protection >> deviendrait << fermeture >>, et la mesure
+    ne saurait pas les distinguer.
+
+    ⛔ Absent ou illisible ⇒ ``None``, donc la largeur FIXE d'avant, a
+    l'identique.
+    """
+    brut = os.getenv("ECHELLE_STOP_OR_TRAINAGE_SPREAD_K", "").strip()
+    if not brut:
+        return None
+    try:
+        v = float(brut)
+        if v < 1.0:
+            raise ValueError(f"k {v} < 1 : le stop serait DANS le spread")
+        return v
+    except Exception as e:  # noqa: BLE001
+        logger.warning("ECHELLE_STOP_OR_TRAINAGE_SPREAD_K illisible (%s) — "
+                       "repli sur la largeur fixe", e)
+        return None
+
+
+def mode_trainage() -> bool:
+    """Sommes-nous en trainage continu plutot qu'aux paliers ?
+
+    🔑 Existe pour que le test de MODE n'ait pas besoin du spread. Sans elle,
+    `tp_vise_eur` appellerait `trainage_eur()` sans spread et declencherait
+    l'avertissement de repli a chaque passage -- un bruit qui ferait perdre de
+    vue les vrais replis.
+    """
+    return os.getenv("ECHELLE_STOP_OR_TRAINAGE_EUR", "").strip() != ""
+
+
+def trainage_eur(spread_eur: float | None = None) -> float | None:
     """La largeur du traînage CONTINU, ou ``None`` si l'on reste aux paliers.
 
     Demande de Xavier le 2026-10-11 : « si le cours augmente jusqu'à 30 euros,
@@ -136,6 +180,25 @@ def trainage_eur() -> float | None:
     brut = os.getenv("ECHELLE_STOP_OR_TRAINAGE_EUR", "").strip()
     if not brut:
         return None
+    # 🔑 LA LARGEUR INDEXEE SUR LE SPREAD MESURE. Elle remplace la largeur
+    # fixe, et elle deplace donc AUSSI le declencheur -- c'est voulu, et c'est
+    # exactement la regle de Xavier.
+    #
+    # ⚠️ MESURE POSEE D'AVANCE, parce qu'elle tempere l'attente : au spread
+    # reel du 12/10 (22 points), `k=2` donne 0,393 EUR contre 0,500 EUR en
+    # production. C'est un ajustement de 11 centimes, pas un changement de
+    # regime. Le banc 3cdd76e a mesure la version radicale (0,14 EUR, parce
+    # que le magasin a un spread 2,75x plus serre) : gagnants -48 %, pertes
+    # -46 %, solde +0,0039 EUR/trade avec t +0,26, donc INDISTINGUABLE DE
+    # ZERO. On l'arme pour la justesse du principe, pas pour un gain promis.
+    k = trainage_spread_k()
+    if k is not None:
+        if spread_eur and spread_eur > 0:
+            return round(k * spread_eur, 4)
+        # ⛔ Un spread illisible ne doit pas produire une largeur devinee : on
+        # retombe sur la largeur fixe, et on le DIT.
+        logger.warning("ECHELLE_STOP_OR_TRAINAGE_SPREAD_K=%s demande mais "
+                       "spread illisible — repli sur la largeur fixe", k)
     try:
         v = float(brut)
         if v <= 0:
@@ -162,7 +225,8 @@ def sans_objectif() -> bool:
         "1", "true", "on", "yes")
 
 
-def palier_atteint(profit_eur: float) -> float | None:
+def palier_atteint(profit_eur: float,
+                   spread_eur: float | None = None) -> float | None:
     """Le stop à poser, en euros de profit, pour ce profit atteint.
 
     Rend `None` sous le premier palier. 🔑 On prend le palier le PLUS HAUT
@@ -172,7 +236,7 @@ def palier_atteint(profit_eur: float) -> float | None:
     palier : le stop vaut `profit - largeur`, **sans plafond**. À +30 € il vaut
     +29,50 ; à +41 €, +40,50.
     """
-    largeur = trainage_eur()
+    largeur = trainage_eur(spread_eur)
     if largeur is not None:
         # ⛔ Sous la largeur, le stop serait SOUS l'entree : on ne pose rien.
         # A exactement la largeur, il vaut 0 — le point mort.
@@ -236,7 +300,7 @@ def tp_vise_eur(profit_eur: float) -> float | None:
     # 🔑 En mode trainage il n'y a pas de palier : l'objectif suivrait le
     # profit, donc il fuirait. On refuse de le poser plutot que de poser une
     # cible que le prix ne rattrape jamais.
-    if trainage_eur() is not None:
+    if mode_trainage():
         return None
     seuil = seuil_atteint(profit_eur)
     if seuil is None:
@@ -259,13 +323,14 @@ def seuil_atteint(profit_eur: float) -> float | None:
 
 
 def stop_vise(entree: float, sens: str, profit_eur: float,
-              taux_eur_usd: float) -> float | None:
+              taux_eur_usd: float,
+              spread_eur: float | None = None) -> float | None:
     """Le prix du stop à poser, ou `None` s'il n'y a rien à faire.
 
     ⚠️ `entree` est le prix d'OUVERTURE de la position chez le courtier, pas
     le niveau du signal : c'est depuis lui que le profit se compte.
     """
-    cible_eur = palier_atteint(profit_eur)
+    cible_eur = palier_atteint(profit_eur, spread_eur)
     if cible_eur is None:
         return None
     if not taux_eur_usd or taux_eur_usd <= 0:
@@ -323,7 +388,8 @@ def _mieux(nouveau: float, actuel: float | None, sens: str,
 
 
 def decision(position: dict, taux_eur_usd: float,
-             prix_courant: float | None = None) -> dict | None:
+             prix_courant: float | None = None,
+             spread_eur: float | None = None) -> dict | None:
     """Ce qu'il faut faire de CETTE position, ou `None` si rien.
 
     Rend `{"ticket", "sl", "profit_eur", "palier"}`. Ne lève jamais : appelée
@@ -368,10 +434,10 @@ def decision(position: dict, taux_eur_usd: float,
         signe = 1 if sens == "buy" else -1
         profit_usd = signe * (courant - entree)
         profit_eur = profit_usd / taux_eur_usd if taux_eur_usd else 0.0
-        cible = palier_atteint(profit_eur)
+        cible = palier_atteint(profit_eur, spread_eur)
         if cible is None:
             return None
-        sl = stop_vise(entree, sens, profit_eur, taux_eur_usd)
+        sl = stop_vise(entree, sens, profit_eur, taux_eur_usd, spread_eur)
         if sl is None:
             return None
         actuel = position.get("sl")

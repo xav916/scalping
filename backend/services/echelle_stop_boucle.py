@@ -98,6 +98,30 @@ async def _poser(base: str, cle: str, ticket: int, sl: float,
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
 
+def _spread_eur(taux_eur_usd: float) -> float | None:
+    """Le spread COURANT de l'or en euros, ou ``None``.
+
+    ⛔ ``None`` plutot qu'une valeur par defaut : une largeur de trainage
+    calculee sur un spread devine serait posee sur de l'argent reel.
+    L'appelant retombe alors sur la largeur FIXE, et le dit.
+    """
+    try:
+        from backend.services import bougies_du_pont as BP
+        d = BP._destination()
+        if d is None:
+            return None
+        t = BP._lire_tick(d, "XAU/USD")
+        if not isinstance(t, dict):
+            return None
+        bid, ask = float(t.get("bid") or 0), float(t.get("ask") or 0)
+        if bid <= 0 or ask <= 0 or ask < bid or not taux_eur_usd:
+            return None
+        return (ask - bid) / float(taux_eur_usd)
+    except Exception as e:  # noqa: BLE001
+        logger.info("echelle: spread illisible (%s)", e)
+        return None
+
+
 async def appliquer() -> dict:
     """Un passage. Rend un bilan lisible, ne lève jamais."""
     # ⛔ L'EQUIPEUR NE DOIT PAS DEPENDRE DE L'ECHELLE (2026-10-10). Un
@@ -117,6 +141,17 @@ async def appliquer() -> dict:
         # devine pas une distance de stop sur l'argent reel.
         logger.warning("echelle: taux EUR/USD illisible — aucun deplacement")
         return {"arme": True, "erreur": "taux illisible"}
+
+    # 🔑 UNE SEULE LECTURE DU SPREAD PAR PASSAGE, et c'est deliberе : a 1 s
+    # d'intervalle, un appel par position multiplierait les requetes au pont
+    # pour une valeur qui, mesuree ce matin, est FIXE a 22 points.
+    #
+    # ⛔ ET IL DOIT ETRE TRANSMIS A `E.decision`, sinon
+    # `trainage_spread_k()` trouve son k, ne recoit aucun spread, retombe sur
+    # la largeur fixe en silence, et le reglage est arme ET INERTE. C'est le
+    # defaut de `XAU_SL_FIXE_EUR`, puis celui du plancher au spread le meme
+    # jour. Deux fois suffisent.
+    spread = _spread_eur(taux) if E.trainage_spread_k() is not None else None
 
     positions = await _positions(base, cle)
     if positions is None:
@@ -162,7 +197,7 @@ async def appliquer() -> dict:
                 # deux ordres de modification pour le meme ticket.
                 continue
 
-        d = E.decision(p, taux)
+        d = E.decision(p, taux, spread_eur=spread)
         if d is None:
             continue
         # 🔑 On transmet le PRIX, pas la distance : c'est tout le correctif.
