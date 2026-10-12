@@ -133,17 +133,53 @@ def test_un_horodatage_illisible_ne_fait_pas_taire(s):
 def test_le_corps_est_du_TEXTE_SIMPLE(s):
     """⚠️ L'endpoint passe le corps dans `html.escape` : une balise `<b>` s'y
     afficherait littéralement, telle quelle, dans Telegram."""
-    _, depart = s.message_depart("admin_live", [_ligne()])
     _, silence = s.message_silence([("fees_exceed_edge", 10)], 24,
                                    {"5min": 126})
-    for corps in (depart, silence):
-        assert "<" not in corps and ">" not in corps, corps
+    assert "<" not in silence and ">" not in silence, silence
 
 
-def test_le_message_de_depart_porte_le_ticket_et_le_stop(s):
-    titre, corps = s.message_depart("admin_live", [_ligne(ticket=4242)])
-    assert "admin_live" in titre
-    assert "4242" in corps and "4580" in corps
+def test_l_annonce_ORDRE_METAL_PARTI_a_ete_RETIREE(s):
+    """⛔ Retiree le 2026-10-12 : Xavier << quelle est la valeur ajoutee de
+    recevoir ce genre de message ? >>. Aucune -- il recoit deja un message
+    d'OUVERTURE DE TRADE qui porte les memes champs et ne passe meme pas par
+    ce routeur. C'etait un doublon, et sa raison d'etre (prouver la chaine le
+    jour de l'ouverture de la poche) etait PONCTUELLE."""
+    assert not hasattr(s, "message_depart"), (
+        "message_depart existe encore : l'annonce doublon n'est pas retiree")
+    import inspect
+    src = inspect.getsource(s)
+    assert "Ordre metal PARTI" not in src and "Ordre métal PARTI" not in src
+
+
+def test_la_DETECTION_survit_a_la_suppression_de_l_annonce(s):
+    """🔑 LE POINT DELICAT, et le defaut qu'il empeche.
+
+    `quelque_chose_est_parti` et `dernier_depart_metal` nourrissent le DIGEST
+    DE SILENCE. Supprimer la detection avec l'annonce aurait fait dire au
+    digest << aucun ordre depuis 24 h >> pendant que des ordres partaient --
+    exactement le 4e defaut du 2026-10-07, ou la sonde a affirme ca alors que
+    QUATRE ordres etaient partis l'apres-midi meme.
+    """
+    import inspect
+    src = inspect.getsource(s.main)
+    assert "quelque_chose_est_parti = True" in src, (
+        "la detection d'un depart a disparu avec l'annonce")
+    assert "dernier_depart_metal" in src, (
+        "la date du dernier depart n'est plus retenue : le digest mentirait")
+    # et le curseur avance, sinon l'audit serait relu indefiniment
+    i = src.index("quelque_chose_est_parti = True")
+    assert "nouveau[f\"curseur:{did}\"] = borne" in src[i:], (
+        "le curseur n'avance plus apres un depart")
+
+
+def test_le_digest_de_silence_ne_cite_PLUS_un_pourcentage_FIGE(s):
+    """⛔ Il disait << la poche des 14 % est prete >>. La poche vaut 20 %
+    depuis le 2026-10-07, et son pourcentage vient du PONT, pas du code : un
+    chiffre en dur dans un message devient faux sans que rien ne le signale.
+    Mieux vaut pas de chiffre qu'un chiffre perime."""
+    _, corps = s.message_silence([], 24, {})
+    assert "14 %" not in corps
+    assert "poche" in corps.lower()
 
 
 def test_le_digest_nomme_les_motifs_ET_les_horizons(s):
@@ -192,15 +228,34 @@ def test_envoi_CONFIRME_le_curseur_avance(s, monkeypatch):
     assert ecrits["curseur:admin_live"] == 9
 
 
-def test_envoi_RATE_le_curseur_NE_bouge_PAS(s, monkeypatch):
-    """⛔ Un événement dont l'annonce a échoué doit être rejoué au passage
-    suivant. Avancer le curseur le perdrait en silence."""
-    etat = {"curseur:admin_legacy": 5, "curseur:admin_live": 5}
-    ecrits = _armer(s, monkeypatch, etat, [_ligne(id=9)], envoi_reussi=False)
-    assert s.main() == 0
-    assert ecrits["curseur:admin_legacy"] == 5
-    assert ecrits["curseur:admin_live"] == 5
+# ⛔ LES QUATRE TESTS CI-DESSOUS ONT ETE REBRANCHES LE 2026-10-12.
+#
+# Ils pilotaient la machinerie de rejeu par la cle `metal_parti:`, c'est-a-dire
+# par l'annonce << Ordre metal PARTI >> -- retiree ce jour-la comme doublon du
+# message d'ouverture de trade.
+#
+# 🔑 MAIS LA MACHINERIE ELLE-MEME EST ENCORE ACTIVE : le DIGEST DE SILENCE
+# l'utilise, avec la cle `metal_silence`. Les supprimer avec l'annonce aurait
+# retire la couverture d'un mecanisme vivant -- celui qui empeche de perdre une
+# alerte en silence quand le relais Telegram ne repond pas. On les rebranche
+# donc sur le digest au lieu de les jeter.
 
+def test_digest_RATE_la_date_NE_bouge_PAS(s, monkeypatch):
+    """⛔ Un digest dont l'envoi a echoue doit etre rejoue au passage suivant.
+    Ecrire `dernier_silence` le perdrait en silence."""
+    etat = {"curseur:admin_legacy": 5, "curseur:admin_live": 5}
+    ecrits = _armer(s, monkeypatch, etat,
+                    [_ligne(id=9, symbol="EURUSD")], envoi_reussi=False)
+    assert s.main() == 0
+    assert "dernier_silence" not in ecrits
+
+
+def test_digest_CONFIRME_la_date_avance(s, monkeypatch):
+    etat = {"curseur:admin_legacy": 5, "curseur:admin_live": 5}
+    ecrits = _armer(s, monkeypatch, etat,
+                    [_ligne(id=9, symbol="EURUSD")], envoi_reussi=True)
+    assert s.main() == 0
+    assert "dernier_silence" in ecrits
 
 def test_sans_depart_le_curseur_avance_quand_meme(s, monkeypatch):
     """Sinon la sonde relirait éternellement les mêmes pages de forex."""
@@ -339,12 +394,15 @@ def test_le_stop_est_None_PAS_zero(s):
     assert s.fills_en_lignes_audit([_fill()])[0]["sl"] is None
 
 
-def test_le_message_DIT_que_le_stop_est_inconnu(s):
-    """⛔ Afficher « stop None » se lirait comme une position sans protection."""
-    l = s.fills_en_lignes_audit([_fill()])
-    _, corps = s.message_depart("admin_kraken", l)
-    assert "None" not in corps
-    assert "inconnu" in corps
+def test_aucun_message_n_ecrit_jamais_None(s):
+    """⛔ Afficher « None » se lirait comme une information, pas comme une
+    absence. Portait sur l'annonce de depart (retiree le 12/10) ; la propriete
+    vaut toujours pour le digest, seul message encore envoye."""
+    for args in (([], 24, {}),
+                 ([("fees_exceed_edge", 10)], 24, {"5min": 126}),
+                 ([("bridge_plafond_risque", 20)], 24, {})):
+        _, corps = s.message_silence(*args)
+        assert "None" not in corps, corps
 
 
 def test_le_dispatcher_envoie_KRAKEN_sur_les_fills(s, monkeypatch):
@@ -489,52 +547,49 @@ def test_la_sonde_est_PLUS_patiente_que_le_relais(s):
 
 
 def test_sans_reponse_on_rejoue_mais_PAS_indefiniment(s, monkeypatch):
-    """🔑 Le défaut n° 3, et le cœur du correctif.
+    """🔑 Le defaut n° 3, et le coeur du correctif — teste sur le DIGEST.
 
-    Les premiers passages rejouent — le message a peut-être échoué. Mais au
-    bout de `MAX_ESSAIS_SANS_REPONSE`, on considère l'annonce faite : à ce
-    stade, un rejeu de plus n'apporte rien qu'un doublon de plus.
+    Les premiers passages rejouent : le message a peut-etre echoue. Mais au
+    bout de `MAX_ESSAIS_SANS_REPONSE`, on considere l'annonce faite — a ce
+    stade un rejeu de plus n'apporte qu'un doublon de plus.
     """
     etat = {"curseur:admin_legacy": 5, "curseur:admin_live": 5}
-    ecrits = _armer3(s, monkeypatch, etat, [_ligne(id=9)], issue=None)
+    L = [_ligne(id=9, symbol="EURUSD")]
+    ecrits = _armer3(s, monkeypatch, etat, L, issue=None)
     assert s.main() == 0
-    # 1er essai sans réponse : on ne bouge pas, on compte
-    assert ecrits["curseur:admin_live"] == 5
-    assert ecrits["essais_sans_reponse:metal_parti:admin_live:9"] == 1
+    assert "dernier_silence" not in ecrits
+    assert ecrits["essais_sans_reponse:metal_silence"] == 1
 
-    # ... au dernier essai, on tranche et on avance
     etat2 = dict(etat)
-    etat2["essais_sans_reponse:metal_parti:admin_live:9"] = \
-        s.MAX_ESSAIS_SANS_REPONSE - 1
-    ecrits2 = _armer3(s, monkeypatch, etat2, [_ligne(id=9)], issue=None)
+    etat2["essais_sans_reponse:metal_silence"] = s.MAX_ESSAIS_SANS_REPONSE - 1
+    ecrits2 = _armer3(s, monkeypatch, etat2, L, issue=None)
     assert s.main() == 0
-    assert ecrits2["curseur:admin_live"] == 9
-    assert "essais_sans_reponse:metal_parti:admin_live:9" not in ecrits2
-
+    assert "dernier_silence" in ecrits2, (
+        "au dernier essai on doit trancher, sinon on rejoue sans fin")
 
 def test_un_VRAI_refus_rejoue_sans_jamais_s_epuiser(s, monkeypatch):
-    """⛔ Un refus du relais est une réponse : il dit que rien n'est parti.
+    """⛔ Un refus du relais est une REPONSE : il dit que rien n'est parti.
 
-    Celui-là doit être rejoué, et le compteur d'essais-sans-réponse ne doit
+    Celui-la doit etre rejoue, et le compteur d'essais-sans-reponse ne doit
     PAS le faire abandonner — sinon un jeton mort perdrait l'alerte en
-    silence, ce que cette sonde existe précisément pour empêcher.
+    silence, ce que cette sonde existe precisement pour empecher.
     """
     etat = {"curseur:admin_legacy": 5, "curseur:admin_live": 5,
-            "essais_sans_reponse:metal_parti:admin_live:9": 99}
-    ecrits = _armer3(s, monkeypatch, etat, [_ligne(id=9)], issue=False)
+            "essais_sans_reponse:metal_silence": 99}
+    ecrits = _armer3(s, monkeypatch, etat,
+                     [_ligne(id=9, symbol="EURUSD")], issue=False)
     assert s.main() == 0
-    assert ecrits["curseur:admin_live"] == 5
-    assert "essais_sans_reponse:metal_parti:admin_live:9" not in ecrits
-
+    assert "dernier_silence" not in ecrits
+    assert "essais_sans_reponse:metal_silence" not in ecrits
 
 def test_un_succes_efface_le_compteur_d_essais(s, monkeypatch):
     etat = {"curseur:admin_legacy": 5, "curseur:admin_live": 5,
-            "essais_sans_reponse:metal_parti:admin_live:9": 2}
-    ecrits = _armer3(s, monkeypatch, etat, [_ligne(id=9)], issue=True)
+            "essais_sans_reponse:metal_silence": 2}
+    ecrits = _armer3(s, monkeypatch, etat,
+                     [_ligne(id=9, symbol="EURUSD")], issue=True)
     assert s.main() == 0
-    assert ecrits["curseur:admin_live"] == 9
-    assert "essais_sans_reponse:metal_parti:admin_live:9" not in ecrits
-
+    assert "dernier_silence" in ecrits
+    assert "essais_sans_reponse:metal_silence" not in ecrits
 
 def test_un_delai_de_lecture_rend_None_et_PAS_False(s, monkeypatch):
     """⛔ Le mapping exact qui a produit les 8 doublons.

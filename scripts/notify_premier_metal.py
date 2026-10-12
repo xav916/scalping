@@ -189,33 +189,6 @@ def doit_parler_du_silence(dernier_iso: str | None, maintenant: datetime,
     return (maintenant - dernier).total_seconds() >= silence_sec
 
 
-def message_depart(destination: str, ordres: list[dict]) -> tuple[str, str]:
-    """⚠️ Texte SIMPLE : l'endpoint échappe le corps, une balise s'y afficherait
-    telle quelle."""
-    o = ordres[0]
-    lignes = [
-        f"Un ordre {o.get('symbol')} {o.get('direction')} est parti chez le "
-        f"courtier sur {destination}.",
-        "",
-        f"ticket   {o.get('ticket')}",
-        f"lots     {o.get('lots')}",
-        f"entree   {o.get('entry')}",
-        # ⚠️ Chez Kraken le stop est un ORDRE SEPARE : le fill ne le porte pas.
-        # Afficher « stop None » se lirait comme une position nue.
-        (f"stop     {o.get('sl')}" if o.get("sl") is not None
-         else "stop     inconnu a cet instant"),
-        f"quand    {str(o.get('created_at'))[:19]}",
-    ]
-    if len(ordres) > 1:
-        lignes += ["", f"({len(ordres) - 1} autre(s) sur le meme passage.)"]
-    lignes += [
-        "",
-        "C'est le premier fait qui prouve la chaine complete depuis "
-        "l'ouverture de la poche metaux a 14 % : le budget existait, rien ne "
-        "disait qu'un ordre en sortait.",
-    ]
-    return (f"🥇 Ordre metal PARTI — {destination}", "\n".join(lignes))
-
 
 def message_silence(refus: list[tuple], heures: int,
                     horizons: dict) -> tuple[str, str]:
@@ -224,8 +197,8 @@ def message_silence(refus: list[tuple], heures: int,
               ""]
     if not refus:
         lignes += ["Et aucun signal metal n'a ete refuse non plus : il n'en "
-                   "arrive tout simplement pas. La poche des 14 % est prete, "
-                   "rien ne s'y presente."]
+                   "arrive tout simplement pas. La poche metaux est "
+                   "prete, rien ne s'y presente."]
     else:
         lignes.append("Ce qui les arrete, par motif :")
         for motif, n in refus:
@@ -556,16 +529,27 @@ def main() -> int:
             continue
 
         quelque_chose_est_parti = True
-        titre, corps = message_depart(did, partis)
-        dedup = f"metal_parti:{did}:{borne}"
-        print(f"  ALERTE : {len(partis)} ordre(s) metal parti(s)")
-        issue = _notifier(titre, corps, dedup=dedup, destination_id=did)
-        if _trancher(issue, etat, nouveau, dedup, "l'ordre metal"):
-            # ⛔ Le curseur n'avance qu'ici. Une annonce VRAIMENT ratee doit
-            # etre rejouee au passage suivant, pas perdue.
-            nouveau[f"curseur:{did}"] = borne
-        else:
-            print("    curseur NON avance — l'evenement sera rejoue")
+        # ⛔ PLUS D'ANNONCE ICI, retiree le 2026-10-12 a la demande de Xavier :
+        # << quelle est la valeur ajoutee de recevoir ce genre de message ? >>
+        # Aucune. Il recoit deja un message d'OUVERTURE DE TRADE complet, qui
+        # porte les memes champs (ticket, entree, stop) et qui ne passe meme
+        # pas par ce routeur. Celui-ci etait un DOUBLON, et sa raison d'etre
+        # -- << le premier fait qui prouve la chaine complete depuis
+        # l'ouverture de la poche metaux >> -- est une preuve PONCTUELLE
+        # etablie le 2026-08-28, pas une alerte recurrente.
+        #
+        # 🔑 MAIS ON GARDE TOUT LE RESTE DE LA BOUCLE, et c'est le point
+        # delicat : `quelque_chose_est_parti` et `dernier_depart_metal`
+        # nourrissent le DIGEST DE SILENCE, qui lui sert vraiment. Supprimer
+        # la detection avec l'annonce aurait fait dire au digest << aucun ordre
+        # depuis 24 h >> alors que des ordres partaient -- exactement le 4e
+        # defaut du 2026-10-07.
+        #
+        # 🔑 Et le curseur avance maintenant SANS CONDITION : il n'y a plus
+        # d'annonce a rejouer, donc plus de raison de le retenir.
+        print(f"  {len(partis)} ordre(s) metal parti(s) — non annonce "
+              "(doublon du message d'ouverture de trade)")
+        nouveau[f"curseur:{did}"] = borne
 
     # ── Digest de silence ────────────────────────────────────────────────
     maintenant = datetime.now(timezone.utc)
