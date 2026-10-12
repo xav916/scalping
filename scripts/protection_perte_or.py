@@ -130,6 +130,83 @@ def _largeur_max_eur() -> float | None:
         return None
 
 
+def _plancher_spread_k() -> float | None:
+    """Le multiple du SPREAD qui sert de plancher, ou ``None``.
+
+    🔑 DEMANDE DE XAVIER le 2026-10-12 : « ne plus avoir la limite de SL a
+    moins 2, mais toujours la division par 2 » — puis, apres mes objections,
+    « avoir comme variable le spread ».
+
+    ## Pourquoi le spread et pas un montant fixe
+
+    Un plancher fixe ne sait pas si le marche est cher. Le spread de l'or vaut
+    **0,0714 EUR** en mediane, mais **0,38 EUR** a la reouverture du dimanche
+    (19 points mesures). Un plancher indexe dessus se DURCIT quand le marche
+    coute cher et se relache quand il est calme — ce qu'un 2,00 EUR en dur ne
+    fera jamais.
+
+    ## ✅ CE QUE LA MESURE DIT, et c'est ce qui l'a fait retenir
+
+    Banc `banc_plancher_au_spread.py`, 3 298 970 ticks, 4 115 positions,
+    15 jours, pre-inscrit en `45b2526` :
+
+        A production (plancher 2,00)   moyenne +0,0000   pire jour -0,151
+        B plancher k=1 ou k=2          moyenne -0,0032   pire jour -0,129
+
+    Rendement identique au bruit pres (`t = -0,81`), **pire journee amelioree
+    de 15 %**, reussite quasi inchangee (69,4 -> 67,7 %), et AUCUN trade nul
+    de plus. Un gain gratuit.
+
+    🔑 Et la mesure a confirme l'intuition de Xavier : le plancher de 2 EUR
+    etait **quasi decoratif**, parce que le point milieu converge vers la
+    PERTE et non vers le plancher. Il ne mordait que sur les trades perdant
+    moins de 2 EUR.
+
+    ⛔ CE QUI A ETE MESURE PUIS ECARTE : son second souhait, passer le stop a
+    l'equilibre des que le trade est positif (au lieu de +0,50 EUR). A k=2 cela
+    transforme **51 % des trades en trades nuls** (2 108 sur 4 115, contre 439
+    aujourd'hui) pour un rendement indistinguable. Non arme.
+
+    ⛔ Absent ou illisible ⇒ ``None``, donc le plancher fixe d'avant.
+    """
+    brut = os.environ.get("PROTECTION_PERTE_PLANCHER_SPREAD_K", "").strip()
+    if not brut:
+        return None
+    try:
+        v = float(brut)
+        if v <= 0:
+            raise ValueError(f"k {v} <= 0")
+        return v
+    except Exception as e:  # noqa: BLE001
+        print(f"⚠️ PROTECTION_PERTE_PLANCHER_SPREAD_K illisible ({e}) — repli "
+              f"sur le plancher fixe")
+        return None
+
+
+def spread_eur(pair: str, taux_eur_usd: float) -> float | None:
+    """Le spread COURANT de la paire, en euros, ou ``None``.
+
+    ⛔ ``None`` plutot qu'une valeur par defaut : un plancher calcule sur un
+    spread devine serait pose sur de l'argent reel. L'appelant retombe alors
+    sur le plancher fixe, et le DIT.
+    """
+    try:
+        from backend.services import bougies_du_pont as BP
+        d = BP._destination()
+        if d is None:
+            return None
+        t = BP._lire_tick(d, pair)
+        if not isinstance(t, dict):
+            return None
+        bid, ask = float(t.get("bid") or 0), float(t.get("ask") or 0)
+        if bid <= 0 or ask <= 0 or ask < bid or not taux_eur_usd:
+            return None
+        return (ask - bid) / float(taux_eur_usd)
+    except Exception as e:  # noqa: BLE001
+        logger.info("protection perte : spread illisible (%s)", e)
+        return None
+
+
 def _plancher_absolu_eur() -> float | None:
     """Le plancher ABSOLU du stop, en euros, ou ``None``.
 
@@ -153,7 +230,8 @@ def _plancher_absolu_eur() -> float | None:
 
 
 def nouveau_stop_eur(stop_eur: float, perte_eur: float,
-                     marge_min_eur: float = MARGE_MIN_EUR) -> float | None:
+                     marge_min_eur: float = MARGE_MIN_EUR,
+                     spread_eur_courant: float | None = None) -> float | None:
     """Nouvelle distance de stop en EUR, ou ``None`` s'il n'y a rien a faire.
 
     `stop_eur` et `perte_eur` sont des distances POSITIVES depuis l'entree.
@@ -189,10 +267,24 @@ def nouveau_stop_eur(stop_eur: float, perte_eur: float,
     # toujours du bon cote du cours, sans garde supplementaire.
     # 🔑 Un `max()` qui ne mord jamais est du code mort : il se maintient, il
     # se lit, et il fait croire a une protection qui n'existe pas.
+    # 🔑 LE PLANCHER AU SPREAD. Il remplace a la fois le plancher absolu ET
+    # la marge au cours : indexer l'un sans l'autre laisserait le `min(vise,
+    # max(plafond, perte + marge))` plus bas dominer avec ses 2,00 EUR en dur,
+    # et le reglage serait silencieusement INERTE — exactement le defaut de
+    # `XAU_SL_FIXE_EUR` paye hier.
+    k = _plancher_spread_k()
+    if k is not None and spread_eur_courant and spread_eur_courant > 0:
+        marge_min_eur = k * spread_eur_courant
+    elif k is not None:
+        logger.warning("protection perte : plancher au spread demande (k=%s) "
+                       "mais spread illisible — repli sur le plancher fixe", k)
+
     plancher = perte_eur + marge_min_eur
     absolu = _plancher_absolu_eur()
     if absolu is not None:
         plancher = absolu
+    if k is not None and spread_eur_courant and spread_eur_courant > 0:
+        plancher = k * spread_eur_courant
     # Deja au plancher (ou plus serre) : rien a faire, et surtout pas desserrer.
     if stop_eur <= plancher:
         return None
@@ -309,7 +401,13 @@ def stop_vise_prix(position: dict, taux_eur_usd: float | None,
         if stop_eur <= 0:
             return None
 
-        vise_eur = nouveau_stop_eur(stop_eur, perte_eur, marge_min_eur)
+        # ⛔ LE SPREAD DOIT ETRE TRANSMIS ICI, sinon `_plancher_spread_k`
+        # est lu, trouve son k, ne recoit aucun spread, et retombe sur le
+        # plancher fixe en silence — un reglage arme et INERTE. C'est le
+        # defaut de `XAU_SL_FIXE_EUR` paye hier soir, a l'identique.
+        sp = spread_eur(str(position.get("symbol") or "XAU/USD"), taux)
+        vise_eur = nouveau_stop_eur(stop_eur, perte_eur, marge_min_eur,
+                                    spread_eur_courant=sp)
         if vise_eur is None:
             return None
         return round(entree - signe * vise_eur * taux, 2)
