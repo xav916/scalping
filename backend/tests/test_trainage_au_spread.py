@@ -212,3 +212,31 @@ def test_decision_bout_en_bout(E, monkeypatch):
     assert d["sl"] < courant, "stop du mauvais cote du cours"
     # et sans le spread, la production ne pose RIEN a 0,45
     assert E.decision(_position(entree), taux, prix_courant=courant) is None
+
+
+# ─── ⑥ La SONDE doit juger comme l'ACTEUR pose ───────────────────────────
+
+def test_la_SONDE_lit_le_spread_comme_l_ACTEUR(E):
+    """⛔ DÉFAUT INTRODUIT PUIS CORRIGÉ LE 2026-10-12.
+
+    J'ai câblé `echelle_stop_boucle` (qui POSE le stop) sans câbler
+    `sonde_echelle_or` (qui l'OBSERVE). La sonde a continué à juger avec la
+    largeur FIXE de 0,50 € pendant que l'acteur posait à `2 × spread` : ses
+    `palier_max_eur` ne décrivaient plus la réalité.
+
+    🔑 Repéré non par relecture mais par les CHIFFRES de production : palier
+    1,59 pour un profit de 2,088 € — soit exactement `profit − 0,50`, l'ancienne
+    largeur, alors que l'acteur utilisait 0,375.
+
+    ⛔ Une sonde qui mesure autre chose que la réalité est pire qu'une sonde
+    absente, parce qu'on la croit.
+    """
+    import pathlib
+    src = pathlib.Path("scripts/sonde_echelle_or.py").read_text(encoding="utf-8")
+    assert "E.palier_atteint(profit_eur, spread)" in src, (
+        "la sonde juge encore SANS le spread")
+    i = src.index("E.palier_atteint(")
+    assert "_spread_eur(taux_eur_usd)" in src[:i], (
+        "la sonde ne lit pas le spread avant de juger")
+    assert "if E.trainage_spread_k() is not None else None" in src, (
+        "la sonde appellerait le pont meme sans le reglage")

@@ -110,6 +110,33 @@ def _assurer_colonnes(c: sqlite3.Connection) -> None:
             c.execute(f"ALTER TABLE echelle_or_suivi ADD COLUMN {nom} TEXT")
 
 
+def _spread_eur(taux_eur_usd: float) -> float | None:
+    """Le spread courant de l'or en euros, ou ``None``.
+
+    ⛔ LA SONDE DOIT LIRE LE SPREAD PAR LE MEME CHEMIN QUE L'ACTEUR. Le
+    2026-10-12 j'ai cable `echelle_stop_boucle` (qui POSE le stop) sans cabler
+    cette sonde (qui l'OBSERVE) : elle a continue a juger avec la largeur FIXE
+    de 0,50 EUR pendant que l'acteur posait a `2 x spread`. Ses `palier_max_eur`
+    ne decrivaient donc PAS ce qui se passait -- une sonde qui mesure autre
+    chose que la realite est pire qu'une sonde absente, parce qu'on la croit.
+    """
+    try:
+        from backend.services import bougies_du_pont as BP
+        d = BP._destination()
+        if d is None:
+            return None
+        t = BP._lire_tick(d, "XAU/USD")
+        if not isinstance(t, dict):
+            return None
+        bid, ask = float(t.get("bid") or 0), float(t.get("ask") or 0)
+        if bid <= 0 or ask <= 0 or ask < bid or not taux_eur_usd:
+            return None
+        return (ask - bid) / float(taux_eur_usd)
+    except Exception as e:  # noqa: BLE001
+        logger.info("sonde echelle : spread illisible (%s)", e)
+        return None
+
+
 def observer(positions: list[dict], taux_eur_usd: float) -> int:
     """Un echantillon. Rend le nombre de positions enregistrees.
 
@@ -126,6 +153,11 @@ def observer(positions: list[dict], taux_eur_usd: float) -> int:
 
     maintenant = datetime.now(timezone.utc).isoformat()
     enregistrees = 0
+
+    # Une seule lecture par echantillon, et seulement si le reglage est pose :
+    # sans lui, aucun appel supplementaire au pont.
+    spread = (_spread_eur(taux_eur_usd)
+              if E.trainage_spread_k() is not None else None)
 
     for p in positions or []:
         ticket = p.get("ticket")
@@ -156,7 +188,7 @@ def observer(positions: list[dict], taux_eur_usd: float) -> int:
         motif = "" if suivie else (
             "position ouverte A LA MAIN : elle ne porte pas la marque "
             f"{E.MARQUE_RADAR!r}, l'echelle ne la suit pas")
-        palier = E.palier_atteint(profit_eur)
+        palier = E.palier_atteint(profit_eur, spread)
 
         try:
             with sqlite3.connect(_db_path()) as c:
