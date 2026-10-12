@@ -82,3 +82,111 @@ ne peut rien « retenir ».
    seul**, parce que les entrées du banc sont synthétiques (toutes les 300 s)
    et non les setups réels. Je l'écris d'avance pour ne pas être tenté de
    surinterpréter un chiffre qui m'arrangerait.
+
+---
+
+# VERDICT, le 2026-10-12
+
+3 371 441 ticks, 16 jours, 4 213 positions par cellule, apparié sur le JOUR.
+
+## ① La validation est passée
+
+```
+ACHATS  execute - ask magasin   n=30  median +4,3 pts
+VENTES  bid magasin - execute   n=32  median +5,2 pts
+                                      => +5,0 pts par cote (attendu 5,0)
+```
+
+✅ Le modèle `bid − 5 pts / ask + 5 pts` est confirmé par l'exécution réelle.
+
+## ② Les cellules, au coût du magasin puis au coût RÉEL
+
+```
+                     moyenne  pire jour  reussite   nuls   gain moy
+A production magasin +0,0072    -0,146     80,2 %   8,4 %   +0,743
+A production REEL    -0,0824    -0,228     77,8 %   7,3 %   +0,748
+B plancher   magasin +0,0032    -0,126     78,3 %   8,1 %   +0,740
+B plancher   REEL    -0,0868    -0,267     75,7 %   7,2 %   +0,745
+X regle Xavier magas +0,0038    -0,123     85,4 %  17,1 %   +0,387
+X regle Xavier REEL  -0,0871    -0,204     78,2 %  11,0 %   +0,581
+```
+
+## 🔑 PRÉDICTION n°1 : TENUE — et elle valide mon affirmation du matin
+
+```
+ecart contre A      au magasin      t     au cout REEL      t      DELTA
+B plancher k=2         -0,0025   -0,57        -0,0037   -0,83    -0,0011
+X regle de Xavier      -0,0069   -0,40        -0,0020   -0,18    +0,0049
+```
+
+**Plus grand déplacement : +0,0049 €/trade**, sous mes 0,005 annoncés. ✅ Mon
+affirmation du matin — « les comparaisons appariées survivent » — **se
+vérifie**. Je ne la retire pas.
+
+## MES PRÉDICTIONS : 3 sur 5, et les deux fausses comptent
+
+| n° | prédiction | verdict |
+|---|---|---|
+| 1 | les écarts appariés survivent, < 0,005 | ✅ **tenue** (+0,0049) |
+| 2 | `B k=2` reste retenu | ⛔ **FAUSSE — il ÉCHOUE** (voir ci-dessous) |
+| 3 | la règle de Xavier reste dans ±0,01 | ✅ tenue (−0,0020) |
+| 4 | le niveau chute de ~0,089 €/trade | ✅ **tenue au millième** : −0,0895 mesuré contre 0,0893 théorique |
+| 5 | le markup relève la réussite REQUISE de ~1,5 pt | ⛔ **FAUSSE, et instructive** : il la relève de **−0,00 point** |
+
+## 🔑 CE QUE LA PRÉDICTION n°5 M'APPREND EN SE TROMPANT
+
+Le markup **ne change pas** ce que la géométrie exige :
+
+```
+reussite REQUISE   79,99 %  au magasin   ->   79,99 %  au cout REEL
+reussite OBTENUE   80,18 %               ->   77,78 %
+marge              +0,19 pt              ->   -2,20 pt
+```
+
+Il ne déplace pas la barre : il **détruit 2,40 points de réussite obtenue**,
+en basculant du bon côté au mauvais les trades qui gagnaient de moins que le
+markup. Et **2,40 points, c'est 3,3 fois les 0,72 point** qui manquaient à la
+géométrie en production.
+
+⛔ **Mais je tiens ma prédiction n°6 : on ne peut PAS en conclure l'attribution.**
+Les entrées de ce banc sont synthétiques (toutes les 300 s), pas les setups
+réels. C'est un **ordre de grandeur** qui dit où chercher, pas une cause
+établie.
+
+## 🔴 ET LA CONSÉQUENCE QUI PORTE : `B` NE PASSE PLUS SON CRITÈRE
+
+Le critère de `45b2526`, **inchangé** : (1) `t > −2`, (2) pire journée pas
+pire que A, (3) nuls bornés.
+
+```
+B au cout REEL :  t -0,83  ✅      pire jour -0,267 contre -0,228  ⛔      nuls 7,2 vs 7,3  ✅
+```
+
+**Il échoue sur la condition 2.** Au coût du magasin il la passait
+(−0,126 contre −0,146) : **ma décision du matin reposait sur un coût
+sous-estimé.**
+
+Et j'ai regardé si cet échec tenait à un accident, parce que la mémoire du
+projet porte déjà « tout l'écart vient d'1 trade » :
+
+```
+sa pire journee est le 2026-10-05, ecart B-A = -0,0390
+   SANS ce jour, le critere PASSE (pire jour B -0,195 contre A -0,227)
+   et sur ce jour, 3 trades sur 276 font 69 % de l'ecart (-7,42 de -10,76 EUR)
+```
+
+⚠️ **Mais ce n'est pas qu'un accident** : `B` est aussi **mollement et
+régulièrement moins bon** — moyenne `B−A` **−0,0037**, médiane **−0,0070**, et
+`B` ne fait mieux que **5 jours sur 16**. Rien de significatif (`t = −0,83`),
+mais la direction est constante.
+
+⇒ **Recommandation : DÉSARMER le plancher au spread**
+(`PROTECTION_PERTE_PLANCHER_SPREAD_K`). Le critère posé avant la mesure
+tranche, et les deux lectures indépendantes pointent dans le même sens.
+Retrait par une ligne de crontab, sans redémarrage ni réarmement.
+
+🔑 Et sur `X` (la configuration armée cet après-midi, plancher ET traînage au
+spread) : au coût réel son rendement est **indistinguable** de A (`t = −0,18`)
+et sa **pire journée est MEILLEURE** (−0,204 contre −0,228). Seuls ses trades
+nuls restent hauts (11,0 % contre 7,3 %) — ce que j'avais déjà dit avant de
+l'armer. **Rien de nouveau contre elle.**
