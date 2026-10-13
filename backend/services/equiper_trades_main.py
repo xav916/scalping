@@ -218,6 +218,38 @@ def concerne(position: dict) -> bool:
     return arme() and est_de_l_or(position) and not est_du_radar(position)
 
 
+def suivi_arme() -> bool:
+    """Les trades A LA MAIN doivent-ils etre SUIVIS apres avoir ete equipes ?
+
+    Demande de Xavier le 2026-10-13 : << pour les trades lances a la main, je
+    ne veux pas avoir le SL qui va s'updater >>.
+
+    🔑 DEUX CHOSES ETAIENT CONFONDUES DANS `concerne()`, et c'est ce que ce
+    reglage separe :
+      - POSER un stop sur une position qui n'en a pas (ce module) ;
+      - le SUIVRE ensuite (l'echelle cote gain, la protection cote perte).
+    Il voulait couper le second sans perdre le premier. Sans cette separation
+    il aurait fallu `EQUIPER_TRADES_MAIN=0`, qui laisse NUE une position
+    ouverte sans stop -- et le 09/10, 40 de ses 43 trades du terminal
+    n'avaient NI stop NI objectif, ses trois pires faisant -41,72 EUR a eux
+    seuls.
+
+    ⛔ Defaut `1` : le comportement d'avant, a l'identique. Un reglage absent
+    ne doit jamais changer la facon dont l'argent reel est protege.
+    """
+    return os.getenv("EQUIPER_TRADES_MAIN_SUIVI", "1").strip().lower() in (
+        "1", "true", "yes", "on", "oui")
+
+
+def concerne_suivi(position: dict) -> bool:
+    """Cette position peut-elle etre SUIVIE (stop deplace) ?
+
+    🔑 A lire par l'echelle et la protection. `concerne()` reste la porte du
+    seul EQUIPEMENT INITIAL : les deux ne doivent plus etre confondues.
+    """
+    return suivi_arme() and concerne(position)
+
+
 def decision(position: dict, taux_eur_usd: float) -> dict | None:
     """Ce qu'il faut poser sur cette position, ou ``None``.
 

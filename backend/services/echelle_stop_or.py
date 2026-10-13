@@ -416,7 +416,7 @@ def decision(position: dict, taux_eur_usd: float,
         # ⚠️ Desarme, le comportement d'avant est EXACTEMENT conserve.
         if MARQUE_RADAR not in str(position.get("comment") or ""):
             from backend.services import equiper_trades_main as _eq
-            if not _eq.concerne(position):
+            if not _eq.concerne_suivi(position):
                 return None
         sens = str(position.get("type") or "").lower()
         if sens not in ("buy", "sell"):
