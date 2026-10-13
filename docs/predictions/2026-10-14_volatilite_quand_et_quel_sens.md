@@ -89,3 +89,76 @@ Ce qui est écrit ici est ce qui sera mesuré.
 
 ⇒ Si 1 et 2 tiennent, la réponse à Xavier sera : **« quand » a une réponse,
 « dans quel sens » n'en a pas.**
+
+---
+
+# VERDICT, le 2026-10-14 : NI « QUAND », NI « DANS QUEL SENS »
+
+3 682 189 ticks, 18 jours, 4 669 instants. Quintiles et plafond calculés sur
+la **première moitié seulement**.
+
+## ⛔ ① LE SENS reste muet, même conditionné à la volatilité
+
+```
+la cellule la plus forte :  Q5 (le plus volatil), horizon 60 min
+                            r = -0,1607    t = -3,60    n = 492
+plafond par permutation (200 melanges) :  median 2,644   p95 3,758   max 4,886
+|t| maximal OBSERVE : 3,605
+```
+
+**3,605 < 3,758** ⇒ **aucune cellule ne dépasse le plafond.** Le sens n'est pas
+prévisible, y compris dans les régimes extrêmes.
+
+⚠️ Et il faut dire que le plafond est **haut** (p95 = 3,76) précisément parce
+qu'il y a 15 cellules : c'est le prix du découpage, et c'est pourquoi il était
+posé **d'avance**. Avec un `t` de confort à 2,0, **sept** cellules auraient
+« passé » — et le hasard seul en fait passer autant.
+
+## ⛔ ② « QUAND » N'A PAS DE RÉPONSE NON PLUS — le signe s'inverse
+
+```
+          dedans                      dehors
+Q1       -0,1310                     -0,1042
+Q2       -0,0796                     -0,0453
+Q3       -0,0166                     -0,0003
+Q4       -0,1003                     +0,0563
+Q5       +0,0026                     -0,1130
+
+monotone ?   dedans NON    dehors NON
+ecart Q1->Q5  -0,1337       +0,0088      <- LE SIGNE S'INVERSE
+```
+
+Le quintile le plus volatil est **le meilleur** en échantillon (+0,0026) et
+**le pire** hors échantillon (−0,1130). La condition 3 (monotonie) échoue dans
+les deux moitiés.
+
+🔑 Et chaque cellule positive **ne se reproduit pas** : `Q5` achats passe de
+**+0,0985** à **−0,1091** ; `Q4` passe de **−0,1003** à **+0,0563**.
+
+## MES PRÉDICTIONS : 1 sur 5, et les échecs sont instructifs
+
+| n° | prédiction | verdict |
+|---|---|---|
+| 1 | aucune cellule de ① ne passera, plafond ≈ 3,0, max observé < 2,5 | ⚠️ **conclusion JUSTE, chiffres FAUX** : plafond 3,76 et max 3,61 |
+| 2 | ② sera **monotone**, pire dans les quintiles hauts, ≥ 0,05 € d'écart | ⛔ **FAUSSE** : non monotone, et le signe s'inverse |
+| 3 | « quand » aura une réponse : **dans le calme** | ⛔ **FAUSSE** — elle dépendait de la 2 |
+| 4 | les deux sens négatifs dans TOUS les quintiles | ⛔ **fausse à la lettre** (`Q3`, `Q4`, `Q5` ont des cellules positives) — ✅ **juste au fond** : aucune ne se reproduit |
+| 5 | si un quintile montre les deux sens positifs, ce serait majeur | ⚠️ `Q4` hors échantillon les montre (**+0,058 / +0,055**) — mais il valait **−0,215 / +0,015** dedans ⇒ **bruit** |
+
+## ⇒ LA RÉPONSE À XAVIER
+
+⛔ **Aucun pattern de volatilité n'indique quand ouvrir, ni dans quel sens.**
+C'est la **troisième** réfutation de la direction, et la première qui la teste
+**conditionnée** — donc la plus difficile à contourner : on ne peut plus dire
+« l'effet moyen est nul parce que deux régimes s'annulent ».
+
+🔑 **La seule chose qui pointe un mécanisme**, et je la nomme en disant qu'elle
+a **échoué sa barre** : `Q5` à 60 min montre un **retour à la moyenne**
+(`r = −0,1607`, `t = −3,60`) — après une forte agitation, l'or tend à revenir.
+C'est un phénomène de marché connu, et c'est la seule cellule à portée du
+plafond.
+
+⛔ **Mais elle ne le franchit pas, et je refuse de la re-tester sur ces mêmes
+18 jours** : re-découper la même donnée jusqu'à ce qu'une cellule passe est
+exactement ce que ce plafond existe pour empêcher. Si on l'éprouve un jour, ce
+sera sur une **fenêtre neuve** et avec une **pré-inscription neuve**.
