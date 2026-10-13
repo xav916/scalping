@@ -101,3 +101,98 @@ franchement sans que le net bouge, ça dit où est le mur.
 ⇒ Si 4 tient, la réponse à Xavier sera : **la volatilité ne sert à la sortie
 que par la VITESSE du mouvement adverse** — ce qu'on a déjà trouvé ce matin —
 **et pas par la largeur du traînage**.
+
+---
+
+# VERDICT, le 2026-10-14 : LA LARGEUR PAIE, L'INDEXATION NON
+
+3 682 189 ticks, 18 jours, 4 669 positions fixes, `k` calibrés sur la
+**première moitié**.
+
+## ✅ ① L'HYPOTHÈSE ÉTAIT JUSTE : le traînage était bien trop serré
+
+```
+                   largeur   gain moyen   vs A     reussite
+A production        0,339      +0,602       -        78,7 %
+B x2 (vol 5 min)    0,679      +0,976     +62,3 %    71,8 %
+B x3                1,018      +1,304    +116,8 %    65,8 %
+```
+
+**Élargir le traînage DOUBLE le gain moyen** (+0,602 → +1,304 €), et ça se
+reproduit hors échantillon (+1,247). ✅ Prédiction n°1 tenue, et largement —
+je prédisais +40 %, c'est **+117 %**.
+
+🔑 Le mécanisme annoncé était le bon : à `2 × spread ≈ 0,34 €`, le traînage
+vivait **dans le bruit d'une minute** (amplitude 15 min = 6,30 €, soit
+~0,42 €/min). Il encaissait dès que le marché respirait.
+
+## ⛔ ② MAIS LA RÉUSSITE S'EFFONDRE, exactement comme prédit
+
+```
+A 78,7 %  ->  B x2 71,8 %  ->  B x3 65,8 %      (-12,9 points)
+```
+
+✅ Prédiction n°2 tenue (je prédisais ≥ 10 points).
+
+## 🔑 ③ ET LA PRÉDICTION QUI DÉCIDE — n°4 — TIENT, plus fort que prévu
+
+Le témoin `D` (simplement **plus large**, sans indexer sur rien) :
+
+```
+             gain moyen    vs A       ecart net /jour
+B x3 (vol)     +1,304    +116,8 %        -0,0630
+D x3 (large)   +1,237    +105,6 %        -0,0167     <- MIEUX que B
+```
+
+⇒ **Élargir sans indexer obtient presque tout le gain, et abîme deux fois
+moins le net.** La condition 3 (« battre son témoin ») échoue pour **5 cellules
+sur 6**.
+
+🔑 **L'indexation sur la volatilité n'apporte RIEN ici — elle est même nuisible.**
+Et la raison était mesurée ce matin : **l'amplitude passée ne prédit pas
+l'amplitude future** (`r = +0,020`). Indexer sur un bruit ajoute du bruit.
+
+⚠️ Contraste instructif avec la trouvaille du matin : la **vitesse** du
+mouvement adverse battait son témoin (+31 % contre +13 %), la **largeur** du
+traînage ne bat pas le sien. La volatilité porte donc quelque chose **sur
+l'instant où l'on réagit**, rien **sur la distance où l'on se place**.
+
+## ⛔ ④ ET LE NET NE S'AMÉLIORE JAMAIS
+
+Aucune cellule ne passe `t > +2`. Et ma prédiction n°3 est **partiellement
+fausse** : je disais « le net ne bougera pas, `|t| < 2` partout ». En réalité
+`B x1/x2/x3` et `C x2` sont **significativement PIRES** en échantillon
+(`t` de −2,00 à −2,11) — puis le signe **s'inverse** hors échantillon. Donc
+pas « plat » : du bruit de forte amplitude.
+
+## MES PRÉDICTIONS : 4 sur 5
+
+| n° | prédiction | verdict |
+|---|---|---|
+| 1 | le gain moyen montera de ≥ 40 % à 3× | ✅ **+117 %** |
+| 2 | la réussite chutera de ≥ 10 points | ✅ **−12,9 points** |
+| 3 | le net ne bougera pas, `\|t\| < 2` partout | ⚠️ direction juste (aucun gain) mais 4 cellules sont **significativement pires** dedans |
+| 4 | `D` fera aussi bien que `B` et `C` | ✅ **et même mieux sur le net** |
+| 5 | gain moyen et réussite sont les deux faces d'une pièce | ✅ **+117 % de gain pour −12,9 points, net inchangé** |
+
+## ⇒ LA RÉPONSE À XAVIER
+
+**La volatilité ne sert à la sortie que par la VITESSE du mouvement adverse**
+(trouvée ce matin : queue −31 %, et elle battait son témoin). **Pas par la
+largeur du traînage** : là, c'est la largeur seule qui agit, et l'indexer
+dégrade.
+
+🔑 **Mais ce banc a produit un choix réel, et chiffré.** Un traînage simplement
+plus large change complètement le profil des trades, **à net identique** :
+
+```
+                  reussite    gain moyen   perte moyenne   net
+A production (aujourd hui)  78,7 %   +0,60      -2,55       reference
+D x2 (trainage double)      71,8 %   +0,93      -2,62       -0,005  (t -0,36)
+D x3 (trainage triple)      66,4 %   +1,24      -2,69       -0,017  (t -0,72)
+```
+
+Deux tiers de réussite avec des gains deux fois plus gros, ou quatre cinquièmes
+de réussite avec des petits gains : **le même argent, une expérience tout
+autre**. C'est son choix, pas une mesure — et il n'y a **aucun gain de
+rendement** à la clé, je le dis avant qu'il ne le demande.
