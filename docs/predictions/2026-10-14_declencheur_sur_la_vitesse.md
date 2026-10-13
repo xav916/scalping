@@ -108,3 +108,92 @@ malhonnête.
 ⇒ Si 1 et 3 tiennent ensemble, la conclusion sera : **le délai de réaction est
 le levier, pas la vitesse** — et le réglage à changer sera simplement la
 cadence.
+
+---
+
+# VERDICT, le 2026-10-14 : LA VITESSE PORTE QUELQUE CHOSE DE RÉEL
+
+3 682 189 ticks, 18 jours, **4 669 positions fixes**. `V = 2,143 € / 30 s`
+(les 10 % de descentes les plus rapides), **calibré sur la première moitié
+seulement**.
+
+## 🔑 LA QUEUE — et c'est le premier effet ROBUSTE de la journée
+
+```
+                    queue dedans   queue dehors    gain
+A production            -20,18        -15,84       0 %  /  0 %
+B vitesse resserre      -13,84        -11,50     +31,4 % / +27,4 %
+C vitesse ferme         -13,81        -11,29     +31,6 % / +28,7 %
+D TEMOIN cadence 15     -17,50        -12,61     +13,3 % / +20,4 %
+E TEMOIN sans age       -20,18        -15,84       0 %  /  0 %
+```
+
+✅ `B` **affine la queue de 31 % dedans et 27 % dehors**. Même signe, même
+ordre de grandeur dans les deux moitiés. **C'est le premier effet de cette
+session qui survive au hors échantillon.**
+
+## ⛔ MA PRÉDICTION n°3 EST FAUSSE — et c'est la bonne nouvelle
+
+Je prédisais que le témoin `D` (cadence 15 s, sans mesurer la vitesse) ferait
+**aussi bien** que `B`, auquel cas la vitesse n'aurait rien apporté.
+
+**`D` n'obtient que +13,3 % dedans contre +31,4 % pour `B`** — moins de la
+moitié. ⇒ **La vitesse porte une information que « regarder plus souvent » ne
+donne pas.** Réagir plus vite explique environ un tiers de l'effet ; les deux
+autres tiers viennent de **mesurer la vitesse elle-même**.
+
+## ⛔ ET UN DÉFAUT DE MON PROTOCOLE : le témoin `E` est DÉGÉNÉRÉ
+
+`E` (aucun âge minimum) rend des chiffres **identiques à `A` au centième**.
+Raison : la cadence de 60 s impose déjà le délai — le premier contrôle tombe à
+`t = 60 s`, où la condition d'âge est de toute façon satisfaite. **`E` ne
+mesurait rien.** C'est une faute de conception de ma part, repérée par
+l'égalité parfaite des deux lignes.
+
+## ⛔ MAIS LE RENDEMENT NE BOUGE PAS — le critère rejette tout
+
+```
+B  ecart/jour :  dedans -0,0099 (t -0,64)   dehors +0,0018 (t +0,14)
+```
+
+La condition 1 exigeait `t > +2,0`. Elle échoue pour les quatre cellules.
+⇒ **Rien n'est « retenu ».** Et c'est juste : la queue s'affine, le rendement
+ne s'améliore pas.
+
+Le prix de cette queue plus fine est visible : la **réussite** passe de
+**78,9 % à 76,3 %** dedans (77,5 → 75,9 % dehors). `B` convertit quelques
+petits gagnants en petits perdants, et coupe les gros perdants.
+
+## MES PRÉDICTIONS : 2 sur 5
+
+| n° | prédiction | verdict |
+|---|---|---|
+| 1 | `B` affinera la queue de plus de 10 % | ✅ **+31,4 / +27,4 %** |
+| 2 | `B` ne passera pas `t > +2` | ✅ `t = −0,64 / +0,14` |
+| 3 | `D` fera aussi bien que `B` | ⛔ **FAUSSE** — `D` fait moins de la moitié |
+| 4 | `C` sera pire que `B` | ⚠️ égales sur la queue, `C` un peu pire en rendement |
+| 5 | `E` sera mauvaise | ⛔ **FAUSSE** : `E` est **dégénérée**, elle ne mesure rien |
+
+## ⇒ CE N'EST PAS UN VERDICT, C'EST UN CHOIX — et il est à Xavier
+
+Je l'avais pré-inscrit : *« si la queue s'affine nettement sans que le
+rendement bouge, je ne retiens pas la cellule — je présente le compromis
+chiffré et c'est lui qui tranche »*.
+
+```
+le compromis, mesure dans les deux moities :
+   la QUEUE s'affine de ~30 %   (les 3 pires trades de chaque journee)
+   la REUSSITE perd ~2,5 points (78,9 -> 76,3 %)
+   le RENDEMENT ne change pas   (t -0,64 dedans, +0,14 dehors)
+```
+
+⚠️ Ce n'est **pas** une machine à gagner. C'est une **réduction de variance
+sans coût de rendement mesurable** — des pires journées moins dures, pour un
+rendement identique. Sur un compte réel de 468 €, ça change ce qu'on ressent,
+pas ce qu'on gagne.
+
+🔑 Et une réserve honnête : 18 jours, et l'effet repose sur les **10 % de
+descentes les plus rapides**, soit ~470 trades dont 3 par journée pèsent la
+queue. **Ce n'est pas assez pour une politique durable** — mais c'est assez
+pour mériter une mesure plus longue, ce qui n'était arrivé à aucune piste
+aujourd'hui.
