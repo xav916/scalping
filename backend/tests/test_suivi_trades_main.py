@@ -134,3 +134,99 @@ def test_l_equipement_initial_lit_concerne_TOUT_COURT(EQ):
     assert "concerne_suivi" not in src, (
         "l'equipement initial dependrait du suivi : une position nue "
         "resterait nue")
+
+
+# ─── ④ Les bornes PROPRES aux trades à la main (13 € / 20 €) ────────────
+
+@pytest.fixture
+def EQB(monkeypatch):
+    """Comme `EQ`, mais sans aucun réglage de bornes posé."""
+    import backend.services.equiper_trades_main as mod
+    monkeypatch.setenv("EQUIPER_TRADES_MAIN", "1")
+    for k in ("MAIN_SL_FIXE_EUR", "MAIN_TP_FIXE_EUR",
+              "XAU_SL_FIXE_EUR", "XAU_TP_FIXE_EUR"):
+        monkeypatch.delenv(k, raising=False)
+    return importlib.reload(mod)
+
+
+def test_sans_reglage_le_comportement_d_avant(EQB):
+    """Stop au POURCENTAGE (0,35 %) et aucun objectif — l'existant."""
+    assert EQB.stop_eur(4180.0, 1.1198) == pytest.approx(13.065, abs=0.01)
+    assert EQB.objectif_eur() is None
+
+
+def test_les_bornes_de_Xavier_13_et_20(EQB, monkeypatch):
+    """🔑 Sa demande du 2026-10-13, mot pour mot : « l'objectif de base 20 €
+    et le stop loss à 13 € »."""
+    monkeypatch.setenv("MAIN_SL_FIXE_EUR", "13")
+    monkeypatch.setenv("MAIN_TP_FIXE_EUR", "20")
+    E = importlib.reload(EQB)
+    assert E.stop_eur(4180.0, 1.1198) == pytest.approx(13.0)
+    assert E.objectif_eur() == pytest.approx(20.0)
+
+
+def test_le_reglage_de_la_MAIN_ne_touche_PAS_le_chemin_AUTOMATIQUE(EQB, monkeypatch):
+    """⛔ LA RAISON D'ÊTRE DE CES DEUX NOMS.
+
+    `XAU_SL_FIXE_EUR` et `XAU_TP_FIXE_EUR` sont lus AUSSI par
+    `pattern_detector`, donc par le robot. Les poser à 13 et 20 aurait donné
+    au ROBOT un stop fixe et un objectif de 20 € — en défaisant en silence
+    deux décisions que Xavier a prises le 11/10 (stop au pourcentage, « plus
+    d'objectif du tout »).
+
+    ⚠️ Et c'est la même variable qui a déjà coûté une heure d'argent réel ce
+    jour-là : `0` vaut « inerte » d'un côté et « ne pose rien » de l'autre.
+    """
+    monkeypatch.setenv("MAIN_SL_FIXE_EUR", "13")
+    monkeypatch.setenv("MAIN_TP_FIXE_EUR", "20")
+    importlib.reload(EQB)
+    import backend.services.pattern_detector as PD
+    PD = importlib.reload(PD)
+    assert PD.XAU_SL_FIXE_EUR == 0.0, "le robot a herite d'un stop fixe"
+    assert PD.XAU_TP_FIXE_EUR == 0.0, "le robot a herite d'un objectif"
+    # et sa regle du 0,35 % est intacte
+    assert PD._distance_sl_or(4180.0) == pytest.approx(14.63, abs=0.01)
+
+
+def test_le_reglage_PARTAGE_reste_le_repli(EQB, monkeypatch):
+    """Absent côté main ⇒ on retombe sur le partagé, à l'identique."""
+    monkeypatch.setenv("XAU_TP_FIXE_EUR", "7")
+    E = importlib.reload(EQB)
+    assert E.objectif_eur() == pytest.approx(7.0), "le repli ne marche plus"
+    monkeypatch.setenv("MAIN_TP_FIXE_EUR", "20")
+    E = importlib.reload(E)
+    assert E.objectif_eur() == pytest.approx(20.0), "le propre ne PRIME pas"
+
+
+@pytest.mark.parametrize("brut", ["zero", "-5", "treize"])
+def test_un_reglage_de_main_ILLISIBLE_rend_MUET(EQB, monkeypatch, brut):
+    """⛔ Illisible ≠ absent. Quelqu'un a voulu poser une valeur et s'est
+    trompé : retomber en silence masquerait sa faute."""
+    monkeypatch.setenv("MAIN_SL_FIXE_EUR", brut)
+    E = importlib.reload(EQB)
+    assert E.stop_eur(4180.0, 1.1198) is None
+
+
+def test_bout_en_bout_un_trade_a_la_main_recoit_13_et_20(EQB, monkeypatch):
+    monkeypatch.setenv("MAIN_SL_FIXE_EUR", "13")
+    monkeypatch.setenv("MAIN_TP_FIXE_EUR", "20")
+    E = importlib.reload(EQB)
+    taux, entree = 1.1198, 4180.0
+    d = E.decision(_main(sl=None), taux)
+    assert d is not None
+    assert d["sl"] == pytest.approx(entree - 13.0 * taux, abs=0.02)
+    assert d["tp"] == pytest.approx(entree + 20.0 * taux, abs=0.02)
+
+
+def test_une_borne_DEJA_POSEE_n_est_PAS_remplacee(EQB, monkeypatch):
+    """🔑 « Après, je me laisse la liberté de les modifier à la main. »
+    Si Xavier déplace son stop ou son objectif, l'équipeur ne doit PAS le
+    réécrire au passage suivant."""
+    monkeypatch.setenv("MAIN_SL_FIXE_EUR", "13")
+    monkeypatch.setenv("MAIN_TP_FIXE_EUR", "20")
+    E = importlib.reload(EQB)
+    p = _main(sl=4160.0)
+    p["tp"] = 4210.0
+    d = E.decision(p, 1.1198)
+    assert d is None or (not d.get("sl") and not d.get("tp")), (
+        f"l'equipeur reecrit des bornes deja posees : {d}")
