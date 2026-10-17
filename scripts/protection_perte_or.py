@@ -373,7 +373,7 @@ def stop_vise_prix(position: dict, taux_eur_usd: float | None,
         if E.MARQUE_RADAR not in str(position.get("comment") or ""):
             try:
                 from backend.services import equiper_trades_main as _eq
-                if not _eq.concerne(position):
+                if not _eq.concerne_suivi(position):
                     return None
             except Exception:  # noqa: BLE001
                 # ⛔ Un import qui echoue ne doit pas ELARGIR la portee : on

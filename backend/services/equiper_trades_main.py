@@ -163,6 +163,28 @@ def stop_eur(prix: float | None = None,
     `prix` ou `taux_eur_usd` manquants ⇒ ``None``, donc rien de pose. On ne
     DEVINE pas un stop sur de l'argent reel.
     """
+    # 🔑 LE REGLAGE PROPRE A LA MAIN, POSE LE 2026-10-13, ET POURQUOI IL
+    # EXISTE. Xavier : << pour les trades lances a la main, je veux que
+    # l'objectif soit de base 20 euros et que le stop loss soit a 13 euros >>.
+    #
+    # ⛔ ON NE PEUT PAS LE FAIRE AVEC `XAU_SL_FIXE_EUR` : ce nom est lu AUSSI
+    # par `pattern_detector._distance_sl_or`, donc par le chemin AUTOMATIQUE.
+    # Le poser a 13 donnerait au ROBOT un stop fixe de 13 EUR a la place de ses
+    # 0,35 % du prix -- en defaisant en silence la decision que Xavier a prise
+    # le 11/10. Un reglage partage entre deux chemins qui veulent desormais
+    # deux choses differentes doit se DEDOUBLER, pas s'arbitrer au hasard.
+    #
+    # ⚠️ Et c'est la MEME variable qui a deja coute une heure d'argent reel le
+    # 11/10 (0 = inerte d'un cote, 0 = ne pose rien de l'autre). On ne la
+    # touche plus.
+    etat_m, fixe_m = _classer("MAIN_SL_FIXE_EUR")
+    if etat_m == _POSE:
+        return fixe_m
+    if etat_m == _ILLISIBLE:
+        # Illisible ⇒ MUET, comme pour le reglage partage : quelqu'un a voulu
+        # poser une valeur et s'est trompe, le masquer serait pire.
+        return None
+
     etat, fixe = _classer("XAU_SL_FIXE_EUR")
     if etat == _POSE:
         return fixe
@@ -194,6 +216,19 @@ def stop_eur(prix: float | None = None,
 
 
 def objectif_eur() -> float | None:
+    """L'objectif a poser sur un trade A LA MAIN, en euros, ou ``None``.
+
+    🔑 `MAIN_TP_FIXE_EUR` PRIME sur `XAU_TP_FIXE_EUR`, pour la meme raison que
+    le stop : le nom partage est lu par `pattern_detector`, donc par le chemin
+    AUTOMATIQUE. Le poser a 20 rendrait au ROBOT un objectif de 20 EUR alors
+    que Xavier a decide le 11/10 << plus d'objectif du tout >>.
+
+    ⛔ Absent ⇒ on retombe sur le reglage partage, donc sur le comportement
+    d'avant, a l'identique.
+    """
+    propre = _reglage("MAIN_TP_FIXE_EUR")
+    if propre is not None:
+        return propre
     return _reglage("XAU_TP_FIXE_EUR")
 
 
@@ -216,6 +251,38 @@ def concerne(position: dict) -> bool:
     gain — tout l'intérêt disparaîtrait.
     """
     return arme() and est_de_l_or(position) and not est_du_radar(position)
+
+
+def suivi_arme() -> bool:
+    """Les trades A LA MAIN doivent-ils etre SUIVIS apres avoir ete equipes ?
+
+    Demande de Xavier le 2026-10-13 : << pour les trades lances a la main, je
+    ne veux pas avoir le SL qui va s'updater >>.
+
+    🔑 DEUX CHOSES ETAIENT CONFONDUES DANS `concerne()`, et c'est ce que ce
+    reglage separe :
+      - POSER un stop sur une position qui n'en a pas (ce module) ;
+      - le SUIVRE ensuite (l'echelle cote gain, la protection cote perte).
+    Il voulait couper le second sans perdre le premier. Sans cette separation
+    il aurait fallu `EQUIPER_TRADES_MAIN=0`, qui laisse NUE une position
+    ouverte sans stop -- et le 09/10, 40 de ses 43 trades du terminal
+    n'avaient NI stop NI objectif, ses trois pires faisant -41,72 EUR a eux
+    seuls.
+
+    ⛔ Defaut `1` : le comportement d'avant, a l'identique. Un reglage absent
+    ne doit jamais changer la facon dont l'argent reel est protege.
+    """
+    return os.getenv("EQUIPER_TRADES_MAIN_SUIVI", "1").strip().lower() in (
+        "1", "true", "yes", "on", "oui")
+
+
+def concerne_suivi(position: dict) -> bool:
+    """Cette position peut-elle etre SUIVIE (stop deplace) ?
+
+    🔑 A lire par l'echelle et la protection. `concerne()` reste la porte du
+    seul EQUIPEMENT INITIAL : les deux ne doivent plus etre confondues.
+    """
+    return suivi_arme() and concerne(position)
 
 
 def decision(position: dict, taux_eur_usd: float) -> dict | None:
