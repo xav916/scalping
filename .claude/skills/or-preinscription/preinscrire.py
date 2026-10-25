@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import pathlib
+import re
 import subprocess
 import sys
 
@@ -19,6 +20,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 from or_commun import sections  # noqa: E402
 
 MINIMUM_PREDICTIONS = 3
+_COMPARAISON_NUM = re.compile(r"[<>]=?\s*[-+]?\d")
+_NEGATION = re.compile(r"(^|\s)(pas|non|ne)(\s|$)", re.IGNORECASE)
 
 
 def valider(markdown: str, anteriorite: bool | None) -> list[str]:
@@ -37,18 +40,33 @@ def valider(markdown: str, anteriorite: bool | None) -> list[str]:
             manques.append("aucune condition d'admission : « pas "
                            "significativement pire » n'en est jamais une "
                            "(fautes des 12/10 et 14/10)")
+        else:
+            # Verifier le CONTENU de admission
+            admission_val = bloc["admission"]
+            if not _COMPARAISON_NUM.search(admission_val):
+                manques.append("contenu de admission invalide : doit contenir "
+                               "une comparaison numerique (ex. t > +2)")
+            if _NEGATION.search(admission_val):
+                manques.append("contenu de admission invalide : ne doit pas "
+                               "contenir de negation (pas, non, ne)")
+
         if "validite" not in bloc:
             manques.append("aucune condition de validite du rejeu, distincte "
                            "du critere")
-        try:
-            cellules = int(bloc.get("cellules", "1"))
-        except ValueError:
-            cellules = 2  # illisible => on exige le plafond, fail-closed
-            manques.append("nombre de cellules illisible")
-        if cellules > 1 and "plafond" not in bloc:
-            manques.append("plafond par permutation absent pour %d cellules : "
-                           "le 14/10, sept cellules auraient passe a t=2"
-                           % cellules)
+
+        if "cellules" not in bloc:
+            manques.append("cellules absent : impossible de determiner si un "
+                           "plafond par permutation est necessaire")
+        else:
+            try:
+                cellules = int(bloc["cellules"])
+            except ValueError:
+                cellules = 2  # illisible => on exige le plafond, fail-closed
+                manques.append("nombre de cellules illisible")
+            if cellules > 1 and "plafond" not in bloc:
+                manques.append("plafond par permutation absent pour %d cellules : "
+                               "le 14/10, sept cellules auraient passe a t=2"
+                               % cellules)
 
     n = sections.compter_predictions(markdown)
     if n < MINIMUM_PREDICTIONS:
@@ -56,7 +74,7 @@ def valider(markdown: str, anteriorite: bool | None) -> list[str]:
                        % (n, MINIMUM_PREDICTIONS))
 
     if anteriorite is None:
-        manques.append("impossible de prouver que la pre-inscription precede "
+        manques.append("impossible de PROUVER que la pre-inscription precede "
                        "le banc (git muet, ou banc non suivi)")
     elif anteriorite is False:
         manques.append("le banc est anterieur a sa pre-inscription")
@@ -65,14 +83,30 @@ def valider(markdown: str, anteriorite: bool | None) -> list[str]:
 
 
 def _premier_commit(chemin: str) -> str | None:
+    """SHA du commit qui a ajoute le fichier (ou None)."""
     try:
+        path = pathlib.Path(chemin)
+        # Trouver le repo git root a partir du repertoire du fichier
+        out_root = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, timeout=20, cwd=str(path.parent))
+        if out_root.returncode != 0:
+            return None
+        root = pathlib.Path(out_root.stdout.strip())
+
+        # Obtenir le chemin relatif par rapport a la racine du repo
+        rel_path = path.relative_to(root)
+
+        # Git log pour obtenir le SHA du premier commit qui a ajoute le fichier
         out = subprocess.run(
-            ["git", "log", "--diff-filter=A", "--format=%ct", "--", chemin],
-            capture_output=True, text=True, timeout=20)
+            ["git", "log", "--diff-filter=A", "--format=%H", "--", str(rel_path)],
+            capture_output=True, text=True, timeout=20, cwd=str(root))
+        if out.returncode != 0:
+            return None
+        lignes = [l for l in out.stdout.splitlines() if l.strip()]
+        return lignes[-1] if lignes else None
     except Exception:
         return None
-    lignes = [l for l in out.stdout.splitlines() if l.strip()]
-    return lignes[-1] if lignes else None
 
 
 def anteriorite_git(preinscription: str, banc: str | None) -> bool | None:
@@ -80,13 +114,33 @@ def anteriorite_git(preinscription: str, banc: str | None) -> bool | None:
 
     ⛔ Un banc non suivi par git rend `None`, pas `True` : on ne peut pas
     prouver qu'il est posterieur.
+
+    Utilise `git merge-base --is-ancestor` pour determiner l'ordre des commits,
+    ce qui evite les problemes de timestamp identique.
     """
     if banc is None:
         return None
-    a, b = _premier_commit(preinscription), _premier_commit(banc)
-    if a is None or b is None:
+    a_sha, b_sha = _premier_commit(preinscription), _premier_commit(banc)
+    if a_sha is None or b_sha is None:
         return None
-    return int(a) <= int(b)
+    try:
+        # Trouver le repo git a partir de la preinscription
+        path = pathlib.Path(preinscription)
+        out_root = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, timeout=20, cwd=str(path.parent))
+        if out_root.returncode != 0:
+            return None
+        root = out_root.stdout.strip()
+
+        # `git merge-base --is-ancestor A B` retourne 0 si A est ancetre de B
+        # (c-a-d si A precede B dans l'histoire des commits)
+        result = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", a_sha, b_sha],
+            capture_output=True, timeout=20, cwd=root)
+        return result.returncode == 0
+    except Exception:
+        return None
 
 
 def main(argv: list[str] | None = None) -> int:

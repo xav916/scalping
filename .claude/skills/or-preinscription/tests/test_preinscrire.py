@@ -1,5 +1,7 @@
 import pathlib
+import subprocess
 import sys
+import tempfile
 
 _ICI = pathlib.Path(__file__).resolve()
 sys.path.insert(0, str(_ICI.parents[1]))
@@ -91,4 +93,117 @@ def test_refuse_un_banc_anterieur_a_sa_preinscription():
 def test_git_muet_est_un_MANQUE_et_non_un_laissez_passer():
     # ⛔ FAIL-CLOSED : ne pas pouvoir prouver l'anteriorite n'est pas la prouver.
     manques = preinscrire.valider(COMPLETE, anteriorite=None)
-    assert any("prouver" in m for m in manques), manques
+    assert any("prouver" in m.lower() for m in manques), manques
+
+
+# ── NOUVELLE COUVERTURE : contenu de la condition d'admission ──
+
+def test_refuse_admission_sans_comparaison_numerique():
+    md = COMPLETE.replace("admission: t > +2\n", "admission: pas mal\n")
+    manques = preinscrire.valider(md, anteriorite=True)
+    assert any("admission" in m and "contenu" in m for m in manques), manques
+
+
+def test_refuse_admission_avec_negation():
+    md = COMPLETE.replace("admission: t > +2\n", "admission: pas significativement pire\n")
+    manques = preinscrire.valider(md, anteriorite=True)
+    assert any("admission" in m and "contenu" in m for m in manques), manques
+
+
+def test_refuse_cellules_absent():
+    md = COMPLETE.replace("cellules: 5\n", "")
+    manques = preinscrire.valider(md, anteriorite=True)
+    assert any("cellules" in m for m in manques), manques
+
+
+# ── COUVERTURE GIT : anteriorite_git avec dépôt temporaire ──
+
+def test_anteriorite_git_preinscription_avant_banc():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir = pathlib.Path(tmpdir)
+
+        # Creer un repo git
+        subprocess.run(["git", "init"], cwd=tmpdir, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@test.com"],
+                      cwd=tmpdir, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test"],
+                      cwd=tmpdir, check=True, capture_output=True)
+
+        # Commit preinscription
+        (tmpdir / "preins.md").write_text("# Pre")
+        subprocess.run(["git", "add", "preins.md"], cwd=tmpdir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "pre"], cwd=tmpdir, check=True, capture_output=True)
+
+        # Commit banc plus tard
+        (tmpdir / "banc.py").write_text("# Banc")
+        subprocess.run(["git", "add", "banc.py"], cwd=tmpdir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "banc"], cwd=tmpdir, check=True, capture_output=True)
+
+        result = preinscrire.anteriorite_git(
+            str(tmpdir / "preins.md"),
+            str(tmpdir / "banc.py"))
+        assert result is True, f"Attendu True, obtenu {result}"
+
+
+def test_anteriorite_git_banc_avant_preinscription():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir = pathlib.Path(tmpdir)
+
+        subprocess.run(["git", "init"], cwd=tmpdir, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@test.com"],
+                      cwd=tmpdir, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test"],
+                      cwd=tmpdir, check=True, capture_output=True)
+
+        # Commit banc d'abord
+        (tmpdir / "banc.py").write_text("# Banc")
+        subprocess.run(["git", "add", "banc.py"], cwd=tmpdir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "banc"], cwd=tmpdir, check=True, capture_output=True)
+
+        # Commit preinscription plus tard
+        (tmpdir / "preins.md").write_text("# Pre")
+        subprocess.run(["git", "add", "preins.md"], cwd=tmpdir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "pre"], cwd=tmpdir, check=True, capture_output=True)
+
+        result = preinscrire.anteriorite_git(
+            str(tmpdir / "preins.md"),
+            str(tmpdir / "banc.py"))
+        assert result is False, f"Attendu False, obtenu {result}"
+
+
+def test_anteriorite_git_banc_non_suivi():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir = pathlib.Path(tmpdir)
+
+        subprocess.run(["git", "init"], cwd=tmpdir, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@test.com"],
+                      cwd=tmpdir, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test"],
+                      cwd=tmpdir, check=True, capture_output=True)
+
+        # Commit preinscription
+        (tmpdir / "preins.md").write_text("# Pre")
+        subprocess.run(["git", "add", "preins.md"], cwd=tmpdir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "pre"], cwd=tmpdir, check=True, capture_output=True)
+
+        # Banc existe mais n'est PAS suivi par git
+        (tmpdir / "banc.py").write_text("# Banc")
+
+        result = preinscrire.anteriorite_git(
+            str(tmpdir / "preins.md"),
+            str(tmpdir / "banc.py"))
+        assert result is None, f"Attendu None (banc non suivi), obtenu {result}"
+
+
+def test_anteriorite_git_pas_un_depot():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir = pathlib.Path(tmpdir)
+
+        # PAS de git init - ce n'est pas un repo
+        (tmpdir / "preins.md").write_text("# Pre")
+        (tmpdir / "banc.py").write_text("# Banc")
+
+        result = preinscrire.anteriorite_git(
+            str(tmpdir / "preins.md"),
+            str(tmpdir / "banc.py"))
+        assert result is None, f"Attendu None (pas un depot), obtenu {result}"
