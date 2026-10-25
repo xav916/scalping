@@ -22,12 +22,14 @@ REQUIS = ("rem002_allowed", "rem002_reason", "mirror_active", "pending",
 
 
 def juger(etat: dict) -> tuple[int, list[str]]:
-    """`(code_de_sortie, lignes)`. JAMAIS 0 sur une information absente."""
+    """`(code_de_sortie, lignes)`. JAMAIS 0 sur une information absente ou None."""
     lignes: list[str] = []
     manquants = [c for c in REQUIS if c not in etat]
-    if manquants:
-        return 1, ["ECHEC : information absente, l'etat n'est pas determinable "
-                   "-> %s" % ", ".join(manquants)]
+    nones = [c for c in REQUIS if c in etat and etat[c] is None]
+    fautifs = manquants + nones
+    if fautifs:
+        return 1, ["ECHEC : information absente ou indeterminable, l'etat n'est pas "
+                   "determinable -> %s" % ", ".join(fautifs)]
 
     arme = bool(etat["rem002_allowed"])
     lignes.append("=== les 3 voies d'ordre")
