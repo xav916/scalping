@@ -35,6 +35,46 @@ def _seuil(expression: str) -> float | None:
     return float(m.group(1).replace(",", ".")) if m else None
 
 
+_NUMERIQUES = ("n", "t", "ecart_par_trade")
+
+
+def _problemes_requis(resultat: dict) -> list[str]:
+    """Les champs de REQUIS absents, a `None`, ou du mauvais type.
+
+    Chaque probleme NOMME le champ et la nature du probleme -- jamais un
+    simple "manquant" qui confondrait absence, nullite et mauvais type.
+    `n`, `t`, `ecart_par_trade` doivent etre convertibles en nombre ;
+    `valide` doit etre un booleen VERITABLE (`"false"` est une chaine, et une
+    chaine non vide est toujours vraie en Python -- piege mesure le 25/10).
+    """
+    problemes: list[str] = []
+    for c in REQUIS:
+        if c not in resultat:
+            problemes.append("[%s] absent" % c)
+            continue
+        v = resultat[c]
+        if v is None:
+            problemes.append("[%s] est null" % c)
+            continue
+        if c == "valide":
+            if not isinstance(v, bool):
+                problemes.append(
+                    "[%s] n'est pas un booleen veritable (type %s, valeur %r)"
+                    % (c, type(v).__name__, v))
+            continue
+        if c in _NUMERIQUES:
+            if isinstance(v, bool):
+                problemes.append("[%s] est un booleen, pas un nombre" % c)
+                continue
+            try:
+                float(v)
+            except (TypeError, ValueError):
+                problemes.append(
+                    "[%s] n'est pas convertible en nombre (type %s, "
+                    "valeur %r)" % (c, type(v).__name__, v))
+    return problemes
+
+
 def juger(resultat: dict, bloc: dict | None,
           critere_intact: bool | None,
           critere_ambigu: bool = False) -> tuple[str, list[str]]:
@@ -69,10 +109,10 @@ def juger(resultat: dict, bloc: dict | None,
                        "correspond plus a la version commitee")
         return REFUS, raisons
 
-    manquants = [c for c in REQUIS if c not in resultat]
-    if manquants:
-        raisons.append("le banc n'emet pas %s : la condition de validite n'est "
-                       "pas calculable" % ", ".join(manquants))
+    problemes = _problemes_requis(resultat)
+    if problemes:
+        raisons.append("champ(s) REQUIS invalide(s), la condition de validite "
+                       "n'est pas calculable : %s" % "; ".join(problemes))
         return REFUS, raisons
 
     barre = _seuil(bloc.get("validite", ""))
@@ -148,9 +188,13 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     critere_ambigu = sections.nombre_titres_correspondants(texte, "critere") > 1
-    decision, raisons = juger(resultat, sections.bloc_machine(texte),
-                              empreinte_critere(a.preinscription),
-                              critere_ambigu)
+    try:
+        decision, raisons = juger(resultat, sections.bloc_machine(texte),
+                                  empreinte_critere(a.preinscription),
+                                  critere_ambigu)
+    except Exception as e:  # noqa: BLE001 -- fail-closed ET bavard, jamais un traceback nu
+        print("ECHEC : resultat illisible pour le jugement (%s)" % e)
+        return 1
     print("=== %s" % decision)
     for r in raisons:
         print("  - " + r)

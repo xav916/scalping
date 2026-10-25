@@ -123,6 +123,41 @@ def test_refuse_validite_nombre_incident():
     assert any("validite" in x and "indechiffrable" in x for x in raisons), raisons
 
 
+# ── REQUIS : presence NE SUFFIT PAS, le contenu doit etre du bon type ──
+# Les quatre pieges mesures le 25/10 : null sur un champ numerique (TypeError
+# nu), chaine non numerique (ValueError nu), et le pire -- "valide": "false"
+# (une CHAINE) qui serait PUBLIABLE puisqu'une chaine non vide est vraie en
+# Python.
+
+def test_refuse_ecart_par_trade_null():
+    r = dict(VALIDE, ecart_par_trade=None)
+    decision, raisons = verdict.juger(r, BLOC, critere_intact=True)
+    assert decision == "NE PAS PUBLIER"
+    assert any("ecart_par_trade" in x and "null" in x for x in raisons), raisons
+
+
+def test_refuse_t_null():
+    r = dict(VALIDE, t=None)
+    decision, raisons = verdict.juger(r, BLOC, critere_intact=True)
+    assert decision == "NE PAS PUBLIER"
+    assert any("t" in x and "null" in x for x in raisons), raisons
+
+
+def test_refuse_ecart_par_trade_chaine_non_numerique():
+    r = dict(VALIDE, ecart_par_trade="abc")
+    decision, raisons = verdict.juger(r, BLOC, critere_intact=True)
+    assert decision == "NE PAS PUBLIER"
+    assert any("ecart_par_trade" in x and "convertible" in x for x in raisons), raisons
+
+
+def test_refuse_valide_chaine_meme_false_textuel():
+    # 🔑 le piege : "false" (une CHAINE non vide) est VRAI en Python.
+    r = dict(VALIDE, valide="false")
+    decision, raisons = verdict.juger(r, BLOC, critere_intact=True)
+    assert decision == "NE PAS PUBLIER"
+    assert any("valide" in x and "booleen" in x for x in raisons), raisons
+
+
 # ── TESTS DISCRIMINANTS : _seuil lit vraiment le bloc, pas un defaut ──
 # Ces tests prouvent que les anciennes implementations qui ignoreaient l'expression
 # et retombaient sur un defaut code en dur ECHOUERAIENT maintenant.
