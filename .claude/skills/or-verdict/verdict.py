@@ -26,11 +26,13 @@ PUBLIABLE, REFUS = "PUBLIABLE", "NE PAS PUBLIER"
 def _seuil(expression: str) -> float | None:
     """Le nombre d'une expression de seuil, ou None si indechiffrable.
 
-    Fail-closed : pas de nombre = None (pas de defaut silencieux).
+    Fail-closed : ancre sur l'operateur de comparaison. Un nombre nu ou sans
+    operateur (ex. 'p95 par permutation') rend None, pas un nombre incident.
     """
     import re
-    m = re.search(r"[-+]?\d+(?:[.,]\d+)?", expression or "")
-    return float(m.group(0).replace(",", ".")) if m else None
+    _SEUIL = re.compile(r"[<>]=?\s*([-+]?\d+(?:[.,]\d+)?)")
+    m = _SEUIL.search(expression or "")
+    return float(m.group(1).replace(",", ".")) if m else None
 
 
 def juger(resultat: dict, bloc: dict | None,

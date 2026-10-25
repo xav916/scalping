@@ -97,3 +97,27 @@ def test_refuse_validite_sans_chiffre():
     decision, raisons = verdict.juger(VALIDE, bloc, critere_intact=True)
     assert decision == "NE PAS PUBLIER"
     assert any("validite" in x and "indechiffrable" in x for x in raisons), raisons
+
+
+# ── NOMBRES INCIDENTS : chiffre present mais sans operateur ──
+
+def test_refuse_admission_nombre_incident():
+    # 'p95 par permutation' contient 95, mais pas apres un operateur.
+    bloc = dict(BLOC, admission="p95 par permutation")
+    decision, raisons = verdict.juger(VALIDE, bloc, critere_intact=True)
+    assert decision == "NE PAS PUBLIER"
+    assert any("admission" in x and "indechiffrable" in x for x in raisons), raisons
+
+
+def test_refuse_rejet_nombre_incident():
+    bloc = dict(BLOC, rejet="signal p50 deces")
+    decision, raisons = verdict.juger(VALIDE, bloc, critere_intact=True)
+    assert decision == "NE PAS PUBLIER"
+    assert any("rejet" in x and "indechiffrable" in x for x in raisons), raisons
+
+
+def test_refuse_validite_nombre_incident():
+    bloc = dict(BLOC, validite="ecart sous p95")
+    decision, raisons = verdict.juger(VALIDE, bloc, critere_intact=True)
+    assert decision == "NE PAS PUBLIER"
+    assert any("validite" in x and "indechiffrable" in x for x in raisons), raisons
