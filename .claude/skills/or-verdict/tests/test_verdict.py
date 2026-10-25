@@ -121,3 +121,34 @@ def test_refuse_validite_nombre_incident():
     decision, raisons = verdict.juger(VALIDE, bloc, critere_intact=True)
     assert decision == "NE PAS PUBLIER"
     assert any("validite" in x and "indechiffrable" in x for x in raisons), raisons
+
+
+# ── TESTS DISCRIMINANTS : _seuil lit vraiment le bloc, pas un defaut ──
+# Ces tests prouvent que les anciennes implementations qui ignoreaient l'expression
+# et retombaient sur un defaut code en dur ECHOUERAIENT maintenant.
+
+def test_seuil_admission_lu_dans_le_bloc_et_non_un_defaut():
+    # BLOC a admission: "t > +3" (seuil = 3.0).
+    # Ancien defaut aurait ete 2.0.
+    # t=2.5 est ENTRE les deux : discrimine.
+    #
+    # Si _seuil ignorait l'expression et retournait 2.0, ce test retournerait
+    # "admission franchie" (2.5 > 2.0). Maintenant, ca retourne "indecidable"
+    # (2.5 est entre -1.5 et 3.0).
+    r = dict(VALIDE, t=2.5)
+    decision, raisons = verdict.juger(r, BLOC, critere_intact=True)
+    assert decision == "PUBLIABLE", raisons
+    assert any("indecidable" in x and "2.50" in x for x in raisons), raisons
+
+
+def test_barre_validite_lue_dans_le_bloc_et_non_un_defaut():
+    # BLOC a validite: "abs(ecart_par_trade) < 0.25" (barre = 0.25).
+    # Ancien defaut aurait ete 0.50.
+    # ecart=0.35 est ENTRE les deux : discrimine.
+    #
+    # Si _seuil ignorait l'expression et retournait 0.50, ce test accepterait
+    # (0.35 < 0.50). Maintenant, ca refuse (0.35 > 0.25).
+    r = dict(VALIDE, ecart_par_trade=-0.35, valide=True)
+    decision, raisons = verdict.juger(r, BLOC, critere_intact=True)
+    assert decision == "NE PAS PUBLIER", raisons
+    assert any("validite" in x and "0.3500" in x for x in raisons), raisons
