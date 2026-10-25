@@ -80,7 +80,10 @@ if hasattr(E, "pas_mini_eur"):
 _spread_du_tick = {"eur": None}
 P.spread_eur = lambda pair, taux: _spread_du_tick["eur"]
 
-JOUR = "2026-10-12"
+JOUR = os.environ.get("BANC_JOUR", "2026-10-12")
+# Hors echantillon (pre-inscrit c7861fd) : les 13 journees qui n ont
+# participe a AUCUN reglage. Le cout reste GELE a 0,30.
+JOURS = [j for j in os.environ.get("BANC_JOURS", JOUR).split(",") if j]
 MARKUP_USD = float(os.environ.get("BANC_MARKUP_USD", "0.10"))          # mesure du 12/10 : magasin + 10 points = cout reel
 CADENCE_PROTECTION = 60    # crontab : * * * * *
 CADENCE_TRAINAGE = 1       # ECHELLE_STOP_INTERVAL_SEC=1
@@ -104,7 +107,7 @@ TRADES = "/app/data/trades.db"
 TICKS = "/app/data/ticks_courtier.db"
 
 
-def charger_trades():
+def charger_trades(jour):
     c = sqlite3.connect("file:%s?mode=ro" % TRADES, uri=True)
     q = ("select id, direction, fill_price, entry_price, stop_loss, take_profit,"
          " created_at, closed_at, exit_price, pnl, close_reason, size_lot"
@@ -114,7 +117,7 @@ def charger_trades():
          " order by created_at")
     champs = ("id", "sens", "fill", "entry", "sl", "tp", "ouvert",
               "ferme", "sortie", "pnl", "motif", "lot")
-    return [dict(zip(champs, r)) for r in c.execute(q, (JOUR,))]
+    return [dict(zip(champs, r)) for r in c.execute(q, (jour,))]
 
 
 def taux_implique(trades):
@@ -134,12 +137,12 @@ def taux_implique(trades):
     return statistics.median(ech), len(ech)
 
 
-def charger_ticks():
+def charger_ticks(jour):
     c = sqlite3.connect("file:%s?mode=ro" % TICKS, uri=True)
     q = ("select ts_utc, ms, bid, ask from ticks"
          " where pair='XAU/USD' and ts_utc like ? order by ms")
     return [(ts, int(ms), float(b), float(a))
-            for ts, ms, b, a in c.execute(q, (JOUR + "%",))]
+            for ts, ms, b, a in c.execute(q, (jour + "%",))]
 
 
 def _mieux(nouveau, actuel, signe):
@@ -275,28 +278,49 @@ def premier_tick(horodatages, horodatage):
     return k if k < len(horodatages) else None
 
 
-def main():
-    trades = charger_trades()
-    taux, n_taux = taux_implique(trades)
-    ticks = charger_ticks()
-    print("trades rejoues      : %d" % len(trades))
-    print("ticks du %s   : %d" % (JOUR, len(ticks)))
-    print("taux EUR/USD DEDUIT : %.5f  (median sur %d trades)" % (taux, n_taux))
-    print()
-
+def une_journee(jour):
+    """Rejoue UNE journee. Rend (lignes, n_sautes, taux)."""
+    trades = charger_trades(jour)
+    if not trades:
+        return [], 0, None
+    taux, _n = taux_implique(trades)
+    ticks = charger_ticks(jour)
+    if len(ticks) < 2:
+        return [], len(trades), taux
     horodatages = index_horodatages(ticks)
-    lignes = []
-    sautes = 0
+    lignes, sautes = [], 0
     for t in trades:
         i0 = premier_tick(horodatages, t["ouvert"])
         if i0 is None or i0 >= len(ticks) - 1:
             sautes += 1
             continue
-        a_pnl, a_motif, _a_age = rejouer(t, ticks, i0, taux, True)
-        b_pnl, b_motif, _b_age = rejouer(t, ticks, i0, taux, False)
-        lignes.append({"id": t["id"], "reel": float(t["pnl"] or 0),
+        a_pnl, a_motif, _aa = rejouer(t, ticks, i0, taux, True)
+        b_pnl, b_motif, _bb = rejouer(t, ticks, i0, taux, False)
+        lignes.append({"id": t["id"], "jour": jour, "reel": float(t["pnl"] or 0),
                        "motif_reel": t["motif"], "a": a_pnl, "a_motif": a_motif,
                        "b": b_pnl, "b_motif": b_motif})
+    return lignes, sautes, taux
+
+
+def main():
+    print("cout aller-retour GELE : %.2f USD  (calibre sur le 12/10, pre-inscrit)"
+          % MARKUP_USD)
+    print("journees : %s" % ", ".join(JOURS))
+    print()
+    lignes, sautes = [], 0
+    print("jour         n   reel EUR    A EUR     B EUR   ecart rejeu/reel par trade")
+    for j in JOURS:
+        lj, sj, _taux = une_journee(j)
+        sautes += sj
+        if not lj:
+            print("  %s   AUCUN trade rejouable" % j)
+            continue
+        r = sum(x["reel"] for x in lj)
+        a = sum(x["a"] for x in lj)
+        print("  %s %4d %9.2f %8.2f %9.2f %11.4f"
+              % (j, len(lj), r, a, sum(x["b"] for x in lj), (a - r) / len(lj)))
+        lignes.extend(lj)
+    print()
 
     if not lignes:
         print("AUCUN trade rejouable")
@@ -314,6 +338,12 @@ def main():
     t_stat = moy / (sd / (n ** 0.5)) if sd > 0 else float("nan")
 
     reel = sum(x["reel"] for x in lignes)
+    ecart_par_trade = (sum(A) - reel) / n
+    print("=== CONDITION DE VALIDITE (pre-inscrite : < 0,50 EUR/trade)")
+    print("  ecart A - reel = %+.2f EUR sur %d trades = %+.4f EUR/trade  -> %s"
+          % (sum(A) - reel, n, ecart_par_trade,
+             "VALIDE" if abs(ecart_par_trade) < 0.50 else "NON CONCLUANT"))
+    print()
     print("=== TOTAUX (EUR)")
     print("  reel observe le 12/10      : %+8.2f" % reel)
     print("  A  avec protection         : %+8.2f" % sum(A))
@@ -351,7 +381,9 @@ def main():
                       "evite": round(sum(B) - sum(A), 2),
                       "moy_appariee": round(moy, 4), "t": round(t_stat, 3),
                       "reussite_A": round(gA, 1), "reussite_B": round(gB, 1),
-                      "taux_eur_usd": round(taux, 5)}, ensure_ascii=False))
+                      "ecart_par_trade": round(ecart_par_trade, 4),
+                      "valide": abs(ecart_par_trade) < 0.50},
+                     ensure_ascii=False))
     return 0
 
 
