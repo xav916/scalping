@@ -52,3 +52,26 @@ def test_lit_le_bloc_machine():
 
 def test_bloc_machine_absent_rend_None():
     assert sections.bloc_machine("# sans bloc\n") is None
+
+
+def test_compter_predictions_ignore_les_lignes_numerotees_ailleurs():
+    """Prouve que compter_predictions n'extrait QUE la section prediction.
+
+    Le decoy (une autre section avec plus de lignes numerotees) doit rester
+    hors du compte. Une implementation fautive qui compterait tout le
+    document echouerait sur ce test (8 au lieu de 3).
+    """
+    md = (
+        "## Autre section avec un decoy\n\n"
+        "1. decoy numero 1\n"
+        "2. decoy numero 2\n"
+        "3. decoy numero 3\n"
+        "4. decoy numero 4\n"
+        "5. decoy numero 5\n"
+        "\n"
+        "## MES PREDICTIONS\n\n"
+        "1. la premiere\n"
+        "2. la deuxieme\n"
+        "3. la troisieme\n"
+    )
+    assert sections.compter_predictions(md) == 3
