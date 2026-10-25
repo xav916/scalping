@@ -6,7 +6,10 @@ import tempfile
 _ICI = pathlib.Path(__file__).resolve()
 sys.path.insert(0, str(_ICI.parents[1]))
 sys.path.insert(0, str(_ICI.parents[2]))
+sys.path.insert(0, str(_ICI.parents[2] / "or-verdict"))
 import preinscrire  # noqa: E402
+import verdict  # noqa: E402
+from or_commun import sections  # noqa: E402
 
 COMPLETE = """# Une mesure
 
@@ -108,6 +111,84 @@ def test_refuse_admission_avec_negation():
     md = COMPLETE.replace("admission: t > +2\n", "admission: pas significativement pire\n")
     manques = preinscrire.valider(md, anteriorite=True)
     assert any("admission" in m and "contenu" in m for m in manques), manques
+
+
+def test_refuse_sans_rejet():
+    md = COMPLETE.replace("rejet: t < -2\n", "")
+    manques = preinscrire.valider(md, anteriorite=True)
+    assert any("rejet" in m for m in manques), manques
+
+
+def test_refuse_rejet_sans_comparaison_numerique():
+    md = COMPLETE.replace("rejet: t < -2\n", "rejet: t tres negatif\n")
+    manques = preinscrire.valider(md, anteriorite=True)
+    assert any("rejet" in m and "contenu" in m for m in manques), manques
+
+
+def test_refuse_rejet_signal_p50():
+    md = COMPLETE.replace("rejet: t < -2\n", "rejet: signal p50\n")
+    manques = preinscrire.valider(md, anteriorite=True)
+    assert any("rejet" in m and "contenu" in m for m in manques), manques
+
+
+def test_refuse_validite_sans_comparaison_numerique():
+    md = COMPLETE.replace("validite: abs(ecart_par_trade) < 0.50\n",
+                          "validite: ecart sous p95\n")
+    manques = preinscrire.valider(md, anteriorite=True)
+    assert any("validite" in m and "contenu" in m for m in manques), manques
+
+
+def test_refuse_validite_le_rejeu_doit_reproduire_la_realite():
+    md = COMPLETE.replace(
+        "validite: abs(ecart_par_trade) < 0.50\n",
+        "validite: le rejeu doit reproduire la realite\n")
+    manques = preinscrire.valider(md, anteriorite=True)
+    assert any("validite" in m and "contenu" in m for m in manques), manques
+
+
+# ── COHERENCE or-preinscription / or-verdict : la MEME fixture aux deux ──
+# 🔑 ce que la porte laisse passer doit etre jugeable ; ce qu'elle refuse ne
+# doit JAMAIS atteindre le juge sans etre refuse aussi.
+
+RESULTAT_NEUTRE = {"n": 100, "t": 1.0, "ecart_par_trade": 0.1, "valide": True}
+
+# Les six blocs mesures dans la revue : le temoin complet, puis les cinq
+# fixtures que l'ancienne porte laissait passer (code 0) alors que or-verdict
+# les refusait A PERPETUITE.
+FIXTURES_PORTE_JUGE = [
+    ("temoin complet", COMPLETE),
+    ("rejet absent", COMPLETE.replace("rejet: t < -2\n", "")),
+    ("rejet: t tres negatif",
+     COMPLETE.replace("rejet: t < -2\n", "rejet: t tres negatif\n")),
+    ("rejet: signal p50",
+     COMPLETE.replace("rejet: t < -2\n", "rejet: signal p50\n")),
+    ("validite: ecart sous p95",
+     COMPLETE.replace("validite: abs(ecart_par_trade) < 0.50\n",
+                      "validite: ecart sous p95\n")),
+    ("validite: le rejeu doit reproduire la realite",
+     COMPLETE.replace(
+         "validite: abs(ecart_par_trade) < 0.50\n",
+         "validite: le rejeu doit reproduire la realite\n")),
+]
+
+
+def test_la_porte_et_le_juge_s_accordent_sur_les_memes_fixtures():
+    for nom, md in FIXTURES_PORTE_JUGE:
+        porte_ok = preinscrire.valider(md, anteriorite=True) == []
+        bloc = sections.bloc_machine(md)
+        decision, raisons = verdict.juger(RESULTAT_NEUTRE, bloc,
+                                          critere_intact=True)
+        juge_ok = decision == verdict.PUBLIABLE
+
+        if nom == "temoin complet":
+            assert porte_ok, (nom, "la porte doit laisser passer le temoin")
+            assert juge_ok, (nom, raisons)
+        else:
+            # ⛔ Avant le correctif, la porte disait OK ici (porte_ok=True)
+            # alors que le juge refusait a perpetuite (juge_ok=False) : les
+            # deux doivent maintenant s'accorder sur un REFUS.
+            assert not porte_ok, (nom, "la porte doit refuser", porte_ok)
+            assert not juge_ok, (nom, "le juge doit refuser", raisons)
 
 
 def test_refuse_cellules_absent():

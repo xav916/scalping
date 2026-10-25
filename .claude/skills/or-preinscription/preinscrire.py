@@ -50,9 +50,27 @@ def valider(markdown: str, anteriorite: bool | None) -> list[str]:
                 manques.append("contenu de admission invalide : ne doit pas "
                                "contenir de negation (pas, non, ne)")
 
+        if "rejet" not in bloc:
+            manques.append("aucune condition de rejet : sans elle, or-verdict "
+                           "refusera a perpetuite le verdict issu de ce banc")
+        else:
+            # Verifier le CONTENU de rejet -- meme motif que admission, mais
+            # SANS le controle de negation : « pas significativement pire »
+            # est une faute d'ADMISSION, pas de rejet (une regle peut etre
+            # rejetee PARCE QU'elle n'est pas pire que l'alternative).
+            if not _COMPARAISON_NUM.search(bloc["rejet"]):
+                manques.append("contenu de rejet invalide : doit contenir une "
+                               "comparaison numerique (ex. t < -2)")
+
         if "validite" not in bloc:
             manques.append("aucune condition de validite du rejeu, distincte "
                            "du critere")
+        else:
+            # Verifier le CONTENU de validite -- meme motif, sans negation.
+            if not _COMPARAISON_NUM.search(bloc["validite"]):
+                manques.append("contenu de validite invalide : doit contenir "
+                               "une comparaison numerique (ex. "
+                               "abs(ecart_par_trade) < 0.50)")
 
         if "cellules" not in bloc:
             manques.append("cellules absent : impossible de determiner si un "
