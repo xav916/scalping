@@ -37,7 +37,18 @@ import urllib.request
 
 TICKS = os.environ.get("SONDE_TICKS_DB", "/app/data/ticks_courtier.db")
 TRADES = os.environ.get("SONDE_TRADES_DB", "/app/data/trades.db")
-PONT = os.environ.get("MT5_BRIDGE_URL", "")
+# ⛔ DEFAUT DU 25/10 : je surveillais `MT5_BRIDGE_URL`, qui est le pont DEMO
+# (Pepperstone, port 8787). Le pont qui porte l'argent est `MT5_BRIDGE_LIVE_URL`
+# (IC Markets, port 8788) -- c'est lui que lisent `batir_magasin_ticks.py` et
+# `bougies_du_pont` (destination `admin_live`). J'ai passe une journee a
+# diagnostiquer le demo en le prenant pour le reel : le demo etait bien casse
+# ("Authorization failed"), le reel repondait.
+# 🔑 Surveiller la mauvaise adresse, c'est etre rassure par le mauvais signal.
+PONT = (os.environ.get("MT5_BRIDGE_LIVE_URL")
+        or os.environ.get("MT5_BRIDGE_URL", ""))
+# Le pont DEMO est surveille aussi, mais sans faire echouer la chaine de l'or :
+# son arret n'empeche ni une mesure ni un trade reel.
+PONT_DEMO = os.environ.get("MT5_BRIDGE_URL", "")
 CANAL = os.environ.get("SONDE_FRAICHEUR_CANAL", "ic_markets")
 
 # Les seuils. Chacun est un CHOIX, pas une verite : ils sont la pour etre
@@ -221,6 +232,21 @@ def verifier() -> list[tuple[bool, str]]:
         except Exception as e:  # noqa: BLE001
             resultats.append((False, "pont : INJOIGNABLE (%s) — ni prix, ni execution"
                                      % type(e).__name__))
+
+    # 1 bis. LE PONT DEMO — signale, mais NON BLOQUANT : son arret n'empeche
+    #         ni une mesure ni un trade reel. On le DIT quand meme, sinon on
+    #         decouvre sa panne des semaines plus tard, comme aujourd'hui.
+    if PONT_DEMO and PONT_DEMO != PONT:
+        try:
+            with urllib.request.urlopen(
+                    urllib.request.Request(PONT_DEMO.rstrip("/") + "/health"),
+                    timeout=TIMEOUT_PONT) as r:
+                code = r.getcode()
+            resultats.append((True, "pont demo : /health rend %s (informatif)" % code))
+        except Exception as e:  # noqa: BLE001
+            resultats.append((True, "pont demo : injoignable (%s) — informatif, "
+                                    "n'empeche ni mesure ni trade reel"
+                                    % type(e).__name__))
 
     # 2. LE MAGASIN DE TICKS — fraicheur, et seulement en seance.
     val, err = _une_valeur(TICKS, "select max(ts_utc) from ticks where pair=?",
