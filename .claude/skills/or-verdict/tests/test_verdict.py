@@ -1,5 +1,8 @@
+import os
 import pathlib
+import subprocess
 import sys
+import tempfile
 
 _ICI = pathlib.Path(__file__).resolve()
 sys.path.insert(0, str(_ICI.parents[1]))
@@ -193,6 +196,91 @@ def test_sans_ambiguite_aucune_mention_n_apparait():
                                       critere_ambigu=False)
     assert decision == "PUBLIABLE"
     assert not any("ATTENTION" in r for r in raisons), raisons
+
+
+# ── empreinte_critere() DEPUIS N'IMPORTE OU : 4 formes d'invocation ──
+# Mesure de la revue : A marche, B/C/D rendaient None avant le correctif
+# (racine deduite du CWD du processus, chemin passe tel quel a git).
+
+_CRITERE_MD = ("# t\n\n## LE CRITERE\n\nseuil : t > +2\n")
+
+
+def _depot_avec_critere():
+    """Cree un depot temporaire avec un fichier CRITERE commite.
+
+    Rend `(tmpdir, chemin_absolu_du_fichier, chemin_du_sous_repertoire)`.
+    """
+    tmpdir = pathlib.Path(tempfile.mkdtemp())
+    subprocess.run(["git", "init"], cwd=tmpdir, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@test.com"],
+                   cwd=tmpdir, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test"],
+                   cwd=tmpdir, check=True, capture_output=True)
+    fichier = tmpdir / "pred.md"
+    fichier.write_text(_CRITERE_MD, encoding="utf-8")
+    subprocess.run(["git", "add", "pred.md"], cwd=tmpdir, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "pred"], cwd=tmpdir, check=True, capture_output=True)
+    sousrep = tmpdir / "sub"
+    sousrep.mkdir()
+    return tmpdir, fichier, sousrep
+
+
+def _depuis(cwd: pathlib.Path, chemin):
+    """Appelle empreinte_critere(chemin) avec le processus EXECUTE dans `cwd`."""
+    avant = pathlib.Path.cwd()
+    os.chdir(cwd)
+    try:
+        return verdict.empreinte_critere(str(chemin))
+    finally:
+        os.chdir(avant)
+
+
+def test_empreinte_A_racine_plus_chemin_relatif():
+    tmpdir, fichier, _sousrep = _depot_avec_critere()
+    assert _depuis(tmpdir, "pred.md") is True
+
+
+def test_empreinte_B_racine_plus_chemin_absolu():
+    tmpdir, fichier, _sousrep = _depot_avec_critere()
+    assert _depuis(tmpdir, fichier) is True
+
+
+def test_empreinte_C_sous_repertoire_plus_chemin_relatif():
+    tmpdir, fichier, sousrep = _depot_avec_critere()
+    # Chemin relatif au CWD reel du processus (le sous-repertoire), pas a la
+    # racine -- c'est la forme naturelle d'invocation depuis un sous-dossier.
+    assert _depuis(sousrep, "../pred.md") is True
+
+
+def test_empreinte_D_sous_repertoire_plus_chemin_absolu():
+    tmpdir, fichier, sousrep = _depot_avec_critere()
+    assert _depuis(sousrep, fichier) is True
+
+
+def test_racine_et_chemin_relatif_rend_None_hors_depot():
+    with tempfile.TemporaryDirectory() as tmp:
+        fichier = pathlib.Path(tmp) / "x.md"
+        fichier.write_text("# t\n")
+        assert verdict._racine_et_chemin_relatif(str(fichier)) is None
+
+
+def test_raison_indeterminable_personnalisee_remplace_le_message_generique():
+    # "chemin non resolu au depot" doit se distinguer de "empreinte non
+    # comparable" -- un chemin mal resolu n'accuse pas d'une falsification.
+    decision, raisons = verdict.juger(
+        VALIDE, BLOC, critere_intact=None,
+        raison_indeterminable="chemin non resolu a un depot git")
+    assert decision == "NE PAS PUBLIER"
+    assert any("chemin non resolu" in r for r in raisons), raisons
+    assert not any("comparer" in r.lower() for r in raisons), raisons
+
+
+def test_empreinte_critere_reecrit_est_detecte_depuis_le_sous_repertoire():
+    # Les quatre formes rendent un booleen : prouver qu'il est aussi JUSTE
+    # (pas seulement "pas None") en reecrivant le critere sur le disque.
+    tmpdir, fichier, sousrep = _depot_avec_critere()
+    fichier.write_text("# t\n\n## LE CRITERE\n\nseuil : t > +999\n", encoding="utf-8")
+    assert _depuis(sousrep, fichier) is False
 
 
 def test_barre_validite_lue_dans_le_bloc_et_non_un_defaut():

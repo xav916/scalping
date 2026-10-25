@@ -77,7 +77,8 @@ def _problemes_requis(resultat: dict) -> list[str]:
 
 def juger(resultat: dict, bloc: dict | None,
           critere_intact: bool | None,
-          critere_ambigu: bool = False) -> tuple[str, list[str]]:
+          critere_ambigu: bool = False,
+          raison_indeterminable: str | None = None) -> tuple[str, list[str]]:
     """`(decision, raisons)`. `decision` vaut PUBLIABLE ou NE PAS PUBLIER.
 
     `critere_ambigu` : plusieurs titres de la pre-inscription contiennent
@@ -85,6 +86,12 @@ def juger(resultat: dict, bloc: dict | None,
     precoce du mot-cle), pas par une correspondance unique. Ce n'est pas en
     soi un refus, mais l'humain qui lit le verdict doit le savoir : on ne le
     rend jamais silencieux.
+
+    `raison_indeterminable` : texte a afficher quand `critere_intact is
+    None`, au lieu du message generique -- distingue par exemple "chemin non
+    resolu au depot" de "empreinte non comparable" (git muet, fichier non
+    suivi) : la premiere n'accuse pas d'une falsification qui n'a pas eu
+    lieu.
     """
     raisons: list[str] = []
 
@@ -101,7 +108,8 @@ def juger(resultat: dict, bloc: dict | None,
         return REFUS, raisons
 
     if critere_intact is None:
-        raisons.append("impossible de COMPARER l'empreinte du critere a sa "
+        raisons.append(raison_indeterminable or
+                       "impossible de COMPARER l'empreinte du critere a sa "
                        "version commitee")
         return REFUS, raisons
     if critere_intact is False:
@@ -146,10 +154,35 @@ def juger(resultat: dict, bloc: dict | None,
     return PUBLIABLE, raisons
 
 
+def _racine_et_chemin_relatif(chemin: str) -> tuple[pathlib.Path, pathlib.Path] | None:
+    """`(racine_depot, chemin_relatif_a_la_racine)`, ou `None`.
+
+    La racine est deduite du REPERTOIRE DU FICHIER (`git rev-parse
+    --show-toplevel` execute avec `cwd` dans ce repertoire), pas du cwd du
+    processus appelant -- ce qui fait marcher la fonction depuis n'importe
+    quel repertoire, avec un chemin relatif ou absolu.
+    """
+    path = pathlib.Path(chemin).resolve()
+    out_root = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        capture_output=True, text=True, timeout=20, cwd=str(path.parent))
+    if out_root.returncode != 0:
+        return None
+    root = pathlib.Path(out_root.stdout.strip()).resolve()
+    try:
+        rel = path.relative_to(root)
+    except ValueError:
+        return None
+    return root, rel
+
+
 def empreinte_critere(chemin: str) -> bool | None:
     """Le critere sur le DISQUE est-il celui qui a ete commite ?
 
-    `None` si la comparaison est impossible (git muet, fichier non suivi).
+    `None` si la comparaison est impossible (git muet, fichier non suivi, ou
+    chemin non resolu a un depot git). Marche depuis n'importe quel
+    repertoire et avec un chemin relatif OU absolu -- la racine du depot est
+    deduite du fichier lui-meme, jamais du cwd du processus appelant.
     """
     def _hash(texte: str) -> str | None:
         corps = sections.section(texte, "critere")
@@ -158,15 +191,26 @@ def empreinte_critere(chemin: str) -> bool | None:
         return hashlib.sha256(corps.encode("utf-8")).hexdigest()
 
     try:
-        disque = _hash(pathlib.Path(chemin).read_text(encoding="utf-8"))
-        out = subprocess.run(["git", "log", "--diff-filter=A", "--format=%H",
-                              "--", chemin],
-                             capture_output=True, text=True, timeout=20)
-        commits = [l for l in out.stdout.splitlines() if l.strip()]
-        if not commits or disque is None:
+        resolu = _racine_et_chemin_relatif(chemin)
+        if resolu is None:
             return None
-        montre = subprocess.run(["git", "show", "%s:%s" % (commits[-1], chemin)],
-                                capture_output=True, text=True, timeout=20)
+        root, rel = resolu
+        rel_git = rel.as_posix()  # git attend des '/' , meme sous Windows
+
+        disque = _hash(pathlib.Path(chemin).resolve().read_text(encoding="utf-8"))
+        if disque is None:
+            return None
+
+        out = subprocess.run(["git", "log", "--diff-filter=A", "--format=%H",
+                              "--", rel_git],
+                             capture_output=True, text=True, timeout=20,
+                             cwd=str(root))
+        commits = [l for l in out.stdout.splitlines() if l.strip()]
+        if not commits:
+            return None
+        montre = subprocess.run(
+            ["git", "show", "%s:%s" % (commits[-1], rel_git)],
+            capture_output=True, text=True, timeout=20, cwd=str(root))
         if montre.returncode != 0:
             return None
         return disque == _hash(montre.stdout)
@@ -188,10 +232,17 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     critere_ambigu = sections.nombre_titres_correspondants(texte, "critere") > 1
+    critere_intact = empreinte_critere(a.preinscription)
+    raison_indeterminable = None
+    if critere_intact is None and _racine_et_chemin_relatif(a.preinscription) is None:
+        raison_indeterminable = (
+            "chemin non resolu a un depot git : impossible de deduire la "
+            "racine du depot ou le chemin relatif depuis '%s' -- ce n'est "
+            "PAS une accusation de critere reecrit" % a.preinscription)
     try:
         decision, raisons = juger(resultat, sections.bloc_machine(texte),
-                                  empreinte_critere(a.preinscription),
-                                  critere_ambigu)
+                                  critere_intact, critere_ambigu,
+                                  raison_indeterminable)
     except Exception as e:  # noqa: BLE001 -- fail-closed ET bavard, jamais un traceback nu
         print("ECHEC : resultat illisible pour le jugement (%s)" % e)
         return 1
