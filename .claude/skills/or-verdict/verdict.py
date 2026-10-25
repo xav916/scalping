@@ -36,9 +36,24 @@ def _seuil(expression: str) -> float | None:
 
 
 def juger(resultat: dict, bloc: dict | None,
-          critere_intact: bool | None) -> tuple[str, list[str]]:
-    """`(decision, raisons)`. `decision` vaut PUBLIABLE ou NE PAS PUBLIER."""
+          critere_intact: bool | None,
+          critere_ambigu: bool = False) -> tuple[str, list[str]]:
+    """`(decision, raisons)`. `decision` vaut PUBLIABLE ou NE PAS PUBLIER.
+
+    `critere_ambigu` : plusieurs titres de la pre-inscription contiennent
+    "critere" -- la section retenue l'a ete par heuristique (position la plus
+    precoce du mot-cle), pas par une correspondance unique. Ce n'est pas en
+    soi un refus, mais l'humain qui lit le verdict doit le savoir : on ne le
+    rend jamais silencieux.
+    """
     raisons: list[str] = []
+
+    if critere_ambigu:
+        raisons.append("ATTENTION : plusieurs titres de la pre-inscription "
+                       "contiennent \"critere\" -- la section retenue l'a ete "
+                       "par heuristique (position la plus precoce du mot-cle "
+                       "dans le titre), verifier qu'il s'agit bien du critere "
+                       "et non d'un recit qui le mentionne")
 
     if bloc is None:
         raisons.append("bloc machine absent : pre-inscription anterieure a la "
@@ -132,8 +147,10 @@ def main(argv: list[str] | None = None) -> int:
         print("ECHEC : entree illisible (%s)" % e)
         return 1
 
+    critere_ambigu = sections.nombre_titres_correspondants(texte, "critere") > 1
     decision, raisons = juger(resultat, sections.bloc_machine(texte),
-                              empreinte_critere(a.preinscription))
+                              empreinte_critere(a.preinscription),
+                              critere_ambigu)
     print("=== %s" % decision)
     for r in raisons:
         print("  - " + r)

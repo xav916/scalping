@@ -23,27 +23,60 @@ def normaliser(texte: str) -> str:
     return re.sub(r"[^a-z0-9 ]+", " ", sans_accent.lower()).strip()
 
 
-def section(markdown: str, mot_cle: str) -> str | None:
-    """Le corps de la premiere section dont le titre contient `mot_cle`.
+def _titres_correspondants(markdown: str, mot_cle: str) -> list[tuple[int, int, int]]:
+    """Les titres dont le titre normalise contient `mot_cle`.
 
-    Rend `None` si aucun titre ne correspond -- l'appelant DOIT traiter ce cas
-    comme un refus, jamais comme une section vide.
+    Chaque entree est `(index_ligne, niveau, position_du_mot_cle)`. Plusieurs
+    titres peuvent correspondre (corpus reel : 5 fichiers sur 38) -- c'est a
+    l'appelant de departager, jamais de prendre le premier au hasard de
+    l'ordre du document.
     """
     cle = normaliser(mot_cle)
     lignes = markdown.splitlines()
-    debut = niveau = None
+    out: list[tuple[int, int, int]] = []
     for i, ligne in enumerate(lignes):
         m = _TITRE.match(ligne)
         if not m:
             continue
-        if debut is None:
-            if cle in normaliser(m.group(2)):
-                debut, niveau = i + 1, len(m.group(1))
-            continue
-        if len(m.group(1)) <= niveau:
-            return "\n".join(lignes[debut:i]).strip()
-    if debut is None:
+        pos = normaliser(m.group(2)).find(cle)
+        if pos != -1:
+            out.append((i, len(m.group(1)), pos))
+    return out
+
+
+def nombre_titres_correspondants(markdown: str, mot_cle: str) -> int:
+    """Combien de titres DISTINCTS contiennent `mot_cle`.
+
+    Sert a signaler une ambiguite a l'appelant (ex. or-verdict) : si ce nombre
+    depasse 1, la section retenue par `section()` l'a ete par heuristique, pas
+    par une correspondance unique.
+    """
+    return len(_titres_correspondants(markdown, mot_cle))
+
+
+def section(markdown: str, mot_cle: str) -> str | None:
+    """Le corps de la section dont le titre contient `mot_cle`.
+
+    Quand PLUSIEURS titres correspondent, on retient celui ou `mot_cle`
+    apparait le PLUS TOT dans le titre normalise (position la plus petite) --
+    un titre de recit qui *mentionne* le mot-cle en fin de phrase ("mesure
+    avant d'ecrire ce critere") perd face a un titre qui *est* la section
+    ("LE CRITERE, pose d'avance"). A egalite de position, le premier dans
+    l'ordre du document.
+
+    Rend `None` si aucun titre ne correspond -- l'appelant DOIT traiter ce cas
+    comme un refus, jamais comme une section vide.
+    """
+    titres = _titres_correspondants(markdown, mot_cle)
+    if not titres:
         return None
+    i, niveau, _ = min(titres, key=lambda t: (t[2], t[0]))
+    lignes = markdown.splitlines()
+    debut = i + 1
+    for j in range(debut, len(lignes)):
+        m = _TITRE.match(lignes[j])
+        if m and len(m.group(1)) <= niveau:
+            return "\n".join(lignes[debut:j]).strip()
     return "\n".join(lignes[debut:]).strip()
 
 

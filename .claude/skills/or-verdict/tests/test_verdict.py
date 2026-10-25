@@ -141,6 +141,25 @@ def test_seuil_admission_lu_dans_le_bloc_et_non_un_defaut():
     assert any("indecidable" in x and "2.50" in x for x in raisons), raisons
 
 
+# ── AMBIGUITE DE TITRE : or-verdict doit le DIRE, jamais le taire ──
+
+def test_critere_ambigu_est_mentionne_dans_les_raisons_sans_bloquer():
+    # Plusieurs titres contiennent "critere" : le choix est une heuristique,
+    # l'humain qui lit le verdict doit le savoir -- ce n'est pas en soi un
+    # refus (le rejeu reste PUBLIABLE si tout le reste tient).
+    decision, raisons = verdict.juger(VALIDE, BLOC, critere_intact=True,
+                                      critere_ambigu=True)
+    assert decision == "PUBLIABLE"
+    assert any("ATTENTION" in r and "heuristique" in r for r in raisons), raisons
+
+
+def test_sans_ambiguite_aucune_mention_n_apparait():
+    decision, raisons = verdict.juger(VALIDE, BLOC, critere_intact=True,
+                                      critere_ambigu=False)
+    assert decision == "PUBLIABLE"
+    assert not any("ATTENTION" in r for r in raisons), raisons
+
+
 def test_barre_validite_lue_dans_le_bloc_et_non_un_defaut():
     # BLOC a validite: "abs(ecart_par_trade) < 0.25" (barre = 0.25).
     # Ancien defaut aurait ete 0.50.
