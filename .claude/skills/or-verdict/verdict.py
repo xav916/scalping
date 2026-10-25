@@ -23,11 +23,14 @@ REQUIS = ("n", "t", "ecart_par_trade", "valide")
 PUBLIABLE, REFUS = "PUBLIABLE", "NE PAS PUBLIER"
 
 
-def _seuil(expression: str, defaut: float) -> float:
-    """Le nombre d'une expression de seuil, ou `defaut`."""
+def _seuil(expression: str) -> float | None:
+    """Le nombre d'une expression de seuil, ou None si indechiffrable.
+
+    Fail-closed : pas de nombre = None (pas de defaut silencieux).
+    """
     import re
     m = re.search(r"[-+]?\d+(?:[.,]\d+)?", expression or "")
-    return float(m.group(0).replace(",", ".")) if m else defaut
+    return float(m.group(0).replace(",", ".")) if m else None
 
 
 def juger(resultat: dict, bloc: dict | None,
@@ -55,7 +58,11 @@ def juger(resultat: dict, bloc: dict | None,
                        "pas calculable" % ", ".join(manquants))
         return REFUS, raisons
 
-    barre = _seuil(bloc.get("validite", ""), 0.50)
+    barre = _seuil(bloc.get("validite", ""))
+    if barre is None:
+        raisons.append("bloc [validite] indechiffrable : aucun nombre lisible")
+        return REFUS, raisons
+
     ecart = abs(float(resultat["ecart_par_trade"]))
     if not resultat["valide"] or ecart >= barre:
         raisons.append("condition de validite NON tenue : ecart %.4f contre "
@@ -63,8 +70,15 @@ def juger(resultat: dict, bloc: dict | None,
         return REFUS, raisons
 
     t = float(resultat["t"])
-    haut = _seuil(bloc.get("admission", "t > +2"), 2.0)
-    bas = _seuil(bloc.get("rejet", "t < -2"), -2.0)
+    haut = _seuil(bloc.get("admission", ""))
+    if haut is None:
+        raisons.append("bloc [admission] indechiffrable : aucun nombre lisible")
+        return REFUS, raisons
+    bas = _seuil(bloc.get("rejet", ""))
+    if bas is None:
+        raisons.append("bloc [rejet] indechiffrable : aucun nombre lisible")
+        return REFUS, raisons
+
     if t > haut:
         raisons.append("admission franchie : t = %+.2f > %+.2f" % (t, haut))
     elif t < bas:

@@ -6,8 +6,8 @@ sys.path.insert(0, str(_ICI.parents[1]))
 sys.path.insert(0, str(_ICI.parents[2]))
 import verdict  # noqa: E402
 
-BLOC = {"admission": "t > +2", "rejet": "t < -2",
-        "validite": "abs(ecart_par_trade) < 0.50",
+BLOC = {"admission": "t > +3", "rejet": "t < -1.5",
+        "validite": "abs(ecart_par_trade) < 0.25",
         "cellules": "1", "plafond": "permutation_p95"}
 
 # Les chiffres REELS du verdict du 25/10 (ffb150e), rejeu valide.
@@ -28,7 +28,7 @@ def test_le_critere_rend_indecidable_sous_le_seuil():
 
 
 def test_admission_franchie_au_dessus_du_seuil():
-    r = dict(VALIDE, t=2.4)
+    r = dict(VALIDE, t=3.1)
     _, raisons = verdict.juger(r, BLOC, critere_intact=True)
     assert any("admission" in x for x in raisons), raisons
 
@@ -67,3 +67,33 @@ def test_refuse_sans_bloc_machine():
     decision, raisons = verdict.juger(VALIDE, None, critere_intact=True)
     assert decision == "NE PAS PUBLIER"
     assert any("bloc machine" in x for x in raisons), raisons
+
+
+def test_rejet_franchi_sous_le_seuil():
+    # La branche elif t < bas doit etre testee aussi.
+    r = dict(VALIDE, t=-2.0)
+    _, raisons = verdict.juger(r, BLOC, critere_intact=True)
+    assert any("rejet" in x for x in raisons), raisons
+
+
+# ── EXPRESSIONS SANS CHIFFRE : FAIL-CLOSED ──
+
+def test_refuse_admission_sans_chiffre():
+    bloc = dict(BLOC, admission="significatif")
+    decision, raisons = verdict.juger(VALIDE, bloc, critere_intact=True)
+    assert decision == "NE PAS PUBLIER"
+    assert any("admission" in x and "indechiffrable" in x for x in raisons), raisons
+
+
+def test_refuse_rejet_sans_chiffre():
+    bloc = dict(BLOC, rejet="t tres negatif")
+    decision, raisons = verdict.juger(VALIDE, bloc, critere_intact=True)
+    assert decision == "NE PAS PUBLIER"
+    assert any("rejet" in x and "indechiffrable" in x for x in raisons), raisons
+
+
+def test_refuse_validite_sans_chiffre():
+    bloc = dict(BLOC, validite="sans chiffre du tout")
+    decision, raisons = verdict.juger(VALIDE, bloc, critere_intact=True)
+    assert decision == "NE PAS PUBLIER"
+    assert any("validite" in x and "indechiffrable" in x for x in raisons), raisons
