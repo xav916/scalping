@@ -28,60 +28,32 @@ def test_section_absente_rend_None():
     assert sections.section("# rien\n\ntexte\n", "critere") is None
 
 
-# ── AMBIGUITE : plusieurs titres contiennent le mot-cle (corpus reel : 5/38) ──
+# ── ORDRE DU DOCUMENT : plusieurs titres contiennent le mot-cle ──
+# REVISE LE 2026-10-26 : l'heuristique "position la plus precoce du mot-cle"
+# a ete retiree (voir le docstring du module). La regle est redevenue le
+# premier titre qui correspond, dans l'ordre du document -- stable par ajout
+# en fin de fichier, ce que l'heuristique n'etait pas.
 
-def test_section_choisit_le_titre_ou_le_mot_cle_est_le_plus_precoce():
-    """Un titre de recit qui MENTIONNE le mot-cle en fin de phrase doit perdre
-    face a un titre qui EST la section, meme s'il vient apres dans le document.
+def test_section_retient_le_premier_titre_meme_si_un_titre_plus_tard_correspond_mieux():
+    """Le premier titre du document gagne, meme si un titre plus loin fait
+    correspondre le mot-cle plus tot dans son propre texte.
 
-    Avec l'ancienne regle (premier titre trouve), ce test echoue : le corps
-    rendu serait celui du recit ("texte du recit, hors de propos"), pas celui
-    du vrai critere ("t > +2").
+    Avec l'heuristique retiree (position la plus precoce du mot-cle), ce test
+    echouerait : le corps rendu serait celui du second titre ("t > +999"),
+    pas celui du premier ("t > +2").
     """
     md = (
         "# t\n\n"
         "## Ce qui a change la portee, mesure avant d'ecrire ce critere\n\n"
-        "texte du recit, hors de propos\n\n"
-        "## LE CRITERE, pose d'avance\n\n"
         "seuil : t > +2\n\n"
+        "## LE CRITERE, pose d'avance\n\n"
+        "seuil : t > +999\n\n"
         "## Autre\n\nhors sujet\n"
     )
     trouve = sections.section(md, "critere")
     assert trouve is not None
     assert "t > +2" in trouve
-    assert "hors de propos" not in trouve
-
-
-def test_section_vrai_fichier_critere_et_non_le_recit():
-    """Preuve sur un fichier REEL du depot (pas un fixture construit).
-
-    `docs/predictions/2026-10-10_surprise_economique_direction.md` contient
-    TROIS titres ou "critere" apparait normalise :
-      - ligne 23 : '## ... mesure avant d'ecrire ce critere' (recit, pos=56)
-      - ligne 81 : '## LE CRITERE, POSE AVANT DE REGARDER'   (le vrai, pos=3)
-      - ligne 167: '## Le reste du critere est INCHANGE'     (pos=12)
-    La regle de la position la plus precoce doit retenir la ligne 81.
-    Ce test echoue sur l'ancienne regle (premier titre trouve = ligne 23).
-    """
-    depot = pathlib.Path(__file__).resolve().parents[4]
-    chemin = depot / "docs" / "predictions" / "2026-10-10_surprise_economique_direction.md"
-    assert chemin.exists(), "fichier reel introuvable : %s" % chemin
-    texte = chemin.read_text(encoding="utf-8")
-
-    assert sections.nombre_titres_correspondants(texte, "critere") == 3
-
-    trouve = sections.section(texte, "critere")
-    assert trouve is not None
-    norm = sections.normaliser(trouve)
-    assert "2 730" in norm and "les cinq" in norm, norm[:200]
-    assert "mesure avant d ecrire ce critere" not in norm
-    assert "le reste du critere est inchange" not in norm
-
-
-def test_nombre_titres_correspondants_compte_toutes_les_correspondances():
-    md = "# t\n\n## critere A\n\ntexte\n\n## autre\n\ntexte\n\n## critere B\n\ntexte\n"
-    assert sections.nombre_titres_correspondants(md, "critere") == 2
-    assert sections.nombre_titres_correspondants(md, "absent") == 0
+    assert "t > +999" not in trouve
 
 
 def test_compte_les_predictions_numerotees():

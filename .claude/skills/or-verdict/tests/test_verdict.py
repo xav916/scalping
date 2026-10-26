@@ -8,6 +8,7 @@ _ICI = pathlib.Path(__file__).resolve()
 sys.path.insert(0, str(_ICI.parents[1]))
 sys.path.insert(0, str(_ICI.parents[2]))
 import verdict  # noqa: E402
+from or_commun import sections  # noqa: E402
 
 BLOC = {"admission": "t > +3", "rejet": "t < -1.5",
         "validite": "abs(ecart_par_trade) < 0.25",
@@ -179,34 +180,36 @@ def test_seuil_admission_lu_dans_le_bloc_et_non_un_defaut():
     assert any("indecidable" in x and "2.50" in x for x in raisons), raisons
 
 
-# ── AMBIGUITE DE TITRE : or-verdict doit le DIRE, jamais le taire ──
-
-def test_critere_ambigu_est_mentionne_dans_les_raisons_sans_bloquer():
-    # Plusieurs titres contiennent "critere" : le choix est une heuristique,
-    # l'humain qui lit le verdict doit le savoir -- ce n'est pas en soi un
-    # refus (le rejeu reste PUBLIABLE si tout le reste tient).
-    decision, raisons = verdict.juger(VALIDE, BLOC, critere_intact=True,
-                                      critere_ambigu=True)
-    assert decision == "PUBLIABLE"
-    assert any("ATTENTION" in r and "heuristique" in r for r in raisons), raisons
-
-
-def test_sans_ambiguite_aucune_mention_n_apparait():
-    decision, raisons = verdict.juger(VALIDE, BLOC, critere_intact=True,
-                                      critere_ambigu=False)
-    assert decision == "PUBLIABLE"
-    assert not any("ATTENTION" in r for r in raisons), raisons
-
-
 # ── empreinte_critere() DEPUIS N'IMPORTE OU : 4 formes d'invocation ──
 # Mesure de la revue : A marche, B/C/D rendaient None avant le correctif
 # (racine deduite du CWD du processus, chemin passe tel quel a git).
+#
+# REVISE LE 2026-10-26 : l'empreinte hache desormais le bloc CRITERE-MACHINE,
+# plus la section en prose "critere" -- la fixture porte donc un bloc.
 
-_CRITERE_MD = ("# t\n\n## LE CRITERE\n\nseuil : t > +2\n")
+_CRITERE_MD = (
+    # Un titre NARRATIF qui mentionne "critere" vient AVANT le vrai titre --
+    # motif reel du corpus (2026-10-10_surprise_economique_direction.md).
+    # Le bloc machine vit dans le vrai titre, pas dans le recit : hacher la
+    # mauvaise section (prose) raterait tout changement du bloc.
+    "# t\n\n"
+    "## Ce qui a change la portee, mesure avant d'ecrire ce critere\n\n"
+    "texte du recit, hors de propos\n\n"
+    "## LE CRITERE\n\nseuil : t > +2\n\n"
+    "<!-- CRITERE-MACHINE\n"
+    "admission: t > +2\n"
+    "rejet: t < -2\n"
+    "validite: abs(ecart_par_trade) < 0.50\n"
+    "-->\n"
+)
+
+# Meme pre-inscription, mais SANS bloc machine -- pour les tests fail-closed
+# du mouvement 1 (bloc absent dans la version commitee).
+_SANS_BLOC_MD = "# t\n\n## LE CRITERE\n\nseuil : t > +2\n"
 
 
-def _depot_avec_critere():
-    """Cree un depot temporaire avec un fichier CRITERE commite.
+def _depot_avec_fichier(contenu: str):
+    """Cree un depot git temporaire avec un fichier `pred.md` commite.
 
     Rend `(tmpdir, chemin_absolu_du_fichier, chemin_du_sous_repertoire)`.
     """
@@ -217,12 +220,16 @@ def _depot_avec_critere():
     subprocess.run(["git", "config", "user.name", "Test"],
                    cwd=tmpdir, check=True, capture_output=True)
     fichier = tmpdir / "pred.md"
-    fichier.write_text(_CRITERE_MD, encoding="utf-8")
+    fichier.write_text(contenu, encoding="utf-8")
     subprocess.run(["git", "add", "pred.md"], cwd=tmpdir, check=True, capture_output=True)
     subprocess.run(["git", "commit", "-m", "pred"], cwd=tmpdir, check=True, capture_output=True)
     sousrep = tmpdir / "sub"
     sousrep.mkdir()
     return tmpdir, fichier, sousrep
+
+
+def _depot_avec_critere():
+    return _depot_avec_fichier(_CRITERE_MD)
 
 
 def _depuis(cwd: pathlib.Path, chemin):
@@ -277,10 +284,100 @@ def test_raison_indeterminable_personnalisee_remplace_le_message_generique():
 
 def test_empreinte_critere_reecrit_est_detecte_depuis_le_sous_repertoire():
     # Les quatre formes rendent un booleen : prouver qu'il est aussi JUSTE
-    # (pas seulement "pas None") en reecrivant le critere sur le disque.
+    # (pas seulement "pas None") en reecrivant le SEUIL DANS LE BLOC MACHINE
+    # sur le disque -- c'est lui qui engage, plus la prose.
     tmpdir, fichier, sousrep = _depot_avec_critere()
-    fichier.write_text("# t\n\n## LE CRITERE\n\nseuil : t > +999\n", encoding="utf-8")
+    fichier.write_text(
+        "# t\n\n## LE CRITERE\n\nseuil : t > +2\n\n"
+        "<!-- CRITERE-MACHINE\n"
+        "admission: t > +999\n"
+        "rejet: t < -2\n"
+        "validite: abs(ecart_par_trade) < 0.50\n"
+        "-->\n", encoding="utf-8")
     assert _depuis(sousrep, fichier) is False
+
+
+# ── MOUVEMENT 1 : l'empreinte hache le BLOC MACHINE, plus la prose ──
+# Les quatre tests exiges par la revue du 2026-10-26.
+
+def test_1_empreinte_stable_par_ajout_dune_section_verdict_titree_critere():
+    """Le flux ajoute le verdict AU FICHIER de la pre-inscription. Un titre
+    de verdict qui COMMENCE PAR "Critere" ne doit JAMAIS faire accuser le
+    fichier de falsification -- c'est precisement ce que l'ancienne
+    heuristique de section() (retiree au mouvement 2) aurait casse : son
+    titre aurait une position de mot-cle plus precoce que "LE CRITERE" et
+    aurait hijacke la section hachee.
+    """
+    tmpdir, fichier, _sousrep = _depot_avec_critere()
+    avant = verdict.empreinte_critere(str(fichier))
+    assert avant is True
+
+    with open(fichier, "a", encoding="utf-8") as f:
+        f.write("\n## Critere du verdict : PUBLIABLE\n\nle rejeu est valide\n")
+
+    apres = verdict.empreinte_critere(str(fichier))
+    assert apres is True, (
+        "ajouter un titre de verdict commencant par Critere en fin de "
+        "fichier a change l'empreinte -- fausse accusation de falsification")
+
+
+def test_2_empreinte_detecte_une_valeur_modifiee_dans_le_bloc_machine_et_juger_refuse():
+    """Modifier une valeur A L'INTERIEUR du bloc machine doit changer
+    l'empreinte, et le verdict bout-en-bout doit refuser.
+
+    `.replace()` sur le texte commite : SEULE la valeur bouge, la structure
+    (titres, prose) reste identique -- la preuve porte sur la valeur, pas sur
+    un changement de structure qui ferait coincidentallement diverger les
+    hachages.
+    """
+    tmpdir, fichier, _sousrep = _depot_avec_critere()
+    reecrit = _CRITERE_MD.replace("admission: t > +2", "admission: t > +777")
+    assert reecrit != _CRITERE_MD  # garde-fou : le replace a bien agi
+    fichier.write_text(reecrit, encoding="utf-8")
+
+    critere_intact = verdict.empreinte_critere(str(fichier))
+    assert critere_intact is False
+
+    decision, raisons = verdict.juger(VALIDE, BLOC, critere_intact=critere_intact)
+    assert decision == "NE PAS PUBLIER"
+    assert any("reecrit" in x.lower() for x in raisons), raisons
+
+
+def test_3_compter_predictions_rend_6_sur_les_deux_fichiers_reels():
+    """Non-regression mesuree sur le corpus REEL de docs/predictions.
+
+    Avec l'heuristique retiree au mouvement 2 (section() revenue a la regle
+    d'ordre du document), compter_predictions() doit retrouver les 6
+    predictions numerotees de chacun de ces deux fichiers -- l'heuristique
+    les faisait tomber a 0 (section "PREDICTION n5/n3" choisie au lieu de
+    "MES PREDICTIONS, posees avant de coder").
+    """
+    depot = pathlib.Path(__file__).resolve().parents[4]
+    for nom in ("2026-10-12_bancs_refaits_au_cout_reel.md",
+                "2026-10-14_declencheur_sur_la_vitesse.md"):
+        chemin = depot / "docs" / "predictions" / nom
+        assert chemin.exists(), "fichier reel introuvable : %s" % chemin
+        texte = chemin.read_text(encoding="utf-8")
+        assert sections.compter_predictions(texte) == 6, nom
+
+
+def test_4a_empreinte_indeterminable_bloc_absent_sur_le_disque():
+    """Fail-closed : le bloc machine est absent du fichier SUR LE DISQUE
+    (meme si la version commitee en avait un) -> None, jamais un booleen.
+    """
+    tmpdir, fichier, _sousrep = _depot_avec_critere()
+    fichier.write_text("# t\n\n## LE CRITERE\n\nseuil : t > +2\n",
+                       encoding="utf-8")  # bloc machine retire, non commite
+    assert verdict.empreinte_critere(str(fichier)) is None
+
+
+def test_4b_empreinte_indeterminable_bloc_absent_dans_la_version_commitee():
+    """Fail-closed : le bloc machine est absent de la version COMMITEE
+    (meme si le disque en a un desormais) -> None, jamais un booleen.
+    """
+    tmpdir, fichier, _sousrep = _depot_avec_fichier(_SANS_BLOC_MD)
+    fichier.write_text(_CRITERE_MD, encoding="utf-8")  # ajoute, non commite
+    assert verdict.empreinte_critere(str(fichier)) is None
 
 
 def test_barre_validite_lue_dans_le_bloc_et_non_un_defaut():

@@ -77,15 +77,8 @@ def _problemes_requis(resultat: dict) -> list[str]:
 
 def juger(resultat: dict, bloc: dict | None,
           critere_intact: bool | None,
-          critere_ambigu: bool = False,
           raison_indeterminable: str | None = None) -> tuple[str, list[str]]:
     """`(decision, raisons)`. `decision` vaut PUBLIABLE ou NE PAS PUBLIER.
-
-    `critere_ambigu` : plusieurs titres de la pre-inscription contiennent
-    "critere" -- la section retenue l'a ete par heuristique (position la plus
-    precoce du mot-cle), pas par une correspondance unique. Ce n'est pas en
-    soi un refus, mais l'humain qui lit le verdict doit le savoir : on ne le
-    rend jamais silencieux.
 
     `raison_indeterminable` : texte a afficher quand `critere_intact is
     None`, au lieu du message generique -- distingue par exemple "chemin non
@@ -94,13 +87,6 @@ def juger(resultat: dict, bloc: dict | None,
     lieu.
     """
     raisons: list[str] = []
-
-    if critere_ambigu:
-        raisons.append("ATTENTION : plusieurs titres de la pre-inscription "
-                       "contiennent \"critere\" -- la section retenue l'a ete "
-                       "par heuristique (position la plus precoce du mot-cle "
-                       "dans le titre), verifier qu'il s'agit bien du critere "
-                       "et non d'un recit qui le mentionne")
 
     if bloc is None:
         raisons.append("bloc machine absent : pre-inscription anterieure a la "
@@ -177,18 +163,28 @@ def _racine_et_chemin_relatif(chemin: str) -> tuple[pathlib.Path, pathlib.Path] 
 
 
 def empreinte_critere(chemin: str) -> bool | None:
-    """Le critere sur le DISQUE est-il celui qui a ete commite ?
+    """Le bloc CRITERE-MACHINE sur le DISQUE est-il celui qui a ete commite ?
 
-    `None` si la comparaison est impossible (git muet, fichier non suivi, ou
-    chemin non resolu a un depot git). Marche depuis n'importe quel
-    repertoire et avec un chemin relatif OU absolu -- la racine du depot est
-    deduite du fichier lui-meme, jamais du cwd du processus appelant.
+    REVISE LE 2026-10-26 : hache desormais le bloc `CRITERE-MACHINE`, pas la
+    section en prose "critere". Sur le corpus reel de docs/predictions, 16
+    formes de titre contiennent "critere", 5 fichiers sur 38 en ont
+    plusieurs, et dans l'un d'eux le premier est du recit -- l'empreinte
+    hachait donc la mauvaise section, fail-open sur la garde meme qu'elle
+    constitue. Le bloc machine est delimite par un marqueur unique et
+    contient precisement ce qui ne doit pas bouger (les seuils) ; la prose
+    autour peut etre reecrite, completee, corrigee sans toucher l'empreinte.
+
+    `None` si la comparaison est impossible (bloc absent sur le disque ou
+    dans la version commitee, git muet, fichier non suivi, ou chemin non
+    resolu a un depot git). Marche depuis n'importe quel repertoire et avec
+    un chemin relatif OU absolu -- la racine du depot est deduite du fichier
+    lui-meme, jamais du cwd du processus appelant.
     """
     def _hash(texte: str) -> str | None:
-        corps = sections.section(texte, "critere")
-        if corps is None:
+        bloc = sections.bloc_machine_texte(texte)
+        if bloc is None:
             return None
-        return hashlib.sha256(corps.encode("utf-8")).hexdigest()
+        return hashlib.sha256(bloc.encode("utf-8")).hexdigest()
 
     try:
         resolu = _racine_et_chemin_relatif(chemin)
@@ -213,7 +209,10 @@ def empreinte_critere(chemin: str) -> bool | None:
             capture_output=True, text=True, timeout=20, cwd=str(root))
         if montre.returncode != 0:
             return None
-        return disque == _hash(montre.stdout)
+        commite = _hash(montre.stdout)
+        if commite is None:
+            return None  # bloc absent de la version commitee : indeterminable
+        return disque == commite
     except Exception:  # noqa: BLE001
         return None
 
@@ -231,7 +230,6 @@ def main(argv: list[str] | None = None) -> int:
         print("ECHEC : entree illisible (%s)" % e)
         return 1
 
-    critere_ambigu = sections.nombre_titres_correspondants(texte, "critere") > 1
     critere_intact = empreinte_critere(a.preinscription)
     raison_indeterminable = None
     if critere_intact is None and _racine_et_chemin_relatif(a.preinscription) is None:
@@ -241,8 +239,7 @@ def main(argv: list[str] | None = None) -> int:
             "PAS une accusation de critere reecrit" % a.preinscription)
     try:
         decision, raisons = juger(resultat, sections.bloc_machine(texte),
-                                  critere_intact, critere_ambigu,
-                                  raison_indeterminable)
+                                  critere_intact, raison_indeterminable)
     except Exception as e:  # noqa: BLE001 -- fail-closed ET bavard, jamais un traceback nu
         print("ECHEC : resultat illisible pour le jugement (%s)" % e)
         return 1
