@@ -249,7 +249,7 @@ def test_reconcile_NON_mature_sans_bougies_reste_pending(temp_db):
     assert stats["pending_remaining"] == 1
 
 
-def test_reconcile_mature_sans_bougies_est_marque_NO_DATA(temp_db):
+def test_reconcile_mature_sans_bougies_est_marque_NO_DATA(temp_db, monkeypatch):
     """Fenetre entierement PASSEE et pas de bougies : irrecuperable, on l'inscrit.
 
     CE TEST REMPLACE `test_reconcile_skipped_no_data`, QUI AFFIRMAIT
@@ -263,6 +263,7 @@ def test_reconcile_mature_sans_bougies_est_marque_NO_DATA(temp_db):
     reservir indefiniment par la requete `ORDER BY bar_timestamp ASC`, ce qui
     BLOQUE LA FILE par sa propre tete.
     """
+    monkeypatch.setattr(recon, "MARQUER_NO_DATA", True)
     bar_ts = datetime.now(timezone.utc) - timedelta(hours=120)
     _insert_pending_setup(temp_db, bar_ts)
 
@@ -278,7 +279,7 @@ def test_reconcile_mature_sans_bougies_est_marque_NO_DATA(temp_db):
     assert issue == "NO_DATA", issue
 
 
-def test_une_tete_de_file_irrecuperable_ne_bloque_plus_la_file(temp_db):
+def test_une_tete_de_file_irrecuperable_ne_bloque_plus_la_file(temp_db, monkeypatch):
     """LE test de la panne du 21/08 : un setup irrecuperable en tete de file.
 
     La requete sert les plus ANCIENS d'abord. Avec `max_per_run=1`, un seul
@@ -289,6 +290,7 @@ def test_une_tete_de_file_irrecuperable_ne_bloque_plus_la_file(temp_db):
     Ce test echoue sur l'ancien comportement : le second passage reservirait
     la meme tete et `resolved` resterait a 0.
     """
+    monkeypatch.setattr(recon, "MARQUER_NO_DATA", True)
     vieux = datetime.now(timezone.utc) - timedelta(hours=200)
     recent = datetime.now(timezone.utc) - timedelta(hours=100)
     _insert_pending_setup(temp_db, vieux, pair="XAU/USD")
@@ -310,6 +312,31 @@ def test_une_tete_de_file_irrecuperable_ne_bloque_plus_la_file(temp_db):
     assert p2["resolved"] == 1, p2
     assert p2["pending_remaining"] == 0, p2
 
+
+def test_le_marquage_NO_DATA_est_DESARME_par_defaut(temp_db):
+    """Le marquage ne doit PAS se declencher sans armement explicite.
+
+    Pose le 2026-10-26 apres refutation de la cause racine : la source n a
+    pas de retention de deux semaines -- c est le code qui demande les 1 500
+    dernieres bougies puis filtre, donc une fenetre ancienne rend vide PAR
+    CONSTRUCTION. Marquer NO_DATA actait une perte non demontree.
+
+    Ce test est la pour qu un futur passant ne rouvre pas l interrupteur par
+    inadvertance : le defaut est FERME, et la journalisation suffit.
+    """
+    bar_ts = datetime.now(timezone.utc) - timedelta(hours=120)
+    _insert_pending_setup(temp_db, bar_ts)
+
+    stats = asyncio.run(recon.reconcile_pending_setups(
+        max_per_run=10, fetch_5min_fn=_fetch_vide,
+    ))
+    assert stats["skipped_no_data"] == 1
+    assert stats["no_data_final"] == 0, "le marquage doit etre desarme"
+    assert stats["pending_remaining"] == 1, "le setup doit RESTER en file"
+
+    with sqlite3.connect(temp_db) as c:
+        issue = c.execute("SELECT outcome FROM shadow_setups").fetchone()[0]
+    assert issue is None, issue
 
 def test_minimal_setup_dataclass():
     """_MinimalSetup expose les bons attributs pour simulate_trade_forward."""

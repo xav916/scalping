@@ -82,6 +82,11 @@ TIMEOUT_HOURS_DEFAULT = 96  # H4 fallback pour rows sans timeframe explicite
 # La logique par-TF est appliquée dans la boucle Python.
 TIMEOUT_HOURS_MIN = min(TIMEOUT_HOURS_BY_TF.values())
 
+# Interrupteur du marquage NO_DATA. FERME par defaut : tant qu on ne sait pas
+# si le 5 min historique est accessible, marquer revient a acter une perte
+# qu on n a pas demontree. La journalisation, elle, est inconditionnelle.
+MARQUER_NO_DATA = os.getenv("RECONCILE_MARQUER_NO_DATA", "0").strip() in ("1", "true", "on")
+
 # Réconciliation anticipée (2026-08-04).
 #
 # Avant : un setup n'était même pas *regardé* avant 96h, alors que l'outcome
@@ -295,7 +300,21 @@ async def reconcile_pending_setups(
             #   - fenetre entierement PASSEE : irrecuperable pour toujours.
             #     On l'INSCRIT, pour qu'il quitte la file et que la perte
             #     soit comptable au lieu de dormir dans un NULL ambigu.
-            if matured:
+            # ⛔ DESARME LE 2026-10-26 apres REFUTATION de ma propre cause
+            # racine. Je croyais que la source avait ~2 semaines de retention.
+            # FAUX : `fetch_5min_for_window` demande les 1 500 DERNIERES
+            # bougies (outputsize=1500, soit ~5,2 jours) puis FILTRE par
+            # fenetre. Une fenetre ancienne rend donc vide PAR CONSTRUCTION,
+            # et non parce que la donnee manque -- personne ne l a jamais
+            # demandee. Marquer NO_DATA transformait donc une file bloquee en
+            # PERTE ACTEE sur une premisse fausse.
+            #
+            # La journalisation RESTE : c est elle qui a leve 65 jours de
+            # silence, et elle ne detruit rien.
+            # Le marquage attend qu on sache si le 5 min HISTORIQUE est
+            # accessible (il faudrait une plage de dates ; `fetch_candles`
+            # n accepte aujourd hui qu un `outputsize`).
+            if matured and MARQUER_NO_DATA:
                 with sqlite3.connect(DB_PATH) as c:
                     c.execute(
                         "UPDATE shadow_setups SET outcome = ?, exit_at = ?"
