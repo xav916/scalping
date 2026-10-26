@@ -179,12 +179,23 @@ def _setup_from_row(row: dict) -> _MinimalSetup:
 async def reconcile_pending_setups(
     max_per_run: int = 50,
     fetch_5min_fn=None,
+    paires: list[str] | None = None,
+    marque_rattrapage: bool = False,
 ) -> dict[str, int]:
     """Résout les setups en pending dont le timeout est dépassé.
 
     Args:
         max_per_run: cap pour éviter rate limit TD si beaucoup de pending
         fetch_5min_fn: injectable pour test (override fetch_5min_for_window)
+        paires: restreint la file a ces paires. ⛔ `None` = toutes ; `[]` =
+            AUCUNE. Une liste vide traitee comme « pas de filtre » ferait d un
+            rattrapage cible un rattrapage general, en silence.
+            🔑 Indispensable au rattrapage par source : la file est servie
+            `ORDER BY bar_timestamp`, donc sans filtre un rattrapage crypto
+            resoudrait au passage des setups XAU avec des bougies BINANCE --
+            une issue fabriquee a partir du mauvais instrument.
+        marque_rattrapage: inscrit `resolved_backfill = 1` sur les issues
+            produites. Laisse a False par la production.
 
     Returns:
         dict de stats : {resolved, skipped_no_data, errors}
@@ -205,17 +216,26 @@ async def reconcile_pending_setups(
     matured_cutoff = now - timedelta(hours=TIMEOUT_HOURS_MIN)
     early_cutoff = now - timedelta(hours=SELECT_CUTOFF_HOURS)
 
+    # Le filtre de paires, construit une seule fois pour les DEUX requetes.
+    # `paires is None` -> clause vide (toutes) ; liste -> IN (...) qui, vide,
+    # ne peut rien selectionner.
+    if paires is None:
+        clause_paires, args_paires = "", []
+    else:
+        trous = ",".join("?" for _ in paires) or "NULL"
+        clause_paires, args_paires = f" AND pair IN ({trous})", list(paires)
+
     with sqlite3.connect(DB_PATH) as c:
         c.row_factory = sqlite3.Row
         rows = list(c.execute(
             """
             SELECT * FROM shadow_setups
              WHERE outcome IS NULL
-               AND bar_timestamp <= ?
+               AND bar_timestamp <= ?""" + clause_paires + """
              ORDER BY bar_timestamp ASC
              LIMIT ?
             """,
-            (matured_cutoff.isoformat(), max_per_run),
+            (matured_cutoff.isoformat(), *args_paires, max_per_run),
         ).fetchall())
 
         spare = max_per_run - len(rows)
@@ -225,11 +245,12 @@ async def reconcile_pending_setups(
                 SELECT * FROM shadow_setups
                  WHERE outcome IS NULL
                    AND bar_timestamp <= ?
-                   AND bar_timestamp > ?
+                   AND bar_timestamp > ?""" + clause_paires + """
                  ORDER BY bar_timestamp ASC
                  LIMIT ?
                 """,
-                (early_cutoff.isoformat(), matured_cutoff.isoformat(), spare),
+                (early_cutoff.isoformat(), matured_cutoff.isoformat(),
+                 *args_paires, spare),
             ).fetchall())
 
     if not rows:
@@ -374,11 +395,13 @@ async def reconcile_pending_setups(
                     UPDATE shadow_setups
                        SET outcome = ?, exit_at = ?, exit_price = ?,
                            pnl_pct_net = ?, pnl_eur = ?,
-                           mfe_pct = ?, mae_pct = ?
+                           mfe_pct = ?, mae_pct = ?,
+                           resolved_backfill = ?
                      WHERE id = ?
                     """,
                     (outcome, exit_time.isoformat(), exit_price,
-                     pct_net, pnl_eur, mfe_pct, mae_pct, setup_dict["id"]),
+                     pct_net, pnl_eur, mfe_pct, mae_pct,
+                     1 if marque_rattrapage else 0, setup_dict["id"]),
                 )
             stats["resolved"] += 1
             logger.info(

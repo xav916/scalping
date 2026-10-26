@@ -594,6 +594,23 @@ def ensure_schema() -> None:
             c.execute("ALTER TABLE shadow_setups ADD COLUMN mfe_pct REAL")
         if "mae_pct" not in cols:
             c.execute("ALTER TABLE shadow_setups ADD COLUMN mae_pct REAL")
+        # Migration (2026-10-26) : etiquette du RATTRAPAGE historique.
+        # 0 = issue produite par le chemin de production ; 1 = issue produite
+        # a posteriori, a partir de bougies allees chercher sur une fenetre de
+        # dates (palier 1 : crypto via Binance).
+        #
+        # 🔑 POURQUOI UNE COLONNE ET PAS RIEN. Le rattrapage reinjecte environ
+        # 19 000 issues dans la table qui sert de socle a TOUS les verdicts
+        # suivants. Sans drapeau, aucun banc ne pourrait jamais mesurer AVEC et
+        # SANS -- la donnee rattrapee deviendrait indistinguable de la donnee
+        # vecue, et un biais de source serait definitivement non testable.
+        #
+        # DEFAULT 0 et non NULL : SQLite applique la valeur par defaut aux
+        # lignes existantes, donc « non etiquete » veut dire 0 partout et
+        # jamais « inconnu ».
+        if "resolved_backfill" not in cols:
+            c.execute("ALTER TABLE shadow_setups ADD COLUMN"
+                      " resolved_backfill INTEGER NOT NULL DEFAULT 0")
         c.execute(
             "CREATE INDEX IF NOT EXISTS idx_shadow_setups_pair_time "
             "ON shadow_setups (pair, bar_timestamp DESC)"

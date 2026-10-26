@@ -365,6 +365,100 @@ def test_le_journal_sort_MEME_quand_le_marquage_est_desarme(temp_db, caplog):
     assert any("DESARME" in l for l in lignes), (
         "le journal doit dire que le marquage est desarme", lignes)
 
+# ─── Palier 1 du rattrapage : filtre de paires + etiquette ──────────────────
+
+
+async def _fetch_gagnant(pair, start, end):
+    """Des bougies qui font toucher le take-profit : issue certaine."""
+    return _make_5min_candles(start, [2000.0, 2020.0, 2060.0])
+
+
+def test_la_colonne_d_etiquette_existe_et_vaut_0_par_defaut(temp_db):
+    """`resolved_backfill` doit exister, et ne JAMAIS valoir NULL par defaut.
+
+    Sans cette colonne, 19 003 issues rattrapees deviendraient le socle de
+    tous les verdicts suivants sans qu aucun banc puisse mesurer AVEC et SANS.
+    """
+    with sqlite3.connect(temp_db) as c:
+        cols = {r[1] for r in c.execute(
+            "PRAGMA table_info(shadow_setups)").fetchall()}
+    assert "resolved_backfill" in cols, sorted(cols)
+
+    bar_ts = datetime.now(timezone.utc) - timedelta(hours=120)
+    _insert_pending_setup(temp_db, bar_ts)
+    with sqlite3.connect(temp_db) as c:
+        v = c.execute("SELECT resolved_backfill FROM shadow_setups").fetchone()[0]
+    assert v == 0, f"defaut attendu 0, obtenu {v!r}"
+
+
+def test_une_resolution_ORDINAIRE_n_est_PAS_etiquetee(temp_db):
+    """Le chemin de production ne doit rien marquer : 0, pas 1."""
+    bar_ts = datetime.now(timezone.utc) - timedelta(hours=120)
+    _insert_pending_setup(temp_db, bar_ts)
+
+    stats = asyncio.run(recon.reconcile_pending_setups(
+        max_per_run=10, fetch_5min_fn=_fetch_gagnant))
+
+    assert stats["resolved"] == 1, stats
+    with sqlite3.connect(temp_db) as c:
+        v = c.execute("SELECT resolved_backfill FROM shadow_setups").fetchone()[0]
+    assert v == 0, "une resolution de production ne doit pas etre etiquetee"
+
+
+def test_le_rattrapage_ETIQUETTE_ses_resolutions(temp_db):
+    """Avec `marque_rattrapage`, l issue porte 1 -- et reste une issue NORMALE."""
+    bar_ts = datetime.now(timezone.utc) - timedelta(hours=120)
+    _insert_pending_setup(temp_db, bar_ts)
+
+    stats = asyncio.run(recon.reconcile_pending_setups(
+        max_per_run=10, fetch_5min_fn=_fetch_gagnant, marque_rattrapage=True))
+
+    assert stats["resolved"] == 1, stats
+    with sqlite3.connect(temp_db) as c:
+        issue, marque = c.execute(
+            "SELECT outcome, resolved_backfill FROM shadow_setups").fetchone()
+    assert marque == 1, "l issue rattrapee doit porter l etiquette"
+    assert issue not in (None, "NO_DATA"), issue
+
+
+def test_le_filtre_de_paires_EXCLUT_vraiment_les_autres(temp_db):
+    """Le rattrapage crypto ne doit pas toucher a l or ni au forex.
+
+    ⛔ Le defaut que ca evite : la file est servie ORDER BY bar_timestamp, donc
+    sans filtre un rattrapage crypto resoudrait au passage des setups XAU avec
+    des bougies BINANCE -- une issue fabriquee a partir du mauvais instrument.
+    """
+    bar_ts = datetime.now(timezone.utc) - timedelta(hours=120)
+    _insert_pending_setup(temp_db, bar_ts, pair="BTC/USD")
+    _insert_pending_setup(temp_db, bar_ts + timedelta(minutes=1), pair="XAU/USD")
+
+    stats = asyncio.run(recon.reconcile_pending_setups(
+        max_per_run=10, fetch_5min_fn=_fetch_gagnant,
+        paires=["BTC/USD"], marque_rattrapage=True))
+
+    assert stats["resolved"] == 1, stats
+    with sqlite3.connect(temp_db) as c:
+        lignes = dict(c.execute(
+            "SELECT pair, outcome IS NOT NULL FROM shadow_setups").fetchall())
+    assert lignes["BTC/USD"] == 1, "la crypto devait etre resolue"
+    assert lignes["XAU/USD"] == 0, "l or NE DEVAIT PAS etre touche"
+
+
+def test_un_filtre_VIDE_ne_resout_rien(temp_db):
+    """`paires=[]` doit tout exclure, jamais tout inclure.
+
+    Une liste vide traitee comme « pas de filtre » ferait d un rattrapage
+    cible un rattrapage GENERAL, en silence.
+    """
+    bar_ts = datetime.now(timezone.utc) - timedelta(hours=120)
+    _insert_pending_setup(temp_db, bar_ts, pair="BTC/USD")
+
+    stats = asyncio.run(recon.reconcile_pending_setups(
+        max_per_run=10, fetch_5min_fn=_fetch_gagnant, paires=[]))
+
+    assert stats["resolved"] == 0, stats
+    assert stats["pending_remaining"] == 1
+
 def test_minimal_setup_dataclass():
     """_MinimalSetup expose les bons attributs pour simulate_trade_forward."""
     setup = recon._MinimalSetup(
