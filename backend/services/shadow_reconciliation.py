@@ -107,6 +107,90 @@ SELECT_CUTOFF_HOURS = min(EARLY_RECONCILE_HOURS, TIMEOUT_HOURS_MIN)
 SPREAD_SLIPPAGE_PCT = 0.0002  # 0.02%, identique au backtest
 
 
+# ─── La PLAGE DE DATES : fermeture de la cause racine ───────────────────────
+
+# Plafond de requetes a plage de dates par passage de reconciliation.
+#
+# 🔑 POURQUOI UN PLAFOND. Un passage sert jusqu'a 50 setups, et une requete a
+# plage de dates NE PASSE PAS par le cache de 200 s (elle ne doit pas : y ranger
+# une serie d'aout la servirait au chemin qui TRADE). Sans plafond, une file
+# bloquee ferait donc 50 requetes non cachees par passage, alors que le plan
+# Twelve Data donne **55 credits par MINUTE** partages avec le cycle qui trade.
+# La detection deviendrait aveugle pour vider une file qui n'a aucune urgence.
+#
+# 8 par passage : la file se resorbe en plusieurs passages, et c'est tres bien.
+FENETRES_MAX_PAR_RUN = int(os.getenv("RECONCILE_FENETRES_MAX_PAR_RUN", "8"))
+
+# Repli sur la base locale de bougies (dev et analyses). Desactivable pour les
+# tests, qui ne doivent pas dependre d'un fichier present ou non sur le disque.
+_REPLI_DB_LOCALE = True
+
+_budget_fenetres = FENETRES_MAX_PAR_RUN
+
+
+def reinitialise_budget_fenetres() -> None:
+    """Recharge le budget de plages de dates. Appele a chaque passage.
+
+    ⛔ Un plafond qui ne se recharge pas n'est pas un plafond, c'est un
+    interrupteur a usage unique -- et il serait MUET : le premier passage le
+    consommerait et plus aucun autre ne pourrait jamais demander une plage.
+    """
+    global _budget_fenetres
+    _budget_fenetres = FENETRES_MAX_PAR_RUN
+
+
+async def _fenetre_explicite(
+    pair: str,
+    start: datetime,
+    end: datetime,
+) -> list[Candle]:
+    """Redemande les bougies avec de VRAIES BORNES DE DATES.
+
+    C'est la fermeture de la cause racine du silence de 65 jours : le chemin
+    rapide demande les N dernieres bougies puis filtre, donc une fenetre plus
+    ancienne que sa couverture (~5,2 jours) rend vide PAR CONSTRUCTION, et non
+    parce que la donnee manque.
+
+    ⛔ MEME ROUTAGE QUE LA CASCADE DE PRODUCTION, et pour une raison mesuree :
+    la question n'est pas « quelle source repond » mais « quelle source cote
+    l'instrument qu'on a reellement trade ».
+
+    - Paires du PONT (XAU, WTI) : **rien**. Le pont ne sert que du recent, et
+      sur le WTI Twelve Data divergeait de 3,394 % du contrat trade -- un ecart
+      de 3,4 % ECRASE n'importe quel stop, donc chaque setup serait declare
+      touche a tort. 🔑 Mieux vaut un setup qui RESTE en file qu'une issue
+      fabriquee a partir du mauvais contrat.
+    - Crypto Binance : `fetch_klines_fenetre` (gratuit, sans quota).
+    - Le reste : `fetch_candles_fenetre` (Twelve Data, tranches de dates).
+    """
+    global _budget_fenetres
+
+    from backend.services import bougies_du_pont
+    if bougies_du_pont.paire_du_pont(pair):
+        return []
+
+    if _budget_fenetres <= 0:
+        logger.warning(
+            "reconcile %s : budget de plages de dates epuise pour ce passage"
+            " (%d max) -- la file N'EST PAS entierement traitee, le prochain"
+            " passage reprendra", pair, FENETRES_MAX_PAR_RUN)
+        return []
+    _budget_fenetres -= 1
+
+    try:
+        from backend.services import binance_klines_service as bks
+        if bks.is_crypto_pair(pair):
+            return await bks.fetch_klines_fenetre(pair, "5min", start, end)
+
+        from backend.services import price_service
+        return await price_service.fetch_candles_fenetre(
+            pair, "5min", start, end)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"reconcile plage de dates {pair}"
+                       f" {start:%Y-%m-%d}->{end:%Y-%m-%d} : {e}")
+        return []
+
+
 # ─── Récupération des candles 5min ──────────────────────────────────────────
 
 
@@ -134,9 +218,28 @@ async def fetch_5min_for_window(
     except Exception as e:
         logger.debug(f"reconcile fetch live 5min {pair}: {e}")
 
-    # Stratégie 2 : fallback DB locale (dev / backfill)
+    # Stratégie 2 : LA PLAGE DE DATES EXPLICITE (soudure du 2026-10-26).
+    #
+    # 🔑 C EST ICI que se fermait la cause racine du silence de 65 jours. La
+    # strategie 1 demande les 1 500 DERNIERES bougies puis filtre : elle
+    # couvre ~5,2 jours. Au-dela, elle rend vide PAR CONSTRUCTION -- pas parce
+    # que la donnee manque, mais parce que personne ne demande la bonne
+    # periode. 22 592 setups ont dormi 65 jours sur ce seul defaut.
+    #
+    # ⛔ ET POURQUOI EN SECOND, PAS EN PREMIER. La strategie 1 lit un cache de
+    # 200 s et coute UNE requete ; la plage de dates ne peut pas etre cachee
+    # (y ranger une serie d aout la servirait au chemin qui TRADE). La mettre
+    # en tete ferait 50 requetes non cachees par passage, sur un plan a 55
+    # credits par MINUTE partages avec la detection. Cet ordre n est donc pas
+    # une optimisation : c est ce qui empeche le rattrapage d affamer le
+    # trading.
+    fenetre = await _fenetre_explicite(pair, start, end)
+    if fenetre:
+        return fenetre
+
+    # Stratégie 3 : fallback DB locale (dev / backfill)
     fallback_db = Path("_macro_veto_analysis/backtest_candles.db")
-    if not fallback_db.exists():
+    if not _REPLI_DB_LOCALE or not fallback_db.exists():
         return []
     with sqlite3.connect(fallback_db) as c:
         rows = c.execute(
@@ -201,6 +304,9 @@ async def reconcile_pending_setups(
         dict de stats : {resolved, skipped_no_data, errors}
     """
     ensure_schema()
+    # Le budget de plages de dates se recharge A CHAQUE PASSAGE : sinon le
+    # premier le consomme et plus aucun autre ne peut en demander.
+    reinitialise_budget_fenetres()
     fetch_fn = fetch_5min_fn or fetch_5min_for_window
 
     now = datetime.now(timezone.utc)
