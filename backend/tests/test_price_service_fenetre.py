@@ -220,6 +220,131 @@ async def test_un_message_d_erreur_de_l_API_est_JOURNALISE(api):
     assert any("symbol not found" in m for m in journal), journal
 
 
+# ─── 429 : le plan Grow est a 55 credits PAR MINUTE, partages ───────────────
+
+
+class _Reponse429:
+    """Imite un refus de quota : `raise_for_status` leve, comme httpx."""
+
+    status_code = 429
+    headers: dict = {}
+
+    def raise_for_status(self):
+        import httpx as _h
+        raise _h.HTTPStatusError("429 Too Many Requests", request=None,
+                                 response=self)
+
+    def json(self):
+        return {}
+
+
+@pytest.mark.asyncio
+async def test_un_429_est_REESSAYE_puis_aboutit(api, monkeypatch):
+    """Mesure en production le 2026-10-26 : 38 tranches en rafale => 429 sur
+    TOUTES les paires, zero bougie, rien rattrape.
+
+    Le plan Grow donne **55 credits par MINUTE**, partages avec le cycle qui
+    trade. Un refus temporaire ne doit pas condamner la paire : on attend et on
+    reessaie.
+    """
+    pauses = []
+
+    async def _pause(d):
+        pauses.append(d)
+
+    monkeypatch.setattr(ps.asyncio, "sleep", _pause)
+
+    etat = {"n": 0}
+
+    def _refuse_puis_accepte(params):
+        etat["n"] += 1
+        if etat["n"] == 1:
+            raise _Reponse429().raise_for_status()
+        return _api_honnete(params)
+
+    debut = datetime(2026, 8, 20, tzinfo=timezone.utc)
+    api(_refuse_puis_accepte)
+
+    bougies = await ps.fetch_candles_fenetre(
+        "EUR/USD", "5min", debut, debut + timedelta(hours=2))
+
+    assert bougies, "le reessai n'a pas eu lieu : la paire est perdue sur un 429"
+    assert pauses, "aucune attente avant le reessai"
+    assert pauses[0] >= 1.0, f"attente trop courte : {pauses[0]}s"
+
+
+@pytest.mark.asyncio
+async def test_un_429_PERSISTANT_s_arrete_en_le_DISANT(api, monkeypatch):
+    """Borne les reessais : ne pas marteler une API qui refuse."""
+    import logging
+
+    appels = {"n": 0}
+
+    async def _pause(d):
+        return None
+
+    monkeypatch.setattr(ps.asyncio, "sleep", _pause)
+
+    def _refuse_toujours(params):
+        appels["n"] += 1
+        raise _Reponse429().raise_for_status()
+
+    debut = datetime(2026, 8, 20, tzinfo=timezone.utc)
+    api(_refuse_toujours)
+
+    with caplog_at(logging.WARNING) as journal:
+        bougies = await ps.fetch_candles_fenetre(
+            "EUR/USD", "5min", debut, debut + timedelta(days=30))
+
+    assert bougies == []
+    assert appels["n"] <= 5, f"{appels['n']} appels : martelage"
+    assert any("429" in m or "quota" in m.lower() for m in journal), journal
+
+
+@pytest.mark.asyncio
+async def test_la_CADENCE_entre_tranches_est_respectee(api, monkeypatch):
+    """Un rattrapage doit laisser de la bande a la production.
+
+    🔑 Le limiteur a jetons borne le DEBIT MOYEN, mais le rattrapage et le
+    cycle qui trade tirent sur le MEME seau de 55/min : sans cadence propre, le
+    rattrapage le vide et la detection devient aveugle.
+    """
+    pauses = []
+
+    async def _pause(d):
+        pauses.append(d)
+
+    monkeypatch.setattr(ps.asyncio, "sleep", _pause)
+    debut = datetime(2026, 8, 20, tzinfo=timezone.utc)
+    api(_api_honnete)
+
+    await ps.fetch_candles_fenetre(
+        "EUR/USD", "5min", debut, debut + timedelta(days=40),
+        pause_entre_tranches=3.0)
+
+    assert pauses, "aucune pause entre les tranches"
+    assert all(p == 3.0 for p in pauses), pauses
+    # 40 jours a 5 min = 11 520 bougies => au moins 3 tranches, donc >= 2 pauses
+    assert len(pauses) >= 2, len(pauses)
+
+
+@pytest.mark.asyncio
+async def test_sans_cadence_demandee_AUCUNE_pause(api, monkeypatch):
+    """Le defaut reste le comportement rapide : la cadence est un CHOIX."""
+    pauses = []
+
+    async def _pause(d):
+        pauses.append(d)
+
+    monkeypatch.setattr(ps.asyncio, "sleep", _pause)
+    debut = datetime(2026, 8, 20, tzinfo=timezone.utc)
+    api(_api_honnete)
+
+    await ps.fetch_candles_fenetre(
+        "EUR/USD", "5min", debut, debut + timedelta(days=40))
+
+    assert pauses == [], pauses
+
 # ─── petit utilitaire de capture, pour ne pas dependre de l'ordre des fixtures ─
 
 import contextlib  # noqa: E402

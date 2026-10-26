@@ -64,8 +64,18 @@ def est_forex_rattrapable(paire: str) -> bool:
     return True
 
 
+# Cadence par defaut entre deux tranches. MESURE le 2026-10-26 : le plan Grow
+# donne 55 credits par MINUTE, partages avec le cycle qui trade. Mon premier
+# passage a tire 38 tranches en rafale et a pris un 429 sur TOUTES les paires.
+# 4 s => ~15 requetes/min pour le rattrapage, le reste pour la production.
+# ⓘ 38 paires x ~5 tranches = ~190 requetes, soit ~13 min. Ce rattrapage n a
+# aucune urgence : la lenteur est le bon prix de la non-interference.
+CADENCE_SEC = 4.0
+
+
 async def chargeur(paire: str, debut: datetime, fin: datetime) -> list[Candle]:
-    return await price_service.fetch_candles_fenetre(paire, "5min", debut, fin)
+    return await price_service.fetch_candles_fenetre(
+        paire, "5min", debut, fin, pause_entre_tranches=CADENCE_SEC)
 
 
 async def _principal(args) -> int:
@@ -117,11 +127,21 @@ async def _principal(args) -> int:
 
 
 def main() -> int:
+    # ⛔ `global` doit preceder tout usage du nom dans la fonction, sinon
+    # SyntaxError -- et `ast.parse` ne l'attrape PAS (c'est une verification de
+    # table des symboles, faite a la compilation). Vu a la collecte pytest.
+    global CADENCE_SEC
+
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--essai", action="store_true", help="charge et mesure, n'ecrit RIEN")
     p.add_argument("--limite", type=int, default=None, help="s'arreter apres N resolutions")
     p.add_argument("--paire", action="append", help="restreindre a ces paires")
-    return asyncio.run(_principal(p.parse_args()))
+    p.add_argument("--cadence", type=float, default=None,
+                   help=f"secondes entre deux requetes (defaut {CADENCE_SEC})")
+    args = p.parse_args()
+    if args.cadence is not None:
+        CADENCE_SEC = args.cadence
+    return asyncio.run(_principal(args))
 
 
 if __name__ == "__main__":

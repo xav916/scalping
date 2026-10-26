@@ -425,6 +425,8 @@ async def fetch_candles_fenetre(
     debut: datetime,
     fin: datetime,
     plafond_tranches: int = 40,
+    pause_entre_tranches: float = 0.0,
+    reessais_429: int = 3,
 ) -> list[Candle]:
     """Bougies Twelve Data sur une PLAGE DE DATES [debut, fin], par tranches.
 
@@ -481,28 +483,52 @@ async def fetch_candles_fenetre(
                 pair, tranches - 1)
             break
 
-        try:
-            async with _get_semaphore():
-                async with httpx.AsyncClient(timeout=30.0) as client:
-                    reponse = await client.get(
-                        f"{TWELVEDATA_BASE}/time_series",
-                        params={
-                            "symbol": symbol,
-                            "interval": interval,
-                            "start_date": curseur.strftime("%Y-%m-%d %H:%M:%S"),
-                            "end_date": borne.strftime("%Y-%m-%d %H:%M:%S"),
-                            "outputsize": _BOUGIES_MAX_PAR_APPEL,
-                            "timezone": "UTC",
-                            "apikey": TWELVEDATA_API_KEY,
-                        },
-                        headers=HEADERS,
-                    )
-                    reponse.raise_for_status()
-                donnees = reponse.json()
-        except Exception as e:  # noqa: BLE001
-            logger.warning(
-                f"Twelve Data fenetre {pair} {curseur:%Y-%m-%d}->{borne:%Y-%m-%d}"
-                f" : {e} -- {len(brutes)} bougies obtenues avant l'erreur")
+        # ⛔ LE 429 N EST PAS UNE PANNE, c est un refus TEMPORAIRE. Mesure en
+        # production le 2026-10-26 : le plan Grow donne **55 credits par
+        # MINUTE** (et non par jour), partages avec le cycle qui trade. Mon
+        # premier passage a tire 38 tranches en rafale => 429 sur TOUTES les
+        # paires, zero bougie, rien rattrape. Abandonner la paire sur un refus
+        # de quota, c est confondre « pas maintenant » et « jamais » -- la meme
+        # confusion que le NO_DATA du matin.
+        donnees = None
+        for essai in range(reessais_429 + 1):
+            try:
+                async with _get_semaphore():
+                    async with httpx.AsyncClient(timeout=30.0) as client:
+                        reponse = await client.get(
+                            f"{TWELVEDATA_BASE}/time_series",
+                            params={
+                                "symbol": symbol,
+                                "interval": interval,
+                                "start_date": curseur.strftime("%Y-%m-%d %H:%M:%S"),
+                                "end_date": borne.strftime("%Y-%m-%d %H:%M:%S"),
+                                "outputsize": _BOUGIES_MAX_PAR_APPEL,
+                                "timezone": "UTC",
+                                "apikey": TWELVEDATA_API_KEY,
+                            },
+                            headers=HEADERS,
+                        )
+                        reponse.raise_for_status()
+                    donnees = reponse.json()
+                break
+            except Exception as e:  # noqa: BLE001
+                quota = "429" in str(e) or "Too Many Requests" in str(e)
+                if quota and essai < reessais_429:
+                    # 15 s, 30 s, 60 s : le seau se remplit a la minute, donc
+                    # une attente plus courte ne sert a rien.
+                    attente = 15.0 * (2 ** essai)
+                    logger.warning(
+                        f"Twelve Data fenetre {pair} : quota (429), attente"
+                        f" {attente:.0f}s puis reessai"
+                        f" {essai + 1}/{reessais_429}")
+                    await asyncio.sleep(attente)
+                    continue
+                logger.warning(
+                    f"Twelve Data fenetre {pair}"
+                    f" {curseur:%Y-%m-%d}->{borne:%Y-%m-%d} : {e}"
+                    f" -- {len(brutes)} bougies obtenues avant l'arret")
+                break
+        if donnees is None:
             break
 
         valeurs = donnees.get("values")
@@ -516,6 +542,8 @@ async def fetch_candles_fenetre(
             if not brutes and tranches >= 3:
                 break
             curseur = borne
+            if pause_entre_tranches and curseur < fin:
+                await asyncio.sleep(pause_entre_tranches)
             continue
 
         for item in valeurs:
@@ -536,6 +564,12 @@ async def fetch_candles_fenetre(
                 logger.debug(f"fenetre parsing {pair}: {e}")
                 continue
         curseur = borne
+        # ⚠️ La cadence est un CHOIX de l appelant, pas un defaut : le seau a
+        # jetons borne le debit MOYEN, mais rattrapage et cycle qui trade
+        # tirent sur le MEME plafond de 55/min. Sans cadence propre, le
+        # rattrapage le vide et la detection devient aveugle.
+        if pause_entre_tranches and curseur < fin:
+            await asyncio.sleep(pause_entre_tranches)
 
     if tranches >= plafond_tranches and curseur < fin:
         logger.warning(
