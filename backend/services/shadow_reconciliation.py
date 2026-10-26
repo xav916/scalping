@@ -121,6 +121,16 @@ SPREAD_SLIPPAGE_PCT = 0.0002  # 0.02%, identique au backtest
 # 8 par passage : la file se resorbe en plusieurs passages, et c'est tres bien.
 FENETRES_MAX_PAR_RUN = int(os.getenv("RECONCILE_FENETRES_MAX_PAR_RUN", "8"))
 
+# Delai avant de RETENTER un setup qu une tentative a laisse sans bougies.
+#
+# 🔑 Ce n est pas un abandon, c est un REPORT : la source peut revenir (pont
+# repare, magasin rempli). Sans ce delai, un setup insoluble revient au
+# passage suivant et bloque la tete de file pour toujours -- mesure en
+# production : 120 lignes « SANS BOUGIES » en 10 min, zero resolution, file en
+# hausse. Avec le delai, il est tente une fois par jour et laisse passer les
+# autres.
+REESSAI_HEURES = float(os.getenv("RECONCILE_REESSAI_HEURES", "24"))
+
 # Repli sur la base locale de bougies (dev et analyses). Desactivable pour les
 # tests, qui ne doivent pas dependre d'un fichier present ou non sur le disque.
 _REPLI_DB_LOCALE = True
@@ -331,17 +341,24 @@ async def reconcile_pending_setups(
         trous = ",".join("?" for _ in paires) or "NULL"
         clause_paires, args_paires = f" AND pair IN ({trous})", list(paires)
 
+    # Exclut les setups tentes recemment sans succes : ils ne doivent pas
+    # reoccuper la tete de file a chaque passage.
+    seuil_reessai = (now - timedelta(hours=REESSAI_HEURES)).isoformat()
+    clause_reessai = (" AND (derniere_tentative_at IS NULL"
+                      " OR derniere_tentative_at <= ?)")
+
     with sqlite3.connect(DB_PATH) as c:
         c.row_factory = sqlite3.Row
         rows = list(c.execute(
             """
             SELECT * FROM shadow_setups
              WHERE outcome IS NULL
-               AND bar_timestamp <= ?""" + clause_paires + """
+               AND bar_timestamp <= ?""" + clause_paires + clause_reessai + """
              ORDER BY bar_timestamp ASC
              LIMIT ?
             """,
-            (matured_cutoff.isoformat(), *args_paires, max_per_run),
+            (matured_cutoff.isoformat(), *args_paires,
+             seuil_reessai, max_per_run),
         ).fetchall())
 
         spare = max_per_run - len(rows)
@@ -351,12 +368,12 @@ async def reconcile_pending_setups(
                 SELECT * FROM shadow_setups
                  WHERE outcome IS NULL
                    AND bar_timestamp <= ?
-                   AND bar_timestamp > ?""" + clause_paires + """
+                   AND bar_timestamp > ?""" + clause_paires + clause_reessai + """
                  ORDER BY bar_timestamp ASC
                  LIMIT ?
                 """,
                 (early_cutoff.isoformat(), matured_cutoff.isoformat(),
-                 *args_paires, spare),
+                 *args_paires, seuil_reessai, spare),
             ).fetchall())
 
     if not rows:
@@ -454,6 +471,17 @@ async def reconcile_pending_setups(
                     + ("" if MARQUER_NO_DATA else " -- marquage DESARME,"
                        " le setup reste en file")
                 )
+            # On HORODATE la tentative : elle a eu lieu, elle n a rien rendu,
+            # et ce setup ne doit pas reoccuper la tete de file au passage
+            # suivant. ⛔ On n ecrit AUCUNE issue : c est un report, pas une
+            # condamnation -- la source peut revenir.
+            with sqlite3.connect(DB_PATH) as c:
+                c.execute(
+                    "UPDATE shadow_setups SET derniere_tentative_at = ?"
+                    " WHERE id = ?",
+                    (now.isoformat(), setup_dict["id"]),
+                )
+
             if matured and MARQUER_NO_DATA:
                 with sqlite3.connect(DB_PATH) as c:
                     c.execute(

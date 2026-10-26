@@ -611,6 +611,24 @@ def ensure_schema() -> None:
         if "resolved_backfill" not in cols:
             c.execute("ALTER TABLE shadow_setups ADD COLUMN"
                       " resolved_backfill INTEGER NOT NULL DEFAULT 0")
+        # Migration (2026-10-26) : horodatage de la DERNIERE TENTATIVE.
+        #
+        # 🔑 MESURE EN PRODUCTION. Les 674 setups les plus anciens de la file
+        # etaient des paires du PONT, dont l historique 5 min est inaccessible.
+        # La file etant servie `ORDER BY bar_timestamp ASC LIMIT 50`, ils
+        # occupaient la tete A CHAQUE PASSAGE : 120 lignes « SANS BOUGIES » en
+        # 10 min, ZERO resolution, et la file qui MONTE. Blocage de tete de
+        # file, exactement ce que ce module documente deja avoir corrige pour
+        # une autre population.
+        #
+        # ⛔ CE N EST PAS UNE CONDAMNATION : la colonne REPORTE, elle ne
+        # marque pas. Marquer ces 674 comme perdus serait refaire le `NO_DATA`
+        # du matin -- transformer « je ne sais pas aller les chercher » en
+        # « perte actee ». Ils sont retentes apres le delai : si le pont est
+        # repare ou le magasin rempli, ils se resolvent.
+        if "derniere_tentative_at" not in cols:
+            c.execute("ALTER TABLE shadow_setups ADD COLUMN"
+                      " derniere_tentative_at TIMESTAMP")
         c.execute(
             "CREATE INDEX IF NOT EXISTS idx_shadow_setups_pair_time "
             "ON shadow_setups (pair, bar_timestamp DESC)"
