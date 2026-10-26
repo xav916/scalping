@@ -137,10 +137,34 @@ ne doit pas être rendu.
 - les branches du critère (`t > +2` / `t < −2` / entre les deux) ;
 - chaque prédiction doit être **notée** juste ou fausse — une prédiction non
   notée bloque ;
-- 🔑 l'**empreinte du critère** : on hache la section « CRITÈRE » du fichier de
-  pré-inscription telle qu'elle est **sur le disque**, et on la compare au
-  haché de la même section dans `git show <commit-de-preinscription>:<fichier>`.
+- 🔑 l'**empreinte du critère** : on hache le **bloc `CRITERE-MACHINE`** du
+  fichier de pré-inscription tel qu'il est **sur le disque**, et on le compare
+  au haché du même bloc dans `git show <commit-de-preinscription>:<fichier>`.
   Un critère réécrit après coup donne deux hachés différents ⇒ **refus**.
+
+  ⛔ **RÉVISÉ LE 2026-10-26, et la première version était fausse.** Elle hachait
+  la **section en prose** « CRITÈRE ». Mesuré sur le corpus réel de
+  `docs/predictions/` : **16 formes** de titre contiennent « critère », **5
+  fichiers sur 38** en ont plusieurs, et dans l'un d'eux le premier est du
+  **récit** — 60 lignes avant le vrai critère. L'empreinte hachait donc la
+  mauvaise section : **fail-open** sur la garde même qu'elle constitue.
+
+  ⛔ Et le correctif intermédiaire — « retenir le titre où le mot-clé apparaît
+  le plus tôt » — était pire : il n'est **pas stable par ajout en fin de
+  fichier**, alors que le flux de travail **ajoute le verdict au fichier de la
+  pré-inscription**. Un titre de verdict commençant par « Critère » aurait
+  produit une **fausse accusation de falsification**. Une heuristique sur de la
+  prose française échange un défaut contre un autre.
+
+  🔑 **Le bloc machine supprime la classe entière de problème** : il est
+  délimité par un marqueur unique, non ambigu, lisible par machine, et déjà
+  exigé par le §5. Et il contient précisément ce qui ne doit pas bouger — les
+  seuils. La prose autour peut être réécrite, complétée, corrigée : ce n'est
+  pas elle qui engage.
+
+  ⇒ Conséquence : l'analyse de section n'a plus à départager des titres
+  ambigus. La règle d'ordre du document suffit, et le module commun redevient
+  simple.
 
 **Sortie** : le squelette du verdict, prêt à relire — jamais publié par elle.
 
