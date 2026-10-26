@@ -338,6 +338,33 @@ def test_le_marquage_NO_DATA_est_DESARME_par_defaut(temp_db):
         issue = c.execute("SELECT outcome FROM shadow_setups").fetchone()[0]
     assert issue is None, issue
 
+def test_le_journal_sort_MEME_quand_le_marquage_est_desarme(temp_db, caplog):
+    """Un setup mur sans bougies doit TOUJOURS produire une ligne de journal.
+
+    Pose le 2026-10-26 apres une erreur a moi : en posant l interrupteur du
+    marquage, j avais enferme le `logger.warning` DEDANS. Le chemin
+    redevenait muet -- exactement le defaut qui a cache la panne 65 jours.
+
+    Aucun test ne verifiait la SORTIE du journal : les tests ne lisaient que
+    les compteurs. C est ce trou qui a permis de livrer la version muette,
+    et c est lui que ce test ferme.
+    """
+    import logging
+
+    bar_ts = datetime.now(timezone.utc) - timedelta(hours=120)
+    _insert_pending_setup(temp_db, bar_ts)
+
+    with caplog.at_level(logging.WARNING,
+                         logger="backend.services.shadow_reconciliation"):
+        asyncio.run(recon.reconcile_pending_setups(
+            max_per_run=10, fetch_5min_fn=_fetch_vide,
+        ))
+
+    lignes = [r.getMessage() for r in caplog.records]
+    assert any("SANS BOUGIES" in l for l in lignes), lignes
+    assert any("DESARME" in l for l in lignes), (
+        "le journal doit dire que le marquage est desarme", lignes)
+
 def test_minimal_setup_dataclass():
     """_MinimalSetup expose les bons attributs pour simulate_trade_forward."""
     setup = recon._MinimalSetup(

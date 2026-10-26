@@ -314,6 +314,19 @@ async def reconcile_pending_setups(
             # Le marquage attend qu on sache si le 5 min HISTORIQUE est
             # accessible (il faudrait une plage de dates ; `fetch_candles`
             # n accepte aujourd hui qu un `outputsize`).
+            if matured:
+                # 🔑 LA JOURNALISATION EST INCONDITIONNELLE, et elle doit le
+                # rester. En posant l interrupteur j avais enferme ce
+                # warning DEDANS : le chemin redevenait muet, c est-a-dire
+                # exactement le defaut qui a cache la panne 65 jours.
+                # Repere par la mesure (0 ligne en 3 min), pas par relecture.
+                logger.warning(
+                    f"reconcile SANS BOUGIES {setup_dict['pair']}"
+                    f" {bar_ts.date()} ({tf}) : fenetre passee et aucune"
+                    f" bougie 5 min rendue par la source"
+                    + ("" if MARQUER_NO_DATA else " -- marquage DESARME,"
+                       " le setup reste en file")
+                )
             if matured and MARQUER_NO_DATA:
                 with sqlite3.connect(DB_PATH) as c:
                     c.execute(
@@ -322,11 +335,6 @@ async def reconcile_pending_setups(
                         ("NO_DATA", now.isoformat(), setup_dict["id"]),
                     )
                 stats["no_data_final"] += 1
-                logger.warning(
-                    f"reconcile NO_DATA {setup_dict['pair']} {bar_ts.date()}"
-                    f" ({tf}) : fenetre passee et aucune bougie 5 min --"
-                    f" hors retention de la source, irrecuperable"
-                )
             continue
 
         try:
