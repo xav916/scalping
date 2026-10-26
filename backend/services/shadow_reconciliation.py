@@ -234,11 +234,12 @@ async def reconcile_pending_setups(
                 "SELECT COUNT(*) FROM shadow_setups WHERE outcome IS NULL"
             ).fetchone()[0]
         return {
-            "resolved": 0, "skipped_no_data": 0, "errors": 0,
+            "resolved": 0, "skipped_no_data": 0, "errors": 0, "no_data_final": 0,
             "still_open": 0, "pending_remaining": remaining,
         }
 
-    stats = {"resolved": 0, "skipped_no_data": 0, "errors": 0, "still_open": 0}
+    stats = {"resolved": 0, "skipped_no_data": 0, "errors": 0,
+             "still_open": 0, "no_data_final": 0}
 
     # Cache des bougies pour ce run. Clé exacte (pair, début, fin) : les
     # setups d'un même cycle sur une même paire partagent leur bar_timestamp
@@ -278,6 +279,35 @@ async def reconcile_pending_setups(
 
         if not candles_5min:
             stats["skipped_no_data"] += 1
+            # DEFAUT MESURE LE 2026-10-26, et il a coute 20 513 setups.
+            #
+            # Ce chemin etait MUET et laissait le setup `outcome IS NULL`.
+            # Or la requete sert les plus ANCIENS d'abord : un setup dont la
+            # fenetre est sortie de la retention de la source (~2 semaines en
+            # 5 min) ne rendra JAMAIS de bougies, donc il etait reservi a
+            # chaque passage et BLOQUAIT LA FILE par sa propre tete. 22 347
+            # setups attendaient derriere lui, et rien ne le disait --
+            # 65 jours sans une ligne de journal.
+            #
+            # La frontiere est `matured`, deja calcule plus haut :
+            #   - fenetre encore OUVERTE : la donnee peut arriver en retard,
+            #     on reessaiera (comportement conserve, et c'est le bon) ;
+            #   - fenetre entierement PASSEE : irrecuperable pour toujours.
+            #     On l'INSCRIT, pour qu'il quitte la file et que la perte
+            #     soit comptable au lieu de dormir dans un NULL ambigu.
+            if matured:
+                with sqlite3.connect(DB_PATH) as c:
+                    c.execute(
+                        "UPDATE shadow_setups SET outcome = ?, exit_at = ?"
+                        " WHERE id = ?",
+                        ("NO_DATA", now.isoformat(), setup_dict["id"]),
+                    )
+                stats["no_data_final"] += 1
+                logger.warning(
+                    f"reconcile NO_DATA {setup_dict['pair']} {bar_ts.date()}"
+                    f" ({tf}) : fenetre passee et aucune bougie 5 min --"
+                    f" hors retention de la source, irrecuperable"
+                )
             continue
 
         try:

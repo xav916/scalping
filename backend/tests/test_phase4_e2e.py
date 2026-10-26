@@ -166,7 +166,7 @@ def test_e2e_no_data_pipeline(isolated_db, monkeypatch):
     stats = asyncio.run(recon.reconcile_pending_setups(max_per_run=10))
     assert stats == {
         "resolved": 0, "skipped_no_data": 0, "errors": 0,
-        "still_open": 0, "pending_remaining": 0,
+        "no_data_final": 0, "still_open": 0, "pending_remaining": 0,
     }
 
     # Summary vide

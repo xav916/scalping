@@ -68,7 +68,7 @@ def test_reconcile_no_pending(temp_db):
     stats = asyncio.run(recon.reconcile_pending_setups(max_per_run=10))
     assert stats == {
         "resolved": 0, "skipped_no_data": 0, "errors": 0,
-        "still_open": 0, "pending_remaining": 0,
+        "no_data_final": 0, "still_open": 0, "pending_remaining": 0,
     }
 
 
@@ -225,20 +225,90 @@ def test_reconcile_with_mock_fetch_sl(temp_db):
     assert row[1] < 0  # pertes
 
 
-def test_reconcile_skipped_no_data(temp_db):
-    """Si fetch retourne vide, le setup reste pending (skipped_no_data++)."""
+async def _fetch_vide(pair, start, end):
+    return []
+
+
+def test_reconcile_NON_mature_sans_bougies_reste_pending(temp_db):
+    """Fenetre encore OUVERTE et pas de bougies : on reessaiera. C'est juste.
+
+    La donnee 5 min peut arriver en retard ; un setup recent merite une
+    seconde chance.
+
+    50 h : au-dela du seuil de SELECTION (2 h) donc candidat, mais en deca du
+    TIMEOUT (96 h) donc pas mur. Mon premier jet utilisait 1 h -- le setup
+    n'etait alors meme pas selectionne, et le test ne mesurait rien.
+    """
+    bar_ts = datetime.now(timezone.utc) - timedelta(hours=50)
+    _insert_pending_setup(temp_db, bar_ts)
+
+    stats = asyncio.run(recon.reconcile_pending_setups(
+        max_per_run=10, fetch_5min_fn=_fetch_vide,
+    ))
+    assert stats["skipped_no_data"] == 1
+    assert stats["pending_remaining"] == 1
+
+
+def test_reconcile_mature_sans_bougies_est_marque_NO_DATA(temp_db):
+    """Fenetre entierement PASSEE et pas de bougies : irrecuperable, on l'inscrit.
+
+    CE TEST REMPLACE `test_reconcile_skipped_no_data`, QUI AFFIRMAIT
+    L'INVERSE -- « le setup reste pending » -- sur un setup de 120 h, donc MUR.
+    Ce comportement, specifie et vert pendant des mois, a coute 20 513 setups
+    perdus : mesure du 2026-10-26.
+
+    La source de bougies 5 min a une retention d'environ deux semaines. Un
+    setup mur dont la fenetre est hors retention ne sera JAMAIS resolvable --
+    la donnee n'existe plus nulle part. Le laisser `outcome IS NULL` le fait
+    reservir indefiniment par la requete `ORDER BY bar_timestamp ASC`, ce qui
+    BLOQUE LA FILE par sa propre tete.
+    """
     bar_ts = datetime.now(timezone.utc) - timedelta(hours=120)
     _insert_pending_setup(temp_db, bar_ts)
 
-    async def mock_empty_fetch(pair, start, end):
-        return []
-
     stats = asyncio.run(recon.reconcile_pending_setups(
-        max_per_run=10, fetch_5min_fn=mock_empty_fetch,
+        max_per_run=10, fetch_5min_fn=_fetch_vide,
     ))
-    assert stats["resolved"] == 0
     assert stats["skipped_no_data"] == 1
-    assert stats["pending_remaining"] == 1
+    assert stats["no_data_final"] == 1, stats
+    assert stats["pending_remaining"] == 0, "le setup doit QUITTER la file"
+
+    with sqlite3.connect(temp_db) as c:
+        issue = c.execute("SELECT outcome FROM shadow_setups").fetchone()[0]
+    assert issue == "NO_DATA", issue
+
+
+def test_une_tete_de_file_irrecuperable_ne_bloque_plus_la_file(temp_db):
+    """LE test de la panne du 21/08 : un setup irrecuperable en tete de file.
+
+    La requete sert les plus ANCIENS d'abord. Avec `max_per_run=1`, un seul
+    setup est servi par passage. Si la tete n'est jamais marquee, elle est
+    reservie a chaque fois et le setup recuperable derriere elle n'obtient
+    JAMAIS de creneau -- exactement ce qui s'est produit pendant 65 jours.
+
+    Ce test echoue sur l'ancien comportement : le second passage reservirait
+    la meme tete et `resolved` resterait a 0.
+    """
+    vieux = datetime.now(timezone.utc) - timedelta(hours=200)
+    recent = datetime.now(timezone.utc) - timedelta(hours=100)
+    _insert_pending_setup(temp_db, vieux, pair="XAU/USD")
+    _insert_pending_setup(temp_db, recent, pair="XAG/USD")
+
+    async def fetch_selectif(pair, start, end):
+        if pair == "XAU/USD":
+            return []
+        return _make_5min_candles(start, [2000.0, 2010.0, 2060.0])
+
+    p1 = asyncio.run(recon.reconcile_pending_setups(
+        max_per_run=1, fetch_5min_fn=fetch_selectif,
+    ))
+    assert p1["no_data_final"] == 1, p1
+
+    p2 = asyncio.run(recon.reconcile_pending_setups(
+        max_per_run=1, fetch_5min_fn=fetch_selectif,
+    ))
+    assert p2["resolved"] == 1, p2
+    assert p2["pending_remaining"] == 0, p2
 
 
 def test_minimal_setup_dataclass():
