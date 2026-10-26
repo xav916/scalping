@@ -9,6 +9,7 @@ import pytest
 
 from backend.models.schemas import Candle
 from backend.services import shadow_v2_core_long as shadow
+from scripts import rattrapage_commun as commun
 from scripts import rattrapage_crypto as rc
 
 
@@ -16,7 +17,10 @@ from scripts import rattrapage_crypto as rc
 def db(tmp_path, monkeypatch):
     chemin = tmp_path / "rattrapage_test.db"
     monkeypatch.setattr(shadow, "DB_PATH", chemin)
-    monkeypatch.setattr(rc, "DB_PATH", chemin)
+    # ⛔ Patcher la ou la valeur est LUE. Depuis l extraction du coeur partage
+    # (2026-10-26), c est `rattrapage_commun` qui lit `DB_PATH` -- patcher
+    # `rattrapage_crypto` ne protegeait plus rien, et le test a su le dire.
+    monkeypatch.setattr(commun, "DB_PATH", chemin)
     shadow.ensure_schema()
     return chemin
 

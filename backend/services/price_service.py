@@ -14,7 +14,7 @@ import asyncio
 import logging
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 
@@ -75,6 +75,15 @@ _PRICE_TTL_SEC = int(os.getenv("PRICE_CACHE_TTL", "5"))
 # Le débit moyen valait ~12/min. Tout le problème tenait à la concentration :
 # ~35 requêtes tirées en une à deux secondes, puis 178 s de silence.
 _TWELVEDATA_MAX_CONCURRENT = int(os.getenv("TWELVEDATA_MAX_CONCURRENT", "8"))
+
+# Plafond de bougies par appel `time_series` (palier 2 du rattrapage).
+_BOUGIES_MAX_PAR_APPEL = 5000
+
+# Duree d une bougie, pour calculer la largeur d une tranche de dates.
+_INTERVALLE_SECONDES = {
+    "1min": 60, "5min": 300, "15min": 900, "30min": 1800,
+    "1h": 3600, "2h": 7200, "4h": 14400, "1day": 86400,
+}
 
 # 50 et non 55 : une marge sous la limite du plan absorbe les réessais et les
 # appels faits hors de ce module. `0` désactive le limiteur (comportement
@@ -408,6 +417,136 @@ async def fetch_current_price(pair: str) -> float | None:
             logger.warning(f"Erreur prix {pair}: {e}")
 
     return None
+
+
+async def fetch_candles_fenetre(
+    pair: str,
+    interval: str,
+    debut: datetime,
+    fin: datetime,
+    plafond_tranches: int = 40,
+) -> list[Candle]:
+    """Bougies Twelve Data sur une PLAGE DE DATES [debut, fin], par tranches.
+
+    Posee le 2026-10-26 pour le palier 2 du rattrapage. `fetch_candles` ne sait
+    demander qu'un `outputsize` : pour une barre d'aout il rendait vide PAR
+    CONSTRUCTION, et c'est la cause racine des 65 jours de silence de la
+    reconciliation -- personne n'avait jamais demande la bonne periode.
+
+    ⛔ LE PIEGE, MESURE AVANT D'ECRIRE CETTE FONCTION. Sur une plage large,
+    l'API ne rend pas les premieres bougies de la plage mais les **5 000
+    DERNIERES** : demander [01/08 -> 26/10] rend du 08/10 au 26/10 et jette
+    aout **en silence**. Une pagination qui se contenterait d'une requete par
+    plage aurait donc « couvert » la periode en n'en rapportant que le quart,
+    sans la moindre erreur. D'ou le decoupage en TRANCHES bornees a
+    `_BOUGIES_MAX_PAR_APPEL` bougies chacune.
+
+    ⛔ NE TOUCHE PAS AU CACHE, ni en lecture ni en ecriture. Il est indexe sur
+    `(paire, intervalle)` SANS la taille : y ranger 19 584 bougies d'aout les
+    servirait au chemin qui TRADE pendant tout le TTL (defaut du 2026-09-08).
+
+    ⛔ PASSE PAR LE LIMITEUR DE DEBIT DE LA PRODUCTION. Un rattrapage ne doit
+    pas pouvoir affamer le cycle qui trade : si le seau refuse, on s'arrete en
+    le DISANT, on ne contourne pas. Rendre une serie partielle est acceptable ;
+    prendre la place de la detection ne l'est pas.
+
+    Best-effort : rend ce qui a ete obtenu, et journalise tout abandon.
+    """
+    symbol = SYMBOL_MAP.get(pair, pair)
+    if not TWELVEDATA_API_KEY:
+        logger.info("Pas de cle API Twelve Data configuree")
+        return []
+
+    pas = _INTERVALLE_SECONDES.get(interval)
+    if not pas:
+        logger.warning(f"fenetre: intervalle non gere {interval}")
+        return []
+    if fin <= debut:
+        return []
+
+    # Largeur d'une tranche : ce que l'API peut rendre d'un coup, avec marge.
+    largeur = timedelta(seconds=pas * int(_BOUGIES_MAX_PAR_APPEL * 0.85))
+
+    brutes: dict[datetime, Candle] = {}
+    curseur = debut
+    tranches = 0
+    while curseur < fin and tranches < plafond_tranches:
+        borne = min(curseur + largeur, fin)
+        tranches += 1
+
+        if not await _get_seau().acquerir():
+            logger.warning(
+                "Twelve Data fenetre %s : debit sature, arret apres %d tranche(s)"
+                " -- la periode n'est PAS entierement couverte",
+                pair, tranches - 1)
+            break
+
+        try:
+            async with _get_semaphore():
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    reponse = await client.get(
+                        f"{TWELVEDATA_BASE}/time_series",
+                        params={
+                            "symbol": symbol,
+                            "interval": interval,
+                            "start_date": curseur.strftime("%Y-%m-%d %H:%M:%S"),
+                            "end_date": borne.strftime("%Y-%m-%d %H:%M:%S"),
+                            "outputsize": _BOUGIES_MAX_PAR_APPEL,
+                            "timezone": "UTC",
+                            "apikey": TWELVEDATA_API_KEY,
+                        },
+                        headers=HEADERS,
+                    )
+                    reponse.raise_for_status()
+                donnees = reponse.json()
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                f"Twelve Data fenetre {pair} {curseur:%Y-%m-%d}->{borne:%Y-%m-%d}"
+                f" : {e} -- {len(brutes)} bougies obtenues avant l'erreur")
+            break
+
+        valeurs = donnees.get("values")
+        if not valeurs:
+            # ⚠️ Peut etre legitime (marche ferme sur la tranche) comme fautif
+            # (symbole inconnu). On le DIT, et on avance : boucler sur une
+            # tranche vide ne la remplira pas.
+            logger.warning(
+                f"Twelve Data fenetre {pair} {curseur:%Y-%m-%d}->{borne:%Y-%m-%d}"
+                f" : aucune valeur -- {donnees.get('message', '')}")
+            if not brutes and tranches >= 3:
+                break
+            curseur = borne
+            continue
+
+        for item in valeurs:
+            try:
+                ts = datetime.fromisoformat(item["datetime"]).replace(
+                    tzinfo=timezone.utc)
+                if not (debut <= ts <= fin) or ts in brutes:
+                    continue
+                brutes[ts] = Candle(
+                    timestamp=ts,
+                    open=float(item["open"]),
+                    high=float(item["high"]),
+                    low=float(item["low"]),
+                    close=float(item["close"]),
+                    volume=float(item.get("volume", 0) or 0),
+                )
+            except (KeyError, ValueError, TypeError) as e:
+                logger.debug(f"fenetre parsing {pair}: {e}")
+                continue
+        curseur = borne
+
+    if tranches >= plafond_tranches and curseur < fin:
+        logger.warning(
+            f"Twelve Data fenetre {pair} : plafond de {plafond_tranches}"
+            f" tranches atteint, arret a {curseur:%Y-%m-%d} avant"
+            f" {fin:%Y-%m-%d} -- periode INCOMPLETE")
+
+    bougies = sorted(brutes.values(), key=lambda c: c.timestamp)
+    logger.info(f"Twelve Data fenetre: {len(bougies)} bougies pour {pair}"
+                f" ({interval}) sur {tranches} tranche(s)")
+    return bougies
 
 
 async def _fetch_twelvedata(

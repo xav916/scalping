@@ -42,111 +42,50 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import bisect
 import logging
-import sqlite3
 import sys
-from collections import Counter
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 sys.path.insert(0, ".")
 
 from backend.models.schemas import Candle  # noqa: E402
 from backend.services import binance_klines_service as bks  # noqa: E402
-from backend.services import shadow_reconciliation as recon  # noqa: E402
-from backend.services.shadow_v2_core_long import DB_PATH, ensure_schema  # noqa: E402
+from backend.services.shadow_v2_core_long import ensure_schema  # noqa: E402
+from scripts import rattrapage_commun as commun  # noqa: E402
 
 logger = logging.getLogger("rattrapage_crypto")
 
-# Marge avant la plus ancienne barre et apres la plus recente : la fenetre de
-# resolution court APRES la barre (jusqu'a TIMEOUT_HOURS_MIN), et une bougie
-# juste avant sert de bord. Large volontairement : les bougies sont gratuites.
-MARGE_AVANT = timedelta(hours=6)
-MARGE_APRES = timedelta(hours=120)
+# ⛔ LE COEUR EST PARTAGE avec le palier 2 (`rattrapage_commun`). Extrait le
+# 2026-10-26 : les deux paliers ne different que par la SOURCE de bougies, et
+# dupliquer la selection, le chargement et la boucle aurait garanti que l un
+# derive de l autre. Les noms publics d ici sont conserves : les tests du
+# palier 1 les visent.
+MARGE_AVANT = commun.MARGE_AVANT
+MARGE_APRES = commun.MARGE_APRES
+fabrique_source = commun.fabrique_source
 
 
 def paires_crypto_en_file(db_path=None) -> dict[str, tuple[datetime, datetime]]:
     """Les paires crypto encore en file, avec leur intervalle de barres.
 
     Ne rend QUE les paires que Binance sait coter : une paire absente de la
-    table de correspondance n'a rien a faire dans un rattrapage Binance.
+    table de correspondance n a rien a faire dans un rattrapage Binance.
     """
-    with sqlite3.connect(f"file:{db_path or DB_PATH}?mode=ro", uri=True) as c:
-        lignes = c.execute(
-            "SELECT pair, MIN(bar_timestamp), MAX(bar_timestamp), COUNT(*)"
-            "  FROM shadow_setups WHERE outcome IS NULL"
-            " GROUP BY pair ORDER BY COUNT(*) DESC"
-        ).fetchall()
-    retenues: dict[str, tuple[datetime, datetime]] = {}
-    for paire, mn, mx, n in lignes:
-        if not bks.is_crypto_pair(paire):
-            logger.info(f"  (ignoree, pas sur Binance) {paire:10s} {n:6d} en file")
-            continue
-        retenues[paire] = (_date(mn), _date(mx))
-        logger.info(f"  retenue {paire:10s} {n:6d} en file  {mn[:10]} -> {mx[:10]}")
-    return retenues
+    return commun.paires_en_file(bks.is_crypto_pair, db_path)
 
 
-def _date(s: str) -> datetime:
-    d = datetime.fromisoformat(s)
-    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
-
-
-def fabrique_source(blocs: dict[str, list[Candle]]):
-    """Rend une fonction `fetch_5min_fn` qui SERT depuis la memoire.
-
-    Signature identique a `fetch_5min_for_window` pour pouvoir etre injectee
-    telle quelle. Aucune requete : les bougies ont deja ete chargees.
-
-    🔑 Recherche dichotomique et non filtre lineaire : appelee une fois par
-    setup sur ~20 000 bougies par paire, un filtre complet couterait 19 003 x
-    20 000 comparaisons pour rien.
-    """
-    index = {p: [c.timestamp for c in cs] for p, cs in blocs.items()}
-
-    async def source(pair: str, start: datetime, end: datetime) -> list[Candle]:
-        cs = blocs.get(pair)
-        if not cs:
-            return []
-        ts = index[pair]
-        g = bisect.bisect_left(ts, start)
-        d = bisect.bisect_right(ts, end)
-        return cs[g:d]
-
-    return source
+async def chargeur(paire: str, debut: datetime, fin: datetime) -> list[Candle]:
+    return await bks.fetch_klines_fenetre(paire, "5min", debut, fin)
 
 
 async def charge_les_blocs(paires: dict[str, tuple[datetime, datetime]]
                            ) -> dict[str, list[Candle]]:
-    """Charge, une fois par paire, tout l'intervalle utile."""
-    blocs: dict[str, list[Candle]] = {}
-    for paire, (mn, mx) in paires.items():
-        debut, fin = mn - MARGE_AVANT, mx + MARGE_APRES
-        bougies = await bks.fetch_klines_fenetre(paire, "5min", debut, fin)
-        blocs[paire] = bougies
-        if not bougies:
-            logger.warning(
-                f"  {paire:10s} AUCUNE bougie rendue pour"
-                f" {debut:%Y-%m-%d}->{fin:%Y-%m-%d} : cette paire ne sera PAS"
-                f" rattrapee (et ses setups restent en file, pas marques)")
-            continue
-        couverture = (bougies[-1].timestamp - bougies[0].timestamp).days
-        logger.info(
-            f"  {paire:10s} {len(bougies):6d} bougies,"
-            f" {bougies[0].timestamp:%Y-%m-%d} -> {bougies[-1].timestamp:%Y-%m-%d}"
-            f" ({couverture} j)")
-    return blocs
+    """Charge, une fois par paire, tout l intervalle utile."""
+    return await commun.charge_les_blocs(paires, chargeur)
 
 
-def _etat(db_path=None) -> tuple[int, Counter]:
-    with sqlite3.connect(f"file:{db_path or DB_PATH}?mode=ro", uri=True) as c:
-        n = c.execute(
-            "SELECT COUNT(*) FROM shadow_setups WHERE outcome IS NULL"
-        ).fetchone()[0]
-        issues = Counter(dict(c.execute(
-            "SELECT outcome, COUNT(*) FROM shadow_setups"
-            " WHERE resolved_backfill = 1 GROUP BY outcome").fetchall()))
-    return n, issues
+def _etat(db_path=None):
+    return commun.etat(db_path)
 
 
 async def _principal(args) -> int:
@@ -181,32 +120,7 @@ async def _principal(args) -> int:
 
     avant, _ = _etat()
     logger.info(f"=== resolution (file : {avant})")
-    source = fabrique_source(blocs)
-    faits = 0
-    sterile = 0
-    while args.limite is None or faits < args.limite:
-        lot = 100
-        if args.limite is not None:
-            lot = min(lot, args.limite - faits)
-        stats = await recon.reconcile_pending_setups(
-            max_per_run=lot,
-            fetch_5min_fn=source,
-            paires=servables,
-            marque_rattrapage=True,
-        )
-        avance = stats["resolved"]
-        faits += avance
-        if avance == 0:
-            sterile += 1
-            # Deux passages sans une resolution : la file crypto ne bouge plus
-            # (soit vide, soit tetes irresolubles). On ne tourne pas en rond.
-            if sterile >= 2:
-                logger.info("deux passages sans avancee : arret")
-                break
-        else:
-            sterile = 0
-            logger.info(f"  +{avance} resolus (total {faits}),"
-                        f" file {stats['pending_remaining']}")
+    faits = await commun.resout(blocs, limite=args.limite)
 
     apres, issues = _etat()
     logger.info("=== bilan")
