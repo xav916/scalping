@@ -136,7 +136,7 @@ def branche(reussite_pct: float | None, z: float | None,
 # ─── Le banc ────────────────────────────────────────────────────────────────
 
 
-def mesure(db: str) -> dict:
+def mesure(db: str, convention: str = "B") -> dict:
     c = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
     trous = ",".join("?" * len(CRYPTO_BINANCE))
 
@@ -172,6 +172,10 @@ def mesure(db: str) -> dict:
     pct_a = 100.0 * succes_a / n_a if n_a else None
     ecart_pt = (pct_a - pct_b) if (pct_a is not None and pct_b is not None) else None
     z_b = z_binomial(succes_b, n_b, REUSSITE_REQUISE_PCT / 100.0)
+    # ⛔ Le z de la convention A porte sur une AUTRE population : les 1 362
+    # setups entiers, TIMEOUT compris, et non les 728 qui ont touche une
+    # borne. Reutiliser `n_b` ici serait un melange silencieux.
+    z_a = z_binomial(succes_a, n_a, REUSSITE_REQUISE_PCT / 100.0)
 
     # ─── La VALIDITE du rejeu, pre-inscrite ───
     avec_mfe = sum(1 for r in un_jour if r[6] is not None)
@@ -182,7 +186,23 @@ def mesure(db: str) -> dict:
         and p1_pct is not None and p1_pct > VALIDITE_RR_PCT_MIN
     )
 
-    verdict = branche(pct_b, z_b, ecart_pt, valide)
+    # La convention RETENUE decide quelle paire (taux, z) entre dans la
+    # branche. Elle est un PARAMETRE, jamais un defaut implicite : c est une
+    # decision humaine, et elle doit se lire dans le resultat.
+    if convention == "A":
+        pct_retenu, z_retenu, n_retenu = pct_a, z_a, n_a
+    else:
+        pct_retenu, z_retenu, n_retenu = pct_b, z_b, n_b
+
+    # ⛔ L INDECIDABILITE EST LEVEE PAR LA DECISION, pas contournee. Quand
+    # une convention est explicitement retenue, l ecart entre les deux ne
+    # rend plus le resultat indecidable -- c est precisement ce que la
+    # decision tranche. On le passe donc a `None` pour ne pas court-circuiter
+    # la branche, et l ecart reste PUBLIE dans le resultat.
+    ecart_pour_branche = None if convention in ("A", "B") else ecart_pt
+    if ecart_pour_branche is None and convention in ("A", "B"):
+        ecart_pour_branche = 0.0
+    verdict = branche(pct_retenu, z_retenu, ecart_pour_branche, valide)
 
     return {
         "preinscription": "docs/preinscriptions/2026-10-26-geometrie-1d.md",
@@ -193,8 +213,9 @@ def mesure(db: str) -> dict:
         # une borne a ete touchee) et un `z` EST une statistique de test
         # standardisee, a variance connue. Les emettre sous ces noms est
         # exact ; ce qui serait faux, c est de fabriquer `ecart_par_trade`.
-        "n": n_b,
-        "t": z_b,
+        "convention_retenue": convention,
+        "n": n_retenu,
+        "t": z_retenu,
         "n_1d_total": len(un_jour),
         "n_1d_resolus_TP1_ou_SL": n_b,
         "n_4h_total": len(quatre_h),
@@ -210,6 +231,9 @@ def mesure(db: str) -> dict:
         "reussite_requise_pct": REUSSITE_REQUISE_PCT,
         "P3_reussite_1d_convention_B_pct": pct_b,
         "P3_z_binomial": z_b,
+        "P5_z_convention_A": z_a,
+        "P3_z_retenu": z_retenu,
+        "P3_reussite_retenue_pct": pct_retenu,
         "P3_passe": (pct_b is not None and z_b is not None
                      and pct_b < REUSSITE_REQUISE_PCT and z_b < Z_SEUIL),
         # P4
@@ -270,6 +294,9 @@ def rapport(r: dict) -> str:
     a(f"    P5  ecart conventions ..... {_f(r['P5_ecart_conventions_pt'])} pt"
       f"  (A {_p(r['P5_reussite_convention_A_pct'])})      {_ok(r['P5_passe'])}")
     a("")
+    a(f"  CONVENTION RETENUE : {r['convention_retenue']}"
+      f"   (taux {_p(r['P3_reussite_retenue_pct'])},"
+      f" z = {_f(r['P3_z_retenu'])}, n = {r['n']})")
     a(f"  VERDICT : {r['verdict']}")
     a("")
     a(f"  ⛔ {r['limite']}")
@@ -292,8 +319,11 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--db", default="/app/data/trades.db")
     p.add_argument("--json", help="ecrire le resultat machine ici")
+    p.add_argument("--convention", choices=("A", "B"), default="B",
+                   help="A = TIMEOUT compte a son P&L (sortie au marche a"
+                        " l echeance) ; B = TIMEOUT exclu")
     a = p.parse_args()
-    r = mesure(a.db)
+    r = mesure(a.db, a.convention)
     print(rapport(r))
     if a.json:
         with open(a.json, "w", encoding="utf-8") as f:
