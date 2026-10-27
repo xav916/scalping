@@ -101,9 +101,23 @@ def valider(markdown: str, anteriorite: bool | None) -> list[str]:
 
 
 def _premier_commit(chemin: str) -> str | None:
-    """SHA du commit qui a ajoute le fichier (ou None)."""
+    """SHA du commit qui a ajoute le fichier (ou None).
+
+    ⛔ `resolve()` EST INDISPENSABLE, et son absence a rendu cette fonction
+    inoperante jusqu au 2026-10-27. La ligne de commande passe un chemin
+    RELATIF (`docs/preinscriptions/...`) tandis que `--show-toplevel` rend un
+    chemin ABSOLU : `relative_to` levait alors `ValueError`, avalee par le
+    `except Exception` ci-dessous. L anteriorite etait donc TOUJOURS
+    indeterminable, et `or-preinscription` refusait a perpetuite sur ce point
+    -- y compris quand git avait parfaitement la reponse.
+
+    🔑 Et rien ne plantait : un defaut de code devenu « je ne sais pas », en
+    SILENCE. Aucun test n exercait cette couche (tous passaient
+    `anteriorite=True` en dur), ce qui est exactement « un test insensible au
+    defaut ne prouve rien ». Six tests la couvrent desormais.
+    """
     try:
-        path = pathlib.Path(chemin)
+        path = pathlib.Path(chemin).resolve()
         # Trouver le repo git root a partir du repertoire du fichier
         out_root = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],

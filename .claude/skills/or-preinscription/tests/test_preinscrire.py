@@ -288,3 +288,91 @@ def test_anteriorite_git_pas_un_depot():
             str(tmpdir / "preins.md"),
             str(tmpdir / "banc.py"))
         assert result is None, f"Attendu None (pas un depot), obtenu {result}"
+
+
+# ─── La couche GIT, qui n'etait testee par AUCUN test ───────────────────────
+#
+# ⛔ LE DEFAUT QUE CES TESTS FERMENT, trouve le 2026-10-27 en utilisant la
+# skill pour de vrai. `_premier_commit` faisait :
+#
+#     path = pathlib.Path(chemin)              # relatif, tel que passe
+#     root = ... git rev-parse --show-toplevel # ABSOLU
+#     rel_path = path.relative_to(root)        # ValueError
+#
+# Un chemin relatif compare a une racine absolue leve `ValueError`, avalee par
+# `except Exception: return None`. Resultat : l'anteriorite etait TOUJOURS
+# indeterminable, donc `or-preinscription` refusait a perpetuite sur ce point,
+# y compris quand git avait parfaitement la reponse.
+#
+# 🔑 Et il n'a pas plante : un defaut de code devenu « je ne sais pas », EN
+# SILENCE. Les tests existants passaient tous `anteriorite=True` en dur, donc
+# aucun n'exercait cette couche -- meme famille que « un test insensible au
+# defaut ne prouve rien ».
+
+
+def _depot_avec_deux_commits(tmp_path):
+    """Un vrai petit depot git : fichier A commite, puis fichier B."""
+    import subprocess
+
+    def git(*a):
+        out = subprocess.run(["git", *a], cwd=tmp_path, capture_output=True,
+                             text=True, timeout=30)
+        assert out.returncode == 0, (a, out.stderr)
+        return out.stdout
+
+    git("init", "-q")
+    git("config", "user.email", "banc@test")
+    git("config", "user.name", "banc")
+    (tmp_path / "preinscription.md").write_text("critere\n", encoding="utf-8")
+    git("add", "preinscription.md")
+    git("commit", "-q", "-m", "pre-inscription")
+    (tmp_path / "banc.py").write_text("print(1)\n", encoding="utf-8")
+    git("add", "banc.py")
+    git("commit", "-q", "-m", "banc")
+    return tmp_path
+
+
+def test_premier_commit_trouve_le_sha_avec_un_chemin_ABSOLU(tmp_path):
+    d = _depot_avec_deux_commits(tmp_path)
+    sha = preinscrire._premier_commit(str(d / "preinscription.md"))
+    assert sha and len(sha) == 40, sha
+
+
+def test_premier_commit_trouve_le_sha_avec_un_chemin_RELATIF(tmp_path,
+                                                            monkeypatch):
+    """LE CAS DU DEFAUT : c'est ainsi que la ligne de commande l'appelle."""
+    d = _depot_avec_deux_commits(tmp_path)
+    monkeypatch.chdir(d)
+    sha = preinscrire._premier_commit("preinscription.md")
+    assert sha and len(sha) == 40, (
+        "chemin relatif : le SHA doit etre trouve, pas avale en None", sha)
+
+
+def test_l_anteriorite_est_PROUVEE_dans_le_bon_sens(tmp_path, monkeypatch):
+    d = _depot_avec_deux_commits(tmp_path)
+    monkeypatch.chdir(d)
+    assert preinscrire.anteriorite_git("preinscription.md", "banc.py") is True
+
+
+def test_l_anteriorite_est_REFUSEE_dans_le_mauvais_sens(tmp_path, monkeypatch):
+    """Un banc ecrit AVANT la pre-inscription doit etre detecte."""
+    d = _depot_avec_deux_commits(tmp_path)
+    monkeypatch.chdir(d)
+    assert preinscrire.anteriorite_git("banc.py", "preinscription.md") is False
+
+
+def test_un_banc_NON_SUIVI_rend_None_et_pas_True(tmp_path, monkeypatch):
+    """⛔ Ne pas pouvoir prouver n'est pas prouver."""
+    d = _depot_avec_deux_commits(tmp_path)
+    (d / "jamais_commite.py").write_text("print(2)\n", encoding="utf-8")
+    monkeypatch.chdir(d)
+    assert preinscrire.anteriorite_git("preinscription.md",
+                                       "jamais_commite.py") is None
+
+
+def test_hors_de_tout_depot_git_rend_None(tmp_path, monkeypatch):
+    seul = tmp_path / "sans_git"
+    seul.mkdir()
+    (seul / "x.md").write_text("critere\n", encoding="utf-8")
+    monkeypatch.chdir(seul)
+    assert preinscrire._premier_commit("x.md") is None
