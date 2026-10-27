@@ -105,6 +105,59 @@ def _exige(d: dict, cle: str, ou: str):
     return d[cle]
 
 
+SEPT_BINANCE = ("BTC/USD", "ETH/USD", "XRP/USD", "LTC/USD",
+                "DOT/USD", "SOL/USD", "ADA/USD")
+
+_ENSEMBLES = {"7_BINANCE": SEPT_BINANCE}
+
+
+def parse_population(expression: str) -> dict:
+    """Le filtre de lignes, lu dans le critere. STRICT ET BAVARD.
+
+    ⛔ CE QUI EST EN JEU : un filtre mal lu mesurerait les MAUVAISES LIGNES, et
+    le resultat aurait l air parfaitement normal. C est le pire mode de panne
+    d un banc -- pire qu une erreur bruyante. Le parseur est donc volontairement
+    etroit et REFUSE tout ce qu il ne reconnait pas.
+
+    Clauses acceptees, separees par ` AND ` :
+      resolved_backfill=0|1 · timeframe=<x> · pair IN <ENSEMBLE>
+      bar_timestamp < <date> · bar_timestamp >= <date>
+    """
+    f = {"resolved_backfill": 1, "timeframe": None,
+         "pairs": None, "bar_max": None, "bar_min": None}
+    for brut in re.split(r"\s+AND\s+", (expression or "").strip()):
+        c = brut.strip()
+        if not c:
+            continue
+        m = re.match(r"^resolved_backfill\s*=\s*([01])$", c)
+        if m:
+            f["resolved_backfill"] = int(m.group(1))
+            continue
+        m = re.match(r"^timeframe\s*=\s*([A-Za-z0-9]+)$", c)
+        if m:
+            f["timeframe"] = m.group(1)
+            continue
+        m = re.match(r"^pair\s+IN\s+([A-Z0-9_]+)$", c)
+        if m:
+            nom = m.group(1)
+            if nom not in _ENSEMBLES:
+                raise SystemExit(
+                    f"ARRET : ensemble de paires inconnu [{nom}] dans la"
+                    f" population. Les ensembles connus : "
+                    f"{sorted(_ENSEMBLES)}.")
+            f["pairs"] = list(_ENSEMBLES[nom])
+            continue
+        m = re.match(r"^bar_timestamp\s*(<|>=)\s*(\S+)$", c)
+        if m:
+            f["bar_max" if m.group(1) == "<" else "bar_min"] = m.group(2)
+            continue
+        raise SystemExit(
+            f"ARRET : clause de population NON RECONNUE : {c!r}. Le banc"
+            f" refuse de deviner -- un filtre mal lu mesurerait les MAUVAISES"
+            f" lignes sans que rien ne le signale.")
+    return f
+
+
 class Criteres:
     """Les seuils ENGAGES, lus une fois et jamais devines."""
 
@@ -121,6 +174,8 @@ class Criteres:
         self.horizon = bloc.get("horizon", "1d")
         self.fenetre_h = int(float(bloc.get("fenetre_heures", 240)))
         self.tirages = int(float(bloc.get("tirages_placebo", 200)))
+        self.population = parse_population(bloc.get("population", ""))
+        self.admission_brut = bloc.get("admission", "")
         # ⛔ BORNE DE CHARGEMENT. Sans elle, la fenetre finissait a
         # `max(barre) + 120 h` -- DANS LE FUTUR -- donc 25 min plus tard
         # quelques bougies de plus existaient sous la meme borne et
@@ -147,10 +202,12 @@ class Criteres:
         # construction a `risk_pct` 0,37 % ; le 5min la pose sur `abs(t) < 2`
         # ET `tirages_battus < 95`. Extraire UN champ en dur aurait oblige a
         # reecrire le lecteur a chaque forme.
+        # ⚠️ `indecidable` est OPTIONNELLE, et ce n est pas un relachement :
+        # le critere du hors echantillon n en a pas, parce que son `rejet`
+        # (`abs(t) < 2`) joue exactement ce role -- un signal qui ne se
+        # distingue plus du hasard. Absente, il n y a simplement PAS de branche
+        # d indecidabilite, et `_indiscernables` rend False.
         self.indecidable_seuils = seuils_par_champ(bloc.get("indecidable", ""))
-        if not self.indecidable_seuils:
-            raise SystemExit(
-                "ARRET : [indecidable] ne porte aucun seuil lisible")
 
         # ⛔ LES PREDICTIONS SONT CHARGEES GENERIQUEMENT, et pour une raison
         # concrete : la pre-inscription 1d porte un `P4` sur les TIMEOUT, la
@@ -262,6 +319,8 @@ def _indiscernables(esp_reel, esp_placebo, t, battus, cr: "Criteres") -> bool:
     pas lire serait pire que ne rien conclure.
     """
     s = cr.indecidable_seuils
+    if not s:
+        return False
     if "abs:esperance_R_reel" in s:
         return (abs(esp_reel - esp_placebo) < s["abs:esperance_R_reel"]
                 and abs(t) < s.get("abs:t_contre_placebo", cr.t_min))
@@ -276,6 +335,14 @@ def _indiscernables(esp_reel, esp_placebo, t, battus, cr: "Criteres") -> bool:
 
 def branche(esp_reel, esp_placebo, t, battus, cout_R, valide,
             cr: "Criteres") -> str:
+    # ⛔ UN SECOND JUGE QUI NE COMPREND PAS LE CRITERE EST PIRE QUE PAS DE
+    # SECOND JUGE. La logique ci-dessous est codee pour un critere dont
+    # l admission porte sur `esperance_R_reel`. Le hors echantillon porte sur
+    # `ecart_signal` : trancher ici serait trancher a l aveugle. `or-verdict`
+    # evalue desormais TOUTES les clauses de n importe quel critere -- on lui
+    # laisse la main plutot que de deviner.
+    if "esperance_R_reel" not in cr.admission_brut:
+        return "RENDU_PAR_OR_VERDICT"
     """Applique MECANIQUEMENT les branches pre-inscrites."""
     if not valide:
         return "NON_CONCLUANT_VALIDITE"
@@ -294,14 +361,36 @@ def branche(esp_reel, esp_placebo, t, battus, cout_R, valide,
 # ─── Chargement ─────────────────────────────────────────────────────────────
 
 
-def lire_reels(db: str, horizon: str) -> list[dict]:
+def _sql_et_args(filtre: dict | None, horizon: str) -> tuple[str, list]:
+    """La clause WHERE et ses arguments, derives du filtre PRE-INSCRIT.
+
+    Tout passe par des parametres `?` : rien du critere n est interpole dans
+    le SQL, meme si le critere est un fichier de confiance.
+    """
+    f = filtre or {}
+    clauses = ["resolved_backfill = ?", "timeframe = ?"]
+    args = [f.get("resolved_backfill", 1), horizon]
+    if f.get("pairs"):
+        clauses.append("pair IN (%s)" % ",".join("?" * len(f["pairs"])))
+        args.extend(f["pairs"])
+    if f.get("bar_max"):
+        clauses.append("bar_timestamp < ?")
+        args.append(f["bar_max"])
+    if f.get("bar_min"):
+        clauses.append("bar_timestamp >= ?")
+        args.append(f["bar_min"])
+    return " AND ".join(clauses), args
+
+
+def lire_reels(db: str, horizon: str, filtre: dict | None = None) -> list[dict]:
+    where, args = _sql_et_args(filtre, horizon)
     c = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
     lignes = c.execute(
         "SELECT pair, bar_timestamp, direction, entry_price, stop_loss,"
         "       take_profit_1, outcome, pnl_pct_net"
         "  FROM shadow_setups"
-        " WHERE resolved_backfill = 1 AND timeframe = ?"
-        " ORDER BY pair, bar_timestamp", (horizon,)).fetchall()
+        " WHERE " + where +
+        " ORDER BY pair, bar_timestamp", args).fetchall()
     out = []
     for p, bt, sens, e, sl, tp, issue, pnl in lignes:
         d = datetime.fromisoformat(bt)
@@ -448,6 +537,25 @@ _NOTATION = {
         "cout median AU-DESSUS du seuil",
         lambda m, v: m["cout_R_median"] is not None
         and m["cout_R_median"] > v),
+    "P1_ecart_signal_min": (
+        "ecart du signal AU-DESSUS du seuil",
+        lambda m, v: m["ecart_signal"] is not None and m["ecart_signal"] > v),
+    "P2_t_contre_placebo_min": (
+        "t AU-DESSUS du seuil",
+        lambda m, v: m["t_contre_placebo"] is not None
+        and m["t_contre_placebo"] > v),
+    "P3_esperance_R_reel_attendue_max": (
+        "esperance reelle sous le seuil",
+        lambda m, v: m["esperance_R_reel"] is not None
+        and m["esperance_R_reel"] < v),
+    "P4_esperance_R_placebo_attendue_max": (
+        "placebo sous le seuil",
+        lambda m, v: m["esperance_R_placebo"] is not None
+        and m["esperance_R_placebo"] < v),
+    "P5_t_hors_echantillon_max": (
+        "t sous la reference en echantillon",
+        lambda m, v: m["t_contre_placebo"] is not None
+        and m["t_contre_placebo"] < v),
     "P5_ecart_esperance_B_moins_A_max": (
         "B - A sous le seuil",
         lambda m, v: m["ecart_esperance_B_moins_A"] is not None
@@ -477,7 +585,7 @@ def mesure(db: str, cr: "Criteres", tirages: int | None = None,
 
     logging.getLogger("banc").info("=== lecture des setups 1d rattrapes")
     tirages = cr.tirages if tirages is None else tirages
-    reels = lire_reels(db, cr.horizon)
+    reels = lire_reels(db, cr.horizon, cr.population)
     if not reels:
         return {"erreur": "aucun setup 1d rattrape"}
 
@@ -595,6 +703,11 @@ def mesure(db: str, cr: "Criteres", tirages: int | None = None,
         "cout_R_median": cout_R,
         "esperance_R_reel": esp_reel,
         "esperance_R_placebo": esp_placebo,
+        # L ECART est la statistique du hors echantillon : invariant au cout,
+        # les deux bras le payant a l identique.
+        "ecart_signal": (esp_reel - esp_placebo
+                         if (esp_reel is not None and esp_placebo is not None)
+                         else None),
         "esperance_R_convention_B": esp_B,
         "esperance_R_timeout": esp_timeout,
         "tirages_demandes": tirages,

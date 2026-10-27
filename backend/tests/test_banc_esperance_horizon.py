@@ -556,3 +556,80 @@ def test_le_CONTROLE_ne_reconstruit_les_bougies_qu_UNE_FOIS_par_paire():
     assert compte["n"] == len(bougies), (
         "les bougies ont ete reconstruites %d fois au lieu de %d"
         % (compte["n"], len(bougies)))
+
+
+# ─── La POPULATION vient du critere, et toute surprise ARRETE ───────────────
+#
+# ⛔ CE QUI EST EN JEU : un filtre mal lu mesurerait les MAUVAISES LIGNES, et
+# le resultat aurait l'air parfaitement normal. C'est le pire mode de panne
+# possible pour un banc, donc le parseur est volontairement etroit et refuse
+# tout ce qu'il ne reconnait pas.
+
+
+def test_la_population_du_5min_se_parse():
+    cr = banc.Criteres("docs/preinscriptions/2026-10-27-esperance-5min.md")
+    f = cr.population
+
+    assert f["resolved_backfill"] == 1
+    assert f["timeframe"] == "5min"
+    assert f.get("pairs") is None
+    assert f.get("bar_max") is None
+
+
+def test_la_population_du_HORS_ECHANTILLON_se_parse():
+    cr = banc.Criteres("docs/preinscriptions/2026-10-28-hors-echantillon-5min.md")
+    f = cr.population
+
+    assert f["resolved_backfill"] == 0, "le hors echantillon lit le VECU"
+    assert f["timeframe"] == "5min"
+    assert len(f["pairs"]) == 7 and "BTC/USD" in f["pairs"]
+    assert f["bar_max"].startswith("2026-08-20")
+
+
+def test_une_clause_de_population_INCONNUE_est_un_ARRET(tmp_path):
+    """🔑 Mieux vaut un banc qui refuse qu'un banc qui mesure autre chose."""
+    f = tmp_path / "pop.md"
+    LIGNES = [
+        "# critere", "", "<!-- CRITERE-MACHINE",
+        "horizon: 5min", "fenetre_heures: 96", "tirages_placebo: 200",
+        "population: resolved_backfill=0 AND quelque_chose_de_neuf > 3",
+        "validite: n_reel >= 10 ET couverture_bougies_pct > 99"
+        " ET abs(risk_pct_median_placebo - risk_pct_median_reel) < 0.01"
+        " ET tirages_aboutis >= 190",
+        "admission: ecart_signal > 0 ET t_contre_placebo > 2.00"
+        " ET tirages_battus_pct >= 95.0",
+        "rejet: abs(t_contre_placebo) < 2.00",
+        "P1_ecart_signal_min: 0.0", "-->",
+    ]
+    f.write_text(chr(10).join(LIGNES) + chr(10), encoding="utf-8")
+
+    with pytest.raises(SystemExit) as e:
+        banc.Criteres(str(f))
+
+    assert "quelque_chose_de_neuf" in str(e.value), str(e.value)
+
+
+def test_le_banc_RENVOIE_AU_JUGE_quand_le_critere_change_de_forme():
+    """⛔ Le critere du hors echantillon porte sur `ecart_signal`, pas sur
+    l'esperance. Le `branche()` du banc, dont la logique est codee pour
+    l'ancienne forme, ne doit PAS trancher a l'aveugle : un second juge qui ne
+    comprend pas le critere est pire que pas de second juge.
+    """
+    cr = banc.Criteres("docs/preinscriptions/2026-10-28-hors-echantillon-5min.md")
+
+    v = banc.branche(0.05, -0.095, 3.0, 99.0, 0.0951, valide=True, cr=cr)
+
+    assert v == "RENDU_PAR_OR_VERDICT", v
+
+
+def test_les_predictions_du_hors_echantillon_sont_notables():
+    cr = banc.Criteres("docs/preinscriptions/2026-10-28-hors-echantillon-5min.md")
+    mesures = {"ecart_signal": 0.0557, "t_contre_placebo": 3.0,
+               "esperance_R_reel": -0.04, "esperance_R_placebo": -0.095,
+               "tirages_battus_pct": 99.0, "cout_R_median": 0.0951,
+               "esperance_R_timeout": 0.0, "ecart_esperance_B_moins_A": 0.0}
+
+    notes = banc.noter_predictions(cr, mesures)
+
+    assert set(notes) == set(cr.predictions)
+    assert all(d["passe"] for d in notes.values()), notes
