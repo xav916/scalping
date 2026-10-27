@@ -1425,6 +1425,34 @@ def _peer_control_cache_hours() -> float:
 # vivier suffit a ce que la decision ne soit plus polluee.
 #
 # Desarmable en une variable, pour cette raison meme.
+# ─── Exclusion des lignes RATTRAPEES du vivier d admission ─────────────────
+#
+# DECISION DE XAVIER le 2026-10-27, apres mesure du cout.
+#
+# ⛔ LE DEFAUT CORRIGE EST DE MOI. Le rattrapage du 2026-10-26 a injecte
+# 21 805 issues dans `shadow_setups`. Mesure du vivier le lendemain :
+# **20 498 lignes sur 26 465, soit 77,5 %** etaient de la donnee rattrapee --
+# dans le mecanisme qui est condition NECESSAIRE au passage en AUTO_EXEC. Et
+# son esperance est de signe OPPOSE au vecu : -0,0333 R contre +0,0919 R.
+# La colonne `resolved_backfill` existe pour permettre exactement cette
+# separation ; ce module ne la lisait pas.
+#
+# COUT MESURE AVANT D ARMER, et il est borne : 5 paires cote ACHAT perdent le
+# controle inter-paires (EUR/GBP 170->29, USD/CHF 146->29, EUR/JPY 138->27,
+# GBP/JPY 131->25, XAG/USD 53->0) pour un seuil a 30. Cote vente, AUCUNE.
+# Quatre des cinq sont a 25-29 : elles repasseront la barre en quelques
+# semaines de donnee vecue, la reconciliation ayant ete reparee le 26/10.
+# ⚠️ Le controle conditionne le PASSAGE en AUTO_EXEC, pas le maintien : ces
+# paires y sont deja et n en sortent pas ; elles ne pourraient plus y REVENIR
+# automatiquement si elles etaient mises en pause.
+#
+# ⓘ Au moment d armer, l interrupteur global vaut DENY/DISARMED_MANUALLY
+# depuis le 2026-10-12 : le cout operationnel immediat est donc NUL.
+PAC_EXCLURE_RATTRAPES = (
+    _os.getenv("PAC_EXCLURE_RATTRAPES", "1").strip().lower()
+    not in ("0", "false", "off", "no"))
+
+
 PAC_EXCLURE_HORIZON_1D = (
     _os.getenv("PAC_EXCLURE_HORIZON_1D", "1").strip().lower()
     not in ("0", "false", "off", "no"))
@@ -1459,6 +1487,22 @@ def _clause_1d() -> str:
     return " AND (timeframe IS NULL OR timeframe != '1d')"
 
 
+def _clause_rattrapes() -> str:
+    """La clause SQL d exclusion des lignes rattrapees, ou la chaine vide.
+
+    ⛔ `resolved_backfill IS NULL OR resolved_backfill = 0`, et non le seul
+    `= 0` : MEME PIEGE QUE POUR LE 1d, paye une fois le meme jour. La
+    migration a pose la colonne en `NOT NULL DEFAULT 0`, donc aucun NULL
+    n existe aujourd hui -- mais une base plus ancienne ou un futur
+    `ALTER TABLE` sans defaut en recreeraient, et ces lignes-la sont des
+    lignes VECUES (la colonne n existait pas quand elles ont ete ecrites).
+    Elles doivent RESTER. Un test l epingle.
+    """
+    if not PAC_EXCLURE_RATTRAPES:
+        return ""
+    return " AND (resolved_backfill IS NULL OR resolved_backfill = 0)"
+
+
 def _fetch_peer_control_rows(direction: str) -> list[tuple]:
     """Lignes `shadow_setups` résolues, ce sens, depuis la fenêtre saine.
 
@@ -1478,7 +1522,8 @@ def _fetch_peer_control_rows(direction: str) -> list[tuple]:
             """
             SELECT id, pair, bar_timestamp, risk_pct, pnl_pct_net
               FROM shadow_setups
-             WHERE direction = ?""" + _clause_1d() + """
+             WHERE direction = ?""" + _clause_1d()
+                                        + _clause_rattrapes() + """
                AND bar_timestamp >= ?
                AND outcome IN ('TP1', 'SL')
                AND pnl_pct_net IS NOT NULL
