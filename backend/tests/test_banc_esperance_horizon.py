@@ -14,9 +14,14 @@ import pytest
 
 from backend.models.schemas import Candle, TradeDirection
 from backend.services.backtest_engine import simulate_trade_forward
-from scripts import banc_esperance_1d as banc
+from scripts import banc_esperance_horizon as banc
 
 T0 = datetime(2026, 8, 20, tzinfo=timezone.utc)
+
+# Les criteres REELS, lus dans la pre-inscription commitee. Les tests portent
+# donc sur ce qui est engage, pas sur des valeurs inventees ici.
+CR_1D = banc.Criteres("docs/preinscriptions/2026-10-27-esperance-1d.md")
+CR_4H = banc.Criteres("docs/preinscriptions/2026-10-27-esperance-4h.md")
 
 
 def _bougies(specs: list[tuple[float, float, float]]) -> list[Candle]:
@@ -147,71 +152,123 @@ def test_la_part_de_tirages_battus():
 
 
 def test_la_VALIDITE_passe_avant_tout():
-    assert banc.branche(1.0, 0.0, 9.0, 100.0, 0.002, valide=False) \
+    assert banc.branche(1.0, 0.0, 9.0, 100.0, 0.002, valide=False, cr=CR_1D) \
         == "NON_CONCLUANT_VALIDITE"
 
 
 def test_reel_et_placebo_INDISCERNABLES_rendent_INDECIDABLE():
-    assert banc.branche(-0.001, -0.005, 0.3, 50.0, 0.002, valide=True) \
+    assert banc.branche(-0.001, -0.005, 0.3, 50.0, 0.002, valide=True, cr=CR_1D) \
         == "INDECIDABLE_REEL_ET_PLACEBO_INDISCERNABLES"
 
 
 def test_l_ADMISSION_exige_les_TROIS_conditions():
-    assert banc.branche(0.30, 0.00, 3.0, 99.0, 0.002, valide=True) \
+    assert banc.branche(0.30, 0.00, 3.0, 99.0, 0.002, valide=True, cr=CR_1D) \
         == "ADMISSION_information_a_l_entree"
     # t insuffisant
-    assert banc.branche(0.30, 0.00, 1.0, 99.0, 0.002, valide=True) \
+    assert banc.branche(0.30, 0.00, 1.0, 99.0, 0.002, valide=True, cr=CR_1D) \
         != "ADMISSION_information_a_l_entree"
     # tirages battus insuffisants
-    assert banc.branche(0.30, 0.00, 3.0, 80.0, 0.002, valide=True) \
+    assert banc.branche(0.30, 0.00, 3.0, 80.0, 0.002, valide=True, cr=CR_1D) \
         != "ADMISSION_information_a_l_entree"
     # sous le cout
-    assert banc.branche(0.001, 0.00, 3.0, 99.0, 0.002, valide=True) \
+    assert banc.branche(0.001, 0.00, 3.0, 99.0, 0.002, valide=True, cr=CR_1D) \
         != "ADMISSION_information_a_l_entree"
 
 
 def test_le_REJET_exige_une_esperance_NEGATIVE_et_un_t_faible():
-    assert banc.branche(-0.20, 0.00, -1.0, 10.0, 0.002, valide=True) \
+    assert banc.branche(-0.20, 0.00, -1.0, 10.0, 0.002, valide=True, cr=CR_1D) \
         == "REJET_horizon_1d_ECARTE"
 
 
 def test_une_esperance_positive_SANS_le_t_n_est_ni_l_un_ni_l_autre():
     """⛔ Le piege : publier une admission sur le seul signe de l'esperance."""
-    assert banc.branche(0.30, 0.00, 1.0, 60.0, 0.002, valide=True) \
+    assert banc.branche(0.30, 0.00, 1.0, 60.0, 0.002, valide=True, cr=CR_1D) \
         == "NON_CONCLUANT_BRANCHES_EN_DESACCORD"
 
 
 # ─── Les seuils viennent du fichier PRE-INSCRIT ─────────────────────────────
 
 
-def test_les_seuils_du_banc_sont_ceux_de_la_PRE_INSCRIPTION():
-    """⛔ Un banc qui recopie ses seuils peut deriver du critere engage sans
-    que rien ne le signale."""
-    import pathlib
-    import re
-    import sys
-    sys.path.insert(0, ".claude/skills")
-    from or_commun import sections
+def test_les_criteres_sont_LUS_et_differents_selon_le_fichier():
+    """⛔ CE QUI REMPLACE LE TEST DES SEUILS RECOPIES.
 
-    md = pathlib.Path(
-        "docs/preinscriptions/2026-10-27-esperance-1d.md"
-    ).read_text(encoding="utf-8")
-    bloc = sections.bloc_machine(md)
-    assert bloc, "bloc machine introuvable"
+    Le banc ne porte plus aucun seuil de decision : il les LIT. Deux criteres
+    engagent des valeurs differentes, et le banc doit servir les deux sans
+    qu une seule constante traine dans le code.
+    """
+    assert CR_1D.horizon == "1d" and CR_1D.fenetre_h == 240
+    assert CR_4H.horizon == "4h" and CR_4H.fenetre_h == 96
+    assert CR_1D.n_min == 1000 and CR_4H.n_min == 1500
+    assert CR_1D.ecart_risk_max == 1.0 and CR_4H.ecart_risk_max == 0.05
+    assert CR_1D.t_min == CR_4H.t_min == 2.00
 
-    assert int(bloc["tirages_placebo"]) == banc.TIRAGES_PLACEBO
-    assert bloc["convention"] == "A"
-    assert int(bloc["cellules"]) == 1
-    assert float(bloc["P2_esperance_R_placebo_abs_max"]) == banc.P2_PLACEBO_ABS_MAX
-    assert float(bloc["P4_esperance_R_timeout_abs_max"]) == banc.P4_TIMEOUT_ABS_MAX
-    assert float(bloc["P5_ecart_esperance_B_moins_A_max"]) == banc.P5_ECART_B_MOINS_A_MAX
-    assert float(bloc["P3_tirages_battus_pct_attendu_max"]) == banc.ADMISSION_BATTUS_PCT
 
-    for attendu in (str(banc.VALIDITE_N_MIN), "99", str(banc.VALIDITE_TIRAGES_MIN)):
-        assert attendu in bloc["validite"], (attendu, bloc["validite"])
-    assert "2.00" in bloc["admission"] and "95.0" in bloc["admission"]
-    assert "0.01" in bloc["indecidable"]
-    assert str(banc.INDECIDABLE_ECART_R) in bloc["indecidable"]
+def test_les_DEUX_abs_de_la_clause_indecidable_ne_se_COLLISIONNENT_pas():
+    """⛔ BUG TROUVE DANS MON PROPRE LECTEUR.
+
+    `abs(esperance_reel - esperance_placebo) < 0,01 ET abs(t) < 2,00` : une cle
+    unique « abs » faisait ecraser 0,01 par 2,00. C est exactement la liaison
+    silencieuse que ce lecteur existe pour empecher.
+    """
+    d = banc.seuils_par_champ(
+        "abs(esperance_R_reel - esperance_R_placebo) < 0.01"
+        " ET abs(t_contre_placebo) < 2.00")
+    assert d == {"abs:esperance_R_reel": 0.01, "abs:t_contre_placebo": 2.0}
+    assert CR_1D.indecidable_ecart == 0.01, "et pas 2,00"
+
+
+def test_un_seuil_ABSENT_du_bloc_est_un_ARRET_et_pas_un_defaut(tmp_path):
+    """🔑 Retomber sur une valeur de secours ferait mesurer autre chose que
+    ce qui a ete souscrit."""
+    ENTETE = "# critere"
+    CLAUSES = [
+        "<!-- CRITERE-MACHINE",
+        "horizon: 4h",
+        "fenetre_heures: 96",
+        "tirages_placebo: 200",
+        # ⛔ la clause `abs(...)` du risque MANQUE volontairement
+        "validite: n_reel >= 1500 ET couverture_bougies_pct > 99"
+        " ET tirages_aboutis >= 190",
+        "admission: t_contre_placebo > 2.00 ET tirages_battus_pct >= 95.0",
+        "indecidable: abs(esperance_R_reel - esperance_R_placebo) < 0.01",
+        "P1_esperance_R_reel_attendue_max: 0.0",
+        "-->",
+    ]
+    f = tmp_path / "ampute.md"
+    f.write_text(ENTETE + chr(10) + chr(10) + chr(10).join(CLAUSES) + chr(10),
+                 encoding="utf-8")
+
+    with pytest.raises(SystemExit) as e:
+        banc.Criteres(str(f))
+
+    assert "abs:risk_pct_median_placebo" in str(e.value), str(e.value)
+
+
+def test_une_PREDICTION_inconnue_est_un_ARRET():
+    """⛔ Une prediction inscrite mais NON NOTEE serait un critere applique en
+    PARTIE, sans que rien ne le dise."""
+    class _Faux:
+        predictions = {"P9_quelque_chose_de_neuf": 1.0}
+
+    with pytest.raises(SystemExit) as e:
+        banc.noter_predictions(_Faux(), {})
+
+    assert "P9_quelque_chose_de_neuf" in str(e.value)
+    assert "EN PARTIE" in str(e.value)
+
+
+def test_les_P4_DIFFERENTS_des_deux_criteres_sont_tous_deux_notes():
+    """Le 1d predit sur les TIMEOUT, le 4h sur le COUT. Les deux doivent etre
+    notables par la meme table."""
+    mesures = {"esperance_R_reel": -0.06, "esperance_R_placebo": 0.04,
+               "tirages_battus_pct": 0.0, "esperance_R_timeout": 0.055,
+               "cout_R_median": 0.0537, "ecart_esperance_B_moins_A": -0.10}
+    n1 = banc.noter_predictions(CR_1D, mesures)
+    n4 = banc.noter_predictions(CR_4H, mesures)
+    assert "P4_esperance_R_timeout_abs_max" in n1
+    assert "P4_cout_R_median_min" in n4
+    assert all(d["passe"] for d in n1.values()), n1
+    assert all(d["passe"] for d in n4.values()), n4
 
 
 # ─── Le point d'ENTREE, que rien n'exercait ─────────────────────────────────
@@ -240,7 +297,7 @@ def test_mesure_sur_une_base_VIDE_ne_leve_pas(tmp_path):
                 stop_loss REAL, take_profit_1 REAL, outcome TEXT,
                 pnl_pct_net REAL, resolved_backfill INTEGER DEFAULT 0)""")
 
-    r = banc.mesure(str(db))
+    r = banc.mesure(str(db), CR_1D)
 
     assert r.get("erreur"), r
     assert "aucun setup" in r["erreur"]
@@ -268,15 +325,8 @@ def test_main_configure_le_JOURNAL_sans_NameError(tmp_path, monkeypatch, capsys)
                 stop_loss REAL, take_profit_1 REAL, outcome TEXT,
                 pnl_pct_net REAL, resolved_backfill INTEGER DEFAULT 0)""")
 
-    code = banc.main(["--db", str(db)]) if _main_accepte_argv() else None
-    if code is None:
-        monkeypatch.setattr("sys.argv", ["banc", "--db", str(db)])
-        code = banc.main()
+    code = banc.main(["--db", str(db), "--preinscription",
+                      "docs/preinscriptions/2026-10-27-esperance-1d.md"])
 
     assert code == 1, "une base vide est un ARRET, donc code 1"
     assert "ARRET" in capsys.readouterr().out
-
-
-def _main_accepte_argv() -> bool:
-    import inspect
-    return bool(inspect.signature(banc.main).parameters)
