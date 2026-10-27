@@ -330,3 +330,40 @@ def test_main_configure_le_JOURNAL_sans_NameError(tmp_path, monkeypatch, capsys)
 
     assert code == 1, "une base vide est un ARRET, donc code 1"
     assert "ARRET" in capsys.readouterr().out
+
+
+def test_le_RAPPORT_ne_lit_aucune_cle_que_le_RESULTAT_n_ecrit_pas():
+    """⛔ LE TEST QUI AURAIT SAUVE DOUZE MINUTES DE MESURE.
+
+    Le 2026-10-27, `rapport()` lisait `r['validite_n_min']` que le dict de
+    resultat n'ecrivait pas : `KeyError` apres douze minutes de chargement et
+    200 tirages, et -- le JSON etant ecrit APRES le rapport a l'epoque -- la
+    mesure entiere a ete perdue.
+
+    🔑 Ce test est STATIQUE : il compare les cles LUES par `rapport()` aux cles
+    ECRITES par `mesure()`, sans avoir besoin de la moindre bougie. C'est
+    exactement le genre de verification qu'un banc long merite, parce qu'y
+    echouer coute une mesure entiere.
+    """
+    import inspect
+    import re
+
+    src_mesure = inspect.getsource(banc.mesure)
+    src_rapport = inspect.getsource(banc.rapport)
+
+    ecrites = set(re.findall(r'^\s+"([a-zA-Z_][a-zA-Z0-9_]*)":',
+                             src_mesure, re.M))
+    ecrites |= set(re.findall(r'resultat\["([a-zA-Z_][a-zA-Z0-9_]*)"\]',
+                              src_mesure))
+    lues = set(re.findall(r"""r\[['"]([a-zA-Z_][a-zA-Z0-9_]*)['"]\]""",
+                          src_rapport))
+    lues |= set(re.findall(r"""r\.get\(['"]([a-zA-Z_][a-zA-Z0-9_]*)['"]""",
+                           src_rapport))
+
+    # `erreur`, `accord`, `essais`, `consigne` appartiennent a la branche
+    # d'ARRET, construite ailleurs : elles sont legitimement absentes.
+    BRANCHE_ARRET = {"erreur", "accord", "essais", "consigne"}
+    manquantes = sorted(lues - ecrites - BRANCHE_ARRET)
+
+    assert not manquantes, (
+        "rapport() lit des cles que mesure() n'ecrit pas : %s" % manquantes)

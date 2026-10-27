@@ -537,6 +537,10 @@ def mesure(db: str, cr: "Criteres", tirages: int | None = None,
         "horizon": cr.horizon,
         "fenetre_heures": cr.fenetre_h,
         "critere_lu_dans": cr.source,
+        "validite_n_min": cr.n_min,
+        "validite_couverture_min": cr.couverture_min,
+        "validite_ecart_risk_max": cr.ecart_risk_max,
+        "validite_tirages_min": cr.tirages_min,
     }
     # ⛔ Les predictions sont notees APRES coup, sur les mesures REELLEMENT
     # emises. Les noter dans le dict en construction obligerait a recopier
@@ -617,11 +621,19 @@ def main(argv: list[str] | None = None) -> int:
     cr = Criteres(a.preinscription)
     r = mesure(a.db, cr, a.tirages,
                controle=not a.sans_controle_moteur)
-    print(rapport(r))
+
+    # ⛔ LE JSON EST ECRIT AVANT LE RAPPORT, et ca vient d etre paye cher. Le
+    # 2026-10-27, un KeyError dans `rapport()` a detruit une mesure de DOUZE
+    # MINUTES : tout etait calcule, rien n etait sauve. Un defaut de mise en
+    # forme ne doit jamais pouvoir faire perdre une mesure.
     if a.json:
         with open(a.json, "w", encoding="utf-8") as f:
             json.dump(r, f, indent=2, ensure_ascii=False, default=str)
-        print(f"\n  resultat machine : {a.json}")
+
+    print(rapport(r))
+    if a.json:
+        print()
+        print("  resultat machine : " + a.json)
     return 1 if "erreur" in r else 0
 
 
