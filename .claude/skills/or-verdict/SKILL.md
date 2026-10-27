@@ -8,10 +8,11 @@ description: >-
   critere a ete reecrit apres coup. Declenche sur : « le resultat est »,
   « la mesure donne », « ca rapporte », « verdict », « conclusion », avant
   tout chiffre issu d'une mesure.
-  ⛔ HORS PORTEE : ne juge que les REJEUX. Un banc sans rejeu -- un taux contre
-  un seuil arithmetique, une esperance contre un placebo -- sera refuse faute
-  d'`ecart_par_trade`, et c'est le comportement juste : publier son verdict
-  sans cette skill, jamais fabriquer le champ.
+  Juge DEUX formes, declarees par le champ `forme` du resultat : `rejeu`
+  (defaut, fidelite mesuree par `ecart_par_trade`) et `placebo` (toutes les
+  clauses du critere recalculees). ⛔ Un banc qui compare un taux a un simple
+  seuil arithmetique, sans second bras ni rejeu, reste hors portee -- et ne
+  doit JAMAIS fabriquer `ecart_par_trade` pour passer la porte.
 ---
 
 # or-verdict
@@ -34,65 +35,76 @@ d'avance -> NON CONCLUANT.
 
 ## Ce qu'elle refuse
 
-- un banc qui n'emet pas `ecart_par_trade` et `valide` : la validite n'est pas
-  calculable, donc le verdict n'est pas rendable. ⚠️ Si votre banc n'a PAS de
-  rejeu -- un taux contre un seuil, une esperance contre un placebo -- ce refus
-  est attendu : voir « HORS PORTEE » plus bas, et surtout **ne fabriquez pas le
-  champ** ;
+- un banc de forme `rejeu` qui n'emet pas `ecart_par_trade` et `valide` : la
+  validite n'est pas calculable, donc le verdict n'est pas rendable. ⚠️ Si
+  votre banc compare le reel a un PLACEBO, declarez `forme: "placebo"` -- il
+  sera juge sur ses clauses, et `ecart_par_trade` n'est alors pas attendu. ⛔ Ne
+  fabriquez JAMAIS ce champ pour passer la porte ;
+- une forme de banc inconnue : elle n'est pas rabattue sur `rejeu` ;
+- sur la forme `placebo` : une clause du critere NON TENUE, ILLISIBLE, ou qui
+  cite un champ absent du resultat. Un critere ne s'applique pas en partie ;
 - un rejeu hors de la barre pre-inscrite ;
 - une expression de seuil (`admission`, `rejet`, `validite`) sans nombre lisible ;
 - un critere dont l'empreinte ne correspond plus a sa version commitee ;
 - ⛔ et une empreinte **indeterminable** : ne pas pouvoir comparer n'est pas
   comparer.
 
-## ⛔ HORS PORTEE : les bancs NON APPARIES
+## Les DEUX FORMES de banc jugees
 
-**Cette skill juge des REJEUX, et rien d'autre.** Un rejeu rejoue une periode
-reelle et se confronte a ce qui s'est passe ; `ecart_par_trade` mesure cette
-fidelite, et c'est ce que la condition de validite controle.
+La forme est **declaree** dans le resultat, sous `forme`. ⛔ Elle n'est jamais
+devinee : inferer « placebo » de `ecart_par_trade is None` confondrait « il n'y
+a pas de rejeu » avec « le rejeu est casse ». Une forme **inconnue** est
+refusee, pas traitee comme un rejeu -- se tromper doit rendre bavard, jamais
+permissif. Forme absente = `rejeu`, donc toute pre-inscription anterieure au
+2026-10-27 est jugee exactement comme avant.
 
-Elle ne sait donc **pas** juger un banc qui n'a pas de realite vecue a
-laquelle se comparer. Deux cas rencontres le **2026-10-27**, tous deux refuses
-sur `[ecart_par_trade] est null` :
-
-| banc | ce qu'il compare | pourquoi hors portee |
+| `forme` | ce qu'elle compare | validite exigee |
 |---|---|---|
-| `banc_geometrie_1d` (`6fe3d82`) | un taux de reussite a un **seuil arithmetique** (35,71 % = 1/(1+1,8)) | aucun second bras, aucune periode rejouee |
-| `banc_esperance_1d` (`b2ed1f6`) | une esperance reelle a un **placebo** de 200 tirages | le placebo n'est pas une realite vecue : c'est une distribution de reference |
+| `rejeu` (defaut) | une periode rejouee a la realite VECUE | `abs(ecart_par_trade)` sous la barre pre-inscrite |
+| `placebo` | le reel a une distribution de REFERENCE | **toutes** les clauses de `validite`, recalculees |
 
-### Ce qu'il faut faire face a ce refus
+### La forme `placebo` (posee le 2026-10-27)
 
-✅ **Le lire comme un refus LEGITIME** et publier le verdict du banc lui-meme,
-en disant que `or-verdict` ne couvre pas cette forme. Les deux verdicts du
-27/10 ont ete publies ainsi (`cf31258`, `0b8106b`), et c'etait correct.
+🔑 **Les clauses sont RECALCULEES, le drapeau du banc ne suffit pas.** C'est la
+raison d'etre de cette skill : un banc qui s'auto-declare `valide: true` alors
+que ses propres nombres violent une clause est **refuse**, et la clause fautive
+est nommee avec sa valeur mesuree.
 
-⛔ **NE JAMAIS fabriquer `ecart_par_trade`.** Emettre `0.0` pour passer la
-porte ferait croire a un rejeu de fidelite PARFAITE -- l'exact contraire de la
-verite, qui est qu'il n'y a pas de rejeu. C'est la faute que cette skill
-existe pour empecher, commise sur son propre champ de controle.
+⛔ **`admission` et `rejet` sont evalues EN ENTIER**, pas sur leur premier
+nombre. Un critere a trois clauses dont on ne verifierait que le `t` donnerait
+un feu vert sur un critere PARTIEL -- et c'est exactement sur un critere
+partiel que le banc du 27/10 aurait ete publie a tort.
 
-🔑 Emettre en revanche `n` et `t` sous ces noms est **exact** quand ils ont un
-sens : `n` est la population du test, et un `z` **est** une statistique de test
-standardisee a variance connue. Ce qui est faux, c'est d'inventer une fidelite
-de rejeu qui n'existe pas.
+Trois formes de clause sont comprises, separees par ` ET ` :
 
-### Ce qu'il manquerait pour les couvrir
+```
+champ <op> nombre                     n_reel >= 1000
+champ_a <op> champ_b                  esperance_R_reel > cout_R_median
+abs(champ_a - champ_b) <op> nombre    abs(risk_pct_median_placebo
+                                          - risk_pct_median_reel) < 1.0
+```
 
-Une seconde forme de validite, propre aux bancs apparies **a un placebo** :
-non pas « le rejeu reproduit-il la realite » mais « le placebo reproduit-il la
-structure du reel » -- memes paires, meme nombre d'observations par paire,
-meme periode, meme geometrie, meme sens. Le banc du 27/10 la calcule deja
-(`risk_pct_median_placebo` contre `risk_pct_median_reel`, `tirages_aboutis`),
-mais sous des noms que cette skill ne lit pas. ⚠️ Tant que ce n'est pas fait,
-**le refus est le comportement juste** : une skill qui juge une forme qu'elle
-ne comprend pas serait pire que son absence.
+⛔ **Une clause illisible REFUSE, elle n'est pas ignoree.** Passer outre une
+clause non comprise reviendrait a publier sur un critere partiel. Idem pour un
+champ cite par le critere mais absent du resultat, ou non numerique : refus,
+en le nommant.
 
+⚠️ L'evaluateur est **volontairement etroit**. Un evaluateur d'expressions
+arbitraires ne serait pas auditable, et ce qui juge une mise en production doit
+l'etre. Une quatrieme forme de clause se rajoute en quelques lignes, avec son
+test ; elle ne doit pas se deviner.
+
+### Ce que la forme `placebo` ne dit toujours PAS
+
+Elle verifie que le **placebo reproduit la structure du reel** (memes paires,
+meme nombre d'observations, meme periode, meme geometrie, meme sens -- via les
+clauses que la pre-inscription ecrit). Elle ne verifie **pas** que le placebo
+est un bon contrefactuel : ca, c'est la conception du banc, et aucune skill ne
+la remplace.
 
 ## Hors v1 (futures extensions)
 
 - Verification que chaque prediction du fichier de pre-inscription est notee
   (exige `sections.compter_predictions`).
-- Une **seconde forme de validite** pour les bancs apparies a un PLACEBO, qui
-  remplacerait `ecart_par_trade` par « le placebo reproduit-il la structure du
-  reel ». Cf. « HORS PORTEE » : tant que ce n'est pas fait, ces bancs sont
-  refuses, et c'est volontaire.
+- ✅ **FAIT le 2026-10-27** : la seconde forme de validite pour les bancs
+  apparies a un PLACEBO. Cf. « Les DEUX FORMES de banc jugees ».

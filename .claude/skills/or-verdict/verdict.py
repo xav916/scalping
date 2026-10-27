@@ -7,17 +7,25 @@ Le 25/10, deux mesures et deux issues opposees :
 
 🔑 Une barre calculee arrete ; une bonne intention ecrite, non.
 
-⛔ HORS PORTEE -- LES BANCS NON APPARIES. Cette skill juge des REJEUX :
-`ecart_par_trade` mesure la fidelite d un rejeu a la realite vecue. Un banc
-sans realite a laquelle se comparer -- un taux contre un seuil arithmetique,
-une esperance contre un placebo -- n a pas cette quantite, et sera refuse sur
-`[ecart_par_trade] est null`. C EST LE COMPORTEMENT JUSTE.
+DEUX FORMES DE BANC sont jugees, declarees par le champ `forme` du resultat :
 
-⛔ Ne jamais fabriquer ce champ pour passer la porte : emettre `0.0` ferait
-croire a une fidelite PARFAITE alors qu il n y a pas de rejeu du tout. Ce
-serait commettre, sur le champ de controle de cette skill, exactement la faute
-qu elle existe pour empecher. Voir la section « HORS PORTEE » du SKILL.md,
-avec les deux cas rencontres le 2026-10-27.
+  - `rejeu` (defaut) : une periode rejouee, confrontee a la realite VECUE.
+    `ecart_par_trade` mesure cette fidelite, et la barre pre-inscrite la
+    borne.
+  - `placebo` (pose le 2026-10-27) : le reel confronte a une distribution de
+    REFERENCE. Pas de rejeu, donc pas d `ecart_par_trade` ; a la place,
+    TOUTES les clauses du critere sont RECALCULEES contre les champs du
+    resultat.
+
+⛔ LA FORME EST DECLAREE, JAMAIS DEVINEE, et une forme inconnue est REFUSEE --
+pas rabattue sur `rejeu`.
+
+⛔ ET NE JAMAIS FABRIQUER `ecart_par_trade` sur un banc qui n en a pas :
+emettre `0.0` ferait croire a une fidelite PARFAITE alors qu il n y a pas de
+rejeu du tout. Ce serait commettre, sur le champ de controle de cette skill,
+exactement la faute qu elle existe pour empecher. Un banc qui compare un taux
+a un simple seuil arithmetique, sans second bras, reste hors portee : publier
+son verdict sans cette skill est la bonne reponse.
 """
 from __future__ import annotations
 
@@ -25,6 +33,7 @@ import argparse
 import hashlib
 import json
 import pathlib
+import re
 import subprocess
 import sys
 
@@ -41,7 +50,6 @@ def _seuil(expression: str) -> float | None:
     Fail-closed : ancre sur l'operateur de comparaison. Un nombre nu ou sans
     operateur (ex. 'p95 par permutation') rend None, pas un nombre incident.
     """
-    import re
     _SEUIL = re.compile(r"[<>]=?\s*([-+]?\d+(?:[.,]\d+)?)")
     m = _SEUIL.search(expression or "")
     return float(m.group(1).replace(",", ".")) if m else None
@@ -87,6 +95,198 @@ def _problemes_requis(resultat: dict) -> list[str]:
     return problemes
 
 
+
+# ─── Formes de banc ────────────────────────────────────────────────────────
+#
+# ⛔ LA FORME EST DECLAREE, JAMAIS DEVINEE. Inferer « placebo » de
+# `ecart_par_trade is None` confondrait « il n'y a pas de rejeu » avec « le
+# rejeu est casse » -- deux situations qui n'appellent pas le meme verdict.
+FORME_REJEU = "rejeu"
+FORME_PLACEBO = "placebo"
+FORMES = (FORME_REJEU, FORME_PLACEBO)
+
+#: Champs exiges de la forme PLACEBO. `ecart_par_trade` n'en fait pas partie :
+#: il n'y a pas de rejeu dont mesurer la fidelite. Le reste demeure.
+REQUIS_PLACEBO = ("n", "t", "valide")
+
+_CLAUSE_SIMPLE = re.compile(
+    r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*(<=|>=|<|>)\s*([-+]?\d+(?:[.,]\d+)?)\s*$")
+# Comparaison de DEUX CHAMPS. Forme indispensable, et trouvee manquante par
+# les tests : « esperance_R_reel > cout_R_median » compare un resultat a un
+# cout mesure, pas a une constante. Sans elle l evaluateur declarait
+# l admission illisible et refusait TOUT -- fail-closed correct, mais inutile.
+_CLAUSE_CHAMPS = re.compile(
+    r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*(<=|>=|<|>)"
+    r"\s*([A-Za-z_][A-Za-z0-9_]*)\s*$")
+
+_CLAUSE_ECART = re.compile(
+    r"^\s*abs\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*-\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)"
+    r"\s*(<=|>=|<|>)\s*([-+]?\d+(?:[.,]\d+)?)\s*$")
+
+_OPERATEURS = {
+    "<": lambda a, b: a < b,
+    "<=": lambda a, b: a <= b,
+    ">": lambda a, b: a > b,
+    ">=": lambda a, b: a >= b,
+}
+
+
+def _nombre(resultat: dict, champ: str) -> tuple[float | None, str | None]:
+    """La valeur numerique de `champ`, ou `(None, probleme nomme)`."""
+    if champ not in resultat:
+        return None, "[%s] cite par le critere mais ABSENT du resultat" % champ
+    v = resultat[champ]
+    if v is None:
+        return None, "[%s] cite par le critere mais null" % champ
+    if isinstance(v, bool):
+        return None, "[%s] est un booleen, pas un nombre" % champ
+    try:
+        return float(v), None
+    except (TypeError, ValueError):
+        return None, ("[%s] n'est pas convertible en nombre (type %s, "
+                      "valeur %r)" % (champ, type(v).__name__, v))
+
+
+def evaluer_clauses(expression: str, resultat: dict
+                    ) -> tuple[bool | None, list[str]]:
+    """Evalue une expression multi-clauses contre les champs du resultat.
+
+    Rend `(verdict, raisons)`. `verdict is None` = **expression non
+    evaluable**, ce qui n'est NI vrai NI faux.
+
+    ⛔ FAIL-CLOSED SUR CE QUI N'EST PAS COMPRIS. Une clause illisible, un champ
+    absent ou non numerique rend `None` en NOMMANT le probleme -- jamais `True`
+    par defaut, et jamais une clause silencieusement ignoree. Ignorer une
+    clause qu'on ne comprend pas revient a publier sur un critere PARTIEL,
+    c'est-a-dire la faute exacte que cette skill existe pour empecher.
+
+    Deux formes de clause sont acceptees, separees par ` ET ` :
+      - `champ <op> nombre`
+      - `abs(champ_a - champ_b) <op> nombre`
+
+    Volontairement etroit : un evaluateur d'expressions arbitraires ne serait
+    pas auditable, et ce qui juge une mise en production doit l'etre.
+    """
+    if not (expression or "").strip():
+        return None, ["expression de critere vide"]
+
+    raisons: list[str] = []
+    tenue = True
+    for brute in re.split(r"\s+ET\s+", expression):
+        clause = brute.strip()
+        if not clause:
+            continue
+
+        m = _CLAUSE_ECART.match(clause)
+        if m:
+            a, b, op, seuil = m.group(1), m.group(2), m.group(3), m.group(4)
+            va, pa = _nombre(resultat, a)
+            vb, pb = _nombre(resultat, b)
+            if pa or pb:
+                return None, [x for x in (pa, pb) if x]
+            s = float(seuil.replace(",", "."))
+            ecart = abs(va - vb)
+            if not _OPERATEURS[op](ecart, s):
+                tenue = False
+                raisons.append(
+                    "clause NON tenue : abs(%s - %s) = %.4f, attendu %s %s"
+                    " (%s = %.4f, %s = %.4f)"
+                    % (a, b, ecart, op, seuil, a, va, b, vb))
+            continue
+
+        m = _CLAUSE_SIMPLE.match(clause)
+        if m:
+            champ, op, seuil = m.group(1), m.group(2), m.group(3)
+            v, probleme = _nombre(resultat, champ)
+            if probleme:
+                return None, [probleme]
+            s = float(seuil.replace(",", "."))
+            if not _OPERATEURS[op](v, s):
+                tenue = False
+                raisons.append(
+                    "clause NON tenue : %s = %s, attendu %s %s"
+                    % (champ, _joli(v), op, seuil))
+            continue
+
+        m = _CLAUSE_CHAMPS.match(clause)
+        if m:
+            a_, op, b_ = m.group(1), m.group(2), m.group(3)
+            va, pa = _nombre(resultat, a_)
+            vb, pb = _nombre(resultat, b_)
+            if pa or pb:
+                return None, [x for x in (pa, pb) if x]
+            if not _OPERATEURS[op](va, vb):
+                tenue = False
+                raisons.append(
+                    "clause NON tenue : %s = %s, attendu %s %s = %s"
+                    % (a_, _joli(va), op, b_, _joli(vb)))
+            continue
+
+        return None, ["clause ILLISIBLE, donc non evaluable : %r -- le"
+                      " critere ne peut pas etre applique en partie" % clause]
+
+    return tenue, raisons
+
+
+def _joli(v: float) -> str:
+    """Un nombre lisible : entier sans decimale, sinon quatre chiffres."""
+    return "%d" % v if float(v).is_integer() else "%.4f" % v
+
+
+def _juger_placebo(resultat: dict, bloc: dict) -> tuple[str, list[str]]:
+    """La forme PLACEBO : toutes les clauses, recalculees.
+
+    ⛔ ADMISSION ET REJET SONT EVALUES EN ENTIER, pas sur leur premier nombre.
+    Un critere d'admission a trois clauses dont on ne verifierait que le `t`
+    donnerait un feu vert sur un critere PARTIEL -- et c'est precisement sur un
+    critere partiel que le banc du 27/10 aurait ete publie a tort.
+    """
+    raisons: list[str] = []
+
+    manques = [c for c in REQUIS_PLACEBO
+               if c not in resultat or resultat[c] is None]
+    if manques:
+        return REFUS, ["champ(s) REQUIS invalide(s) sur la forme placebo : %s"
+                       % "; ".join("[%s] absent ou null" % c for c in manques)]
+    if not isinstance(resultat["valide"], bool):
+        return REFUS, ["[valide] n'est pas un booleen veritable (type %s,"
+                       " valeur %r)" % (type(resultat["valide"]).__name__,
+                                        resultat["valide"])]
+
+    tenue, details = evaluer_clauses(bloc.get("validite", ""), resultat)
+    if tenue is None:
+        return REFUS, ["condition de validite NON evaluable : %s"
+                       % "; ".join(details)]
+    if not tenue:
+        return REFUS, ["condition de validite NON tenue : %s"
+                       % "; ".join(details)]
+    if not resultat["valide"]:
+        return REFUS, ["le banc se declare lui-meme NON valide (`valide:"
+                       " false`), meme si ses nombres tiennent les clauses"]
+
+    adm, d_adm = evaluer_clauses(bloc.get("admission", ""), resultat)
+    if adm is None:
+        return REFUS, ["bloc [admission] NON evaluable : %s" % "; ".join(d_adm)]
+    rej, d_rej = evaluer_clauses(bloc.get("rejet", ""), resultat)
+    if rej is None:
+        return REFUS, ["bloc [rejet] NON evaluable : %s" % "; ".join(d_rej)]
+
+    if adm and rej:
+        return REFUS, ["admission ET rejet tenus SIMULTANEMENT : le critere"
+                       " pre-inscrit est contradictoire, aucun verdict n'en"
+                       " sort"]
+    if adm:
+        raisons.append("ADMISSION : toutes les clauses tenues")
+        return PUBLIABLE, raisons
+    if rej:
+        raisons.append("REJET : toutes les clauses tenues")
+        return PUBLIABLE, raisons
+
+    return REFUS, ["ni admission ni rejet : %s"
+                   % "; ".join(d_adm + d_rej) if (d_adm or d_rej)
+                   else "ni admission ni rejet, et aucune clause ne le dit"]
+
+
 def juger(resultat: dict, bloc: dict | None,
           critere_intact: bool | None,
           raison_indeterminable: str | None = None) -> tuple[str, list[str]]:
@@ -114,6 +314,22 @@ def juger(resultat: dict, bloc: dict | None,
         raisons.append("critere REECRIT apres coup : son empreinte ne "
                        "correspond plus a la version commitee")
         return REFUS, raisons
+
+    # ─── Aiguillage par FORME de banc ───────────────────────────────────
+    #
+    # Absente, la forme vaut REJEU : toute pre-inscription anterieure au
+    # 2026-10-27 continue d etre jugee exactement comme avant.
+    forme = resultat.get("forme") or FORME_REJEU
+    if forme not in FORMES:
+        raisons.append(
+            "forme de banc INCONNUE : %r -- les formes jugees sont %s."
+            " Une forme non comprise n est PAS traitee comme un rejeu :"
+            " se tromper doit rendre bavard, jamais permissif."
+            % (forme, ", ".join(FORMES)))
+        return REFUS, raisons
+    if forme == FORME_PLACEBO:
+        decision, details = _juger_placebo(resultat, bloc)
+        return decision, raisons + details
 
     problemes = _problemes_requis(resultat)
     if problemes:

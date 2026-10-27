@@ -335,10 +335,16 @@ def mesure(db: str, tirages: int = TIRAGES_PLACEBO,
                        if (esp_B is not None and esp_reel is not None) else None)
 
     return {
+        # La FORME du banc, declaree et non devinee : `or-verdict` ne juge
+        # pas un placebo comme un rejeu, et deviner la forme confondrait
+        # « il n y a pas de rejeu » avec « le rejeu est casse ».
+        "forme": "placebo",
         "preinscription": "docs/preinscriptions/2026-10-27-esperance-1d.md",
         "commit_preinscription": "d3cd3fe",
         "graine": GRAINE,
         "n": len(couverts),
+        # `n_reel` est le nom employe par la clause de validite pre-inscrite.
+        "n_reel": len(couverts),
         "n_reel_total": len(reels),
         "couverture_bougies_pct": couverture,
         "controle_moteur_accord": accord,

@@ -28,5 +28,7 @@
   "valide": true,
   "verdict": "REJET_horizon_1d_ECARTE",
   "ecart_par_trade": null,
-  "placebo": "200_TIRAGES_GRAINE_20261027"
+  "placebo": "200_TIRAGES_GRAINE_20261027",
+  "forme": "placebo",
+  "n_reel": 1362
 }
