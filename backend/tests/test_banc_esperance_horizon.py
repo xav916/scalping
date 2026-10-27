@@ -214,7 +214,7 @@ def test_les_DEUX_abs_de_la_clause_indecidable_ne_se_COLLISIONNENT_pas():
         "abs(esperance_R_reel - esperance_R_placebo) < 0.01"
         " ET abs(t_contre_placebo) < 2.00")
     assert d == {"abs:esperance_R_reel": 0.01, "abs:t_contre_placebo": 2.0}
-    assert CR_1D.indecidable_ecart == 0.01, "et pas 2,00"
+    assert CR_1D.indecidable_seuils["abs:esperance_R_reel"] == 0.01, "et pas 2,00"
 
 
 def test_un_seuil_ABSENT_du_bloc_est_un_ARRET_et_pas_un_defaut(tmp_path):
@@ -402,3 +402,121 @@ def test_le_TITRE_du_rapport_nomme_l_horizon_du_resultat():
 
     assert "horizon 4h" in texte, texte[:200]
     assert "horizon 1d" not in texte
+
+
+# ─── Le critere 5min : borne de chargement et clauses de forme NEUVE ────────
+
+
+def test_le_critere_5min_se_lit_avec_sa_BORNE_DE_CHARGEMENT():
+    """⛔ `fin_chargement` fixe la donnee, pas seulement la graine.
+
+    Sur le 4h, la fenetre etait bornee a `max(barre) + 120 h` -- DANS LE
+    FUTUR -- donc 25 min plus tard quelques bougies de plus existaient et
+    l'esperance du placebo bougeait de 1,1e-5 R. « Reproductible » doit vouloir
+    dire bit pour bit.
+    """
+    cr = banc.Criteres("docs/preinscriptions/2026-10-27-esperance-5min.md")
+
+    assert cr.horizon == "5min"
+    assert cr.fenetre_h == 96
+    assert cr.fin_chargement is not None
+    assert cr.fin_chargement.year == 2026 and cr.fin_chargement.hour == 13
+
+
+def test_les_criteres_SANS_borne_restent_lisibles():
+    """Compatibilite : le 1d et le 4h n'ont pas `fin_chargement`."""
+    assert CR_1D.fin_chargement is None
+    assert CR_4H.fin_chargement is None
+
+
+def test_l_indecidabilite_du_5min_porte_sur_le_t_et_les_TIRAGES():
+    """⛔ Le 4h la posait sur un ecart absolu en R, inoperant par construction.
+
+    Le 5min la pose sur `abs(t) < 2,00 ET tirages_battus < 95` : les deux
+    quantites qui disent si le reel se distingue du hasard.
+    """
+    cr = banc.Criteres("docs/preinscriptions/2026-10-27-esperance-5min.md")
+
+    assert "abs:t_contre_placebo" in cr.indecidable_seuils
+    assert cr.indecidable_seuils["abs:t_contre_placebo"] == 2.00
+    assert cr.indecidable_seuils["tirages_battus_pct"] == 95.0
+    # et l'ancienne forme reste lisible
+    assert "abs:esperance_R_reel" in CR_1D.indecidable_seuils
+
+
+def test_la_branche_INDECIDABLE_marche_sous_les_DEUX_formes():
+    cr5 = banc.Criteres("docs/preinscriptions/2026-10-27-esperance-5min.md")
+
+    # forme 5min : t faible ET peu de tirages battus
+    assert banc.branche(0.016, 0.001, 0.4, 55.0, 0.0395,
+                        valide=True, cr=cr5) \
+        == "INDECIDABLE_REEL_ET_PLACEBO_INDISCERNABLES"
+    # forme 1d : ecart en R minuscule ET t faible
+    assert banc.branche(-0.001, -0.005, 0.3, 50.0, 0.002,
+                        valide=True, cr=CR_1D) \
+        == "INDECIDABLE_REEL_ET_PLACEBO_INDISCERNABLES"
+
+
+def test_les_TROIS_predictions_neuves_du_5min_sont_notables():
+    """P1 devient un MINIMUM (esperance attendue positive), P4 porte sur
+    l'ecart des conventions, P5 sur le cout. Aucune ne doit ARRETER le banc."""
+    cr5 = banc.Criteres("docs/preinscriptions/2026-10-27-esperance-5min.md")
+    mesures = {"esperance_R_reel": 0.016, "esperance_R_placebo": 0.001,
+               "tirages_battus_pct": 55.0, "esperance_R_timeout": 0.0,
+               "cout_R_median": 0.0395, "ecart_esperance_B_moins_A": -0.004}
+
+    notes = banc.noter_predictions(cr5, mesures)
+
+    assert set(notes) == set(cr5.predictions)
+    assert notes["P1_esperance_R_reel_attendue_min"]["passe"] is True
+    assert notes["P4_ecart_conventions_A_B_abs_max"]["passe"] is True
+    assert notes["P5_cout_R_median_min"]["passe"] is True
+
+
+def test_la_BORNE_de_chargement_est_REELLEMENT_appliquee(monkeypatch):
+    """⛔ UNE CLE LUE ET IGNOREE EST PIRE QU'ABSENTE : elle ferait croire que la
+    donnee est figee alors qu'elle bouge.
+
+    On observe la borne LA OU ELLE AGIT : la date que `charge()` transmet au
+    chargeur Binance. La fenetre demandee va jusqu'a `max(barre) + 120 h`, donc
+    au-dela de la borne -- elle doit etre ECRETEE.
+    """
+    import asyncio
+    from datetime import datetime, timezone
+
+    recues = []
+
+    async def _espion(paire, interval, debut, fin, **kw):
+        recues.append(fin)
+        return []
+
+    monkeypatch.setattr(banc.bks, "fetch_klines_fenetre", _espion)
+    borne = datetime(2026, 10, 27, 13, 0, tzinfo=timezone.utc)
+    bornes = {"BTC/USD": (datetime(2026, 8, 20, tzinfo=timezone.utc),
+                          datetime(2026, 10, 26, tzinfo=timezone.utc))}
+
+    asyncio.run(banc.charge(bornes, borne))
+
+    assert recues, "le chargeur n'a pas ete appele"
+    assert all(f <= borne for f in recues), recues
+
+
+def test_SANS_borne_la_fenetre_n_est_PAS_ecretee(monkeypatch):
+    """Compatibilite : le 1d et le 4h n'ont pas de borne, rien ne change."""
+    import asyncio
+    from datetime import datetime, timezone
+
+    recues = []
+
+    async def _espion(paire, interval, debut, fin, **kw):
+        recues.append(fin)
+        return []
+
+    monkeypatch.setattr(banc.bks, "fetch_klines_fenetre", _espion)
+    mx = datetime(2026, 10, 26, tzinfo=timezone.utc)
+    bornes = {"BTC/USD": (datetime(2026, 8, 20, tzinfo=timezone.utc), mx)}
+
+    asyncio.run(banc.charge(bornes, None))
+
+    assert recues and recues[0] > mx, (
+        "sans borne, la fenetre doit depasser la derniere barre", recues)

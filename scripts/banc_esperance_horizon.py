@@ -121,6 +121,15 @@ class Criteres:
         self.horizon = bloc.get("horizon", "1d")
         self.fenetre_h = int(float(bloc.get("fenetre_heures", 240)))
         self.tirages = int(float(bloc.get("tirages_placebo", 200)))
+        # ⛔ BORNE DE CHARGEMENT. Sans elle, la fenetre finissait a
+        # `max(barre) + 120 h` -- DANS LE FUTUR -- donc 25 min plus tard
+        # quelques bougies de plus existaient sous la meme borne et
+        # l esperance du placebo bougeait (1,1e-5 R mesure sur le 4h). La
+        # graine fixe les nombres aleatoires ; seule cette borne fixe la
+        # DONNEE. `None` = comportement d avant, pour les criteres anterieurs.
+        fin = bloc.get("fin_chargement")
+        self.fin_chargement = (
+            datetime.fromisoformat(fin) if fin else None)
 
         v = seuils_par_champ(bloc.get("validite", ""))
         self.n_min = int(_exige(v, "n_reel", "validite"))
@@ -133,9 +142,15 @@ class Criteres:
         self.t_min = _exige(a, "t_contre_placebo", "admission")
         self.battus_min = _exige(a, "tirages_battus_pct", "admission")
 
-        i = seuils_par_champ(bloc.get("indecidable", ""))
-        self.indecidable_ecart = _exige(
-            i, "abs:esperance_R_reel", "indecidable")
+        # ⛔ LES SEUILS D INDECIDABILITE SONT GARDES BRUTS, par nom de champ.
+        # Le 4h la posait sur `abs(reel - placebo) < 0,01 R`, INOPERANT par
+        # construction a `risk_pct` 0,37 % ; le 5min la pose sur `abs(t) < 2`
+        # ET `tirages_battus < 95`. Extraire UN champ en dur aurait oblige a
+        # reecrire le lecteur a chaque forme.
+        self.indecidable_seuils = seuils_par_champ(bloc.get("indecidable", ""))
+        if not self.indecidable_seuils:
+            raise SystemExit(
+                "ARRET : [indecidable] ne porte aucun seuil lisible")
 
         # ⛔ LES PREDICTIONS SONT CHARGEES GENERIQUEMENT, et pour une raison
         # concrete : la pre-inscription 1d porte un `P4` sur les TIMEOUT, la
@@ -236,6 +251,29 @@ def part_battus_pct(reel: float, tirages: list[float]) -> float | None:
     return 100.0 * sum(1 for x in tirages if x < reel) / len(tirages)
 
 
+def _indiscernables(esp_reel, esp_placebo, t, battus, cr: "Criteres") -> bool:
+    """Le reel se confond-il avec le hasard, selon la forme PRE-INSCRITE ?
+
+    Deux formes rencontrees, et le lecteur sert les deux :
+      - `abs(reel - placebo) < s ET abs(t) < s2`  (1d, 4h)
+      - `abs(t) < s ET tirages_battus < s2`       (5min)
+
+    ⛔ Une forme inconnue est un ARRET : conclure sur un critere qu on ne sait
+    pas lire serait pire que ne rien conclure.
+    """
+    s = cr.indecidable_seuils
+    if "abs:esperance_R_reel" in s:
+        return (abs(esp_reel - esp_placebo) < s["abs:esperance_R_reel"]
+                and abs(t) < s.get("abs:t_contre_placebo", cr.t_min))
+    if "abs:t_contre_placebo" in s:
+        return (abs(t) < s["abs:t_contre_placebo"]
+                and battus < s.get("tirages_battus_pct", cr.battus_min))
+    raise SystemExit(
+        "ARRET : forme de clause [indecidable] non reconnue : %r -- conclure"
+        " sur un critere qu on ne sait pas lire serait pire que ne rien"
+        " conclure." % sorted(s))
+
+
 def branche(esp_reel, esp_placebo, t, battus, cout_R, valide,
             cr: "Criteres") -> str:
     """Applique MECANIQUEMENT les branches pre-inscrites."""
@@ -243,8 +281,7 @@ def branche(esp_reel, esp_placebo, t, battus, cout_R, valide,
         return "NON_CONCLUANT_VALIDITE"
     if esp_reel is None or t is None or battus is None or esp_placebo is None:
         return "NON_CONCLUANT_MESURE_ABSENTE"
-    if (abs(esp_reel - esp_placebo) < cr.indecidable_ecart
-            and abs(t) < cr.t_min):
+    if _indiscernables(esp_reel, esp_placebo, t, battus, cr):
         return "INDECIDABLE_REEL_ET_PLACEBO_INDISCERNABLES"
     if (esp_reel > cout_R and t > cr.t_min
             and battus >= cr.battus_min):
@@ -279,10 +316,25 @@ def lire_reels(db: str, horizon: str) -> list[dict]:
     return out
 
 
-async def charge(paires: dict[str, tuple[datetime, datetime]]) -> dict[str, Serie]:
+async def charge(paires: dict[str, tuple[datetime, datetime]],
+                 fin_chargement: datetime | None = None) -> dict[str, Serie]:
+    """Charge les series, en BORNANT la fin si le critere l exige.
+
+    ⛔ POURQUOI CETTE BORNE EXISTE. Sans elle, `charge_les_blocs` demande les
+    bougies jusqu a `max(barre) + 120 h` -- une date DANS LE FUTUR. Chaque
+    minute qui passe fait apparaitre de nouvelles bougies sous cette meme
+    borne, donc une poignee de tirages du placebo tombent sur un index
+    different. Mesure sur le 4h : l esperance du placebo a bouge de 1,1e-5 R
+    entre deux passes a 25 min d intervalle, graine IDENTIQUE.
+
+    🔑 La graine fixe les nombres aleatoires ; seule cette borne fixe la
+    DONNEE. Sans les deux, « reproductible » ne veut rien dire.
+    """
     from scripts import rattrapage_commun as commun
 
     async def chargeur(paire, debut, fin):
+        if fin_chargement is not None and fin > fin_chargement:
+            fin = fin_chargement
         if bks.is_crypto_pair(paire):
             return await bks.fetch_klines_fenetre(paire, "5min", debut, fin)
         return await price_service.fetch_candles_fenetre(
@@ -370,6 +422,18 @@ _NOTATION = {
         "cout median AU-DESSUS du seuil",
         lambda m, v: m["cout_R_median"] is not None
         and m["cout_R_median"] > v),
+    "P1_esperance_R_reel_attendue_min": (
+        "esperance reelle AU-DESSUS du seuil",
+        lambda m, v: m["esperance_R_reel"] is not None
+        and m["esperance_R_reel"] > v),
+    "P4_ecart_conventions_A_B_abs_max": (
+        "|ecart A - B| sous le seuil",
+        lambda m, v: m["ecart_esperance_B_moins_A"] is not None
+        and abs(m["ecart_esperance_B_moins_A"]) < v),
+    "P5_cout_R_median_min": (
+        "cout median AU-DESSUS du seuil",
+        lambda m, v: m["cout_R_median"] is not None
+        and m["cout_R_median"] > v),
     "P5_ecart_esperance_B_moins_A_max": (
         "B - A sous le seuil",
         lambda m, v: m["ecart_esperance_B_moins_A"] is not None
@@ -408,7 +472,7 @@ def mesure(db: str, cr: "Criteres", tirages: int | None = None,
         mn, mx = bornes.get(d["pair"], (d["bar"], d["bar"]))
         bornes[d["pair"]] = (min(mn, d["bar"]), max(mx, d["bar"]))
     logging.getLogger("banc").info("=== chargement des bougies (cadence, peut prendre ~10 min)")
-    series = asyncio.run(charge(bornes))
+    series = asyncio.run(charge(bornes, cr.fin_chargement))
 
     couverts = [d for d in reels if d["pair"] in series]
     couverture = 100.0 * len(couverts) / len(reels)
