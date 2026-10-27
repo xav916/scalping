@@ -188,6 +188,13 @@ def mesure(db: str) -> dict:
         "preinscription": "docs/preinscriptions/2026-10-26-geometrie-1d.md",
         "commit_preinscription": "ecbe33c",
         "population": "resolved_backfill=1",
+        # `n` et `t` sous les noms que `or-verdict` lit. Ce ne sont pas des
+        # alias de complaisance : `n` EST la population du test (les 1d dont
+        # une borne a ete touchee) et un `z` EST une statistique de test
+        # standardisee, a variance connue. Les emettre sous ces noms est
+        # exact ; ce qui serait faux, c est de fabriquer `ecart_par_trade`.
+        "n": n_b,
+        "t": z_b,
         "n_1d_total": len(un_jour),
         "n_1d_resolus_TP1_ou_SL": n_b,
         "n_4h_total": len(quatre_h),
