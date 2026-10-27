@@ -6,6 +6,18 @@ Le 25/10, deux mesures et deux issues opposees :
     posee d'avance -> NON CONCLUANT, et c'est ce calcul qui m'a arrete.
 
 🔑 Une barre calculee arrete ; une bonne intention ecrite, non.
+
+⛔ HORS PORTEE -- LES BANCS NON APPARIES. Cette skill juge des REJEUX :
+`ecart_par_trade` mesure la fidelite d un rejeu a la realite vecue. Un banc
+sans realite a laquelle se comparer -- un taux contre un seuil arithmetique,
+une esperance contre un placebo -- n a pas cette quantite, et sera refuse sur
+`[ecart_par_trade] est null`. C EST LE COMPORTEMENT JUSTE.
+
+⛔ Ne jamais fabriquer ce champ pour passer la porte : emettre `0.0` ferait
+croire a une fidelite PARFAITE alors qu il n y a pas de rejeu du tout. Ce
+serait commettre, sur le champ de controle de cette skill, exactement la faute
+qu elle existe pour empecher. Voir la section « HORS PORTEE » du SKILL.md,
+avec les deux cas rencontres le 2026-10-27.
 """
 from __future__ import annotations
 
