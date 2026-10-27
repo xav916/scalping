@@ -16,6 +16,10 @@ DEUX FORMES DE BANC sont jugees, declarees par le champ `forme` du resultat :
     REFERENCE. Pas de rejeu, donc pas d `ecart_par_trade` ; a la place,
     TOUTES les clauses du critere sont RECALCULEES contre les champs du
     resultat.
+  - `seuil` (pose le 2026-10-27) : le reel confronte a une CONSTANTE
+    arithmetique, sans aucun second bras. Meme evaluateur que `placebo`, mais
+    sa decision favorable est `PUBLIABLE_SANS_CONTROLE` et JAMAIS `PUBLIABLE`
+    -- un banc sans controle ne dit pas s il existe une information.
 
 ⛔ LA FORME EST DECLAREE, JAMAIS DEVINEE, et une forme inconnue est REFUSEE --
 pas rabattue sur `rejeu`.
@@ -23,9 +27,15 @@ pas rabattue sur `rejeu`.
 ⛔ ET NE JAMAIS FABRIQUER `ecart_par_trade` sur un banc qui n en a pas :
 emettre `0.0` ferait croire a une fidelite PARFAITE alors qu il n y a pas de
 rejeu du tout. Ce serait commettre, sur le champ de controle de cette skill,
-exactement la faute qu elle existe pour empecher. Un banc qui compare un taux
-a un simple seuil arithmetique, sans second bras, reste hors portee : publier
-son verdict sans cette skill est la bonne reponse.
+exactement la faute qu elle existe pour empecher. Declarer la bonne forme est
+la seule voie.
+
+🔑 CE QUE CES FORMES APPORTENT MEME SANS CONTROLE : le lien NOM PAR NOM entre
+les champs que le critere engage et ceux que le banc emet. Mesure du
+2026-10-27 sur le banc de la geometrie 1d : CINQ NOMS SUR CINQ divergeaient
+(`z_binomial` contre `P3_z_binomial`, etc.) et rien ne l avait vu, parce que
+le banc evaluait ses branches en interne avec des constantes recopiees. Un
+critere engage sous un nom et mesure sous un autre n est pas un critere.
 """
 from __future__ import annotations
 
@@ -42,6 +52,14 @@ from or_commun import sections  # noqa: E402
 
 REQUIS = ("n", "t", "ecart_par_trade", "valide")
 PUBLIABLE, REFUS = "PUBLIABLE", "NE PAS PUBLIER"
+
+#: Decision propre aux bancs SANS CONTROLE (forme `seuil`). ⛔ Distincte de
+#: `PUBLIABLE` a dessein : un banc sans second bras ne peut pas dire s il
+#: existe une information, seulement si une geometrie atteint son propre seuil
+#: arithmetique. Rendre `PUBLIABLE` effacerait cette difference dans la seule
+#: sortie que quelqu un lit vraiment. Le code de sortie reste 0 : c est
+#: publiable, a condition de le dire.
+PUBLIABLE_SANS_CONTROLE = "PUBLIABLE SANS CONTROLE"
 
 
 def _seuil(expression: str) -> float | None:
@@ -103,7 +121,11 @@ def _problemes_requis(resultat: dict) -> list[str]:
 # rejeu est casse » -- deux situations qui n'appellent pas le meme verdict.
 FORME_REJEU = "rejeu"
 FORME_PLACEBO = "placebo"
-FORMES = (FORME_REJEU, FORME_PLACEBO)
+# Un banc compare a un SEUIL ARITHMETIQUE, sans second bras d aucune sorte.
+# Juge sur ses clauses, mais sa decision favorable est
+# `PUBLIABLE_SANS_CONTROLE` et jamais `PUBLIABLE`.
+FORME_SEUIL = "seuil"
+FORMES = (FORME_REJEU, FORME_PLACEBO, FORME_SEUIL)
 
 #: Champs exiges de la forme PLACEBO. `ecart_par_trade` n'en fait pas partie :
 #: il n'y a pas de rejeu dont mesurer la fidelite. Le reste demeure.
@@ -233,7 +255,8 @@ def _joli(v: float) -> str:
     return "%d" % v if float(v).is_integer() else "%.4f" % v
 
 
-def _juger_placebo(resultat: dict, bloc: dict) -> tuple[str, list[str]]:
+def _juger_par_clauses(resultat: dict, bloc: dict, etiquette: str,
+                       note: str = "") -> tuple[str, list[str]]:
     """La forme PLACEBO : toutes les clauses, recalculees.
 
     ⛔ ADMISSION ET REJET SONT EVALUES EN ENTIER, pas sur leur premier nombre.
@@ -276,15 +299,41 @@ def _juger_placebo(resultat: dict, bloc: dict) -> tuple[str, list[str]]:
                        " pre-inscrit est contradictoire, aucun verdict n'en"
                        " sort"]
     if adm:
-        raisons.append("ADMISSION : toutes les clauses tenues")
-        return PUBLIABLE, raisons
+        raisons.append("ADMISSION : toutes les clauses tenues" + note)
+        return etiquette, raisons
     if rej:
-        raisons.append("REJET : toutes les clauses tenues")
-        return PUBLIABLE, raisons
+        raisons.append("REJET : toutes les clauses tenues" + note)
+        return etiquette, raisons
 
     return REFUS, ["ni admission ni rejet : %s"
                    % "; ".join(d_adm + d_rej) if (d_adm or d_rej)
                    else "ni admission ni rejet, et aucune clause ne le dit"]
+
+
+#: La note accolee a toute decision de la forme `seuil`. Elle vit dans la
+#: SORTIE, parce que la documentation ne suffit pas : personne ne la relit au
+#: moment de publier un chiffre.
+NOTE_SANS_CONTROLE = (" -- ⛔ AUCUN CONTROLE : ce banc n a ni rejeu ni placebo,"
+                      " donc il ne dit PAS s il existe une information, seulement"
+                      " si une geometrie atteint son propre seuil arithmetique."
+                      " Une comparaison a des entrees tirees au HASARD reste a"
+                      " faire.")
+
+
+def _juger_placebo(resultat: dict, bloc: dict) -> tuple[str, list[str]]:
+    """Forme `placebo` : le reel contre une distribution de reference."""
+    return _juger_par_clauses(resultat, bloc, PUBLIABLE)
+
+
+def _juger_seuil(resultat: dict, bloc: dict) -> tuple[str, list[str]]:
+    """Forme `seuil` : le reel contre une constante arithmetique.
+
+    Mecaniquement identique au placebo -- memes clauses, meme recalcul. La
+    difference est SEMANTIQUE et doit rester VISIBLE : pas de second bras,
+    donc pas de `PUBLIABLE`.
+    """
+    return _juger_par_clauses(resultat, bloc, PUBLIABLE_SANS_CONTROLE,
+                              NOTE_SANS_CONTROLE)
 
 
 def juger(resultat: dict, bloc: dict | None,
@@ -329,6 +378,9 @@ def juger(resultat: dict, bloc: dict | None,
         return REFUS, raisons
     if forme == FORME_PLACEBO:
         decision, details = _juger_placebo(resultat, bloc)
+        return decision, raisons + details
+    if forme == FORME_SEUIL:
+        decision, details = _juger_seuil(resultat, bloc)
         return decision, raisons + details
 
     problemes = _problemes_requis(resultat)
@@ -474,7 +526,10 @@ def main(argv: list[str] | None = None) -> int:
     print("=== %s" % decision)
     for r in raisons:
         print("  - " + r)
-    return 0 if decision == PUBLIABLE else 1
+    # ⛔ `PUBLIABLE_SANS_CONTROLE` rend 0 : c est publiable. Ce qui change est
+    # ce que la sortie DIT, pas le droit de publier -- un code 1 ferait croire
+    # a un refus, et un code 0 muet ferait croire a un controle.
+    return 0 if decision in (PUBLIABLE, PUBLIABLE_SANS_CONTROLE) else 1
 
 
 if __name__ == "__main__":

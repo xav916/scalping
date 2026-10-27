@@ -10,9 +10,10 @@ description: >-
   tout chiffre issu d'une mesure.
   Juge DEUX formes, declarees par le champ `forme` du resultat : `rejeu`
   (defaut, fidelite mesuree par `ecart_par_trade`) et `placebo` (toutes les
-  clauses du critere recalculees). ⛔ Un banc qui compare un taux a un simple
-  seuil arithmetique, sans second bras ni rejeu, reste hors portee -- et ne
-  doit JAMAIS fabriquer `ecart_par_trade` pour passer la porte.
+  clauses du critere recalculees), et `seuil` (sans aucun second bras : juge
+  sur ses clauses, mais rend `PUBLIABLE SANS CONTROLE` et jamais `PUBLIABLE`).
+  ⛔ Ne JAMAIS fabriquer `ecart_par_trade` pour passer la porte : declarer la
+  bonne forme est la seule voie.
 ---
 
 # or-verdict
@@ -49,7 +50,7 @@ d'avance -> NON CONCLUANT.
 - ⛔ et une empreinte **indeterminable** : ne pas pouvoir comparer n'est pas
   comparer.
 
-## Les DEUX FORMES de banc jugees
+## Les TROIS FORMES de banc jugees
 
 La forme est **declaree** dans le resultat, sous `forme`. ⛔ Elle n'est jamais
 devinee : inferer « placebo » de `ecart_par_trade is None` confondrait « il n'y
@@ -62,6 +63,7 @@ permissif. Forme absente = `rejeu`, donc toute pre-inscription anterieure au
 |---|---|---|
 | `rejeu` (defaut) | une periode rejouee a la realite VECUE | `abs(ecart_par_trade)` sous la barre pre-inscrite |
 | `placebo` | le reel a une distribution de REFERENCE | **toutes** les clauses de `validite`, recalculees |
+| `seuil` | le reel a une CONSTANTE arithmetique | idem -- mais la decision favorable est `PUBLIABLE SANS CONTROLE` |
 
 ### La forme `placebo` (posee le 2026-10-27)
 
@@ -93,6 +95,48 @@ en le nommant.
 arbitraires ne serait pas auditable, et ce qui juge une mise en production doit
 l'etre. Une quatrieme forme de clause se rajoute en quelques lignes, avec son
 test ; elle ne doit pas se deviner.
+
+### La forme `seuil` (posee le 2026-10-27)
+
+Un banc **sans aucun second bras** : il compare une mesure a une constante
+pre-inscrite -- par exemple un taux de reussite aux **35,71 %** qu exige un
+R:R de 1,8. Mecaniquement, c est le meme evaluateur que `placebo`.
+
+⛔ **Sa decision favorable est `PUBLIABLE SANS CONTROLE`, jamais `PUBLIABLE`.**
+Un banc sans controle ne peut pas dire s il existe une **information** ; il dit
+seulement si une geometrie atteint **son propre seuil**. Rendre `PUBLIABLE`
+effacerait cette difference dans la seule sortie que quelqu un lit vraiment.
+La note part avec la decision :
+
+```
+=== PUBLIABLE SANS CONTROLE
+  - REJET : toutes les clauses tenues -- ⛔ AUCUN CONTROLE : ce banc n a ni
+    rejeu ni placebo, donc il ne dit PAS s il existe une information,
+    seulement si une geometrie atteint son propre seuil arithmetique. Une
+    comparaison a des entrees tirees au HASARD reste a faire.
+```
+
+ⓘ Le **code de sortie vaut 0** : c est publiable. Ce qui change est ce que la
+sortie DIT, pas le droit de publier -- un code 1 ferait croire a un refus, et
+un code 0 muet ferait croire a un controle.
+
+### 🔑 Ce que ces formes apportent MEME sans controle
+
+Le lien **NOM PAR NOM** entre les champs que le critere engage et ceux que le
+banc emet. Mesure du 2026-10-27 sur le banc de la geometrie 1d :
+
+| cite par le critere | emis par le banc, avant correction |
+|---|---|
+| `n_resolus_1d` | `n_1d_resolus_TP1_ou_SL` |
+| `reussite_1d_resolus_pct` | `P3_reussite_1d_convention_B_pct` |
+| `z_binomial` | `P3_z_binomial` |
+| `part_rows_RR_conforme_pct` | `P1_rr_conforme_1d_pct` |
+| `part_mfe_non_nul_pct` | `validite_mfe_non_nul_pct` |
+
+**Cinq noms sur cinq divergeaient**, et rien ne l avait vu : le banc evaluait
+ses branches en interne avec des constantes recopiees, et son test ne
+verifiait que les NOMBRES. 🔑 Un critere engage sous un nom et mesure sous un
+autre n est pas un critere.
 
 ### Ce que la forme `placebo` ne dit toujours PAS
 

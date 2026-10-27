@@ -205,6 +205,26 @@ def mesure(db: str, convention: str = "B") -> dict:
     verdict = branche(pct_retenu, z_retenu, ecart_pour_branche, valide)
 
     return {
+        # ─── Les noms du CRITERE, et pourquoi ils comptent ───────────────
+        #
+        # ⛔ DEFAUT TROUVE LE 2026-10-27 : le critere engageait `z_binomial`,
+        # ce banc emettait `P3_z_binomial`. CINQ NOMS SUR CINQ divergeaient,
+        # et rien ne l avait vu -- le banc evaluait ses branches en interne
+        # avec des constantes recopiees, et son test ne verifiait que les
+        # NOMBRES. Ce ne sont pas de nouvelles quantites : ce sont les MEMES
+        # mesures, sous les noms que la pre-inscription a engages, pour que
+        # `or-verdict` puisse relier le critere au resultat NOM PAR NOM.
+        #
+        # 🔑 `reussite_1d_resolus_pct` dit « resolus », donc la CONVENTION B.
+        # C est elle qui etait engagee le 26/10 ; la convention A est une
+        # decision POSTERIEURE de Xavier, et je ne la retro-projette pas sur
+        # le critere. Les chiffres de A restent sous leurs propres noms.
+        "forme": "seuil",
+        "n_resolus_1d": n_b,
+        "part_mfe_non_nul_pct": mfe_pct,
+        "part_rows_RR_conforme_pct": p1_pct,
+        "reussite_1d_resolus_pct": pct_b,
+        "z_binomial": z_b,
         "preinscription": "docs/preinscriptions/2026-10-26-geometrie-1d.md",
         "commit_preinscription": "ecbe33c",
         "population": "resolved_backfill=1",
