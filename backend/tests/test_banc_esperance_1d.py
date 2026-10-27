@@ -212,3 +212,71 @@ def test_les_seuils_du_banc_sont_ceux_de_la_PRE_INSCRIPTION():
     assert "2.00" in bloc["admission"] and "95.0" in bloc["admission"]
     assert "0.01" in bloc["indecidable"]
     assert str(banc.INDECIDABLE_ECART_R) in bloc["indecidable"]
+
+
+# ─── Le point d'ENTREE, que rien n'exercait ─────────────────────────────────
+#
+# ⛔ LE TROU QUE CES TESTS FERMENT. Le 2026-10-27, un `logging.basicConfig`
+# ajoute sans `import logging` a fait planter le banc en production -- apres
+# que `py_compile` ET les 21 tests soient passes. Les tests ne couvraient que
+# les fonctions PURES : `mesure()` et `main()` n'etaient jamais appeles, donc
+# une NameError dans l'un ou l'autre restait invisible.
+#
+# 🔑 C'est la deuxieme fois le meme jour (apres `os` contre `_os` dans
+# `pair_admission_controller`) : une NameError n'est pas une erreur de syntaxe,
+# et un module qui compile n'a pas prouve qu'il TOURNE.
+
+
+def test_mesure_sur_une_base_VIDE_ne_leve_pas(tmp_path):
+    """Exerce `lire_reels` et le premier jalon de journal."""
+    import sqlite3
+
+    db = tmp_path / "vide.db"
+    with sqlite3.connect(db) as c:
+        c.execute("""
+            CREATE TABLE shadow_setups (
+                id INTEGER PRIMARY KEY, pair TEXT, bar_timestamp TIMESTAMP,
+                timeframe TEXT, direction TEXT, entry_price REAL,
+                stop_loss REAL, take_profit_1 REAL, outcome TEXT,
+                pnl_pct_net REAL, resolved_backfill INTEGER DEFAULT 0)""")
+
+    r = banc.mesure(str(db))
+
+    assert r.get("erreur"), r
+    assert "aucun setup" in r["erreur"]
+
+
+def test_le_rapport_d_ERREUR_s_imprime_sans_lever():
+    """`rapport()` doit savoir rendre un arret, pas seulement un succes."""
+    texte = banc.rapport({"erreur": "LE MOTEUR DIVERGE", "accord": 5,
+                          "essais": 7, "consigne": "le banc s'arrete"})
+
+    assert "LE MOTEUR DIVERGE" in texte
+    assert "5" in texte and "7" in texte
+
+
+def test_main_configure_le_JOURNAL_sans_NameError(tmp_path, monkeypatch, capsys):
+    """⛔ LE TEST QUI AURAIT ATTRAPE LE DEFAUT. Appelle `main()` pour de vrai."""
+    import sqlite3
+
+    db = tmp_path / "vide2.db"
+    with sqlite3.connect(db) as c:
+        c.execute("""
+            CREATE TABLE shadow_setups (
+                id INTEGER PRIMARY KEY, pair TEXT, bar_timestamp TIMESTAMP,
+                timeframe TEXT, direction TEXT, entry_price REAL,
+                stop_loss REAL, take_profit_1 REAL, outcome TEXT,
+                pnl_pct_net REAL, resolved_backfill INTEGER DEFAULT 0)""")
+
+    code = banc.main(["--db", str(db)]) if _main_accepte_argv() else None
+    if code is None:
+        monkeypatch.setattr("sys.argv", ["banc", "--db", str(db)])
+        code = banc.main()
+
+    assert code == 1, "une base vide est un ARRET, donc code 1"
+    assert "ARRET" in capsys.readouterr().out
+
+
+def _main_accepte_argv() -> bool:
+    import inspect
+    return bool(inspect.signature(banc.main).parameters)

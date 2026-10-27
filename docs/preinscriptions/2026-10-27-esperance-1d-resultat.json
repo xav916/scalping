@@ -1,8 +1,10 @@
 {
+  "forme": "placebo",
   "preinscription": "docs/preinscriptions/2026-10-27-esperance-1d.md",
   "commit_preinscription": "d3cd3fe",
   "graine": 20261027,
   "n": 1362,
+  "n_reel": 1362,
   "n_reel_total": 1362,
   "couverture_bougies_pct": 100.0,
   "controle_moteur_accord": 1362,
@@ -28,7 +30,5 @@
   "valide": true,
   "verdict": "REJET_horizon_1d_ECARTE",
   "ecart_par_trade": null,
-  "placebo": "200_TIRAGES_GRAINE_20261027",
-  "forme": "placebo",
-  "n_reel": 1362
+  "placebo": "200_TIRAGES_GRAINE_20261027"
 }

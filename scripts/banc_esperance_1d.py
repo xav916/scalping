@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import math
 import random
 import sqlite3
@@ -242,6 +243,7 @@ def mesure(db: str, tirages: int = TIRAGES_PLACEBO,
            controle: bool = True) -> dict:
     import asyncio
 
+    logging.getLogger("banc").info("=== lecture des setups 1d rattrapes")
     reels = lire_reels(db)
     if not reels:
         return {"erreur": "aucun setup 1d rattrape"}
@@ -250,12 +252,14 @@ def mesure(db: str, tirages: int = TIRAGES_PLACEBO,
     for d in reels:
         mn, mx = bornes.get(d["pair"], (d["bar"], d["bar"]))
         bornes[d["pair"]] = (min(mn, d["bar"]), max(mx, d["bar"]))
+    logging.getLogger("banc").info("=== chargement des bougies (cadence, peut prendre ~10 min)")
     series = asyncio.run(charge(bornes))
 
     couverts = [d for d in reels if d["pair"] in series]
     couverture = 100.0 * len(couverts) / len(reels)
 
     accord = essais = -1
+    logging.getLogger("banc").info("=== controle du moteur vectorise contre la production")
     if controle:
         accord, essais = controle_moteur(couverts, series)
         if essais and accord != essais:
@@ -280,6 +284,7 @@ def mesure(db: str, tirages: int = TIRAGES_PLACEBO,
     cout_R = (100.0 * SPREAD_PCT) / risk_med_reel
 
     # ─── le placebo ───
+    logging.getLogger("banc").info("=== placebo : 200 tirages")
     alea = random.Random(GRAINE)
     esperances: list[float] = []
     risks_placebo: list[float] = []
@@ -311,6 +316,9 @@ def mesure(db: str, tirages: int = TIRAGES_PLACEBO,
                 continue
             pts.append((pnl_pct(entry, r[1], d["achat"]), d["risk_pct"]))
             risks_placebo.append(d["risk_pct"])
+        if (len(esperances) + 1) % 20 == 0:
+            logging.getLogger("banc").info(
+                "    tirage %d / %d", len(esperances) + 1, tirages)
         e = esperance_R(pts)
         if e is not None:
             esperances.append(e)
@@ -432,6 +440,12 @@ def _ok(b):
 
 
 def main() -> int:
+    # ⛔ UN TRAVAIL DE DIX MINUTES NE DOIT PAS ETRE MUET. Le 2026-10-27 ce
+    # banc n imprimait rien avant la fin et n appelait pas `basicConfig` :
+    # j en ai conclu qu il etait MORT alors qu il tournait. Un long silence
+    # est indiscernable d une panne.
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--db", default=str(DB_PATH))
     p.add_argument("--tirages", type=int, default=TIRAGES_PLACEBO)
