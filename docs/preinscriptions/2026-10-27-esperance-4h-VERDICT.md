@@ -98,7 +98,8 @@ propre mesure avec contrôle aléatoire.
 2. **La première passe a rendu `REJET_horizon_1d_ECARTE` et un titre
    « horizon 1d » alors qu'elle mesurait le `4h`.** Les chiffres étaient justes,
    l'étiquette mentait — et c'est l'étiquette qui survit dans une fiche. Corrigé
-   et relancé, chiffres reproduits à l'identique (graine fixe).
+   et relancé ; tous les chiffres se reproduisent sauf la moyenne du placebo,
+   à `1,1e−5 R` près — voir la section sur la reproductibilité plus bas.
 
 ## ✅ `or-verdict` : PUBLIABLE
 
