@@ -365,14 +365,28 @@ def controle_moteur(reels: list[dict], series: dict[str, Serie],
             self.stop_loss = d["sl"]
             self.take_profit_1 = d["tp"]
 
+    # ⛔ LA LISTE DE BOUGIES EST CONSTRUITE UNE FOIS PAR PAIRE, pas par setup.
+    # Mesure : a 1 775 setups c'etait tolerable, mais a 18 668 x ~19 000
+    # bougies cela ferait 350 MILLIONS de constructions d'objets -- le controle
+    # aurait dure des heures et j'aurais ete tente de le desarmer. Un garde-fou
+    # trop lent finit par etre coupe : c'est en le rendant rapide qu'on le
+    # garde.
+    cache: dict[str, list] = {}
+
+    def _bougies(nom: str, s: "Serie") -> list:
+        if nom not in cache:
+            cache[nom] = [
+                Candle(timestamp=datetime.fromtimestamp(t, tz=timezone.utc),
+                       open=o, high=h, low=b, close=cl, volume=0)
+                for t, o, h, b, cl in zip(s.ts, s.open, s.high, s.low, s.close)]
+        return cache[nom]
+
     accord = essais = 0
     for d in reels:
         s = series.get(d["pair"])
         if s is None or not len(s):
             continue
-        bougies = [Candle(timestamp=datetime.fromtimestamp(t, tz=timezone.utc),
-                          open=o, high=h, low=b, close=cl, volume=0)
-                   for t, o, h, b, cl in zip(s.ts, s.open, s.high, s.low, s.close)]
+        bougies = _bougies(d["pair"], s)
         attendu = simulate_trade_forward(_Stub(d), bougies, d["bar"],
                                          timeout_hours=fenetre_h)
         obtenu = s.simule(s.index_apres(d["bar"].timestamp()),

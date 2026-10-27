@@ -520,3 +520,39 @@ def test_SANS_borne_la_fenetre_n_est_PAS_ecretee(monkeypatch):
 
     assert recues and recues[0] > mx, (
         "sans borne, la fenetre doit depasser la derniere barre", recues)
+
+
+def test_le_CONTROLE_ne_reconstruit_les_bougies_qu_UNE_FOIS_par_paire():
+    """⛔ Un garde-fou trop lent finit par etre coupe.
+
+    A 18 668 setups x ~19 000 bougies, reconstruire la liste par setup ferait
+    350 MILLIONS de constructions d'objets. Ce test compte les constructions
+    reelles : une seule passe par paire, quel que soit le nombre de setups.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    T = datetime(2026, 8, 20, tzinfo=timezone.utc)
+    bougies = _bougies([(100.5, 99.5, 100.0)] * 20)
+    serie = banc.Serie(bougies)
+    reels = [{"pair": "BTC/USD", "bar": T, "achat": True,
+              "entry": 100.0, "sl": 95.0, "tp": 110.0} for _ in range(50)]
+
+    compte = {"n": 0}
+    vrai = banc.Candle
+
+    class _Compteur(vrai):
+        def __init__(self, **kw):
+            compte["n"] += 1
+            super().__init__(**kw)
+
+    banc.Candle = _Compteur
+    try:
+        accord, essais = banc.controle_moteur(reels, {"BTC/USD": serie}, 96)
+    finally:
+        banc.Candle = vrai
+
+    assert essais == 50, essais
+    assert accord == 50, (accord, essais)
+    assert compte["n"] == len(bougies), (
+        "les bougies ont ete reconstruites %d fois au lieu de %d"
+        % (compte["n"], len(bougies)))
