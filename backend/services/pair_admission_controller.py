@@ -1401,6 +1401,35 @@ def _peer_control_cache_hours() -> float:
         return 6.0
 
 
+# ─── Exclusion de l horizon 1 JOUR du vivier d admission ───────────────────
+#
+# DECISION DE XAVIER le 2026-10-27, sur le verdict `0b8106b` (pre-inscrit
+# `d3cd3fe`, banc `b2ed1f6`) : l esperance du `1d` vaut **-0,0641 R** contre
+# **+0,0413 R** pour des entrees tirees au hasard sur la MEME geometrie, les
+# memes paires, la meme periode et le meme sens -- et le reel ne bat **AUCUN**
+# des 200 tirages (`t = -4,23`).
+#
+# ⛔ POURQUOI C EST UNE AFFAIRE DE PRODUCTION ET PAS D OBSERVATION.
+# `_fetch_peer_control_rows` alimente `peer_control_for_pair`, condition
+# NECESSAIRE au passage d une paire en AUTO_EXEC. Sa requete n avait AUCUN
+# filtre de timeframe : les 1 016 lignes `1d` du vivier pesaient donc sur
+# l admission de paires qui, elles, sont tradees en `5min` et `4h`.
+#
+# ⚠️ CE QUI N EST PAS FAIT, ET C EST VOLONTAIRE : la GENERATION des setups
+# `1d` continue. Le verdict n a aucune mesure hors echantillon, et la seule
+# autre fenetre disponible (08 -> 20/08, n=288, **+0,5483 R**) dit l INVERSE.
+# Les deux populations ne se chevauchent pas d un jour -- la coupure est
+# exactement la date ou la reconciliation est morte -- donc l ecart est
+# entierement confondu avec la PERIODE et ne peut pas etre tranche.
+# 🔑 Couper l observation interdirait de trancher plus tard ; l ecarter du
+# vivier suffit a ce que la decision ne soit plus polluee.
+#
+# Desarmable en une variable, pour cette raison meme.
+PAC_EXCLURE_HORIZON_1D = (
+    _os.getenv("PAC_EXCLURE_HORIZON_1D", "1").strip().lower()
+    not in ("0", "false", "off", "no"))
+
+
 def _peer_control_since_iso() -> str:
     """Borne basse (ISO UTC) de la fenêtre saine de `shadow_setups`.
 
@@ -1414,6 +1443,20 @@ def _peer_control_since_iso() -> str:
     comparabilité que le contrôle est censé garantir.
     """
     return "2026-08-04T00:00:00+00:00"
+
+
+def _clause_1d() -> str:
+    """La clause SQL d exclusion du `1d`, ou la chaine vide si desarmee.
+
+    ⛔ `timeframe IS NULL OR timeframe != '1d'` et non le seul `!=` : en SQL,
+    `NULL != '1d'` vaut NULL, donc FAUX. Une ligne sans timeframe -- il en
+    existe d anciennes, legitimes -- disparaitrait SILENCIEUSEMENT du vivier,
+    et le filtre retirerait bien plus que ce qu on lui demande. Un test
+    l epingle.
+    """
+    if not PAC_EXCLURE_HORIZON_1D:
+        return ""
+    return " AND (timeframe IS NULL OR timeframe != '1d')"
 
 
 def _fetch_peer_control_rows(direction: str) -> list[tuple]:
@@ -1435,7 +1478,7 @@ def _fetch_peer_control_rows(direction: str) -> list[tuple]:
             """
             SELECT id, pair, bar_timestamp, risk_pct, pnl_pct_net
               FROM shadow_setups
-             WHERE direction = ?
+             WHERE direction = ?""" + _clause_1d() + """
                AND bar_timestamp >= ?
                AND outcome IN ('TP1', 'SL')
                AND pnl_pct_net IS NOT NULL
