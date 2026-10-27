@@ -130,6 +130,35 @@ class Accumulateur:
         return (100.0 * self.un_tp_un_sl / self.n) if self.n else None
 
 
+def r_reel_par_setup(couverts: list[dict], series: dict[str, Serie],
+                     fenetre_h: int) -> list[tuple[int, float, str] | None]:
+    """Le `R` et l issue de chaque setup REEL, avec la GEOMETRIE D AOUT.
+
+    🔴 LE BUG QUE LE CONTROLE DE REPRODUCTION A ATTRAPE LE 28/10.
+    J avais evalue le bras reel avec `r_par_setup`, qui RECALCULE
+    `entry`/`sl`/`tp` depuis la bougie tiree -- c est-a-dire avec la geometrie
+    du PLACEBO. L esperance reelle sortait a **-0,1978** au lieu de **-0,0593**
+    publie, soit **153 %** d ecart, et le banc s est ARRETE.
+
+    🔑 Le bras reel garde ses bornes d aout (`entry`, `sl`, `tp` stockes) et
+    ne rejoue que l ISSUE sur les bougies chargees -- exactement ce que fait
+    `banc_placebo_structure.mesure`. Les deux barreaux de placebo, eux,
+    etaient deja exacts : seul le bras reel etait faux.
+    """
+    out: list[tuple[int, float, str] | None] = []
+    for i, d in enumerate(couverts):
+        s_ = series[d["pair"]]
+        t = d["bar"].timestamp()
+        r = s_.simule(s_.index_apres(t), t + fenetre_h * 3600,
+                      d["achat"], d["sl"], d["tp"])
+        if r is None or d["risk_pct"] <= 0:
+            out.append(None)
+            continue
+        out.append((i, pnl_pct(d["entry"], r[1], d["achat"]) / d["risk_pct"],
+                    r[0]))
+    return out
+
+
 def sd_predite(sd_baseline, rho, duos_n: int, n: int) -> float | None:
     """L ecart-type nul reconstruit depuis `rho`, par la formule PRE-INSCRITE.
 
@@ -290,9 +319,7 @@ def mesure(db: str, cr: "Criteres") -> dict:
     paires_duos = duos(couverts)
 
     # ─── bras REEL, RECALCULE en memoire ───
-    reel_rs = r_par_setup(
-        couverts, series, [d["bar"].timestamp() for d in couverts],
-        cr.fenetre_h)
+    reel_rs = r_reel_par_setup(couverts, series, cr.fenetre_h)
     acc_reel = Accumulateur()
     for ia, ib in paires_duos:
         a, b = reel_rs[ia], reel_rs[ib]

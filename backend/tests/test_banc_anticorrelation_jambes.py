@@ -425,3 +425,48 @@ def test_la_formule_sd_predite_rend_NONE_sur_une_entree_absente():
     assert baj.sd_predite(None, -0.5, 40, 100) is None
     assert baj.sd_predite(0.02, None, 40, 100) is None
     assert baj.sd_predite(0.02, -0.5, 40, 0) is None
+
+
+# ─── le bras REEL garde la geometrie d AOUT ────────────────────────────────
+
+
+def test_le_bras_REEL_utilise_la_geometrie_STOCKEE_et_pas_celle_du_placebo():
+    """🔴 LE BUG QU A ATTRAPE LE CONTROLE DE REPRODUCTION, LE 28/10.
+
+    `r_par_setup` recalcule `entry`/`sl`/`tp` depuis la bougie tiree : c est
+    juste pour un placebo, et FAUX pour le bras reel, qui doit garder ses
+    bornes d aout. L esperance reelle sortait a -0,1978 au lieu de -0,0593,
+    soit 153 % d ecart, et le banc s est arrete au lieu de publier.
+    """
+    couverts = _setups(6, 2)
+    for d in couverts:          # bornes d aout, volontairement DECALEES
+        d["entry"], d["sl"], d["tp"] = 90.0, 89.0, 91.8
+    series = {"BTC/USD": _serie()}
+
+    reel = baj.r_reel_par_setup(couverts, series, 96)
+    placebo = baj.r_par_setup(couverts, series,
+                              [d["bar"].timestamp() for d in couverts], 96)
+
+    assert [x[1] for x in reel if x] != [x[1] for x in placebo if x]
+    # ⚠️ et rien de plus : ma 2e assertion attendait « tout en TIMEOUT »,
+    # ce qui etait FAUX -- avec `sl` et `tp` poses a l identique pour les
+    # achats ET les ventes, ma fixture inversait les bornes des ventes. Le
+    # desaccord des deux evaluateurs est ce qui doit etre teste ici ;
+    # `test_le_bras_REEL_depend_du_SL_STOCKE` couvre la lecture du stop.
+
+
+def test_le_bras_REEL_depend_du_SL_STOCKE():
+    """Changer le stop stocke doit changer l issue -- sinon la fonction ne le
+    lit pas."""
+    series = {"BTC/USD": _serie()}
+    larges = _setups(4, 2)
+    for d in larges:
+        d["entry"], d["sl"], d["tp"] = 100.0, 80.0, 136.0
+    serres = _setups(4, 2)
+    for d in serres:
+        d["entry"], d["sl"], d["tp"] = 100.0, 99.99, 100.018
+
+    a = {x[2] for x in baj.r_reel_par_setup(larges, series, 96) if x}
+    b = {x[2] for x in baj.r_reel_par_setup(serres, series, 96) if x}
+
+    assert a != b, (a, b)
