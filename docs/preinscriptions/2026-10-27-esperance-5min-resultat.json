@@ -1,0 +1,63 @@
+{
+  "forme": "placebo",
+  "preinscription": "docs/preinscriptions/2026-10-27-esperance-1d.md",
+  "commit_preinscription": "d3cd3fe",
+  "graine": 20261027,
+  "n": 18668,
+  "n_reel": 18668,
+  "n_reel_total": 18668,
+  "couverture_bougies_pct": 100.0,
+  "controle_moteur_accord": 18668,
+  "controle_moteur_essais": 18668,
+  "risk_pct_median_reel": 0.5058047157206044,
+  "risk_pct_median_placebo": 0.5058047157206044,
+  "cout_R_median": 0.03954095202830724,
+  "esperance_R_reel": 0.0014021974489446967,
+  "esperance_R_placebo": -0.05425109885359126,
+  "esperance_R_convention_B": 0.0005096351220350209,
+  "esperance_R_timeout": 0.14928064868230212,
+  "tirages_demandes": 200,
+  "tirages_aboutis": 200,
+  "t": 6.277314218439457,
+  "t_contre_placebo": 6.277314218439457,
+  "tirages_battus_pct": 100.0,
+  "ecart_esperance_B_moins_A": -0.0008925623269096758,
+  "predictions": {
+    "P1_esperance_R_reel_attendue_min": {
+      "seuil": -0.05,
+      "libelle": "esperance reelle AU-DESSUS du seuil",
+      "passe": true
+    },
+    "P2_esperance_R_placebo_abs_max": {
+      "seuil": 0.05,
+      "libelle": "|placebo| sous le seuil",
+      "passe": false
+    },
+    "P3_tirages_battus_pct_attendu_max": {
+      "seuil": 95.0,
+      "libelle": "tirages battus sous le seuil",
+      "passe": false
+    },
+    "P4_ecart_conventions_A_B_abs_max": {
+      "seuil": 0.02,
+      "libelle": "|ecart A - B| sous le seuil",
+      "passe": true
+    },
+    "P5_cout_R_median_min": {
+      "seuil": 0.03,
+      "libelle": "cout median AU-DESSUS du seuil",
+      "passe": true
+    }
+  },
+  "valide": true,
+  "verdict": "NON_CONCLUANT_BRANCHES_EN_DESACCORD",
+  "ecart_par_trade": null,
+  "placebo": "200_TIRAGES_GRAINE_20261027",
+  "horizon": "5min",
+  "fenetre_heures": 96,
+  "critere_lu_dans": "docs/preinscriptions/2026-10-27-esperance-5min.md",
+  "validite_n_min": 15000,
+  "validite_couverture_min": 99.0,
+  "validite_ecart_risk_max": 0.05,
+  "validite_tirages_min": 190
+}
