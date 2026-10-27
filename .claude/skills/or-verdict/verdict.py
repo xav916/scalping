@@ -137,6 +137,10 @@ _CLAUSE_SIMPLE = re.compile(
 # les tests : « esperance_R_reel > cout_R_median » compare un resultat a un
 # cout mesure, pas a une constante. Sans elle l evaluateur declarait
 # l admission illisible et refusait TOUT -- fail-closed correct, mais inutile.
+_CLAUSE_ABS_SIMPLE = re.compile(
+    r"^\s*abs\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)"
+    r"\s*(<=|>=|<|>)\s*([-+]?\d+(?:[.,]\d+)?)\s*$")
+
 _CLAUSE_CHAMPS = re.compile(
     r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*(<=|>=|<|>)"
     r"\s*([A-Za-z_][A-Za-z0-9_]*)\s*$")
@@ -214,6 +218,26 @@ def evaluer_clauses(expression: str, resultat: dict
                     "clause NON tenue : abs(%s - %s) = %.4f, attendu %s %s"
                     " (%s = %.4f, %s = %.4f)"
                     % (a, b, ecart, op, seuil, a, va, b, vb))
+            continue
+
+        # ⛔ LACUNE COMBLEE LE 2026-10-27 : `abs(champ) <op> n`, a UN SEUL
+        # champ. Deux verdicts avaient ete refuses sur cette FORME et non sur
+        # leur substance. 🔑 J ai refuse de corriger quand le resultat concerne
+        # etait douteux -- et corriger seulement quand un resultat arrange
+        # serait pire. La correction est appliquee aux DEUX, et elle ne change
+        # aucun chiffre.
+        m = _CLAUSE_ABS_SIMPLE.match(clause)
+        if m:
+            champ, op, seuil = m.group(1), m.group(2), m.group(3)
+            v, probleme = _nombre(resultat, champ)
+            if probleme:
+                return None, [probleme]
+            s_ = float(seuil.replace(",", "."))
+            if not _OPERATEURS[op](abs(v), s_):
+                tenue = False
+                raisons.append(
+                    "clause NON tenue : abs(%s) = %s, attendu %s %s"
+                    % (champ, _joli(abs(v)), op, seuil))
             continue
 
         m = _CLAUSE_SIMPLE.match(clause)

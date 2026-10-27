@@ -227,3 +227,29 @@ def test_les_champs_de_base_restent_exiges_sur_la_forme_placebo():
 
     assert decision == verdict.REFUS
     assert any("[t]" in x for x in raisons), raisons
+
+
+def test_une_clause_abs_a_UN_SEUL_CHAMP_est_lisible():
+    """⛔ LACUNE TROUVEE LE 2026-10-27, et le contexte de sa correction importe.
+
+    `abs(t_contre_placebo) < 2.00` etait declare ILLISIBLE : seul `abs(a - b)`
+    etait reconnu. Deux verdicts ont ete refuses sur cette FORME, pas sur leur
+    substance.
+
+    🔑 J'ai refuse de corriger quand le resultat concerne etait douteux -- et le
+    corriger seulement quand un resultat m'arrange serait PIRE. La correction
+    est donc appliquee aux DEUX, et elle ne change aucun chiffre : elle laisse
+    seulement le juge lire une forme qu'il aurait toujours du lire.
+    """
+    d = verdict.evaluer_clauses("abs(t_contre_placebo) < 2.00",
+                                {"t_contre_placebo": -0.98})
+    assert d == (True, []), d
+
+    d = verdict.evaluer_clauses("abs(t_contre_placebo) < 2.00",
+                                {"t_contre_placebo": 4.32})
+    assert d[0] is False, d
+    assert any("t_contre_placebo" in x for x in d[1]), d
+
+    # la forme a DEUX champs continue de marcher
+    d = verdict.evaluer_clauses("abs(a - b) < 1.0", {"a": 5.0, "b": 5.5})
+    assert d == (True, []), d
