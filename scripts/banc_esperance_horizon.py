@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Banc : l'esperance de l'horizon `1d`, contre un PLACEBO de 200 tirages.
+"""Banc : l'esperance d'un HORIZON, contre un PLACEBO de tirages.
 
 PRE-INSCRIT `d3cd3fe` -- `docs/preinscriptions/2026-10-27-esperance-1d.md`.
 Ce banc n'applique QUE les branches de ce bloc machine. Aucun seuil n'est
@@ -248,9 +248,9 @@ def branche(esp_reel, esp_placebo, t, battus, cout_R, valide,
         return "INDECIDABLE_REEL_ET_PLACEBO_INDISCERNABLES"
     if (esp_reel > cout_R and t > cr.t_min
             and battus >= cr.battus_min):
-        return "ADMISSION_information_a_l_entree"
+        return f"ADMISSION_information_a_l_entree_{cr.horizon}"
     if esp_reel <= 0 and t < cr.t_min:
-        return "REJET_horizon_1d_ECARTE"
+        return f"REJET_horizon_{cr.horizon}_ECARTE"
     return "NON_CONCLUANT_BRANCHES_EN_DESACCORD"
 
 
@@ -555,7 +555,8 @@ def rapport(r: dict) -> str:
                f"    accord {r.get('accord')} / {r.get('essais')}"
     out = []
     p = out.append
-    p("=== BANC : l'esperance de l'horizon 1d, contre placebo")
+    p("=== BANC : l'esperance de l'horizon "
+      + str(r.get("horizon", "?")) + ", contre placebo")
     p(f"    pre-inscrit {r['commit_preinscription']} · graine {r['graine']}")
     p("")
     p(f"  n = {r['n']} sur {r['n_reel_total']}"

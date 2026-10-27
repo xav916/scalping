@@ -163,16 +163,16 @@ def test_reel_et_placebo_INDISCERNABLES_rendent_INDECIDABLE():
 
 def test_l_ADMISSION_exige_les_TROIS_conditions():
     assert banc.branche(0.30, 0.00, 3.0, 99.0, 0.002, valide=True, cr=CR_1D) \
-        == "ADMISSION_information_a_l_entree"
+        == "ADMISSION_information_a_l_entree_1d"
     # t insuffisant
     assert banc.branche(0.30, 0.00, 1.0, 99.0, 0.002, valide=True, cr=CR_1D) \
-        != "ADMISSION_information_a_l_entree"
+        != "ADMISSION_information_a_l_entree_1d"
     # tirages battus insuffisants
     assert banc.branche(0.30, 0.00, 3.0, 80.0, 0.002, valide=True, cr=CR_1D) \
-        != "ADMISSION_information_a_l_entree"
+        != "ADMISSION_information_a_l_entree_1d"
     # sous le cout
     assert banc.branche(0.001, 0.00, 3.0, 99.0, 0.002, valide=True, cr=CR_1D) \
-        != "ADMISSION_information_a_l_entree"
+        != "ADMISSION_information_a_l_entree_1d"
 
 
 def test_le_REJET_exige_une_esperance_NEGATIVE_et_un_t_faible():
@@ -367,3 +367,38 @@ def test_le_RAPPORT_ne_lit_aucune_cle_que_le_RESULTAT_n_ecrit_pas():
 
     assert not manquantes, (
         "rapport() lit des cles que mesure() n'ecrit pas : %s" % manquantes)
+
+
+def test_le_VERDICT_nomme_l_horizon_MESURE():
+    """⛔ DEFAUT REEL DU 2026-10-27. Le banc 4h a rendu
+    « REJET_horizon_1d_ECARTE » et un titre « horizon 1d » : un verdict qui
+    nomme le mauvais horizon empoisonne le dossier, et rien ne l'aurait
+    signale.
+    """
+    v4 = banc.branche(-0.27, -0.24, -0.98, 13.0, 0.0537, valide=True, cr=CR_4H)
+    v1 = banc.branche(-0.06, 0.04, -4.23, 0.0, 0.0021, valide=True, cr=CR_1D)
+
+    assert "4h" in v4 and "1d" not in v4, v4
+    assert "1d" in v1 and "4h" not in v1, v1
+
+
+def test_le_TITRE_du_rapport_nomme_l_horizon_du_resultat():
+    titre = banc.rapport({"erreur": "x"})  # branche d'arret, pas de titre
+    assert "ARRET" in titre
+
+    complet = {"horizon": "4h", "n": 1, "n_reel_total": 1,
+               "couverture_bougies_pct": 100.0, "controle_moteur_accord": 1,
+               "controle_moteur_essais": 1, "validite_n_min": 1,
+               "risk_pct_median_reel": 0.37, "risk_pct_median_placebo": 0.37,
+               "tirages_aboutis": 200, "tirages_demandes": 200, "valide": True,
+               "esperance_R_reel": -0.27, "esperance_R_placebo": -0.24,
+               "esperance_R_convention_B": -0.47, "esperance_R_timeout": 0.17,
+               "cout_R_median": 0.0537, "predictions": {},
+               "t_contre_placebo": -0.98, "tirages_battus_pct": 13.0,
+               "ecart_esperance_B_moins_A": -0.20, "graine": 1,
+               "commit_preinscription": "x", "verdict": "REJET_horizon_4h_ECARTE"}
+
+    texte = banc.rapport(complet)
+
+    assert "horizon 4h" in texte, texte[:200]
+    assert "horizon 1d" not in texte
