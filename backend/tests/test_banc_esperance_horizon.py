@@ -633,3 +633,54 @@ def test_les_predictions_du_hors_echantillon_sont_notables():
 
     assert set(notes) == set(cr.predictions)
     assert all(d["passe"] for d in notes.values()), notes
+
+
+def test_la_source_du_bras_reel_se_lit_et_une_valeur_INCONNUE_ARRETE(tmp_path):
+    """⛔ Le premier hors echantillon a montre ce que coute l'asymetrie de
+    provenance : 24,5 % de desaccord, ~ +0,15 R d'artefact. La source du bras
+    reel est donc DECLAREE, et une valeur inconnue ARRETE."""
+    cr = banc.Criteres(
+        "docs/preinscriptions/2026-10-28-hors-echantillon-5min-symetrique.md")
+    assert cr.source_bras_reel == "RECALCULE"
+
+    # les criteres anterieurs n'ont pas la cle : le defaut est STOCKE
+    assert CR_1D.source_bras_reel == "STOCKE"
+
+    f = tmp_path / "src.md"
+    LIGNES = [
+        "# critere", "", "<!-- CRITERE-MACHINE",
+        "horizon: 5min", "fenetre_heures: 96", "tirages_placebo: 200",
+        "source_bras_reel: DEVINE",
+        "population: resolved_backfill=0",
+        "validite: n_reel >= 10 ET couverture_bougies_pct > 99"
+        " ET abs(risk_pct_median_placebo - risk_pct_median_reel) < 0.01"
+        " ET tirages_aboutis >= 190",
+        "admission: ecart_signal > 0 ET t_contre_placebo > 2.00"
+        " ET tirages_battus_pct >= 95.0",
+        "rejet: abs(t_contre_placebo) < 2.00",
+        "P1_ecart_signal_min: 0.0", "-->",
+    ]
+    f.write_text(chr(10).join(LIGNES) + chr(10), encoding="utf-8")
+
+    with pytest.raises(SystemExit) as e:
+        banc.Criteres(str(f))
+
+    assert "DEVINE" in str(e.value), str(e.value)
+
+
+def test_les_predictions_du_banc_SYMETRIQUE_sont_notables():
+    cr = banc.Criteres(
+        "docs/preinscriptions/2026-10-28-hors-echantillon-5min-symetrique.md")
+    mesures = {"ecart_signal": 0.087, "t_contre_placebo": 4.3,
+               "esperance_R_reel": -0.060, "esperance_R_placebo": -0.1467,
+               "tirages_battus_pct": 100.0, "cout_R_median": 0.0950,
+               "desaccord_avec_stocke_pct": 24.5,
+               "esperance_R_timeout": 0.0, "ecart_esperance_B_moins_A": 0.0}
+
+    notes = banc.noter_predictions(cr, mesures)
+
+    assert set(notes) == set(cr.predictions)
+    assert all(d["passe"] for d in notes.values()), notes
+    # et le garde-fou doit TOMBER si l'artefact subsiste
+    notes2 = banc.noter_predictions(cr, dict(mesures, ecart_signal=0.24))
+    assert notes2["P4_ecart_signal_max"]["passe"] is False

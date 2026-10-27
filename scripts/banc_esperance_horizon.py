@@ -176,6 +176,15 @@ class Criteres:
         self.tirages = int(float(bloc.get("tirages_placebo", 200)))
         self.population = parse_population(bloc.get("population", ""))
         self.admission_brut = bloc.get("admission", "")
+        # ⛔ SOURCE DU BRAS REEL. `STOCKE` lit les `pnl_pct_net` de la base ;
+        # `RECALCULE` rejoue l issue sur les bougies CHARGEES, donc les memes
+        # que le placebo. Le premier hors echantillon a montre ce que coute
+        # l asymetrie : 24,5 % de desaccord et ~ +0,15 R d artefact.
+        self.source_bras_reel = bloc.get("source_bras_reel", "STOCKE")
+        if self.source_bras_reel not in ("STOCKE", "RECALCULE"):
+            raise SystemExit(
+                f"ARRET : source_bras_reel inconnue"
+                f" [{self.source_bras_reel}] -- attendu STOCKE ou RECALCULE")
         # ⛔ BORNE DE CHARGEMENT. Sans elle, la fenetre finissait a
         # `max(barre) + 120 h` -- DANS LE FUTUR -- donc 25 min plus tard
         # quelques bougies de plus existaient sous la meme borne et
@@ -556,6 +565,13 @@ _NOTATION = {
         "t sous la reference en echantillon",
         lambda m, v: m["t_contre_placebo"] is not None
         and m["t_contre_placebo"] < v),
+    "P4_ecart_signal_max": (
+        "ecart du signal SOUS le seuil",
+        lambda m, v: m["ecart_signal"] is not None and m["ecart_signal"] < v),
+    "P5_desaccord_avec_stocke_pct_min": (
+        "desaccord avec le stocke AU-DESSUS du seuil",
+        lambda m, v: m["desaccord_avec_stocke_pct"] is not None
+        and m["desaccord_avec_stocke_pct"] > v),
     "P5_ecart_esperance_B_moins_A_max": (
         "B - A sous le seuil",
         lambda m, v: m["ecart_esperance_B_moins_A"] is not None
@@ -610,6 +626,34 @@ def mesure(db: str, cr: "Criteres", tirages: int | None = None,
                 "consigne": ("c'est un defaut d'implementation, pas un"
                              " resultat : le banc s'arrete"),
             }
+
+    # ─── le bras REEL : stocke, ou RECALCULE sur les memes bougies ───
+    #
+    # ⛔ RIEN N EST ECRIT EN BASE. Les issues d aout restent la trace de ce que
+    # la production a calcule a l epoque ; le recalcul vit en memoire.
+    desaccord = None
+    if cr.source_bras_reel == "RECALCULE":
+        n_dif = n_cmp = 0
+        for d in couverts:
+            s = series[d["pair"]]
+            r = s.simule(s.index_apres(d["bar"].timestamp()),
+                         d["bar"].timestamp() + cr.fenetre_h * 3600,
+                         d["achat"], d["sl"], d["tp"])
+            if r is None:
+                d["pnl"] = None
+                continue
+            n_cmp += 1
+            if r[0] != d["issue"]:
+                n_dif += 1
+            # ⚠️ On garde la GEOMETRIE d aout (entry, sl, tp) et on ne rejuge
+            # que l ISSUE. C est la meme construction qu en echantillon, donc
+            # les deux mesures restent COMPARABLES -- une replication l exige.
+            d["issue"] = r[0]
+            d["pnl"] = pnl_pct(d["entry"], r[1], d["achat"])
+        desaccord = (100.0 * n_dif / n_cmp) if n_cmp else None
+        logging.getLogger("banc").info(
+            "    bras reel RECALCULE : %.1f %% de desaccord avec le stocke"
+            " (%d / %d)", desaccord or 0.0, n_dif, n_cmp)
 
     # ─── le reel ───
     reel_pts = [(d["pnl"], d["risk_pct"]) for d in couverts
@@ -705,6 +749,8 @@ def mesure(db: str, cr: "Criteres", tirages: int | None = None,
         "esperance_R_placebo": esp_placebo,
         # L ECART est la statistique du hors echantillon : invariant au cout,
         # les deux bras le payant a l identique.
+        "source_bras_reel": cr.source_bras_reel,
+        "desaccord_avec_stocke_pct": desaccord,
         "ecart_signal": (esp_reel - esp_placebo
                          if (esp_reel is not None and esp_placebo is not None)
                          else None),
