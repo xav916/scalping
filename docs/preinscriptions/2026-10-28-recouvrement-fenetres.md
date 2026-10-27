@@ -40,6 +40,9 @@ Pour chaque population, par paire, sur les seuls instants (aucune bougie) :
 - **`n_eff_naif`** — `union / 96 h` : le nombre de créneaux de fenêtre
   réellement distincts. ⛔ **À ne pas lire comme un `n` effectif statistique** :
   c'est une borne géométrique, pas un calcul de variance.
+- **`blocs_effectifs`** — le nombre **effectif** de blocs de 96 h occupés
+  (Herfindahl, moyenné sur 4 origines de découpage) : **la variable de
+  décision**, voir la correction ci-dessous.
 - **`ecart_median_s`** — l'écart médian entre entrées consécutives.
 - **Les mêmes statistiques sur le placebo** : 20 tirages avec **exactement** le
   schéma du banc (`random.Random(20261027)`, `uniform(min, max)` par paire),
@@ -83,6 +86,54 @@ barre de 2. **C'est donc 2,00 que j'engage.**
 approximation, pas une identité. Elle fixe l'**ordre de grandeur** du seuil, et
 c'est tout ce que je lui demande.
 
+## ⛔ CORRECTION, AVANT TOUTE MESURE : mon seuil était infalsifiable
+
+**Écrit le même jour, après avoir codé le banc et AVANT de l'exécuter.**
+
+J'ai vérifié l'arithmétique du seuil mais **pas l'amplitude de la statistique
+sur laquelle je le posais**. Le rapport des recouvrements **SATURE** dans ce
+régime :
+
+```
+n/paire = 611, etendue = 336 h, fenetre = 96 h
+tirage UNIFORME     ~ 299,3 croisements par setup
+plafond (tout colle) = 610
+=> RATIO MAXIMUM ATTEIGNABLE = 2,038
+```
+
+🔴 **Mon seuil engagé valait 2,00 pour un maximum atteignable de 2,038.**
+`P5 < 2,00` n'aurait pu être violée que par une agglomération quasi totale :
+c'est **le quatrième seuil impossible par construction**, cette fois dans
+l'autre sens — non pas impossible à tenir, mais impossible à **enfreindre**.
+
+✅ **Cette fois il a été attrapé AVANT la mesure**, et pas par relecture : par
+un test qui sondait le comportement de la statistique sur une agglomération
+fabriquée, et qui a rendu `×1,18` là où j'attendais `> 1,5`.
+
+### Ce qui change, et pourquoi c'est légitime
+
+La **décision** passe sur le **nombre effectif de blocs** de 96 h occupés
+(Herfindahl `(Σnᵦ)²/Σnᵦ²`, moyenné sur 4 origines de découpage) :
+
+```
+ratio_blocs = blocs_effectifs(UNIFORME) / blocs_effectifs(REEL)
+```
+
+| | plancher | uniforme | plafond du rapport |
+|---|---|---|---|
+| hors éch. (7 paires, 3,5 blocs/paire) | 7 | ≈ 24,5 | **≈ 3,5** |
+| en éch. (≈ 17 blocs/paire) | n paires | ≈ 17 × n | **≈ 17** |
+
+⇒ **Le seuil de 2,00 vit désormais bien à l'intérieur de l'amplitude**, et son
+sens est direct : « le réel occupe-t-il moins de la moitié des unités
+indépendantes que l'uniforme occupe ? ». La table de `√k` ci-dessus s'y
+applique telle quelle, `k` étant la perte de blocs.
+
+⛔ **Le recouvrement reste mesuré et publié** — c'est la question posée, et
+c'est lui qui dit l'ampleur du problème. Il n'est simplement **plus
+décisionnel**. Et le banc **publie désormais le MAXIMUM ATTEIGNABLE de chaque
+rapport**, pour que ce défaut ne puisse pas se reproduire en silence.
+
 <!-- CRITERE-MACHINE
 statistique: recouvrement_temporel_des_fenetres
 forme: placebo
@@ -94,13 +145,13 @@ tirages_placebo: 20
 graine: 20261027
 cellules: 1
 validite: n >= 4000 ET n_secondaire >= 15000 ET paires >= 5 ET tirages_aboutis >= 20
-admission: ratio_reel_sur_placebo < 2.00 ET ratio_reel_sur_placebo_secondaire < 2.00
-rejet: ratio_reel_sur_placebo >= 2.00
+admission: ratio_blocs_placebo_sur_reel < 2.00 ET ratio_blocs_placebo_sur_reel_secondaire < 2.00
+rejet: ratio_blocs_placebo_sur_reel >= 2.00
 P1_recouvrement_moyen_min: 150
 P2_ratio_somme_sur_union_min: 40
 P3_n_eff_naif_max: 400
-P4_ratio_reel_sur_placebo_min: 1.00
-P5_ratio_reel_sur_placebo_max: 2.00
+P4_ratio_blocs_min: 1.00
+P5_ratio_blocs_max: 2.00
 -->
 
 ⚠️ **Correspondance des noms** : `admission` = **le placebo reproduit la
@@ -121,11 +172,12 @@ comme description.
    avec **des centaines** d'autres.
 2. **`ratio_somme_sur_union ≥ 40`**, attendu ≈ **136** hors échantillon.
 3. **`n_eff_naif ≤ 400`**, attendu ≈ **31** hors échantillon.
-4. **`ratio_reel_sur_placebo > 1,00`** : le réel est **plus aggloméré** que
-   l'uniforme — le détecteur ne tire pas ses instants au hasard.
-5. **`ratio_reel_sur_placebo < 2,00`** : et modérément, parce que les entrées
-   occupent déjà une part importante des barres disponibles, ce qui **borne**
-   leur agglomération possible.
+4. **`ratio_blocs > 1,00`** : le réel occupe **moins** d'unités indépendantes
+   que l'uniforme — le détecteur ne tire pas ses instants au hasard. Attendu
+   ≈ **1,1** (soit ≈ 22 blocs réels contre ≈ 24,5 uniformes hors échantillon).
+5. **`ratio_blocs < 2,00`** : et la perte reste **sous la moitié**, pour un
+   plafond atteignable de **≈ 3,5** — le seuil est donc réellement
+   enfreignable, contrairement à celui que je viens de retirer.
 
 ## Ce que chaque issue implique
 
@@ -136,7 +188,7 @@ comme description.
 - **P5 violée** (`≥ 2,00`) ⇒ **je retire la réplication** jusqu'à un placebo par
   **blocs** (décalage circulaire par paire, qui préserve exactement le
   regroupement réel). ⛔ Ce serait une rétractation, pas une nuance.
-- **P4 violée** (réel **moins** aggloméré que l'uniforme) ⇒ le placebo est
+- **P4 violée** (le réel occupe **PLUS** de blocs que l'uniforme) ⇒ le placebo est
   **conservateur**, les `t` sont si quelque chose **sous-estimés**. ⛔ Et je
   devrais expliquer pourquoi un détecteur produit des instants plus réguliers
   que le hasard, ce que je n'attends pas.
