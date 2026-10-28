@@ -1594,6 +1594,32 @@ def start_scheduler() -> AsyncIOScheduler:
         replace_existing=True,
     )
 
+    # Sonde de la mesure du coût d'exécution (2026-10-28).
+    #
+    # ⛔ POURQUOI ELLE N'ÉTAIT PAS LÀ. `slippage_instrumentation_check.run()`
+    # existait depuis le 06/08 et n'était appelé par RIEN, sauf son propre
+    # test. Le module écrit pour empêcher le silence de se réinstaller était
+    # lui-même muet : onze semaines de glissement absurde — `BTC/USD` à
+    # 1 113 350 pips — sans que personne ne le sache. Un observateur non câblé
+    # vaut MOINS que pas d'observateur, parce qu'on croit en avoir un.
+    #
+    # 🔑 Elle n'alerte qu'au CHANGEMENT de verdict et n'avance son état que sur
+    # un envoi confirmé : pas de répétition, pas d'alerte perdue.
+    #
+    # Six heures et non la minute : elle juge une MÉDIANE sur des dizaines de
+    # trades. Sonder plus souvent ne la ferait pas bouger plus vite, et une
+    # sonde qui parle trop finit par ne plus être lue — la sauvegarde S3
+    # signalait son échec depuis cinq nuits le 04/09.
+    from backend.services import slippage_instrumentation_check as _sonde_glis
+    _scheduler.add_job(
+        _sonde_glis.executer,
+        "interval",
+        hours=6,
+        id="sonde_glissement",
+        name="Sonde du coût d'exécution (alerte au changement)",
+        replace_existing=True,
+    )
+
     # Arbitrage du plafond de perte journalier (2026-09-04).
     #
     # ⛔ Ce job ne DÉCIDE de rien : le blocage est déjà en vigueur dès le

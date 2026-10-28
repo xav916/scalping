@@ -263,6 +263,7 @@ def _upsert_open_trade(row: dict[str, Any], user: str,
     fill_source = row.get("fill_source")
 
     slippage_pips = None
+    slippage_pct = None
     if fill_price and planned_price and fill_source != "requested":
         pip = _pip_size(pair)
         # Slippage signé : positif = en faveur du trade, négatif = défavorable.
@@ -272,6 +273,27 @@ def _upsert_open_trade(row: dict[str, Any], user: str,
             raw = fill_price - planned_price  # vendu plus haut = favorable
         if pip:
             slippage_pips = round(raw / pip, 1)
+        # ⛔ LE GLISSEMENT EN % DU PRIX, et pourquoi il s'ajoute au lieu de
+        # remplacer (2026-10-28).
+        #
+        # `slippage_pips` passe par `_pip_size`, qui n'a AUCUN cas crypto ni
+        # énergie et retombe sur le facteur forex `0.0001` : `BTC/USD` sortait
+        # donc à 1 113 350 pips de médiane, et la sonde rendait `OK` dessus.
+        # Mesuré le 28/10 sur 544 trades : le coût réel vaut 0,1298 % du prix
+        # sur `BTC/USD`, 0,0251 % sur `XAU/USD`, 0,006 à 0,016 % en forex.
+        #
+        # 🔑 Le pourcentage ne dépend d'AUCUNE convention par instrument, donc
+        # il ne peut pas retomber en silence sur la mauvaise échelle quand un
+        # instrument neuf arrive. C'est aussi l'unité dont les bancs ont besoin :
+        # leur coût en R vaut `slippage_pct / risk_pct`.
+        #
+        # ⛔ Et `slippage_pips` n'est PAS corrigée : changer sa valeur rendrait
+        # les lignes d'avant incomparables à celles d'après SOUS LE MÊME NOM --
+        # la faute « deux choses sous un mot » qui a produit un verdict faux le
+        # 28/10. Les anciennes restent lisibles (facteur connu), les neuves
+        # portent la vérité dans la colonne neuve.
+        if planned_price:
+            slippage_pct = round(100.0 * raw / planned_price, 6)
 
     # Matching signal_id : on cherche un signal recent qui correspond a ce
     # fill (pair + direction + entry a +/-0.1% pres, dans les 30 dernieres
@@ -315,14 +337,20 @@ def _upsert_open_trade(row: dict[str, Any], user: str,
             c.execute("ALTER TABLE personal_trades ADD COLUMN horizon TEXT")
         if "source" not in cols_pt:
             c.execute("ALTER TABLE personal_trades ADD COLUMN source TEXT")
+        # Glissement en % du prix (2026-10-28) : unité sans convention par
+        # instrument, voir le commentaire du calcul plus haut.
+        if "slippage_pct" not in cols_pt:
+            c.execute(
+                "ALTER TABLE personal_trades ADD COLUMN slippage_pct REAL")
         c.execute("""
             INSERT OR IGNORE INTO personal_trades (
                 user, pair, direction, entry_price, stop_loss, take_profit,
                 size_lot, signal_pattern, signal_confidence, checklist_passed,
                 notes, status, created_at, mt5_ticket, is_auto,
                 post_entry_sl, post_entry_tp, post_entry_size, context_macro,
-                signal_id, fill_price, slippage_pips, destination_id, horizon, source
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 'OPEN', ?, ?, 1, 1, 1, 1, ?, ?, ?, ?, ?, ?, ?)
+                signal_id, fill_price, slippage_pips, slippage_pct,
+                destination_id, horizon, source
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 'OPEN', ?, ?, 1, 1, 1, 1, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             user,
             pair,
@@ -345,6 +373,7 @@ def _upsert_open_trade(row: dict[str, Any], user: str,
             signal_id,
             fill_price,
             slippage_pips,
+            slippage_pct,
             # Destination (2026-08-20) : sans elle, demo et reel se
             # confondaient dans le plafond journalier.
             destination_id,
