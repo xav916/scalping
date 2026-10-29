@@ -14,8 +14,10 @@ from __future__ import annotations
 
 import json
 import pathlib
-import subprocess
 import sys
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+from or_commun import distant  # noqa: E402
 
 REQUIS = ("rem002_allowed", "rem002_reason", "mirror_active", "pending",
           "pont_live", "pont_demo", "fingerprint_running", "fingerprint_armed")
@@ -64,42 +66,6 @@ def juger(etat: dict) -> tuple[int, list[str]]:
     return code, lignes
 
 
-def _executer_a_distance(depot: pathlib.Path, src: str,
-                         timeout: int = 90) -> dict:
-    """Execute `src` dans le conteneur et rend la derniere ligne JSON.
-
-    ⛔ La charge passe par STDIN, jamais en argument de `python3 -c`. Mesure du
-    2026-10-29 : une charge MULTI-LIGNES passee en argument arrive sur UNE
-    seule ligne avec des `\\n` litteraux — bash ne les interprete pas entre
-    guillemets doubles, et Python lit le backslash comme une continuation de
-    ligne : `SyntaxError: unexpected character after line continuation
-    character`. La 1re charge de `collecter` survivait seulement parce qu'elle
-    n'a aucun saut de ligne. Meme correctif que dans `or-porte`, verifie
-    jusqu'a 50 Ko.
-
-    ⛔ `-n` est RETIRE (il fermerait le stdin qu'on utilise) et `docker exec`
-    prend `-i` (sinon le conteneur ne recoit pas le flux).
-
-    ⛔ Fail-closed : une sortie illisible LEVE. Rendre `None` en silence est ce
-    qui avait rendu ce defaut invisible pendant des semaines — les champs
-    manquaient et le message accusait le symptome, jamais la cause.
-
-    La derniere ligne commencant par `{` est prise : la banniere ssh ecrit sur
-    stdout a chaque appel.
-    """
-    out = subprocess.run(
-        ["ssh", "-i", str(depot / "scalping-key.pem"),
-         "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes",
-         "ec2-user@13.63.77.180",
-         "sudo docker exec -i scalping-radar python3 -"],
-        input=src, capture_output=True, text=True, timeout=timeout)
-    for ligne in reversed(out.stdout.splitlines()):
-        if ligne.strip().startswith("{"):
-            return json.loads(ligne)
-    raise RuntimeError("la production n'a rien rendu de lisible : %s"
-                       % (out.stderr or out.stdout)[-300:])
-
-
 def collecter(depot: pathlib.Path) -> dict:
     """Interroge la production en LECTURE SEULE. Non testee (reseau)."""
     pyt = (
@@ -116,7 +82,7 @@ def collecter(depot: pathlib.Path) -> dict:
         "'pending':p,'fingerprint_running':e.get('fingerprint_running'),"
         "'fingerprint_armed':e.get('fingerprint_armed')}))"
     )
-    brut = _executer_a_distance(depot, pyt)
+    brut = distant.derniere_ligne_json(distant.executer(depot, pyt))
 
     # Deuxieme appel pour les ponts
     pont = (
@@ -141,7 +107,7 @@ def collecter(depot: pathlib.Path) -> dict:
     # ⛔ Pas de `if second is not None` : un echec ici doit REMONTER. Avaler
     # le silence laissait `pont_live`/`pont_demo` absents, et `juger()`
     # annoncait « information absente » sans jamais nommer la cause.
-    brut.update(_executer_a_distance(depot, pont))
+    brut.update(distant.derniere_ligne_json(distant.executer(depot, pont)))
     return brut
 
 
