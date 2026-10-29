@@ -11,8 +11,6 @@ produisent porte donc `origine: lot`.
 """
 from __future__ import annotations
 
-import lot as L
-
 ORIGINE_PRODUCTION = "production"
 ORIGINE_LOT = "lot"
 
