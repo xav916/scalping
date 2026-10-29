@@ -52,9 +52,14 @@ for nom in LOT["destinations"]:
         setup = SimpleNamespace(**s)
         try:
             code = M._check_rejection(setup, d)
+            classe = asset_class_for(s["pair"])
+            admission = A.get_current_state(
+                s["pair"], direction=s.get("direction"), destination=nom)
         except Exception as e:
             code = "porte_en_erreur:%%s" %% type(e).__name__
-        if code and not code.startswith("_"):
+            classe = None
+            admission = None
+        if code and not code.startswith("_") and not code.startswith("porte_en_erreur:"):
             lab = RS.REASON_LABELS_FR.get(code)
             if lab:
                 libelles[code] = lab
@@ -62,9 +67,8 @@ for nom in LOT["destinations"]:
                 sans.add(code)
         verdicts.append({
             "i": i, "destination": nom, "reason_code": code,
-            "classe": asset_class_for(s["pair"]),
-            "admission": A.get_current_state(
-                s["pair"], direction=s.get("direction"), destination=nom),
+            "classe": classe,
+            "admission": admission,
         })
 
 det = G.execution_allowed().as_details()

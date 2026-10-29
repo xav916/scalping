@@ -72,3 +72,25 @@ def test_la_charge_rend_le_fingerprint_et_les_sans_libelle():
     for clef in ("fingerprint_running", "sans_libelle", "limites",
                  "verdicts", "admission", "classe"):
         assert clef in src, "la charge doit rendre `%s`" % clef
+
+
+def test_exceptions_dans_la_boucle_setup_sont_gardees():
+    """Les trois appels critiques doivent être dans un try/except."""
+    src = C.construire(LOT)
+    arbre = ast.parse(src)
+
+    # Collect all calls in Try nodes
+    calls_protected = set()
+    for node in ast.walk(arbre):
+        if isinstance(node, ast.Try):
+            for child in ast.walk(node):
+                if isinstance(child, ast.Call):
+                    if isinstance(child.func, ast.Name):
+                        calls_protected.add(child.func.id)
+                    elif isinstance(child.func, ast.Attribute):
+                        calls_protected.add(child.func.attr)
+
+    # All three critical calls must be inside try blocks
+    assert "asset_class_for" in calls_protected, "asset_class_for not protected"
+    assert "get_current_state" in calls_protected, "get_current_state not protected"
+    assert "_check_rejection" in calls_protected, "_check_rejection not protected"
