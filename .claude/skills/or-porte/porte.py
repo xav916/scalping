@@ -247,27 +247,50 @@ def _lot_depuis_vivier(depot: pathlib.Path, destination: str) -> dict:
     ⛔ Jamais par requete sur `pair_admission_state` : cette table est un
     HISTORIQUE de transitions, et la lire par etat rend 166 la ou la cascade
     rend 1.
+
+    🔑 R18 (2026-10-29) : resout la destination par
+    `bridge_destinations.admin_destinations()` et filtre par
+    `allowed_asset_classes`, exactement comme la charge principale -- jamais
+    par `destinations_registry.asset_classes`, dont l'ensemble est FAUX
+    (admin_kraken y a "metal" en plus, qui n'est pas dans ce que la
+    production accepte reellement). Une destination absente d'
+    `admin_destinations()` echoue explicitement, jamais un lot vide en
+    silence.
     """
+    dest_lit = json.dumps(destination)
     src = (
         "import json,sys; sys.path.insert(0,'/app')\n"
         "from backend.services import pair_admission_controller as A\n"
-        "from backend.services import destinations_registry as R\n"
+        "from backend.services import bridge_destinations as BD\n"
         "from config.settings import asset_class_for, WATCHED_PAIRS\n"
-        "d=R.get(%s)\n" % json.dumps(destination) +
+        "NOM=%s\n" % dest_lit +
+        "_ACTIVES={x.destination_id:x for x in BD.admin_destinations()}\n"
+        "d=_ACTIVES.get(NOM)\n"
+        "if d is None:\n"
+        "    print(json.dumps({'erreur':'destination inconnue: '+NOM,\n"
+        "                      'connues':sorted(_ACTIVES)}))\n"
+        "    sys.exit(0)\n"
         "out=[]\n"
         "for p in sorted({str(x).upper() for x in WATCHED_PAIRS}):\n"
-        "    if asset_class_for(p) not in d.asset_classes: continue\n"
+        "    if asset_class_for(p) not in d.allowed_asset_classes: continue\n"
         "    for s in ('buy','sell'):\n"
-        "        if A.get_current_state(p,direction=s,destination=d.id)=='AUTO_EXEC':\n"
+        "        if A.get_current_state(p,direction=s,destination=d.destination_id)"
+        "=='AUTO_EXEC':\n"
         "            out.append({'pair':p,'direction':s})\n"
         "print(json.dumps(out))"
     )
     res = _executer_a_distance(depot, src, timeout=120)
     couples = None
     for ligne in reversed(res.stdout.splitlines()):
-        if ligne.strip().startswith("["):
-            couples = json.loads(ligne)
+        t = ligne.strip()
+        if t.startswith("["):
+            couples = json.loads(t)
             break
+        if t.startswith("{"):
+            brut = json.loads(t)
+            raise RuntimeError("%s (connues : %s)"
+                               % (brut["erreur"],
+                                  ", ".join(brut.get("connues") or [])))
     if couples is None:
         raise RuntimeError("vivier illisible : %s"
                            % (res.stderr or res.stdout)[-300:])
