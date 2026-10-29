@@ -1,0 +1,25 @@
+{
+  "destinations": ["admin_live", "admin_kraken"],
+  "setups": [
+    {"pair": "XAU/USD", "direction": "buy", "entry_price": 2412.50,
+     "stop_loss": 2404.10, "confidence_score": 71, "pattern": "range_bounce",
+     "horizon": "30min", "chaine": null, "shadow_system_id": null,
+     "is_simulated": false, "verdict_blockers": [], "risk_pct": 0.35},
+    {"pair": "XAU/USD", "direction": "sell", "entry_price": 2412.50,
+     "stop_loss": 2420.90, "confidence_score": 71, "pattern": "range_bounce",
+     "horizon": "30min", "chaine": null, "shadow_system_id": null,
+     "is_simulated": false, "verdict_blockers": [], "risk_pct": 0.35},
+    {"pair": "BTC/USD", "direction": "buy", "entry_price": 61200.0,
+     "stop_loss": 60800.0, "confidence_score": 71, "pattern": "range_bounce",
+     "horizon": "30min", "chaine": null, "shadow_system_id": null,
+     "is_simulated": false, "verdict_blockers": [], "risk_pct": 0.35},
+    {"pair": "ETH/USD", "direction": "buy", "entry_price": 2980.0,
+     "stop_loss": 2955.0, "confidence_score": 71, "pattern": "range_bounce",
+     "horizon": "30min", "chaine": null, "shadow_system_id": null,
+     "is_simulated": false, "verdict_blockers": [], "risk_pct": 0.35},
+    {"pair": "XAG/USD", "direction": "sell", "entry_price": 28.40,
+     "stop_loss": 28.62, "confidence_score": 71, "pattern": "range_bounce",
+     "horizon": "30min", "chaine": null, "shadow_system_id": null,
+     "is_simulated": false, "verdict_blockers": [], "risk_pct": 0.35}
+  ]
+}

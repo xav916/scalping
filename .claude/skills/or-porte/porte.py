@@ -11,6 +11,14 @@ produisent porte donc `origine: lot`.
 """
 from __future__ import annotations
 
+import argparse
+import json
+import pathlib
+import subprocess
+import sys
+from datetime import datetime, timezone
+
+import charge
 import lot as L
 
 ORIGINE_PRODUCTION = "production"
@@ -184,3 +192,138 @@ def juger(lot_valide: dict, brut: dict) -> tuple[int, list[str], dict]:
 
     etat = {"empreinte_code": empreinte_code, "verdicts": verdicts}
     return (1 if bloques else 0), lignes, etat
+
+
+def _executer_a_distance(depot: pathlib.Path, src: str, timeout: int = 120):
+    """Lance `src` dans le conteneur, par ssh. Non testee (reseau).
+
+    `src` voyage par le STDIN de ssh (`python3 -`), jamais comme argument de
+    `-c` : verifie le 2026-10-29 contre la production, deux defauts
+    independants rendaient cette derniere voie non fiable --
+      1. le shell distant (`bash -c`) ne convertit pas le `\\n` JSON en vrai
+         saut de ligne -> `SyntaxError: unexpected character after line
+         continuation character` sur tout script de plus d'une ligne ;
+      2. meme une fois ce texte mis en base64 (donc sans saut de ligne), un
+         seul argument de commande au-dela d'environ 8 Ko tronque en silence
+         -> `bash: -c: ... unexpected EOF`. Le lot `--depuis-vivier` depasse
+         deja ce seuil (25 buckets ~ 12,4 Ko encodes).
+    Le flux stdin n'a ni l'un ni l'autre defaut : aucune conversion de
+    caractere, aucune limite de longueur observee jusqu'a 50 Ko. `-n` est
+    donc RETIRE (il couperait ce flux) et `docker exec` passe en `-i`.
+    """
+    return subprocess.run(
+        ["ssh", "-i", str(depot / "scalping-key.pem"),
+         "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes",
+         "ec2-user@13.63.77.180",
+         "sudo docker exec -i scalping-radar python3 -"],
+        input=src, capture_output=True, text=True, timeout=timeout)
+
+
+def collecter(depot: pathlib.Path, lot_valide: dict) -> dict:
+    """Interroge la production en LECTURE SEULE. Non testee (reseau).
+
+    Le parsing prend la DERNIERE ligne commencant par `{` : la banniere ssh
+    pollue stdout, et c'est le contournement deja eprouve par `or-etat`.
+    """
+    src = charge.construire(lot_valide)
+    out = _executer_a_distance(depot, src, timeout=120)
+    for ligne in reversed(out.stdout.splitlines()):
+        if ligne.strip().startswith("{"):
+            brut = json.loads(ligne)
+            if "erreur" in brut:
+                raise RuntimeError("%s (connues : %s)"
+                                   % (brut["erreur"],
+                                      ", ".join(brut.get("connues") or [])))
+            return brut
+    raise RuntimeError("la production n'a rien rendu de lisible : %s"
+                       % (out.stderr or out.stdout)[-300:])
+
+
+def _lot_depuis_vivier(depot: pathlib.Path, destination: str) -> dict:
+    """Construit un lot depuis les buckets AUTO_EXEC, par la CASCADE.
+
+    ⛔ Jamais par requete sur `pair_admission_state` : cette table est un
+    HISTORIQUE de transitions, et la lire par etat rend 166 la ou la cascade
+    rend 1.
+    """
+    src = (
+        "import json,sys; sys.path.insert(0,'/app')\n"
+        "from backend.services import pair_admission_controller as A\n"
+        "from backend.services import destinations_registry as R\n"
+        "from config.settings import asset_class_for, WATCHED_PAIRS\n"
+        "d=R.get(%s)\n" % json.dumps(destination) +
+        "out=[]\n"
+        "for p in sorted({str(x).upper() for x in WATCHED_PAIRS}):\n"
+        "    if asset_class_for(p) not in d.asset_classes: continue\n"
+        "    for s in ('buy','sell'):\n"
+        "        if A.get_current_state(p,direction=s,destination=d.id)=='AUTO_EXEC':\n"
+        "            out.append({'pair':p,'direction':s})\n"
+        "print(json.dumps(out))"
+    )
+    res = _executer_a_distance(depot, src, timeout=120)
+    couples = None
+    for ligne in reversed(res.stdout.splitlines()):
+        if ligne.strip().startswith("["):
+            couples = json.loads(ligne)
+            break
+    if couples is None:
+        raise RuntimeError("vivier illisible : %s"
+                           % (res.stderr or res.stdout)[-300:])
+    return {"destinations": [destination], "setups": [
+        {"pair": c["pair"], "direction": c["direction"],
+         "entry_price": 0.0, "stop_loss": 0.0, "confidence_score": 100,
+         "pattern": None, "horizon": None, "chaine": None,
+         "shadow_system_id": None, "is_simulated": False,
+         "verdict_blockers": [], "risk_pct": 0.0}
+        for c in couples]}
+
+
+def main(argv: list[str] | None = None) -> int:
+    depot = pathlib.Path(__file__).resolve().parents[3]
+    ap = argparse.ArgumentParser(description="La porte avant le pont.")
+    ap.add_argument("--lot", default=str(depot / "or" / "lot.json"))
+    ap.add_argument("--json", action="store_true", dest="en_json")
+    ap.add_argument("--no-write", action="store_true", dest="sans_ecrire")
+    ap.add_argument("--depuis-vivier", default=None, metavar="DESTINATION")
+    a = ap.parse_args(argv)
+
+    try:
+        if a.depuis_vivier:
+            brut_lot = _lot_depuis_vivier(depot, a.depuis_vivier)
+        else:
+            brut_lot = json.loads(pathlib.Path(a.lot).read_text(encoding="utf-8"))
+        lot_valide = L.valider_lot(brut_lot)
+    except L.ErreurLot as e:
+        print("ECHEC : lot non jugeable -- %s" % e)
+        return 2
+    except Exception as e:  # noqa: BLE001
+        print("ECHEC : lot illisible (%s)" % e)
+        return 2
+
+    try:
+        brut = collecter(depot, lot_valide)
+    except Exception as e:  # noqa: BLE001
+        print("ECHEC : production injoignable (%s) -- rien n'est juge" % e)
+        return 2
+
+    code, lignes, etat = juger(lot_valide, brut)
+    if a.depuis_vivier:
+        print("⚠️ lot issu du vivier : les setups ne portent PAS de prix\n"
+              "   (entry_price=0, stop_loss=0) -- tout refus dependant du prix\n"
+              "   n'est pas significatif")
+    if a.en_json:
+        print(json.dumps(etat, indent=2, ensure_ascii=False))
+    else:
+        for l in lignes:
+            print(l)
+    if etat and not a.sans_ecrire:
+        cible = depot / "or" / "state" / "porte.json"
+        cible.parent.mkdir(parents=True, exist_ok=True)
+        etat["juge_le"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        cible.write_text(json.dumps(etat, indent=2, ensure_ascii=False) + "\n",
+                         encoding="utf-8")
+    return code
+
+
+if __name__ == "__main__":
+    sys.exit(main())

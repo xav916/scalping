@@ -49,6 +49,11 @@ bridge.log
 # REM-003 : sortie de build, jamais commitee (elle porte le sha du commit)
 deployment_manifest.json
 
+# or-porte : sortie d'execution et lot de travail personnel -- jamais commites
+# (or/exemple-lot.json reste suivi : c'est de la documentation executable)
+or/state/
+or/lot.json
+
 # Genere par deploy-v2.sh a chaque build. Non suivi, mais il rendait l'arbre de
 # travail de l'EC2 SALE en permanence — donc `generer_manifest_deploiement.py
 # --exiger-propre` aurait bloque tous les deploiements (trouve le 2026-09-28).
