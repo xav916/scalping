@@ -12,8 +12,10 @@ S = {"pair": "XAU/USD", "direction": "buy", "entry_price": 2412.50,
 LOT = {"destinations": ["admin_live"], "setups": [S]}
 
 # Limites et empreinte REELLES du 2026-10-29.
-LIM = {"admin_live": {"max_correlated_positions": 3, "order_cooldown_sec": 0,
-                      "max_risque_engage_pct": 5.0, "places_par_paire": 2}}
+LIM = {"admin_live": {"order_cooldown_sec": 0,
+                      "max_risque_engage_pct": 5.0,
+                      "max_risque_engage_or_argent_pct": 15.0,
+                      "max_open_positions": 2}}
 
 
 def _brut(reason_code=None, **kw):
@@ -137,3 +139,96 @@ def test_le_correctif_nomme_la_valeur_lue():
     b = _brut("below_confidence", libelles={"below_confidence": "Confiance < seuil"})
     _, _, etat = P.juger(LOT, b)
     assert "71" in etat["verdicts"][0]["correctif"]
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Important 1 (2026-10-29) : le plafond de lot `max_open_positions` est
+# GLOBAL par destination, jamais un cap par paire -- integre ici au niveau
+# de `juger()`, en plus de l'unitaire `test_contraintes_lot.py`.
+# ──────────────────────────────────────────────────────────────────────
+
+def test_juger_applique_le_plafond_global_meme_sur_des_paires_differentes():
+    lot3 = {"destinations": ["admin_live"], "setups": [
+        S, dict(S, pair="XAG/USD"), dict(S, pair="EUR/USD")]}
+    b = _brut()
+    b["verdicts"] = [
+        {"i": i, "destination": "admin_live", "reason_code": None,
+         "classe": "metal", "admission": "AUTO_EXEC"} for i in range(3)]
+    code, lignes, etat = P.juger(lot3, b)
+    assert code == 1
+    resultats = [v["resultat"] for v in etat["verdicts"]]
+    assert resultats == ["PASS", "PASS", "BLOCK"], (
+        "max_open_positions=2 (LIM) doit bloquer le TROISIEME setup, meme "
+        "sur sa propre troisieme paire -- un cap garde par paire le "
+        "laisserait passer")
+    assert etat["verdicts"][2]["reason_code"] == "lot_places_destination"
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Important 2 (2026-10-29) : la poche de risque engage suit la classe
+# d'actif du setup, pas la destination -- integre ici via `vp["classe"]`.
+# ──────────────────────────────────────────────────────────────────────
+
+def test_juger_lit_la_poche_or_argent_pour_un_setup_metal():
+    """Avec la poche commune a 5 % et la poche or/argent a 15 %, un risque
+    de 10 % doit PASSER pour un setup `classe=metal` -- il serait BLOQUE a
+    tort si la clause lisait encore la poche commune (Important 2)."""
+    s = dict(S, risk_pct=10.0)
+    lot1 = {"destinations": ["admin_live"], "setups": [s]}
+    b = _brut()
+    b["verdicts"] = [{"i": 0, "destination": "admin_live",
+                      "reason_code": None, "classe": "metal",
+                      "admission": "AUTO_EXEC"}]
+    code, _, etat = P.juger(lot1, b)
+    assert code == 0
+    assert etat["verdicts"][0]["resultat"] == "PASS"
+
+
+def test_juger_bloque_un_setup_non_metal_contre_la_poche_commune():
+    s = dict(S, pair="EUR/USD", risk_pct=10.0)
+    lot1 = {"destinations": ["admin_live"], "setups": [s]}
+    b = _brut()
+    b["verdicts"] = [{"i": 0, "destination": "admin_live",
+                      "reason_code": None, "classe": "forex",
+                      "admission": "AUTO_EXEC"}]
+    code, _, etat = P.juger(lot1, b)
+    assert code == 1
+    assert etat["verdicts"][0]["reason_code"] == "lot_risque_engage"
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Minor 1 reclassifie (2026-10-29) : `asset_class_blocked` doit avoir son
+# propre correctif, pointant la fonction REELLE qui le reconstruit.
+# ──────────────────────────────────────────────────────────────────────
+
+def test_le_correctif_asset_class_blocked_ne_pointe_pas_check_rejection():
+    """Avant le correctif, `asset_class_blocked` n'avait pas d'entree dans
+    `_CORRECTIFS` : le fallback generique disait « lire `asset_class_blocked`
+    dans `mt5_bridge._check_rejection` » -- la MAUVAISE fonction, puisque ce
+    code est reconstruit par `_push_to_destination` (mt5_bridge.py:2278)."""
+    texte = P.correctif("asset_class_blocked", S)
+    assert "asset_class_blocked" in P._CORRECTIFS, (
+        "asset_class_blocked doit avoir sa PROPRE entree, pas le fallback "
+        "generique qui pointe _check_rejection")
+    assert "dans `mt5_bridge._check_rejection`" not in texte
+    assert "_push_to_destination" in texte or "2278" in texte
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Important 3 (2026-10-29) : le contrat des codes de sortie. `juger()`
+# ne doit RIEN laisser remonter -- c'est `main()` qui l'enveloppe desormais
+# (verifie ici au niveau du contrat : une entree qui ferait planter
+# `contraintes_lot` a l'interieur de `juger` doit etre rattrapable par
+# l'appelant sans jamais produire le code 1 reserve a « au moins un BLOCK »).
+# ──────────────────────────────────────────────────────────────────────
+
+def test_une_limite_non_numerique_leve_a_l_interieur_de_juger_pas_un_1_silencieux():
+    """`contraintes_lot` fait `int(limites[...])` : une valeur `/health` non
+    numerique y leve `ValueError` *a l'interieur* de `juger()`, puisque
+    `juger()` n'est pas protege lui-meme -- c'est `main()` qui doit la
+    rattraper et rendre 2, jamais laisser Python sortir en 1."""
+    import pytest
+    b = _brut()
+    b["limites"]["admin_live"]["order_cooldown_sec"] = "pas-un-nombre"
+    with pytest.raises(ValueError):
+        P.juger(LOT, b)

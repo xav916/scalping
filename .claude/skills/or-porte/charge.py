@@ -47,10 +47,21 @@ def limites(d):
     except Exception:
         sante = {}
     gf = sante.get("garde_fous") or {}
+    # ⚠️ `max_open_positions` est le plafond GLOBAL du pont
+    # (`bridge.py:1089` -- `len(positions) >= MAX_OPEN_POSITIONS`), jamais un
+    # cap PAR PAIRE. La cle garde son nom de production pour ne jamais
+    # laisser croire qu'elle a ete recalculee ; c'est `porte.py` qui decide
+    # a quel perimetre la consommer.
+    #
+    # Deux poches de risque engage, comme la production (`bridge.py:1103-
+    # 1107`) : la commune (`max_risque_engage_pct`) et celle de l'or/argent
+    # (`max_risque_engage_or_argent_pct`), active seulement si > 0.
     return {
         "order_cooldown_sec": OC.delai_requis(d),
         "max_risque_engage_pct": gf.get("max_risque_engage_pct"),
-        "places_par_paire": gf.get("max_open_positions"),
+        "max_risque_engage_or_argent_pct":
+            gf.get("max_risque_engage_or_argent_pct"),
+        "max_open_positions": gf.get("max_open_positions"),
     }
 
 verdicts, lim, libelles, sans = [], {}, {}, set()

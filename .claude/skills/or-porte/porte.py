@@ -33,16 +33,49 @@ import lot as L
 ORIGINE_PRODUCTION = "production"
 ORIGINE_LOT = "lot"
 
+# `max_risque_engage_or_argent_pct` est TOUJOURS requise, meme pour un setup
+# non-metal : c'est sa valeur (>0 ou non) qui decide si la poche or/argent
+# est separee de la commune (cf. `poche_risque`), donc elle doit etre lue
+# avant de savoir laquelle des deux poches s'applique.
 _LIMITES_REQUISES = ("order_cooldown_sec", "max_risque_engage_pct",
-                     "places_par_paire")
+                     "max_risque_engage_or_argent_pct", "max_open_positions")
 
 
 def cumul_vide() -> dict:
-    """L'etat de remplissage simule, vide. Separe par destination."""
-    return {"paires": {}, "risque": {}, "cadence": {}}
+    """L'etat de remplissage simule, vide.
+
+    `destinations` : places consommees, par destination SEULE -- c'est un
+    budget GLOBAL du pont, jamais par paire (cf. `poche_risque` et le
+    commentaire de `contraintes_lot`). `risque` : par (destination, poche),
+    les deux poches de risque engage ne se pretant jamais rien. `cadence` :
+    par (destination, paire), inchange.
+    """
+    return {"destinations": {}, "risque": {}, "cadence": {}}
 
 
-def contraintes_lot(setup: dict, destination: str,
+def poche_risque(classe: str | None,
+                 limites: dict) -> tuple[str | None, float | None]:
+    """`(nom_de_poche, plafond_pct)` pour CE setup, ou `(None, None)` si l'une
+    des deux valeurs necessaires est illisible.
+
+    Reproduit EXACTEMENT `mt5_bridge.bridge` (`bridge.py:1103-1107`) :
+    `poches_separees = MAX_RISQUE_ENGAGE_OR_ARGENT_PCT > 0`. L'or/argent n'a
+    sa poche PROPRE que si cette valeur est > 0 -- sinon il retombe dans la
+    poche commune comme tout le reste, exactement comme en production.
+    `/health` publie les deux valeurs separement (5 % contre 15-20 % releve
+    le 2026-10-29) : juger l'or contre la poche commune le bloquerait 3x
+    trop tot.
+    """
+    plafond_or = limites.get("max_risque_engage_or_argent_pct")
+    plafond_commun = limites.get("max_risque_engage_pct")
+    if plafond_or is None or plafond_commun is None:
+        return None, None
+    if classe == "metal" and plafond_or > 0:
+        return "or_argent", plafond_or
+    return "autres", plafond_commun
+
+
+def contraintes_lot(setup: dict, destination: str, classe: str | None,
                     limites: dict, cumul: dict) -> tuple[str | None, dict]:
     """`(reason_code ou None, nouveau_cumul)`. Fail-closed sur toute limite
     illisible : on ne laisse pas passer ce qu'on n'a pas pu verifier."""
@@ -50,25 +83,37 @@ def contraintes_lot(setup: dict, destination: str,
         if limites.get(champ) is None:
             return "limite_illisible", cumul
 
-    paire = setup["pair"]
-    cle_p = (destination, paire)
+    poche, plafond_risque_pct = poche_risque(classe, limites)
+    if poche is None:
+        return "limite_illisible", cumul
 
-    if cumul["paires"].get(cle_p, 0) >= int(limites["places_par_paire"]):
-        return "lot_places_par_paire", cumul
+    paire = setup["pair"]
+
+    # ⚠️ `max_open_positions` est le plafond GLOBAL du pont
+    # (`bridge.py:1089`), consomme par CHAQUE PASS sur cette destination,
+    # quelle que soit la paire -- jamais une allocation par paire. Le cap
+    # PAR PAIRE reel de production (`mt5_bridge._max_positions_for_pair`,
+    # defaut 2) est deja applique DANS `_check_rejection`, en amont de cette
+    # clause ; la recopier ici aurait ete reimplementer une porte.
+    if cumul["destinations"].get(destination, 0) >= int(limites["max_open_positions"]):
+        return "lot_places_destination", cumul
 
     risque = float(setup.get("risk_pct") or 0.0)
-    engage = cumul["risque"].get(destination, 0.0)
-    if engage + risque > float(limites["max_risque_engage_pct"]):
+    cle_risque = (destination, poche)
+    engage = cumul["risque"].get(cle_risque, 0.0)
+    if engage + risque > float(plafond_risque_pct):
         return "lot_risque_engage", cumul
 
     # Le lot n'a pas d'horloge : ses setups sont traites comme SIMULTANES,
     # donc le deuxieme sur la meme paire bloque des que la fenetre existe.
+    cle_p = (destination, paire)
     if int(limites["order_cooldown_sec"]) > 0 and cumul["cadence"].get(cle_p):
         return "lot_cadence", cumul
 
     neuf = {
-        "paires": {**cumul["paires"], cle_p: cumul["paires"].get(cle_p, 0) + 1},
-        "risque": {**cumul["risque"], destination: engage + risque},
+        "destinations": {**cumul["destinations"],
+                         destination: cumul["destinations"].get(destination, 0) + 1},
+        "risque": {**cumul["risque"], cle_risque: engage + risque},
         "cadence": {**cumul["cadence"], cle_p: True},
     }
     return None, neuf
@@ -82,12 +127,19 @@ _CORRECTIFS = {
     "pair_not_whitelisted":
         "La paire %(pair)s n'est pas dans la liste blanche de cette "
         "destination. Elargir la liste est une DECISION, pas un correctif.",
-    "lot_places_par_paire":
-        "Le lot a deja consomme toutes les places sur %(pair)s -- retirer un "
-        "setup de cette paire du lot.",
+    "asset_class_blocked":
+        "La classe d'actif de %(pair)s n'est pas dans `allowed_asset_classes` "
+        "de cette destination -- reconstruite ici (SEULE exception, cf. "
+        "charge.py), appliquee en production par "
+        "`mt5_bridge._push_to_destination` (mt5_bridge.py:2278), APRES "
+        "`_check_rejection` -- pas dedans.",
+    "lot_places_destination":
+        "Le lot a deja consomme toutes les places GLOBALES de cette "
+        "destination (`max_open_positions`, tous couples confondus) -- "
+        "retirer un setup de cette destination.",
     "lot_risque_engage":
-        "Le risque cumule du lot depasse le plafond -- baisser `risk_pct` ou "
-        "retirer un setup.",
+        "Le risque cumule du lot depasse le plafond de sa poche -- baisser "
+        "`risk_pct` ou retirer un setup.",
     "lot_cadence":
         "Un autre setup du lot vise deja %(pair)s, et la cadence de la "
         "destination interdit deux ordres rapproches.",
@@ -157,7 +209,7 @@ def juger(lot_valide: dict, brut: dict) -> tuple[int, list[str], dict]:
                     erreurs.append("setup #%d / %s : %s" % (i, dest, code_prod))
             else:
                 reason_lot, cumul = contraintes_lot(
-                    setup, dest, limites.get(dest) or {}, cumul)
+                    setup, dest, vp.get("classe"), limites.get(dest) or {}, cumul)
                 if reason_lot:
                     resultat, reason, origine = "BLOCK", reason_lot, ORIGINE_LOT
 
@@ -294,6 +346,20 @@ def _lot_depuis_vivier(depot: pathlib.Path, destination: str) -> dict:
     if couples is None:
         raise RuntimeError("vivier illisible : %s"
                            % (res.stderr or res.stdout)[-300:])
+    # ⚠️ Important 4 : seuls `pair`/`direction` sont REELS ici. Les NEUF
+    # autres champs sont FABRIQUES, chacun desarme une porte precise -- la
+    # banniere imprimee par `main()` doit nommer la MEME liste :
+    #   entry_price=0, stop_loss=0     -> toute porte dependant du prix
+    #   confidence_score=100           -> `below_confidence` (permissif)
+    #   verdict_blockers=[]            -> geopolitical/macro/verdict veto
+    #   is_simulated=False             -> `simulated_data`
+    #   pattern/horizon/chaine/
+    #   shadow_system_id=None          -> listes de motifs/horizons admis,
+    #                                      ouverture par chaine, cout de
+    #                                      portage -- jugent une valeur
+    #                                      absente, ni PASS ni BLOCK n'est
+    #                                      significatif
+    #   risk_pct=0.0 (lot, pas production) -> `lot_risque_engage`
     return {"destinations": [destination], "setups": [
         {"pair": c["pair"], "direction": c["direction"],
          "entry_price": 0.0, "stop_loss": 0.0, "confidence_score": 100,
@@ -331,11 +397,32 @@ def main(argv: list[str] | None = None) -> int:
         print("ECHEC : production injoignable (%s) -- rien n'est juge" % e)
         return 2
 
-    code, lignes, etat = juger(lot_valide, brut)
+    try:
+        code, lignes, etat = juger(lot_valide, brut)
+    except Exception as e:  # noqa: BLE001
+        print("ECHEC : lot non jugeable (%s) -- rien n'est juge" % e)
+        return 2
     if a.depuis_vivier:
-        print("⚠️ lot issu du vivier : les setups ne portent PAS de prix\n"
-              "   (entry_price=0, stop_loss=0) -- tout refus dependant du prix\n"
-              "   n'est pas significatif")
+        # Important 4 : `_lot_depuis_vivier` fabrique DIX des onze champs que
+        # les portes lisent (seuls `pair`/`direction` viennent du vivier) --
+        # la banniere doit les nommer TOUS, pas seulement le prix.
+        print("⚠️ lot issu du vivier : seuls `pair`/`direction` sont reels, "
+              "TOUT LE RESTE est fabrique :\n"
+              "   entry_price=0, stop_loss=0 -- tout refus dependant du prix "
+              "n'est pas significatif\n"
+              "   confidence_score=100 -- MAXIMALEMENT permissif : "
+              "`below_confidence` ne peut JAMAIS bloquer ici\n"
+              "   verdict_blockers=[] -- `geopolitical_veto`/`macro_veto`/"
+              "`verdict_blocker` ne peuvent JAMAIS bloquer ici\n"
+              "   is_simulated=False -- `simulated_data` ne peut JAMAIS "
+              "bloquer ici\n"
+              "   pattern=None, horizon=None, chaine=None, "
+              "shadow_system_id=None -- toute porte qui les lit (liste de "
+              "motifs/horizons autorises, ouverture par chaine, cout de "
+              "portage) juge une valeur absente, pas celle du setup reel : "
+              "ni son PASS ni son BLOCK n'est significatif\n"
+              "   risk_pct=0.0 -- la clause de lot `lot_risque_engage` ne "
+              "peut JAMAIS bloquer ici (clause d'ORIGINE lot, pas production)")
     if a.en_json:
         print(json.dumps(etat, indent=2, ensure_ascii=False))
     else:
