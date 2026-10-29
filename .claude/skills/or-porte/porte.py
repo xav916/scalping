@@ -120,6 +120,7 @@ def juger(lot_valide: dict, brut: dict) -> tuple[int, list[str], dict]:
     lignes.append("  ⚠️ les clauses `lot` sont un AJOUT de cette skill, pas un "
                   "comportement de production")
     lignes.append("")
+    entete = list(lignes)
 
     verdicts: list[dict] = []
     cumul = cumul_vide()
@@ -129,7 +130,10 @@ def juger(lot_valide: dict, brut: dict) -> tuple[int, list[str], dict]:
         for i, setup in enumerate(lot_valide["setups"]):
             vp = par_couple.get((i, dest))
             if vp is None:
-                return 2, lignes + [
+                # Code 2 = rien n'est juge : ne JAMAIS rendre les lignes
+                # PASS/BLOCK des couples deja traites, qui mentiraient sur
+                # un run que l'on declare par ailleurs injugeable.
+                return 2, entete + [
                     "ECHEC : aucun verdict de production pour setup #%d / %s "
                     "-- le lot n'est pas jugeable." % (i, dest)], {}
 

@@ -95,6 +95,22 @@ def test_un_verdict_manquant_pour_un_couple_rend_2():
     assert code == 2
 
 
+def test_un_code_2_n_affiche_aucun_verdict_meme_pour_les_couples_deja_traites():
+    """Le premier couple PASSE, le second n'a aucun verdict de production.
+    Un code 2 doit juger RIEN : la ligne PASS du premier couple deja traite
+    ne doit pas survivre dans le rapport, sous peine de mentir sur un run
+    que l'on declare par ailleurs injugeable."""
+    lot = {"destinations": ["admin_live"], "setups": [S, dict(S)]}
+    b = _brut()
+    b["verdicts"] = [{"i": 0, "destination": "admin_live",
+                      "reason_code": None, "classe": "metal",
+                      "admission": "AUTO_EXEC"}]
+    code, lignes, etat = P.juger(lot, b)
+    assert code == 2
+    assert etat == {}
+    assert "PASS" not in "\n".join(lignes)
+
+
 def test_une_erreur_de_porte_bloque_le_setup_sans_arreter_le_lot():
     b = _brut("porte_en_erreur:KeyError")
     code, lignes, etat = P.juger(LOT, b)
