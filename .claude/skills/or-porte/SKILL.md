@@ -33,17 +33,29 @@ code **2** avec « lot illisible ». C'est le comportement voulu. Partir de
 
 ## Ce qu'elle garantit
 
-- ⛔ **Elle n'invente aucun verdict de production.** Les refus d'origine
-  `production` viennent d'un appel a `mt5_bridge._check_rejection` execute
-  dans le conteneur. Aucune porte n'est recopiee ici.
+- ⛔ **Elle n'invente aucun verdict de production**, avec UNE exception
+  declaree. Les refus d'origine `production` viennent d'un appel a
+  `mt5_bridge._check_rejection` execute dans le conteneur, contre un
+  `BridgeConfig` resolu par `bridge_destinations.admin_destinations()` — la
+  meme fonction que la production itere. La SEULE porte reconstruite est la
+  clause de classe d'actif (`allowed_asset_classes`, code
+  `asset_class_blocked`) : la production l'applique dans
+  `_push_to_destination`, APRES `_check_rejection` — et cette fonction
+  envoie des ordres, donc inutilisable dans un miroir en lecture seule.
+  Cette clause reste d'origine `production` dans le rapport : la fonction de
+  classe et l'ensemble autorise viennent tous deux de la production.
 - 🔑 **Deux empreintes.** `empreinte_setup` sur les onze champs que les portes
   lisent vraiment : un setup modifie doit repasser. `empreinte_code` sur le
   `fingerprint_running` de production : un verdict calcule contre un autre
   code est NUL.
-- ⚠️ **Quatre clauses sont un AJOUT** — places par paire, exposition
-  correlee, risque engage, cadence. `_check_rejection` juge un setup a la
-  fois ; ces quatre simulent les remplissages successifs du lot. Elles
-  portent `origine: lot`, et le rapport le rappelle en tete.
+- ⚠️ **Trois clauses sont un AJOUT** — places par paire, risque engage,
+  cadence. `_check_rejection` juge un setup a la fois ; ces trois simulent
+  les remplissages successifs du lot. Elles portent `origine: lot`, et le
+  rapport le rappelle en tete. ⛔ Une quatrieme, « exposition correlee par
+  classe d'actif », a ete retiree le 2026-10-29 : la production n'a rien de
+  tel — son garde-fou de correlation est par couple (destination, paire),
+  fonde sur des coefficients, et lit les positions reellement ouvertes chez
+  le courtier. L'inventer aurait ete fabriquer une porte.
 - ⛔ **Fail-closed.** Limite illisible, empreinte absente, verdict manquant :
   `BLOCK` ou code 2, jamais `PASS`.
 - ⚠️ **`--depuis-vivier` construit des setups SANS PRIX**

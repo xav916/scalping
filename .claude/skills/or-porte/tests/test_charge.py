@@ -32,7 +32,14 @@ def test_la_charge_APPELLE_check_rejection_de_production():
 
 
 def test_la_charge_ne_REIMPLEMENTE_aucune_porte():
-    """Un reason_code en litteral dans la charge serait une porte recopiee."""
+    """Un reason_code en litteral dans la charge serait une porte recopiee.
+
+    ⚠️ "asset_class_blocked" est volontairement ABSENT de cette liste : c'est
+    la SEULE exception admise (cf. test ci-dessous), car c'est la SEULE porte
+    reconstruite -- la production l'applique dans `_push_to_destination`,
+    une fonction qui envoie des ordres et qu'un miroir en lecture seule ne
+    peut donc pas appeler.
+    """
     src = C.construire(LOT)
     for code in ("below_confidence", "market_closed", "kill_switch",
                  "pair_not_whitelisted", "correlated_exposure"):
@@ -94,3 +101,63 @@ def test_exceptions_dans_la_boucle_setup_sont_gardees():
     assert "asset_class_for" in calls_protected, "asset_class_for not protected"
     assert "get_current_state" in calls_protected, "get_current_state not protected"
     assert "_check_rejection" in calls_protected, "_check_rejection not protected"
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Tests de derive ajoutes le 2026-10-29 (correctif R13-R17) : la charge
+# resolvait les destinations avec le MAUVAIS type d'objet -- invisible
+# tant que `execution_globale_fermee` court-circuite tout, et qui se
+# serait revele au rearmement, le seul moment ou l'outil doit etre juste.
+# ──────────────────────────────────────────────────────────────────────
+
+def test_la_charge_resout_par_admin_destinations_et_plus_par_le_registre():
+    """`_check_rejection(setup, dest)` attend un `BridgeConfig` --
+    `destinations_registry.get()` rend un `Destination` qui n'a ni
+    `.destination_id` ni `.min_confidence`. La charge doit resoudre par
+    `bridge_destinations.admin_destinations()`, la fonction que la
+    production elle-meme itere, et `destinations_registry` ne doit plus
+    servir a decider quoi que ce soit ici."""
+    src = C.construire(LOT)
+    assert "destinations_registry" not in src, (
+        "le registre ne doit plus etre une source de decision dans la charge")
+    arbre = ast.parse(src)
+    appels = [n for n in ast.walk(arbre)
+              if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+              and n.func.attr == "admin_destinations"]
+    assert appels, "la charge doit APPELER bridge_destinations.admin_destinations"
+
+
+def test_la_charge_lit_allowed_asset_classes_et_pas_asset_classes_du_registre():
+    """Le registre et le `BridgeConfig` desaccordent sur les classes
+    autorisees (admin_live a FAUSSEMENT `equity`, admin_kraken a FAUSSEMENT
+    `metal`) : la charge doit lire `allowed_asset_classes` du `BridgeConfig`,
+    jamais `asset_classes` du registre."""
+    src = C.construire(LOT)
+    assert "allowed_asset_classes" in src, (
+        "la charge doit lire `allowed_asset_classes` sur le BridgeConfig")
+    assert ".asset_classes" not in src, (
+        "la charge ne doit plus lire `asset_classes` (l'attribut du "
+        "registre, dont l'ensemble est faux)")
+
+
+def test_la_charge_rend_le_littteral_asset_class_blocked_comme_SEULE_exception():
+    """`asset_class_blocked` est le code que `_push_to_destination` rend pour
+    la clause de classe d'actif -- inutilisable ici car cette fonction
+    envoie des ordres. C'est la SEULE porte reconstruite de toute la charge,
+    donc la SEULE exception admise a la regle « aucun reason_code en dur »
+    (verifiee par `test_la_charge_ne_REIMPLEMENTE_aucune_porte` ci-dessus,
+    qui exclut nommement ce code de sa liste interdite)."""
+    src = C.construire(LOT)
+    assert '"asset_class_blocked"' in src
+
+
+def test_la_charge_APPELLE_order_cooldown_delai_requis():
+    """R16 : la cadence vient de `order_cooldown.delai_requis(dest)`, pas
+    d'un champ du registre (`order_cooldown_sec` n'existe pas sur le
+    `BridgeConfig`)."""
+    src = C.construire(LOT)
+    arbre = ast.parse(src)
+    appels = [n for n in ast.walk(arbre)
+              if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+              and n.func.attr == "delai_requis"]
+    assert appels, "la charge doit APPELER order_cooldown.delai_requis"

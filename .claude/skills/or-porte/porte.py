@@ -4,10 +4,19 @@ Deux moities, comme `or-etat` : un juge PUR teste, et un collecteur impur
 non teste. Les verdicts de production viennent d'une charge executee dans le
 conteneur ; ce module n'en recopie aucun.
 
-Les quatre contraintes ci-dessous sont un AJOUT de la skill, pas une
+Les TROIS contraintes ci-dessous sont un AJOUT de la skill, pas une
 description de la production : `_check_rejection(setup, dest)` n'a aucun
 parametre « fais comme si ceux-la etaient remplis ». Chaque verdict qu'elles
 produisent porte donc `origine: lot`.
+
+⛔ Il n'y en a plus QUATRE. La clause « exposition correlee » retiree le
+2026-10-29 cle par CLASSE D'ACTIF : la production n'a rien de tel. Son garde-
+fou de correlation est PAR COUPLE (destination, paire), fonde sur des
+coefficients (`correlation_guard.SEUIL_CORRELATION`), et lit les positions
+REELLEMENT ouvertes chez le courtier (`pari_deja_pris()`) -- on ne peut pas
+lui demander « et si ceux-la se remplissaient aussi » sans une fonction de
+production qui n'existe pas. Inventer un plafond par classe aurait ete
+fabriquer une porte.
 """
 from __future__ import annotations
 
@@ -24,16 +33,16 @@ import lot as L
 ORIGINE_PRODUCTION = "production"
 ORIGINE_LOT = "lot"
 
-_LIMITES_REQUISES = ("max_correlated_positions", "order_cooldown_sec",
-                     "max_risque_engage_pct", "places_par_paire")
+_LIMITES_REQUISES = ("order_cooldown_sec", "max_risque_engage_pct",
+                     "places_par_paire")
 
 
 def cumul_vide() -> dict:
     """L'etat de remplissage simule, vide. Separe par destination."""
-    return {"paires": {}, "classes": {}, "risque": {}, "cadence": {}}
+    return {"paires": {}, "risque": {}, "cadence": {}}
 
 
-def contraintes_lot(setup: dict, destination: str, classe: str,
+def contraintes_lot(setup: dict, destination: str,
                     limites: dict, cumul: dict) -> tuple[str | None, dict]:
     """`(reason_code ou None, nouveau_cumul)`. Fail-closed sur toute limite
     illisible : on ne laisse pas passer ce qu'on n'a pas pu verifier."""
@@ -43,12 +52,9 @@ def contraintes_lot(setup: dict, destination: str, classe: str,
 
     paire = setup["pair"]
     cle_p = (destination, paire)
-    cle_c = (destination, classe)
 
     if cumul["paires"].get(cle_p, 0) >= int(limites["places_par_paire"]):
         return "lot_places_par_paire", cumul
-    if cumul["classes"].get(cle_c, 0) >= int(limites["max_correlated_positions"]):
-        return "lot_exposition_correlee", cumul
 
     risque = float(setup.get("risk_pct") or 0.0)
     engage = cumul["risque"].get(destination, 0.0)
@@ -62,7 +68,6 @@ def contraintes_lot(setup: dict, destination: str, classe: str,
 
     neuf = {
         "paires": {**cumul["paires"], cle_p: cumul["paires"].get(cle_p, 0) + 1},
-        "classes": {**cumul["classes"], cle_c: cumul["classes"].get(cle_c, 0) + 1},
         "risque": {**cumul["risque"], destination: engage + risque},
         "cadence": {**cumul["cadence"], cle_p: True},
     }
@@ -80,9 +85,6 @@ _CORRECTIFS = {
     "lot_places_par_paire":
         "Le lot a deja consomme toutes les places sur %(pair)s -- retirer un "
         "setup de cette paire du lot.",
-    "lot_exposition_correlee":
-        "Le lot a deja rempli le plafond de positions correlees de la classe "
-        "-- retirer un setup de la meme classe.",
     "lot_risque_engage":
         "Le risque cumule du lot depasse le plafond -- baisser `risk_pct` ou "
         "retirer un setup.",
@@ -155,7 +157,7 @@ def juger(lot_valide: dict, brut: dict) -> tuple[int, list[str], dict]:
                     erreurs.append("setup #%d / %s : %s" % (i, dest, code_prod))
             else:
                 reason_lot, cumul = contraintes_lot(
-                    setup, dest, vp.get("classe"), limites.get(dest) or {}, cumul)
+                    setup, dest, limites.get(dest) or {}, cumul)
                 if reason_lot:
                     resultat, reason, origine = "BLOCK", reason_lot, ORIGINE_LOT
 
