@@ -11,6 +11,8 @@ produisent porte donc `origine: lot`.
 """
 from __future__ import annotations
 
+import lot as L
+
 ORIGINE_PRODUCTION = "production"
 ORIGINE_LOT = "lot"
 
@@ -57,3 +59,124 @@ def contraintes_lot(setup: dict, destination: str, classe: str,
         "cadence": {**cumul["cadence"], cle_p: True},
     }
     return None, neuf
+
+
+_CORRECTIFS = {
+    "below_confidence":
+        "Confiance %(confidence_score)s jugee insuffisante par cette "
+        "destination -- relever le score, ou viser une destination moins "
+        "exigeante.",
+    "pair_not_whitelisted":
+        "La paire %(pair)s n'est pas dans la liste blanche de cette "
+        "destination. Elargir la liste est une DECISION, pas un correctif.",
+    "lot_places_par_paire":
+        "Le lot a deja consomme toutes les places sur %(pair)s -- retirer un "
+        "setup de cette paire du lot.",
+    "lot_exposition_correlee":
+        "Le lot a deja rempli le plafond de positions correlees de la classe "
+        "-- retirer un setup de la meme classe.",
+    "lot_risque_engage":
+        "Le risque cumule du lot depasse le plafond -- baisser `risk_pct` ou "
+        "retirer un setup.",
+    "lot_cadence":
+        "Un autre setup du lot vise deja %(pair)s, et la cadence de la "
+        "destination interdit deux ordres rapproches.",
+    "limite_illisible":
+        "Une limite de la destination n'a pas pu etre lue : on BLOQUE plutot "
+        "que de laisser passer ce qu'on n'a pas verifie.",
+}
+
+
+def correctif(reason_code: str, setup: dict) -> str:
+    """Quoi changer, en nommant la valeur. Jamais « desserrer la regle »."""
+    if reason_code.startswith("porte_en_erreur"):
+        return ("La porte de production a leve (%s) -- le setup est bloque par "
+                "prudence, la trace est en pied de rapport." % reason_code)
+    modele = _CORRECTIFS.get(reason_code)
+    if modele is None:
+        return ("Refus rendu par la production sans correctif connu -- lire "
+                "`%s` dans `mt5_bridge._check_rejection`." % reason_code)
+    return modele % {k: setup.get(k) for k in L.CHAMPS_ADMIS}
+
+
+def juger(lot_valide: dict, brut: dict) -> tuple[int, list[str], dict]:
+    """`(code, lignes, etat)`. JAMAIS 0 sur une information absente."""
+    lignes: list[str] = []
+    empreinte_code = brut.get("fingerprint_running")
+    if not empreinte_code:
+        return 2, ["ECHEC : empreinte_code_illisible -- un verdict calcule "
+                   "contre un code inconnu est NUL, rien n'est juge."], {}
+
+    par_couple = {(v["i"], v["destination"]): v
+                  for v in brut.get("verdicts") or []}
+    limites = brut.get("limites") or {}
+    libelles = brut.get("libelles") or {}
+    sans_libelle = set(brut.get("sans_libelle") or [])
+
+    lignes.append("=== or-porte | empreinte_code %s" % empreinte_code)
+    lignes.append("  armement : %s (%s)"
+                  % ("OUVERT" if brut.get("rem002_allowed") else "FERME",
+                     brut.get("rem002_reason")))
+    lignes.append("  ⚠️ les clauses `lot` sont un AJOUT de cette skill, pas un "
+                  "comportement de production")
+    lignes.append("")
+
+    verdicts: list[dict] = []
+    cumul = cumul_vide()
+    erreurs: list[str] = []
+
+    for dest in lot_valide["destinations"]:
+        for i, setup in enumerate(lot_valide["setups"]):
+            vp = par_couple.get((i, dest))
+            if vp is None:
+                return 2, lignes + [
+                    "ECHEC : aucun verdict de production pour setup #%d / %s "
+                    "-- le lot n'est pas jugeable." % (i, dest)], {}
+
+            empreinte = L.empreinte_setup(setup)
+            code_prod = vp.get("reason_code")
+            resultat, reason, origine = "PASS", None, None
+
+            if code_prod:
+                resultat, reason, origine = "BLOCK", code_prod, ORIGINE_PRODUCTION
+                if code_prod.startswith("porte_en_erreur"):
+                    erreurs.append("setup #%d / %s : %s" % (i, dest, code_prod))
+            else:
+                reason_lot, cumul = contraintes_lot(
+                    setup, dest, vp.get("classe"), limites.get(dest) or {}, cumul)
+                if reason_lot:
+                    resultat, reason, origine = "BLOCK", reason_lot, ORIGINE_LOT
+
+            ligne = {
+                "empreinte_setup": empreinte, "pair": setup["pair"],
+                "direction": setup.get("direction"), "destination": dest,
+                "resultat": resultat, "admission": vp.get("admission"),
+            }
+            if resultat == "BLOCK":
+                ligne.update({
+                    "reason_code": reason,
+                    "libelle": libelles.get(reason, reason),
+                    "origine": origine,
+                    "correctif": correctif(reason, setup),
+                })
+            verdicts.append(ligne)
+
+            lignes.append("  %-10s %-5s %-20s %s%s"
+                          % (setup["pair"], setup.get("direction"), dest,
+                             resultat,
+                             "" if resultat == "PASS"
+                             else " %s [%s] %s" % (ligne["libelle"],
+                                                   origine, ligne["correctif"])))
+
+    bloques = [v for v in verdicts if v["resultat"] == "BLOCK"]
+    lignes.append("")
+    if sans_libelle:
+        lignes.append("  ⓘ motifs rencontres SANS libelle francais : %s"
+                      % ", ".join(sorted(sans_libelle)))
+    for e in erreurs:
+        lignes.append("  ⓘ porte en erreur -- %s" % e)
+    lignes.append("=> %d PASS, %d BLOCK sur %d couples"
+                  % (len(verdicts) - len(bloques), len(bloques), len(verdicts)))
+
+    etat = {"empreinte_code": empreinte_code, "verdicts": verdicts}
+    return (1 if bloques else 0), lignes, etat
