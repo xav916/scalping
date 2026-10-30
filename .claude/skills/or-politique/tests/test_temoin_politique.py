@@ -133,6 +133,46 @@ def test_ILLISIBLE_compte_comme_echec_et_rend_1():
     assert "ILLISIBLE" in texte
 
 
+def test_destination_fautive_ne_bloque_pas_les_autres():
+    """Round 1 de revue : une destination dont la collecte a leve sur un
+    champ doit revenir marquee ILLISIBLE sur les regles 2 et 3 (jamais
+    CONFORME muet, jamais omise), contribuer a l'echec global, et ne pas
+    empecher les autres destinations d'etre jugees."""
+    etat = {
+        "fingerprint_running": "abc123", "rem002_allowed": False,
+        "rem002_reason": "DISARMED_MANUALLY",
+        "listes_blanches": {"admin_live": ["XAU/USD"]},
+        "destinations": [
+            {"destination_id": "admin_live", "bridge_type": "mt5",
+             "reel": True, "min_confidence": 42.0,
+             "classes_porte": ["metal"], "classes_registre": ["metal"],
+             "connue_du_registre": True,
+             "garde_fous": {"max_open_positions": 10}},
+            # tel que _CHARGE le produit quand un champ a leve en collecte.
+            {"destination_id": "admin_fautive", "bridge_type": "mt5",
+             "reel": True, "min_confidence": "ILLISIBLE: champ non lu",
+             "classes_porte": [], "classes_registre": [],
+             "connue_du_registre": False, "garde_fous": True,
+             "erreur": "registre=AttributeError"},
+            {"destination_id": "admin_kraken", "bridge_type": "kraken",
+             "reel": True, "min_confidence": 42.0,
+             "classes_porte": ["crypto"], "classes_registre": ["crypto"],
+             "connue_du_registre": True, "garde_fous": {}},
+        ],
+    }
+    fautive = etat["destinations"][1]
+    par_regle = {v["regle"]: v
+                for v in R.juger_destination(fautive, etat["listes_blanches"])}
+    assert par_regle[2]["verdict"] == R.ILLISIBLE
+    assert par_regle[3]["verdict"] == R.ILLISIBLE
+
+    code, lignes = P.juger(etat)
+    assert code == 1
+    texte = "\n".join(lignes)
+    for nom in ("admin_live", "admin_fautive", "admin_kraken"):
+        assert nom in texte
+
+
 def test_le_resume_distingue_FAIL_et_ILLISIBLE():
     """La ligne finale doit nommer les deux comptes separement, pas les
     fondre dans un seul total -- sinon un lecteur ne sait pas lequel des deux

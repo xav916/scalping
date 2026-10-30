@@ -13,6 +13,15 @@ une destination dont les garde-fous sont illisibles serait rapportee comme
 conforme, le pire resultat que cette skill puisse produire. Les deux comptes
 restent distincts dans le resume pour que le lecteur sache lequel il affronte.
 
+🔴 Dans `_CHARGE`, CHAQUE champ d'UNE destination est lu isolement (`_champ`) :
+une levee sur un seul champ (ex. `RG.get` indisponible) ne doit jamais faire
+tomber les champs deja lus de la MEME destination, ni les autres destinations
+du lot -- une seule destination fautive ne doit pas couter tout le rapport
+(round 1 de revue). Les defauts choisis font lire ILLISIBLE aux regles
+concernees plutot que CONFORME muet, et `reel` defaut a `True` (fail-closed :
+une destination dont on ne sait plus si c'est de l'argent reel est jugee
+comme si elle l'etait).
+
 Lecture seule. Elle ne bloque rien : rapport et code de sortie.
 """
 from __future__ import annotations
@@ -52,20 +61,48 @@ def gardes(d):
         s = {}
     return s.get("garde_fous") or {}
 
+def _champ(fn, defaut, erreurs, nom):
+    """Lit UN champ. Une levee ne doit JAMAIS emporter les autres champs
+    deja lus ni les autres destinations -- une seule destination fautive ne
+    doit pas couter tout le rapport (REM-003, round 1)."""
+    try:
+        return fn()
+    except Exception as e:
+        erreurs.append("%s=%s" % (nom, type(e).__name__))
+        return defaut
+
 dests = []
 for d in BD.admin_destinations():
     i = d.destination_id
-    dests.append({
+    erreurs = []
+    reg = _champ(lambda: RG.get(i), None, erreurs, "registre")
+    rec = {
         "destination_id": i,
-        "bridge_type": getattr(d, "bridge_type", "mt5"),
-        "reel": bool(RG.is_real_money(i)),
-        "min_confidence": getattr(d, "min_confidence", None),
-        "classes_porte": sorted(getattr(d, "allowed_asset_classes", ()) or ()),
-        "classes_registre": sorted(
-            getattr(RG.get(i), "asset_classes", ()) or ()) if RG.get(i) else [],
-        "connue_du_registre": bool(RG.is_known(i)),
-        "garde_fous": gardes(d),
-    })
+        "bridge_type": _champ(lambda: getattr(d, "bridge_type", "mt5"),
+                              "mt5", erreurs, "bridge_type"),
+        # fail-closed : une destination dont on ne sait plus si c'est de
+        # l'argent reel est traitee COMME SI c'etait le cas, jamais exemptee.
+        "reel": _champ(lambda: bool(RG.is_real_money(i)), True, erreurs,
+                       "reel"),
+        # defaut non numerique -> regle 3 ILLISIBLE, jamais CONFORME muet.
+        "min_confidence": _champ(
+            lambda: getattr(d, "min_confidence", None),
+            "ILLISIBLE: champ non lu", erreurs, "min_confidence"),
+        "classes_porte": _champ(
+            lambda: sorted(getattr(d, "allowed_asset_classes", ()) or ()),
+            [], erreurs, "classes_porte"),
+        "classes_registre": _champ(
+            lambda: sorted(getattr(reg, "asset_classes", ()) or ())
+            if reg else [], [], erreurs, "classes_registre"),
+        "connue_du_registre": _champ(lambda: bool(RG.is_known(i)), False,
+                                     erreurs, "connue_du_registre"),
+        # defaut truthy sans len() -> regle 2 ILLISIBLE, jamais CONFORME muet.
+        "garde_fous": _champ(lambda: gardes(d), True, erreurs,
+                             "garde_fous"),
+    }
+    if erreurs:
+        rec["erreur"] = ", ".join(erreurs)
+    dests.append(rec)
 
 from backend.services import global_execution_switch as G
 det = G.execution_allowed().as_details()
