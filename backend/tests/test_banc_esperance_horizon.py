@@ -684,3 +684,73 @@ def test_les_predictions_du_banc_SYMETRIQUE_sont_notables():
     # et le garde-fou doit TOMBER si l'artefact subsiste
     notes2 = banc.noter_predictions(cr, dict(mesures, ecart_signal=0.24))
     assert notes2["P4_ecart_signal_max"]["passe"] is False
+
+
+# ─── L'INVARIANCE QUI PROTEGE LES VERDICTS PUBLIES (2026-10-30) ────────────
+#
+# Mesure du 30/10 : `SPREAD_PCT = 0,0002` vaut 4,44x le cout reel de l'or
+# (0,0000450 sur 11 987 039 ticks, markup de 10 points inclus). La constante
+# est pourtant conservee, et ces tests disent pourquoi c'est legitime.
+
+def _esperance(jeu) -> float:
+    """L'esperance en R d'un jeu de `(entree, sortie, achat, risque_pct)`."""
+    return banc.esperance_R(
+        [(banc.pnl_pct(e, s, a), r) for e, s, a, r in jeu])
+
+
+# Le bras REEL et son placebo : entrees et sorties differentes, mais le MEME
+# multiensemble de risques -- c'est exactement ce que fait le banc, qui
+# reutilise `d["risk_pct"]` tirage par tirage.
+_REEL = [(4129.0, 4150.0, True, 0.50), (4129.0, 4100.0, True, 0.50),
+         (4200.0, 4180.0, False, 0.80), (4200.0, 4260.0, False, 0.80)]
+_PLACEBO = [(4000.0, 4010.0, True, 0.50), (4000.0, 3985.0, True, 0.50),
+            (4300.0, 4290.0, False, 0.80), (4300.0, 4330.0, False, 0.80)]
+
+
+def test_LE_COUT_NE_DEPLACE_PAS_la_difference_reel_moins_placebo(monkeypatch):
+    """⛔ LE test qui sauve `1d` rejete et `4h` indiscernable.
+
+    Le placebo appelle le MEME `pnl_pct()`, donc la meme constante, sur le
+    MEME multiensemble de risques. La soustraction du cout porte alors sur
+    `mean(1/risque)`, identique dans les deux bras ⇒ la difference est
+    invariante. Corriger le cout ne ressuscite donc AUCUN verdict.
+    """
+    monkeypatch.setattr(banc, "SPREAD_PCT", 0.0002)       # l'ancien
+    avant = _esperance(_REEL) - _esperance(_PLACEBO)
+    monkeypatch.setattr(banc, "SPREAD_PCT", 0.0000450)    # le cout MESURE
+    apres = _esperance(_REEL) - _esperance(_PLACEBO)
+    assert apres == pytest.approx(avant, abs=1e-9), (
+        "la difference reel-placebo a bouge de %.6g : l'invariance est "
+        "rompue, donc les verdicts publies devraient etre rejoues" % (apres - avant))
+
+
+def test_mais_le_cout_deplace_BIEN_chaque_niveau_absolu(monkeypatch):
+    """Temoin de l'instrument : si rien ne bougeait, le test ci-dessus
+    passerait pour une raison fausse (par exemple un `pnl_pct` qui ignore
+    la constante)."""
+    monkeypatch.setattr(banc, "SPREAD_PCT", 0.0002)
+    haut = _esperance(_REEL)
+    monkeypatch.setattr(banc, "SPREAD_PCT", 0.0000450)
+    bas = _esperance(_REEL)
+    assert bas > haut, "un cout plus faible doit remonter le niveau absolu"
+    assert abs(bas - haut) > 0.01, "le deplacement doit etre visible"
+
+
+def test_l_invariance_EXIGE_des_risques_identiques(monkeypatch):
+    """La precondition, rendue explicite. Si un jour le placebo tirait ses
+    propres risques, l'invariance tomberait et les verdicts devraient etre
+    rejoues au cout mesure. Ce test echouera alors -- c'est son role."""
+    placebo_autres_risques = [(e, s, a, r * 2) for e, s, a, r in _PLACEBO]
+    monkeypatch.setattr(banc, "SPREAD_PCT", 0.0002)
+    avant = _esperance(_REEL) - _esperance(placebo_autres_risques)
+    monkeypatch.setattr(banc, "SPREAD_PCT", 0.0000450)
+    apres = _esperance(_REEL) - _esperance(placebo_autres_risques)
+    assert apres != pytest.approx(avant, abs=1e-6), (
+        "avec des risques differents la difference DOIT bouger ; si elle ne "
+        "bouge pas, c'est l'instrument qui est casse")
+
+
+def test_la_constante_est_celle_qui_a_servi_aux_verdicts():
+    """Garde de reproductibilite : la changer rendrait les verdicts publies
+    non rejouables. Le correctif passe par `cout_execution`, pas par ici."""
+    assert banc.SPREAD_PCT == 0.0002

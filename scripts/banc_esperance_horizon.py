@@ -237,6 +237,26 @@ class Criteres:
 # geometrie (`PATTERN_TP1_RR` de production) et le cout de spread du moteur de
 # backtest. Ce sont des faits du systeme, pas des seuils de decision.
 RR = 1.80
+
+# ⚠️ MESURE DU 2026-10-30 : cette constante vaut **4,44x le cout reel de
+# l'or** (0,0000450, soit 0,186 $ markup inclus, sur 11 987 039 ticks). Elle
+# est conservee TELLE QUELLE, et ce n'est pas de la negligence :
+#
+# 🔑 **le placebo appelle le MEME `pnl_pct()`**, donc la meme constante, avec
+# la MEME geometrie (`d["risk_pct"]` est reutilise tirage par tirage). Les
+# deux bras paient donc un cout identique, et comme la soustraction porte sur
+# `mean(1/risque)` -- identique par construction -- la difference reelle moins
+# placebo est **EXACTEMENT invariante**. Changer ce nombre deplacerait les
+# deux esperances du meme montant sans toucher a `t`, tout en cassant la
+# reproductibilite des verdicts deja publies (`1d` rejete, `4h`
+# indiscernable). `test_banc_esperance_horizon.py` garde cette invariance.
+#
+# ⛔ EN REVANCHE, tout NIVEAU absolu tire de ce banc est faux de 4,44x. Pour
+# un niveau, passer par `backend.services.cout_execution.cout_spread_relatif`,
+# qui lit le tick de l'instant et ajoute les 10 points de marge du courtier.
+# La geometrie de production, elle, facturait 0,045 EUR au lieu de ~0,169 :
+# sa reussite requise passe de 91,11 % a 91,68 %, donc le manque de 0,72 pt
+# devient 1,29 pt. Cf. docs/predictions/2026-10-30_protocole_cout_reel_or.md
 SPREAD_PCT = 0.0002
 
 # ⛔ Graine FIXE et declaree. Un placebo non reproductible ne peut pas etre
