@@ -101,6 +101,45 @@ sous-estimé ×10, XLU annoncé à 343 800 €). La chaîne échoue fermée : ri
 hypothèse de classe n'entre pas dans un registre**, et `tick_moyen` non plus
 — c'est une mesure, mais pas celle de ce trade.
 
+## ⛔ CORRECTION DU VERDICT DU 28/10 (`09c31e2`)
+
+Le 28/10 j'avais conclu : *« `SPREAD_PCT = 0,0002` était JUSTE à 10 % près »*,
+sur une mesure donnant l'or à **0,0251 % du prix**. Aujourd'hui je mesure
+**0,0045 %** — un facteur **5,6**. Les deux ne peuvent pas être vrais.
+
+**La mesure du 28/10 était fausse, et voici pourquoi.** Elle passait par
+`slippage_pips`, qui est une grandeur **signée** : le glissement peut être
+favorable. Or elle en prenait la **médiane de la valeur absolue**.
+
+```
+slippage SIGNE, or, n=350 :
+   moyenne  -4,85 pips  (-0,0485 $)   t = -0,282   => INDISCERNABLE DE ZERO
+   favorables 171 (48,9 %) | defavorables 179 (51,1 %)
+   mediane |x| = 1,0750 $   <-- le chiffre du 28/10
+```
+
+🔑 **Prendre `|x|` d'une variable de moyenne nulle produit un grand nombre
+positif qui ressemble à un coût sans en être un.** Ce qu'on mesure alors est
+la **dispersion**, pas l'espérance. Le glissement n'est donc **pas un coût**
+sur ce compte : il est symétrique à 49/51.
+
+⇒ Le coût d'exécution déterministe de l'or est le **spread**, et il vaut bien
+`0,0000450`. La constante est bien **4,44× trop haute**.
+
+⚠️ **Mais le glissement n'est pas inoffensif** — il apporte de la
+**variance** : σ = **3,21 $** (p5 −4,80 $, p95 +4,00 $). Rapporté aux
+distances réellement utilisées sur l'or depuis le 21/09 (stop médian
+**14,62 $**, objectif **26,04 $**) :
+
+| | en fraction de R |
+|---|---|
+| **spread** (coût certain) | **0,012 R** par trade |
+| **glissement** (bruit, moyenne nulle) | **σ = 0,22 R** |
+
+⇒ Le bruit d'entrée vaut **18× le coût du spread** en écart-type. Il ne fait
+pas perdre d'argent en espérance, mais il brouille toute mesure d'avantage —
+ce qui est cohérent avec cinq réfutations de la direction.
+
 ## ⛔ Ce que je ne conclus PAS
 
 Le brut hors coût vaut **+0,0444 €/trade**, **t = +0,126** sur 410 trades,
