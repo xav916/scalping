@@ -28,10 +28,11 @@ _BRIDGE = (pathlib.Path(__file__).resolve().parents[2]
 # Les deux ordres REELS du 27/09, et la protection reelle d'INJ.
 BTC = {"order_id": "a2d8bded-cd2f-4aa4-86b3-f8d3a9dba7b2",
        "symbol": "PF_XBTUSD", "orderType": "lmt", "side": "buy",
-       "size": 0.0074, "limitPrice": 63366, "reduceOnly": False}
+       "unfilledSize": 0.0074, "limitPrice": 63366,
+       "reduceOnly": False}
 STOP_INJ = {"order_id": "a2f5e01e-a67a-4298-b4b2-409b94de9793",
             "symbol": "PF_INJUSD", "orderType": "stop", "side": "sell",
-            "size": 0.4, "stopPrice": 6.307, "reduceOnly": True}
+            "unfilledSize": 0.4, "stopPrice": 6.307, "reduceOnly": True}
 
 
 @pytest.fixture(scope="module")
@@ -218,3 +219,40 @@ def test_kill_reste_present_et_distinct(bridge):
     """La route chirurgicale n'enleve pas le geste d'urgence."""
     regles = {str(r.rule) for r in bridge.app.url_map.iter_rules()}
     assert "/kill" in regles and "/order/annuler" in regles
+
+
+# -- La taille vient du nom BRUT de Kraken ---------------------------------
+
+def test_la_taille_rendue_vient_de_unfilledSize(bridge, monkeypatch):
+    """Kraken nomme ce champ `unfilledSize` dans la charge BRUTE ; `size`
+    n'existe que dans la version normalisee par `/openorders`. Lire `size`
+    seul rendait `null` -- constate sur les deux annulations reelles du
+    30/10, dont le journal disait "PF_XBTUSD buy None"."""
+    k = _Courtier([BTC], restants=[])
+    r = _poster(_client(bridge, monkeypatch, k), order_id=BTC["order_id"])
+    assert r.get_json()["size"] == 0.0074
+
+
+# -- ABSENT n'est pas FALSE ------------------------------------------------
+
+def test_un_ordre_SANS_reduceOnly_est_REFUSE(bridge, monkeypatch):
+    """LE durcissement du 30/10. Le pont lit `bool(o.get("reduceOnly"))` :
+    un champ ABSENT vaudrait False, donc un stop deviendrait annulable si
+    Kraken renommait le champ. Refuser ne coute qu'un ordre qui reste ;
+    autoriser a tort laisse une position NUE."""
+    sans = {k: v for k, v in STOP_INJ.items() if k != "reduceOnly"}
+    k = _Courtier([sans])
+    r = _poster(_client(bridge, monkeypatch, k), order_id=sans["order_id"])
+    assert r.status_code == 409
+    assert "reduceOnly" in r.get_json()["error"]
+    assert k.annulations() == [], "aucune annulation ne doit partir"
+
+
+def test_reduceOnly_FALSE_explicite_passe_bien(bridge, monkeypatch):
+    """Le durcissement ne doit pas bloquer le cas legitime : un ordre qui
+    declare explicitement `reduceOnly: false` s'annule."""
+    k = _Courtier([BTC], restants=[])
+    r = _poster(_client(bridge, monkeypatch, k), order_id=BTC["order_id"])
+    assert r.status_code == 200
+    assert r.get_json()["ok"] is True
+

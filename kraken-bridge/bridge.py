@@ -1976,6 +1976,23 @@ def annuler_un_ordre():
         return jsonify({"ok": False, "error": "ordre introuvable",
                         "order_id": oid, "raison": raison}), 404
 
+    # ⛔ ABSENT n'est pas FALSE. Si Kraken renommait ce champ, le lire par
+    # `bool(o.get(...))` rendrait `False` et cette route autoriserait
+    # l'annulation d'un stop. On refuse donc aussi quand l'information
+    # MANQUE : refuser ne coute qu'un ordre qui reste, autoriser a tort laisse
+    # une position NUE.
+    if "reduceOnly" not in cible:
+        logger.warning("order/annuler : REFUS, `reduceOnly` absent de l'ordre "
+                       "%s — impossible de savoir s'il protege (raison=%s)",
+                       oid, raison)
+        return jsonify({
+            "ok": False, "error": "refus : `reduceOnly` absent de l'ordre",
+            "order_id": oid, "symbol": cible.get("symbol"),
+            "detail": "sans ce champ on ne peut pas distinguer une entree "
+                      "d'une protection ; le format du courtier a peut-etre "
+                      "change",
+            "raison": raison}), 409
+
     if cible.get("reduceOnly"):
         logger.warning("order/annuler : REFUS, %s est une PROTECTION sur %s "
                        "(raison=%s)", oid, cible.get("symbol"), raison)
@@ -2013,10 +2030,14 @@ def annuler_un_ordre():
 
     logger.warning("order/annuler : %s annule (%s %s %s) raison=%s",
                    oid, cible.get("symbol"), cible.get("side"),
-                   cible.get("size"), raison)
+                   cible.get("unfilledSize", cible.get("size")), raison)
     return jsonify({
         "ok": True, "order_id": oid, "symbol": cible.get("symbol"),
-        "side": cible.get("side"), "size": cible.get("size"),
+        "side": cible.get("side"),
+        # ⚠️ Kraken nomme ce champ `unfilledSize` dans la charge BRUTE ; `size`
+        # n'existe que dans la version normalisee par `/openorders`. Lire
+        # `size` seul rendait `null` — meme lecture que la route jumelle.
+        "size": cible.get("unfilledSize", cible.get("size")),
         "limitPrice": cible.get("limitPrice"),
         # `None` = la relecture a echoue : l'annulation est acceptee mais non
         # CONFIRMEE. On le dit plutot que de l'affirmer.
