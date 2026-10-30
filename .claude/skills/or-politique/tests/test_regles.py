@@ -132,3 +132,73 @@ def test_juger_destination_ne_leve_jamais_sur_dest_malformee():
         for v in verdicts:
             assert "regle" in v
             assert "verdict" in v
+
+
+# --- deux mecanismes de filtre, deux semantiques du VIDE ------------------
+# Pose le 2026-10-30 avec le filtre backend d'`admin_kraken`.
+#
+# 🔑 La meme absence veut dire l'INVERSE des deux cotes :
+#   - liste blanche MT5 vide  -> `if LIVE_WHITELIST_PAIRS and ...` -> AUCUN
+#     filtrage, donc FAIL ;
+#   - filtre backend Kraken vide -> RIEN ne passe, donc protection MAXIMALE.
+# La regle 1 ne doit pas deduire laquelle s'applique du nom de la
+# destination : la semantique est portee par la MAP ou elle apparait.
+
+def test_un_filtre_backend_VIDE_est_CONFORME_car_il_bloque_tout():
+    v = next(x for x in R.juger_destination(
+        KRAKEN, BLANCHES, filtres_backend={"admin_kraken": []})
+        if x["regle"] == 1)
+    assert v["verdict"] == R.CONFORME
+    assert "bloque" in v["valeur"].lower() or "aucune" in v["valeur"].lower()
+
+
+def test_un_filtre_backend_NON_vide_est_CONFORME_et_nomme_ses_paires():
+    v = next(x for x in R.juger_destination(
+        KRAKEN, BLANCHES, filtres_backend={"admin_kraken": ["BTC/USD"]})
+        if x["regle"] == 1)
+    assert v["verdict"] == R.CONFORME
+    assert "BTC/USD" in v["valeur"]
+
+
+def test_sans_AUCUN_mecanisme_la_regle_1_reste_FAIL():
+    """L'etat d'`admin_kraken` AVANT le 30/10 : rien ne filtre."""
+    v = next(x for x in R.juger_destination(KRAKEN, BLANCHES,
+                                            filtres_backend={})
+             if x["regle"] == 1)
+    assert v["verdict"] == R.FAIL
+
+
+def test_une_liste_blanche_MT5_VIDE_reste_FAIL():
+    """Semantique inverse : cote MT5, vide signifie « pas de filtrage »."""
+    v = next(x for x in R.juger_destination(
+        dict(LIVE, destination_id="admin_live"), {"admin_live": []},
+        filtres_backend={}) if x["regle"] == 1)
+    assert v["verdict"] == R.FAIL
+
+
+def test_filtres_backend_est_OPTIONNEL_et_vaut_absence():
+    """Compatibilite : les appels existants ne le passent pas."""
+    v = next(x for x in R.juger_destination(KRAKEN, BLANCHES)
+             if x["regle"] == 1)
+    assert v["verdict"] == R.FAIL
+
+
+def test_la_charge_n_inscrit_PAS_un_filtre_absent():
+    """FAUX-SUR trouve le 2026-10-30 : la charge inscrivait `admin_kraken`
+    dans `filtres_backend` des que le MODULE s'importait, sans verifier que
+    la CONSTANTE existe. Sur un conteneur ou le filtre n'est pas deploye,
+    elle rapportait donc regle 1 CONFORME -- une protection affirmee qui
+    n'existe pas. C'est le pire defaut que cette skill puisse produire.
+
+    La distinction est subtile et doit rester explicite : `absent` n'est pas
+    `vide`. Vide = tout bloque (CONFORME). Absent = rien ne filtre (FAIL).
+    """
+    import pathlib
+    src = pathlib.Path(
+        pathlib.Path(__file__).resolve().parents[1] / "politique.py"
+    ).read_text(encoding="utf-8")
+    assert "_SENTINELLE" in src or "hasattr(_kbc" in src, (
+        "la charge doit distinguer « constante ABSENTE » de « liste VIDE » : "
+        "sans sentinelle, un filtre non deploye passe pour une protection")
+    assert 'BACKEND["admin_kraken"] = sorted(\n' not in src.replace(" ", ""), \
+        "l'inscription ne doit pas etre inconditionnelle"

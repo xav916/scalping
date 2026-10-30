@@ -30,6 +30,9 @@ from typing import Any
 # - bridge_timeout : bridge injoignable (PC éteint, Tailscale down)
 
 REASON_LABELS_FR = {
+    # Filtre de paires backend d'`admin_kraken` (2026-10-30). Opt-in STRICT :
+    # liste vide par defaut, donc rien ne passe. Cf. kraken_bridge_client.
+    "kraken_pair_not_whitelisted": "Paire hors liste blanche Kraken",
     "kill_switch": "Kill switch actif",
     "kill_switch_pair_paused": "Pair en pause rafale SL",
     "event_blackout": "Blackout event macro",

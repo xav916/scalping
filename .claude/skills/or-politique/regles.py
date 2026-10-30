@@ -20,16 +20,37 @@ def _v(n, titre, verdict, source, valeur):
             "source": source, "valeur": str(valeur)}
 
 
-def juger_destination(dest: dict, listes_blanches: dict) -> list[dict]:
-    """Les cinq verdicts, dans l'ordre, pour UNE destination."""
+def juger_destination(dest: dict, listes_blanches: dict,
+                      filtres_backend: dict | None = None) -> list[dict]:
+    """Les cinq verdicts, dans l'ordre, pour UNE destination.
+
+    ⛔ DEUX mecanismes de filtre, et le VIDE veut dire l'INVERSE des deux
+    cotes. `listes_blanches` porte les listes MT5, ou la porte fait
+    `if LIVE_WHITELIST_PAIRS and ...` : vide => AUCUN filtrage.
+    `filtres_backend` porte les filtres en opt-in STRICT (Kraken depuis le
+    2026-10-30), ou vide => RIEN ne passe, donc protection maximale.
+
+    🔑 La semantique est portee par la MAP ou la destination apparait, et
+    jamais deduite de son nom : deduire aurait ete un fait reconstruit de
+    plus, et c'est exactement ce que cette skill cherche a reduire.
+    """
     nom = dest.get("destination_id")
     reel = bool(dest.get("reel"))
     liste = listes_blanches.get(nom)
+    backend = (filtres_backend or {})
+    a_filtre_backend = nom in backend
 
     # 1 — argent reel sans filtre de paires
     if not reel:
         r1 = _v(1, "filtre de paires", NON_APPLICABLE,
                 "destinations_registry.is_real_money", "reel=False")
+    elif a_filtre_backend:
+        paires = sorted(backend.get(nom) or ())
+        r1 = _v(1, "filtre de paires", CONFORME,
+                "filtre backend en opt-in strict (vide = tout bloque)",
+                ("%d paire(s) : %s" % (len(paires), ", ".join(paires)))
+                if paires else
+                "aucune paire inscrite : tout est bloque")
     elif liste:
         r1 = _v(1, "filtre de paires", CONFORME,
                 "mt5_bridge.*_WHITELIST_PAIRS",

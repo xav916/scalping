@@ -25,6 +25,27 @@ RESPECT_VERDICT = os.getenv("KRAKEN_RESPECT_VERDICT", "true").strip().lower() in
 MIN_FINAL_CONFIDENCE = float(os.getenv("KRAKEN_MIN_FINAL_CONFIDENCE", "60"))
 KRAKEN_BRIDGE_TIMEOUT_SEC = float(os.getenv("KRAKEN_BRIDGE_TIMEOUT_SEC", "10"))
 
+# Filtre de paires cote BACKEND, pose le 2026-10-30.
+#
+# Mesure du 29/10 : `admin_kraken` tient de l'argent reel, est joignable,
+# porte 22 buckets AUTO_EXEC -- et AUCUN filtre de paires ne s'applique a
+# lui. Ce n'etait pas un oubli de configuration : la liste blanche de
+# `mt5_bridge` est gardee par `bridge_type == "mt5"` (mt5_bridge.py:1097-1117),
+# donc la porte SAUTE une destination Kraken. Le compte IC Markets
+# (`admin_live`) est filtre a une seule paire depuis toujours ; celui-ci ne
+# l'etait pas du tout.
+#
+# ⛔ OPT-IN STRICT : vide par defaut, donc RIEN ne passe. C'est l'inverse de
+# la semantique MT5, ou une liste vide signifie « pas de filtrage »
+# (`if LIVE_WHITELIST_PAIRS and ...`). La meme absence veut donc dire
+# « protection maximale » ici et « aucune protection » la-bas. Si vous
+# touchez l'une, ne recopiez pas le test de l'autre.
+_KRAKEN_WHITELIST_PAIRS = frozenset(
+    p.strip().upper()
+    for p in os.getenv("KRAKEN_BRIDGE_WHITELIST_PAIRS", "").split(",")
+    if p.strip()
+)
+
 
 def _build_kraken_payload(setup, sz: dict, dest) -> dict[str, Any]:
     """Convertit un setup scalping-radar en payload kraken-bridge.
@@ -126,6 +147,26 @@ async def push_to_kraken(setup, sz: dict, dest) -> None:
     direction = setup.direction.value if hasattr(setup.direction, "value") else str(setup.direction)
     score = float(getattr(setup, "confidence_score", 0) or 0)
     verdict = getattr(setup, "verdict_action", None)
+
+    # ⛔ Filtre de paires -- EN PREMIER, et avant tout appel reseau.
+    # La propriete qui compte n'est pas le refus mais son MOMENT : un ordre
+    # refuse ici n'a pas ete envoye et ne laisse aucune reservation de push.
+    # Place avant la porte de verdict pour que le motif rapporte soit le bon
+    # quand les deux s'appliquent -- sinon on corrigerait la mauvaise chose.
+    if setup.pair not in _KRAKEN_WHITELIST_PAIRS:
+        record_rejection(
+            pair=setup.pair, direction=direction, confidence=score,
+            reason_code="kraken_pair_not_whitelisted",
+            details={"pair": setup.pair,
+                     "autorisees": sorted(_KRAKEN_WHITELIST_PAIRS)},
+            destination_id=dest.destination_id,
+        )
+        logger.info(
+            f"kraken[{dest.destination_id}] REFUSE {setup.pair} : hors liste "
+            f"blanche backend (autorisees : "
+            f"{sorted(_KRAKEN_WHITELIST_PAIRS) or 'aucune'})"
+        )
+        return
 
     # Final-score gate
     if RESPECT_VERDICT and verdict == "SKIP":

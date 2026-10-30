@@ -53,6 +53,34 @@ for nom, cst in (("admin_live", "LIVE_WHITELIST_PAIRS"),
     if v:
         BLANCHES[nom] = sorted(v)
 
+# Filtres en OPT-IN STRICT, ou le vide signifie « rien ne passe » -- donc
+# l'inverse de la semantique MT5 ci-dessus. La destination est INSCRITE ici
+# des que le mecanisme existe, meme si sa liste est vide : c'est la presence
+# dans cette map qui porte la semantique, pas son contenu.
+BACKEND = {}
+BACKEND_ERREURS = {}
+_SENTINELLE = object()
+try:
+    from backend.services import kraken_bridge_client as _kbc
+    # ⛔ « ABSENTE » n'est PAS « VIDE », et la nuance est tout l'enjeu :
+    # vide => tout bloque (CONFORME) ; absente => rien ne filtre (FAIL).
+    # Sans cette sentinelle, un conteneur ou le filtre n'est PAS DEPLOYE
+    # rapportait regle 1 CONFORME -- une protection affirmee qui n'existe
+    # pas. Faux-sur trouve et corrige le 2026-10-30, apres l'avoir
+    # effectivement produit.
+    _v = getattr(_kbc, "_KRAKEN_WHITELIST_PAIRS", _SENTINELLE)
+    if _v is not _SENTINELLE:
+        BACKEND["admin_kraken"] = sorted(_v or ())
+    else:
+        BACKEND_ERREURS["admin_kraken"] = (
+            "_KRAKEN_WHITELIST_PAIRS absente du module : filtre NON deploye")
+except Exception as _e:
+    # ⛔ On NE se tait PAS. La direction est pourtant sure -- un filtre
+    # illisible laisse la destination hors de la map, donc regle 1 = FAIL --
+    # mais un echec que personne ne lit n'est pas une garde. Le motif remonte
+    # au pied du rapport.
+    BACKEND_ERREURS["admin_kraken"] = "%s: %s" % (type(_e).__name__, _e)
+
 def gardes(d):
     try:
         from backend.services import plafond_arbitrage as P
@@ -111,6 +139,8 @@ print(json.dumps({
     "rem002_allowed": G.execution_allowed().allowed,
     "rem002_reason": det.get("reason_code"),
     "listes_blanches": BLANCHES,
+    "filtres_backend": BACKEND,
+    "erreurs_filtres": BACKEND_ERREURS,
     "destinations": dests,
 }))
 '''
@@ -128,6 +158,8 @@ def juger(etat: dict) -> tuple[int, list[str]]:
                    "suspect. On ne rend pas « conforme »."]
 
     blanches = etat.get("listes_blanches") or {}
+    backend = etat.get("filtres_backend") or {}
+    erreurs_filtres = etat.get("erreurs_filtres") or {}
     lignes = ["=== or-politique | empreinte_code %s" % empreinte,
               "  armement : %s (%s)"
               % ("OUVERT" if etat.get("rem002_allowed") else "FERME",
@@ -147,7 +179,7 @@ def juger(etat: dict) -> tuple[int, list[str]]:
             n_illisible += 1
             lignes.append("      ⚠️ fait non lu : %s" % erreur)
             faits_non_lus.append("%s: %s" % (d.get("destination_id"), erreur))
-        for v in R.juger_destination(d, blanches):
+        for v in R.juger_destination(d, blanches, backend):
             if v["verdict"] == R.FAIL:
                 n_fail += 1
             elif v["verdict"] == R.ILLISIBLE:
@@ -166,6 +198,15 @@ def juger(etat: dict) -> tuple[int, list[str]]:
                       "comptee en ILLISIBLE) :")
         for f in faits_non_lus:
             lignes.append("   - %s" % f)
+    # ⛔ Un filtre backend illisible laisse sa destination hors de la map, donc
+    # regle 1 = FAIL : la direction est sure. Mais le MOTIF doit se voir, sinon
+    # on lit « aucune liste blanche » en croyant qu'il n'y en a pas, alors
+    # qu'on n'a pas su la lire. Deux phrases differentes.
+    if erreurs_filtres:
+        lignes.append("=> filtre(s) backend ILLISIBLE(S) -- la regle 1 les "
+                      "traite comme absents (sens prudent) :")
+        for nom, motif in sorted(erreurs_filtres.items()):
+            lignes.append("   - %s : %s" % (nom, motif))
     return (1 if (n_fail or n_illisible) else 0), lignes
 
 

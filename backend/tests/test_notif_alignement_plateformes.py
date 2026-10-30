@@ -165,6 +165,12 @@ def test_le_hook_kraken_part_bien_a_l_execution(tmp_path, monkeypatch):
 
     monkeypatch.setattr(httpx.AsyncClient, "post", _post)
 
+    # Le filtre de paires backend d'`admin_kraken` (2026-10-30) est VIDE par
+    # defaut : rien ne passe. Le sujet de ce test est la notification d'un
+    # fill, pas ce filtre, donc on declare la precondition.
+    monkeypatch.setattr(kbc, "_KRAKEN_WHITELIST_PAIRS",
+                        frozenset({"BTC/USD", "ETH/USD", "XAU/USD"}))
+
     import asyncio
     asyncio.run(kbc.push_to_kraken(
         _setup(), {"risk_money": 0.66},

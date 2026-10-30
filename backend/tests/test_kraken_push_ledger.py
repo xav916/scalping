@@ -39,6 +39,12 @@ def base(tmp_path, monkeypatch):
         lambda **kw: rejets.append(kw),
     )
     rejets: list[dict] = []
+    # Le filtre de paires backend d'`admin_kraken` (pose le 2026-10-30) est
+    # VIDE par defaut : rien ne passe. Le sujet de ce fichier est le registre
+    # de push, pas ce filtre, donc on declare la precondition au lieu de
+    # l'affaiblir. Cf. `test_kraken_filtre_paires.py`.
+    monkeypatch.setattr(kbc, "_KRAKEN_WHITELIST_PAIRS",
+                        frozenset({"BTC/USD", "ETH/USD"}))
     mt5_pushes_service._ensure_schema()
     return NS(path=str(db), rejets=rejets)
 
