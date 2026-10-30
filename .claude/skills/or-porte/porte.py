@@ -23,9 +23,11 @@ from __future__ import annotations
 import argparse
 import json
 import pathlib
-import subprocess
 import sys
 from datetime import datetime, timezone
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+from or_commun import distant  # noqa: E402
 
 import charge
 import lot as L
@@ -248,31 +250,6 @@ def juger(lot_valide: dict, brut: dict) -> tuple[int, list[str], dict]:
     return (1 if bloques else 0), lignes, etat
 
 
-def _executer_a_distance(depot: pathlib.Path, src: str, timeout: int = 120):
-    """Lance `src` dans le conteneur, par ssh. Non testee (reseau).
-
-    `src` voyage par le STDIN de ssh (`python3 -`), jamais comme argument de
-    `-c` : verifie le 2026-10-29 contre la production, deux defauts
-    independants rendaient cette derniere voie non fiable --
-      1. le shell distant (`bash -c`) ne convertit pas le `\\n` JSON en vrai
-         saut de ligne -> `SyntaxError: unexpected character after line
-         continuation character` sur tout script de plus d'une ligne ;
-      2. meme une fois ce texte mis en base64 (donc sans saut de ligne), un
-         seul argument de commande au-dela d'environ 8 Ko tronque en silence
-         -> `bash: -c: ... unexpected EOF`. Le lot `--depuis-vivier` depasse
-         deja ce seuil (25 buckets ~ 12,4 Ko encodes).
-    Le flux stdin n'a ni l'un ni l'autre defaut : aucune conversion de
-    caractere, aucune limite de longueur observee jusqu'a 50 Ko. `-n` est
-    donc RETIRE (il couperait ce flux) et `docker exec` passe en `-i`.
-    """
-    return subprocess.run(
-        ["ssh", "-i", str(depot / "scalping-key.pem"),
-         "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes",
-         "ec2-user@13.63.77.180",
-         "sudo docker exec -i scalping-radar python3 -"],
-        input=src, capture_output=True, text=True, timeout=timeout)
-
-
 def collecter(depot: pathlib.Path, lot_valide: dict) -> dict:
     """Interroge la production en LECTURE SEULE. Non testee (reseau).
 
@@ -280,17 +257,12 @@ def collecter(depot: pathlib.Path, lot_valide: dict) -> dict:
     pollue stdout, et c'est le contournement deja eprouve par `or-etat`.
     """
     src = charge.construire(lot_valide)
-    out = _executer_a_distance(depot, src, timeout=120)
-    for ligne in reversed(out.stdout.splitlines()):
-        if ligne.strip().startswith("{"):
-            brut = json.loads(ligne)
-            if "erreur" in brut:
-                raise RuntimeError("%s (connues : %s)"
-                                   % (brut["erreur"],
-                                      ", ".join(brut.get("connues") or [])))
-            return brut
-    raise RuntimeError("la production n'a rien rendu de lisible : %s"
-                       % (out.stderr or out.stdout)[-300:])
+    brut = distant.derniere_ligne_json(distant.executer(depot, src))
+    if "erreur" in brut:
+        raise RuntimeError("%s (connues : %s)"
+                           % (brut["erreur"],
+                              ", ".join(brut.get("connues") or [])))
+    return brut
 
 
 def _lot_depuis_vivier(depot: pathlib.Path, destination: str) -> dict:
@@ -331,21 +303,21 @@ def _lot_depuis_vivier(depot: pathlib.Path, destination: str) -> dict:
         "            out.append({'pair':p,'direction':s})\n"
         "print(json.dumps(out))"
     )
-    res = _executer_a_distance(depot, src, timeout=120)
-    couples = None
-    for ligne in reversed(res.stdout.splitlines()):
-        t = ligne.strip()
-        if t.startswith("["):
-            couples = json.loads(t)
-            break
-        if t.startswith("{"):
-            brut = json.loads(t)
-            raise RuntimeError("%s (connues : %s)"
-                               % (brut["erreur"],
-                                  ", ".join(brut.get("connues") or [])))
-    if couples is None:
-        raise RuntimeError("vivier illisible : %s"
-                           % (res.stderr or res.stdout)[-300:])
+    out = distant.executer(depot, src, timeout=120)
+    try:
+        couples = distant.derniere_ligne_json(out, prefixe="[")
+    except RuntimeError as e:
+        # Essayer de trouver un objet erreur au lieu du tableau
+        try:
+            brut = distant.derniere_ligne_json(out, prefixe="{")
+            if "erreur" in brut:
+                raise RuntimeError("%s (connues : %s)"
+                                   % (brut["erreur"],
+                                      ", ".join(brut.get("connues") or []))) from e
+        except RuntimeError:
+            pass
+        # Relever l'erreur originale (pas de ligne [ trouvee)
+        raise e
     # ⚠️ Important 4 : seuls `pair`/`direction` sont REELS ici. Les NEUF
     # autres champs sont FABRIQUES, chacun desarme une porte precise -- la
     # banniere imprimee par `main()` doit nommer la MEME liste :
