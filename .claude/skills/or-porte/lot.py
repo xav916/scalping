@@ -60,4 +60,15 @@ def valider_lot(obj: dict) -> dict:
             raise ErreurLot(
                 "setup #%d : champ(s) requis manquant(s) %s -- les portes les "
                 "lisent" % (n, ", ".join(manquants)))
-    return {"destinations": list(dests), "setups": [dict(s) for s in setups]}
+    # ⛔ Deduplique en PRESERVANT l'ordre d'apparition. Une destination
+    # repetee double-comptait les contraintes de lot : deux passages
+    # consommaient deux places la ou l'operateur n'en voulait qu'une. Le sens
+    # etait prudent, mais un verdict faux dans le sens prudent reste faux.
+    # 🔑 L'ordre doit survivre : les contraintes de lot simulent des
+    # remplissages SUCCESSIFS, donc le reordonner changerait quel setup bloque.
+    vues, uniques = set(), []
+    for d in dests:
+        if d not in vues:
+            vues.add(d)
+            uniques.append(d)
+    return {"destinations": uniques, "setups": [dict(s) for s in setups]}

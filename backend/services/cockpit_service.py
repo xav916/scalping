@@ -95,7 +95,21 @@ def _compute_unrealized_pnl(trade: dict, current_price: float) -> float:
 
 def _pip_size(pair: str) -> float:
     """Taille d'un pip pour afficher un delta lisible.
-    Approximation cohérente avec le reste du code.
+
+    ⛔ NE PAS FUSIONNER avec `mt5_sync._pip_size`, malgre le code identique.
+    Les deux ont des CONTRATS opposes :
+      - celle-ci sert a AFFICHER : la changer ne touche aucune donnee stockee ;
+      - celle de `mt5_sync` alimente `slippage_pips`, une colonne HISTORIQUE.
+        La changer rendrait les lignes d'avant incomparables aux suivantes
+        SOUS LE MEME NOM -- la faute qui a produit un verdict faux le
+        2026-10-28, et la raison pour laquelle `slippage_pct` existe.
+    La duplication est donc PORTEUSE, pas un oubli. (note du 2026-10-30)
+
+    ⚠️ RESTE A FAIRE, et volontairement pas fait sous pression : aucun cas
+    crypto ni energie, donc `BTC/USD` s'affiche a ~1 113 350 pips. Le corriger
+    demande de CHOISIR une convention d'affichage (ou de rendre `None` plutot
+    qu'un nombre fabrique) et de tracer les consommateurs de `pnl_pips`.
+    Inventer l'unite ici serait refaire « deux choses sous un meme nom ».
     """
     base = pair.split("/")[0].upper() if "/" in pair else pair.upper()
     quote = pair.split("/")[1].upper() if "/" in pair else ""

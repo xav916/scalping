@@ -142,7 +142,19 @@ def _db_path():
 
 def _pip_size(pair: str) -> float:
     """Approx cohérente avec le reste du code (XAU/XAG = 0.01, JPY = 0.01,
-    forex standard = 0.0001). Utilisé uniquement pour afficher le slippage."""
+    forex standard = 0.0001). Utilisé uniquement pour afficher le slippage.
+
+    ⛔ NE PAS FUSIONNER avec `cockpit_service._pip_size`, ni « corriger » ses
+    classes manquantes. Cette fonction alimente `slippage_pips`, une colonne
+    HISTORIQUE : lui ajouter un cas crypto changerait la VALEUR de la colonne
+    et rendrait les lignes d'avant incomparables aux suivantes **sous le même
+    nom**. C'est la faute qui a produit un verdict faux le 2026-10-28, et la
+    raison pour laquelle `slippage_pct` — sans convention par instrument — a
+    été ajoutée à côté plutôt qu'en remplacement.
+
+    La copie du cockpit sert à AFFICHER et n'a aucun effet sur les données
+    stockées : leurs contrats sont opposés, donc la duplication est PORTEUSE.
+    (note du 2026-10-30)"""
     base = pair.split("/")[0].upper() if "/" in pair else pair.upper()
     quote = pair.split("/")[1].upper() if "/" in pair else ""
     if base in {"XAU", "XAG", "XPT", "XPD"}:

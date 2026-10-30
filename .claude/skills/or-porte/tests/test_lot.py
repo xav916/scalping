@@ -69,3 +69,26 @@ def test_lot_valide_passe_et_rend_les_setups():
     valide = L.valider_lot(bon)
     assert valide["destinations"] == ["admin_live", "admin_kraken"]
     assert valide["setups"][0]["pair"] == "XAU/USD"
+
+
+def test_une_destination_REPETEE_est_dedupliquee():
+    """Minor de la revue finale du 29/10. Une destination repetee dans le lot
+    double-comptait les contraintes de lot : deux passages sur la meme
+    destination consommaient deux places la ou l'operateur n'en voulait
+    qu'une. Le sens etait prudent (on bloquait trop tot), mais le verdict
+    etait faux, et un verdict faux dans le sens prudent reste faux."""
+    valide = L.valider_lot({"destinations": ["admin_live", "admin_kraken",
+                                             "admin_live"],
+                            "setups": [SETUP]})
+    assert valide["destinations"] == ["admin_live", "admin_kraken"], \
+        "les doublons doivent partir, et l'ORDRE d'apparition rester"
+
+
+def test_la_deduplication_preserve_l_ordre():
+    """L'ordre compte : les contraintes de lot simulent des remplissages
+    SUCCESSIFS, donc changer l'ordre changerait quel setup bloque."""
+    valide = L.valider_lot({"destinations": ["admin_kraken", "admin_live",
+                                             "admin_kraken", "admin_legacy"],
+                            "setups": [SETUP]})
+    assert valide["destinations"] == ["admin_kraken", "admin_live",
+                                      "admin_legacy"]

@@ -939,6 +939,47 @@ def intervalle_sec(nom: str, defaut: int) -> int:
     return v
 
 
+def intervalle_protection_sec() -> int:
+    """La cadence de la boucle de protection des pertes, en secondes. ``0`` =
+    inerte (le cron ``*/5`` continue seul, a l'identique).
+
+    🔑 EXTRAITE POUR ETRE TESTABLE SANS EFFET DE BORD, comme
+    `config_cycle_rapide` : un test qui appelle le vrai `start_scheduler()`
+    ecrit dans `data/scalping.db` et fait tomber trente tests ailleurs. Le
+    harnais serait invasif, pas le code.
+
+    ⛔ LE DEFAUT QU'ELLE FERME. Jusqu'au 2026-10-30, `start_scheduler` lisait
+    cette variable par un `int(os.getenv(...))` **nu**, a la ligne 1210 —
+    donc avec ~600 lignes de declarations de travaux derriere elle. Une
+    valeur illisible levait `ValueError` et **tous les travaux suivants
+    disparaissaient**, le conteneur restant `active`. C'est l'incident du
+    2026-10-11 (`ECHELLE_STOP_INTERVAL_SEC=1FENETRE_HEBDO_DEBUT=lun 00:00`),
+    sur une autre variable, dix-neuf jours plus tard. `intervalle_sec()`
+    avait ete ecrite pour fermer ce defaut ; cette conversion-la lui avait
+    echappe, et mon `grep` ne la voyait pas : il trouvait la DOCSTRING qui
+    cite l'ancien code fautif. Trouvee par analyse AST.
+
+    ⛔ POURQUOI PAS `intervalle_sec()`. Ici **0 est une valeur LEGITIME** —
+    c'est la desactivation documentee. `intervalle_sec` crie au niveau ERROR
+    sur tout `v <= 0` : la reutiliser ferait hurler une alerte sur un reglage
+    volontaire, et du bruit dans un journal de surete est exactement la facon
+    dont une vraie alerte se perd. On crie donc sur l'ILLISIBLE, et on se
+    tait sur le zero.
+    """
+    brut = (os.getenv("PROTECTION_PERTE_INTERVAL_SEC") or "").strip()
+    if not brut:
+        return 0
+    try:
+        v = int(brut)
+    except (TypeError, ValueError):
+        logger.error(
+            "PROTECTION_PERTE_INTERVAL_SEC illisible (%r) — boucle de "
+            "protection INERTE, le cron */5 continue seul. Corriger le .env.",
+            brut)
+        return 0
+    return v if v > 0 else 0
+
+
 def config_cycle_rapide() -> tuple[int, list[str]]:
     """``(secondes, paires)`` du cycle rapide. ``(0, [])`` = desarme.
 
@@ -1207,8 +1248,10 @@ def start_scheduler() -> AsyncIOScheduler:
     # cron `*/5` qui continue seul, a l'identique. Avec, la boucle prend le
     # relais a la cadence demandee — et il faut alors RETIRER la ligne de cron,
     # sinon les deux sondent le pont pour rien.
-    _intervalle_protection = int(
-        os.getenv("PROTECTION_PERTE_INTERVAL_SEC", "0"))
+    # ⛔ Par `intervalle_protection_sec()` et jamais par un `int(os.getenv())`
+    # nu : une levee ICI ferait disparaitre tous les travaux declares plus
+    # bas, et le conteneur resterait `active`. Cf. l'incident du 2026-10-11.
+    _intervalle_protection = intervalle_protection_sec()
     if _intervalle_protection > 0:
         _scheduler.add_job(
             _protection_perte_cycle,

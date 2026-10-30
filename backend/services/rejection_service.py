@@ -33,6 +33,22 @@ REASON_LABELS_FR = {
     # Filtre de paires backend d'`admin_kraken` (2026-10-30). Opt-in STRICT :
     # liste vide par defaut, donc rien ne passe. Cf. kraken_bridge_client.
     "kraken_pair_not_whitelisted": "Paire hors liste blanche Kraken",
+
+    # Les NEUF motifs qui s'affichaient en CODE BRUT (releve du 2026-10-29,
+    # comble le 30/10). Dont `pair_not_whitelisted` : la porte qui protege
+    # l'argent reel sur MT5 n'avait aucun libelle, donc partout ou ce refus
+    # etait montre a un humain, il lisait un identifiant technique.
+    # ⛔ `test_tous_les_motifs_ont_un_libelle.py` enumere les codes par AST et
+    # echoue si un dixieme apparait sans son libelle.
+    "pair_not_whitelisted": "Paire hors liste blanche du compte reel",
+    "pair_blocked": "Paire bloquee pour cette destination",
+    "pair_auto_paused": "Paire en pause automatique",
+    "cooldown_symbole": "Delai minimum entre deux ordres sur ce symbole",
+    "correlated_exposure": "Meme pari deja pris sur une paire correlee",
+    "direction_blocked_for_pair": "Sens bloque pour cette paire",
+    "direction_blocked_global": "Sens bloque globalement",
+    "hour_in_avoid_list": "Heure dans la liste a eviter",
+    "energy_pre_weekend_freeze": "Energie gelee avant le week-end",
     "kill_switch": "Kill switch actif",
     "kill_switch_pair_paused": "Pair en pause rafale SL",
     "event_blackout": "Blackout event macro",

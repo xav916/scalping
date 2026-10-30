@@ -68,6 +68,15 @@ def juger_destination(dest: dict, listes_blanches: dict,
     elif gf is None or gf == {}:
         r2 = _v(2, "garde-fous du pont", FAIL, "/health garde_fous",
                 "aucun champ publie -- on ne peut pas verifier ce qui protege")
+    elif not isinstance(gf, dict):
+        # ⛔ FAUX-SUR ferme le 2026-10-30. La lisibilite etait testee par
+        # `len(gf)` : un `garde_fous` publie comme CHAINE non vide ou comme
+        # liste a un `len()`, donc sortait `CONFORME « N champ(s) »` -- en
+        # annoncant N garde-fous la ou il n'y en avait aucun. `/health` doit
+        # rendre un OBJET ; toute autre forme n'est pas interpretable.
+        r2 = _v(2, "garde-fous du pont", ILLISIBLE, "/health garde_fous",
+                "forme inattendue (%s) : un objet est attendu"
+                % type(gf).__name__)
     elif gf:
         try:
             num_champs = len(gf)

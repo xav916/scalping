@@ -227,3 +227,42 @@ def test_le_resume_distingue_FAIL_et_ILLISIBLE():
     resume = lignes[-1]
     assert "FAIL" in resume
     assert "ILLISIBLE" in resume
+
+
+# --- Minor de la revue finale : les deux chemins vers le code 2 ------------
+
+def test_une_collecte_qui_LEVE_rend_2(monkeypatch):
+    """Chemin non couvert, releve le 30/10. Une collecte qui leve doit rendre
+    2 (« je n'ai pas pu juger »), jamais 1 (« quelque chose a bloque ») : sur
+    une decision de rearmement, ces deux phrases ne disent pas la meme chose."""
+    def _boom(_depot):
+        raise RuntimeError("pont injoignable")
+    monkeypatch.setattr(P, "collecter", _boom)
+    assert P.main([]) == 2
+
+
+def test_un_JUGE_qui_LEVE_rend_2(monkeypatch):
+    """Meme exigence de l'autre cote : si `juger` leve, on ne conclut RIEN."""
+    monkeypatch.setattr(P, "collecter", lambda _d: dict(ETAT))
+
+    def _boom(_etat):
+        raise ValueError("juge casse")
+    monkeypatch.setattr(P, "juger", _boom)
+    assert P.main([]) == 2
+
+
+def test_le_mode_json_porte_le_caveat_de_configuration_DECLAREE(monkeypatch,
+                                                                capsys):
+    """Un consommateur machine perdait l'avertissement « seule la
+    configuration DECLAREE est jugee ». Le code de sortie restait juste, mais
+    la reserve disparaissait -- et c'est elle qui dit ce que l'outil NE prouve
+    pas."""
+    monkeypatch.setattr(P, "collecter", lambda _d: dict(ETAT))
+    code = P.main(["--json"])
+    sortie = capsys.readouterr().out
+    assert code == 1
+    import json as _j
+    charge = _j.loads(sortie)          # doit rester lisible par json.loads
+    texte = _j.dumps(charge).lower()
+    assert "declaree" in texte or "declare" in texte, \
+        "le JSON doit porter le caveat de configuration DECLAREE"

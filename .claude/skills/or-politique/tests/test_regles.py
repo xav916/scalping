@@ -202,3 +202,29 @@ def test_la_charge_n_inscrit_PAS_un_filtre_absent():
         "sans sentinelle, un filtre non deploye passe pour une protection")
     assert 'BACKEND["admin_kraken"] = sorted(\n' not in src.replace(" ", ""), \
         "l'inscription ne doit pas etre inconditionnelle"
+
+
+# --- Minor de la revue finale : `len(gf)` est un FAUX-SUR ------------------
+
+def test_un_garde_fous_NON_DICT_est_ILLISIBLE_et_non_CONFORME():
+    """La regle 2 testait la lisibilite par `len(gf)`. Un `garde_fous` publie
+    comme CHAINE non vide (ou comme liste) a donc un `len()` et sortait
+    `CONFORME « N champ(s) »` -- en annoncant N garde-fous la ou il n'y en a
+    aucun. Faux-sur releve par la revue finale du 30/10."""
+    for faux in ("garde_fous", ["a", "b"], ("x",), 7, 3.5):
+        v = next(x for x in R.juger_destination(
+            dict(KRAKEN, garde_fous=faux), BLANCHES,
+            filtres_backend={"admin_kraken": []}) if x["regle"] == 2)
+        assert v["verdict"] == R.ILLISIBLE, (
+            "garde_fous=%r (%s) doit etre ILLISIBLE, pas %s"
+            % (faux, type(faux).__name__, v["verdict"]))
+
+
+def test_un_vrai_dict_de_garde_fous_reste_CONFORME():
+    """Temoin POSITIF : sans lui, un `isinstance` trop strict rendrait tout
+    ILLISIBLE et la regle 2 ne dirait plus jamais rien d'utile."""
+    v = next(x for x in R.juger_destination(
+        dict(KRAKEN, garde_fous={"max_open_positions": 10}), BLANCHES,
+        filtres_backend={"admin_kraken": []}) if x["regle"] == 2)
+    assert v["verdict"] == R.CONFORME
+    assert "1" in v["valeur"]

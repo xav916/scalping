@@ -26,3 +26,21 @@ def test_le_module_importe_or_commun_distant():
 def test_aucun_appel_subprocess_direct_ne_reste():
     """Tout passe par `distant.executer` desormais."""
     assert "subprocess.run" not in SOURCE
+
+
+def test_aucun_import_mort():
+    """`json` ne servait que dans la fonction supprimee au branchement.
+    Verifie par AST et non par grep : `json` apparait encore dans des
+    CHAINES destinees au processus distant, et un grep aurait conclu qu'il
+    servait. Troisieme fois ce jour-la qu'un grep trompe sur un motif qui
+    figure aussi dans la prose ou la donnee."""
+    arbre = ast.parse(SOURCE)
+    utilises = {n.id for n in ast.walk(arbre) if isinstance(n, ast.Name)}
+    utilises |= {n.value.id for n in ast.walk(arbre)
+                 if isinstance(n, ast.Attribute)
+                 and isinstance(n.value, ast.Name)}
+    importes = [al.name.split(".")[0]
+                for n in ast.walk(arbre) if isinstance(n, ast.Import)
+                for al in n.names]
+    morts = [i for i in importes if i not in utilises]
+    assert morts == [], "import(s) mort(s) : %s" % morts

@@ -233,7 +233,21 @@ def main(argv: list[str] | None = None) -> int:
         print("ECHEC : le jugement a leve (%s) -- rien n'est conclu" % e)
         return 2
     if a.en_json:
-        print(json.dumps(etat, indent=2, ensure_ascii=False))
+        # ⛔ Le caveat voyage AVEC la donnee. Un consommateur machine perdait
+        # « seule la configuration DECLAREE est jugee » : le code de sortie
+        # restait juste, mais la reserve disparaissait -- et c'est elle qui
+        # dit ce que l'outil NE prouve pas. Les verdicts aussi, pour que le
+        # JSON porte la meme chose que le rapport lu par un humain.
+        print(json.dumps(dict(
+            etat,
+            _caveat="Seule la configuration DECLAREE est jugee, pas son "
+                    "fonctionnement : REM-002 court-circuite toute sonde.",
+            _code_de_sortie=code,
+            _verdicts=[v for d in (etat.get("destinations") or [])
+                       for v in R.juger_destination(
+                           d, etat.get("listes_blanches") or {},
+                           etat.get("filtres_backend") or {})],
+        ), indent=2, ensure_ascii=False))
     else:
         for l in lignes:
             print(l)

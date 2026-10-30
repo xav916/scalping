@@ -12,7 +12,6 @@ partir de la table. Un seul drapeau n'est donc pas une reponse.
 """
 from __future__ import annotations
 
-import json
 import pathlib
 import sys
 
