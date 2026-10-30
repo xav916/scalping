@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sqlite3
 from datetime import datetime, timezone
 from typing import Any
@@ -369,6 +370,32 @@ def clotures_par_nettage(pushes, fills, positions, deja_closes) -> list[dict[str
 
 
 # ─── Écriture et notification ──────────────────────────────────────────
+
+# Âge au-delà duquel une clôture découverte ne se notifie plus : c'est un
+# RATTRAPAGE d'historique, pas un événement. 24 h laisse passer un retard
+# d'un cycle, d'une nuit ou d'un redémarrage, et retient les semaines.
+NOTIF_MAX_AGE_H = int(os.getenv("KRAKEN_SYNC_NOTIF_MAX_AGE_H", "24") or 24)
+
+
+def notifiable(closed_at: Any) -> bool:
+    """Cette clôture mérite-t-elle un Telegram ?
+
+    ⛔ **Une absence d'horodatage se notifie** : ne pas savoir quand une
+    position s'est fermée est précisément le genre de chose qu'il faut dire.
+    Le silence n'est jamais le repli sûr pour une notification.
+    """
+    if not closed_at:
+        return True
+    try:
+        t = str(closed_at).replace("Z", "+00:00")
+        quand = datetime.fromisoformat(t)
+        if quand.tzinfo is None:
+            quand = quand.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return True          # illisible ⇒ on notifie, on ne devine pas
+    age_h = (datetime.now(timezone.utc) - quand).total_seconds() / 3600.0
+    return age_h <= NOTIF_MAX_AGE_H
+
 
 # ⛔ Les futures d'ACTIONS, NOMMÉS. Kraken les suffixe d'un `X`
 # (`PF_AAPLXUSD`), mais ce suffixe ne les distingue pas : `AVAX` finit aussi
@@ -788,6 +815,20 @@ async def reconcile() -> int:
                 f"cause={trade['close_reason']} pnl={trade['pnl']} EUR "
                 f"(push #{c['push']['push_id']})"
             )
+            if not notifiable(trade.get("closed_at")):
+                # ⛔ Pas de Telegram sur un RATTRAPAGE. Une clôture de
+                # septembre découverte en octobre n'est pas une alerte, c'est
+                # du bruit — et le bruit dans un fil de surveillance est la
+                # façon dont une vraie alerte se perd. La ligne est écrite,
+                # le P&L est compté ; seule la notification est retenue.
+                # 🔑 Et ça se DIT : un geste supprimé sans trace est le
+                # défaut que ce module vient de corriger.
+                logger.warning(
+                    "kraken_sync: notification OMISE pour %s (cloturee le %s, "
+                    "rattrapage au-dela de %d h) — la ligne EST ecrite",
+                    trade["pair"], str(trade.get("closed_at"))[:19],
+                    NOTIF_MAX_AGE_H)
+                continue
             try:
                 from backend.services.telegram_service import send_close
                 await send_close(trade)

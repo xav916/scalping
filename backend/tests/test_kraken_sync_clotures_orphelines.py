@@ -228,3 +228,49 @@ def test_un_fill_rattrape_ne_compte_plus_comme_orphelin():
     fills = [{"order_id": "x", "realized_pnl": 3.27}]
     clotures = [{"push": {"order_id": "x"}}]
     assert ks.fills_non_attribues(pushes, fills, clotures) == 0
+
+
+# ─── Un rattrapage s'ECRIT mais ne se NOTIFIE pas ────────────────────────
+#
+# Une cloture de septembre decouverte en octobre n'est pas une alerte, c'est
+# du bruit -- et le bruit dans un fil de surveillance est la facon dont une
+# vraie alerte se perd. La LIGNE est ecrite, le P&L est compte ; seule la
+# notification est retenue, et l'omission est journalisee.
+
+def _il_y_a(heures=0, jours=0):
+    from datetime import datetime, timedelta, timezone
+    return (datetime.now(timezone.utc)
+            - timedelta(hours=heures, days=jours)).isoformat()
+
+
+def test_une_cloture_RECENTE_se_notifie():
+    assert ks.notifiable(_il_y_a(heures=2)) is True
+
+
+def test_une_cloture_de_PLUSIEURS_SEMAINES_ne_se_notifie_pas():
+    assert ks.notifiable(_il_y_a(jours=40)) is False
+
+
+def test_les_trois_de_l_incident_ne_notifieraient_PAS():
+    """Les dates reelles : septembre 2026, soit plus d'un mois."""
+    for quand in ("2026-09-19T23:16:32.000Z", "2026-09-22T21:39:58.000Z",
+                  "2026-09-27T13:55:33.000Z"):
+        assert ks.notifiable(quand) is False, quand
+
+
+def test_la_bordure_est_du_bon_cote():
+    assert ks.notifiable(_il_y_a(heures=ks.NOTIF_MAX_AGE_H - 1)) is True
+    assert ks.notifiable(_il_y_a(heures=ks.NOTIF_MAX_AGE_H + 1)) is False
+
+
+@pytest.mark.parametrize("valeur", [None, "", "pas une date", 12345, "2026-13-45"])
+def test_une_date_ABSENTE_ou_ILLISIBLE_se_notifie(valeur):
+    """⛔ Le silence n'est jamais le repli sur pour une notification : ne pas
+    savoir QUAND une position s'est fermee est precisement une chose a dire."""
+    assert ks.notifiable(valeur) is True
+
+
+def test_un_retard_d_une_nuit_notifie_encore():
+    """Le seuil doit tolerer un cycle rate, un redemarrage, une nuit — et
+    retenir seulement les semaines."""
+    assert ks.notifiable(_il_y_a(heures=10)) is True
