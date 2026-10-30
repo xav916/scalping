@@ -37,6 +37,7 @@ import sqlite3
 from datetime import datetime, timezone
 
 from backend.services import destinations_registry
+from backend.services.cout_execution import cout_spread_relatif as _cout_spread
 from backend.services.risk_eur import calculer as _risque_eur
 
 TABLE = "trade_financial_ledger"
@@ -66,6 +67,7 @@ COLONNES_PROVENANCE = (
     "src_sortie",    # 'courtier' | 'stock' | NULL
     "src_cloture",   # 'courtier_confirme' | 'stock_seul' | NULL
     "src_risque",    # 'calcule' | NULL
+    "src_spread",    # 'tick_courtier' | NULL  (2026-10-30, cf. `_spread`)
     "categorie_pnl",  # REM-006, voir `categorie_pnl()`
     "construit_le",
 )
@@ -231,6 +233,58 @@ def _risque(r: sqlite3.Row, net: float | None) -> dict:
     }
 
 
+def _spread(r: sqlite3.Row, risque: float | None) -> dict:
+    """Le coût du spread en euros — MESURÉ, ou `NULL`. Jamais estimé.
+
+    ⛔ **Ce champ valait `None` pour tout le monde**, et le commentaire qui
+    l'expliquait disait vrai à l'époque : « le courtier intègre le spread au
+    prix d'exécution et renvoie commission=0, il n'est pas séparable a
+    posteriori ». La phrase suivante disait aussi ce qu'il faudrait :
+    « enregistrer le bid ET le ask à l'instant du push ».
+
+    🔑 **C'est désormais fait, pour l'or** : `ticks_courtier.db` porte 12 M de
+    bid/ask à la seconde. Le coût d'un trade or n'est donc plus inconnaissable
+    — il se lit. Mesuré le 2026-10-30 : **410 trades or sur 410** ont trouvé
+    leur tick, coût médian **0,176 €**.
+
+    ## Pourquoi passer par le RISQUE plutôt que par le notionnel
+
+        spread_eur = risque_eur x (spread_prix / distance_au_stop)
+
+    `risk_amount` porte déjà le volume, la taille de contrat par symbole et la
+    conversion en euros — trois choses que ce module n'a pas à recalculer, et
+    dont chacune a déjà été une source d'erreur (l'argent sous-estimé d'un
+    facteur 10, XLU annoncé à 343 800 €). Si le risque est `NULL`, le coût
+    l'est aussi : la chaîne échoue fermée d'elle-même.
+
+    ## Les deux refus
+
+    ⛔ **Une hypothèse de classe est refusée.** `cout_execution` sait rendre
+    une valeur déclarée quand aucun tick n'existe (forex, crypto, énergie) ;
+    un registre ne peut pas la porter. Seul `tick_instant` est admis — le
+    tick de CE trade, pas une moyenne.
+    ⛔ **Et le markup est inclus** : les 10 points mesurés le 12/10 entre le
+    magasin et la route d'exécution. Sans eux le coût serait sous-estimé de
+    plus de la moitié.
+    """
+    vide = {"spread_cost": None, "src_spread": None}
+    stop, entree = r["stop_loss"], r["entry_price"]
+    if risque is None or not (entree and stop) or not r["created_at"]:
+        return vide
+    distance = abs(float(entree) - float(stop))
+    if distance <= 0:
+        return vide
+    co = _cout_spread(r["pair"], str(r["created_at"])[:19])
+    # ⛔ `tick_moyen` est une mesure, mais pas celle de ce trade : un registre
+    # ne porte que ce qui a été constaté a cet instant.
+    if co.source != "tick_instant":
+        return vide
+    return {
+        "spread_cost": risque * (co.relatif * float(entree)) / distance,
+        "src_spread": "tick_courtier",
+    }
+
+
 def _cloture(r: sqlite3.Row) -> dict:
     """Motif de clôture, main humaine, et qui l'atteste.
 
@@ -342,13 +396,15 @@ def _ligne(r: sqlite3.Row, maintenant: str) -> dict:
         "quantity": r["b_vol"] if r["b_vol"] is not None else r["size_lot"],
         "stop": r["stop_loss"],
         "take_profit": r["take_profit"],
-        # ⛔ INCONNU PAR CONSTRUCTION, pas par paresse. Le courtier intègre le
-        # spread au prix d'exécution et renvoie commission=0 et fee=0 : il
-        # n'est pas séparable a posteriori. Le connaître demanderait
-        # d'enregistrer le bid ET le ask à l'instant du push, ce que le pont
-        # ne fait pas. C'est le trou le plus coûteux du ledger, puisque la
-        # mesure du 12/09 dit que le spread EST la perte entière.
+        # ✅ RÉSOLU LE 2026-10-30, et seulement pour l'or — `_spread()` écrase
+        # ce défaut quand un tick le dit. L'ancien commentaire disait « inconnu
+        # par construction… il faudrait enregistrer le bid ET le ask à
+        # l'instant du push » : `ticks_courtier.db` le fait depuis le 21/09,
+        # avec 12 M de bid/ask à la seconde. 410 trades or sur 410 ont trouvé
+        # leur tick. Partout ailleurs la valeur reste NULL, faute de magasin —
+        # et c'est une limite de DONNÉES, pas de code.
         "spread_cost": None,
+        "src_spread": None,
         "slippage": r["slippage_pips"],
         # ⛔ Le courtier rend déjà son P&L en devise de compte : l'effet de
         # change est DÉJÀ dedans et n'en est plus extractible.
@@ -366,7 +422,11 @@ def _ligne(r: sqlite3.Row, maintenant: str) -> dict:
     ligne.update(_prix(r))
     ligne.update(_compte(r))
     ligne.update(_cloture(r))
-    ligne.update(_risque(r, argent["net_pnl"]))
+    risque = _risque(r, argent["net_pnl"])
+    ligne.update(risque)
+    # ⚠️ APRÈS `_risque` et pas avant : le coût du spread se déduit du risque
+    # en euros, donc il hérite de son `NULL` quand il y en a un.
+    ligne.update(_spread(r, risque["risk_amount"]))
     ligne["categorie_pnl"] = categorie_pnl(ligne["human_intervention"],
                                            ligne["environment"])
     return ligne
