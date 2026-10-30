@@ -318,3 +318,88 @@ def test_le_symbole_ENCORE_OUVERT_n_est_pas_ferme_lui(base):
              "size": 0.4, "price": 8.5, "realized_pnl": 0.2,
              "fill_time": "2026-10-29T12:00:00.000Z"}
     assert ks.clotures_orphelines([f_inj], {"PF_INJUSD": 0.4}, set()) == []
+
+
+# ─── Le compteur doit compter ce qui MANQUE, pas ce qui est orphelin ─────
+#
+# Premiere version : elle annoncait 30 la ou il en manquait 4 -- les 26 autres
+# etaient deja enregistrees, leur push ayant simplement ete purge. Une alarme
+# qui nait a 26 est une alarme morte.
+
+def _fill(sym="PF_AVAXUSD", oid="x", pnl=3.27, quand="2026-09-19T23:16:32.000Z"):
+    return {"order_id": oid, "symbol": sym, "realized_pnl": pnl,
+            "fill_time": quand, "side": "sell", "size": 1.82, "price": 9.862}
+
+
+def _fermee(db, pair, quand):
+    with sqlite3.connect(db) as c:
+        c.execute("""INSERT INTO personal_trades
+            (pair, direction, entry_price, stop_loss, take_profit, size_lot,
+             status, created_at, closed_at, mt5_ticket, destination_id)
+            VALUES (?,'buy',1,0.9,1.2,1,'CLOSED','2026-09-01',?,?, 'admin_kraken')""",
+                  (pair, quand, "t-" + pair + quand))
+
+
+def test_un_fill_DEJA_enregistre_ne_compte_PAS(base):
+    """⛔ LE correctif. Le push est purge, mais la cloture est aux livres :
+    il n'y a aucun defaut a signaler."""
+    _fermee(base, "AVAX/USD", "2026-09-19T23:16:32")
+    assert ks.fills_non_attribues([], [_fill()], []) == 0
+
+
+def test_un_fill_SANS_cloture_aux_livres_compte(base):
+    """Le cas qui doit crier : rien en base pour cet instant."""
+    assert ks.fills_non_attribues([], [_fill()], []) == 1
+
+
+def test_une_cloture_du_MEME_JOUR_mais_d_une_AUTRE_seconde_compte_encore(base):
+    """🔑 L'appariement est a la SECONDE. Apparier au jour masquerait une
+    perte reelle survenue un jour ou une autre cloture de la meme paire a
+    ete ecrite -- mesure le 30/10 : les deux regles donnaient le meme
+    compte, on garde donc la plus stricte."""
+    _fermee(base, "AVAX/USD", "2026-09-19T08:00:00")
+    assert ks.fills_non_attribues([], [_fill()], []) == 1
+
+
+def test_un_fill_rattache_a_un_PUSH_ne_compte_pas(base):
+    pushes = [{"order_id": "o", "sl_order_id": "sl9", "tp_order_id": None}]
+    assert ks.fills_non_attribues(pushes, [_fill(oid="sl9")], []) == 0
+
+
+def test_un_fill_rattrape_DANS_CE_CYCLE_ne_compte_pas(base):
+    clotures = [{"push": {"order_id": "zz"}}]
+    assert ks.fills_non_attribues([], [_fill(oid="zz")], clotures) == 0
+
+
+def test_un_fill_SANS_pnl_realise_n_est_pas_une_cloture(base):
+    assert ks.fills_non_attribues([], [_fill(pnl=0.0)], []) == 0
+
+
+def test_un_future_d_ACTIONS_ne_compte_pas(base):
+    """Hors sujet : ces symboles ne se traduisent pas en paire, et rien ne
+    les suit dans `personal_trades`."""
+    assert ks.fills_non_attribues([], [_fill(sym="PF_SPYXUSD")], []) == 0
+
+
+def test_les_QUATRE_vraiment_perdues_du_30_10_sont_comptees(base):
+    """Les fills reels encore absents des livres : MANA, PUMP x2, SUI."""
+    reels = [
+        _fill("PF_MANAUSD", "a", -1.0881, "2026-08-31T13:54:45.000Z"),
+        _fill("PF_PUMPUSD", "b", 0.0900, "2026-09-27T14:01:14.000Z"),
+        _fill("PF_PUMPUSD", "c", 0.1148, "2026-09-27T14:01:14.000Z"),
+        _fill("PF_SUIUSD", "d", -0.2086, "2026-10-02T18:17:38.000Z"),
+    ]
+    assert ks.fills_non_attribues([], reels, []) == 4
+
+
+def test_un_fill_SANS_symbole_COMPTE_plutot_que_d_etre_ignore(base):
+    """⛔ On ne peut meme pas le confronter aux livres. Le sauter en silence
+    serait rendre muet le compteur ecrit pour briser le silence."""
+    sans = {"order_id": "z", "realized_pnl": 3.27,
+            "fill_time": "2026-09-19T23:16:32.000Z"}
+    assert ks.fills_non_attribues([], [sans], []) == 1
+
+
+def test_un_symbole_de_forme_INCONNUE_compte_aussi(base):
+    """`PF_ETHEUR` n'est ni traduisible ni un future d'actions : on le dit."""
+    assert ks.fills_non_attribues([], [_fill(sym="PF_ETHEUR")], []) == 1

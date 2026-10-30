@@ -537,23 +537,74 @@ def clotures_orphelines(fills, positions, deja_vus) -> list[dict[str, Any]]:
 
 
 def fills_non_attribues(pushes, fills, clotures) -> int:
-    """Combien de fills porteurs d'un P&L ne sont rattachés à RIEN.
+    """Combien de clôtures du courtier MANQUENT vraiment aux livres.
 
     🔑 C'est le chiffre qui aurait crié. ``reconcile`` ne journalisait que
     ``if n:`` — un cycle qui n'apparie rien n'écrivait pas une ligne, donc
     « il n'a rien trouvé » était indistinguable de « il n'a jamais tourné ».
     Les 7 clôtures perdues l'ont été dans ce silence.
+
+    ## ⛔ Et la première version comptait la MAUVAISE chose
+
+    Elle comptait tout fill sans push, et en annonçait **30** là où il en
+    manquait **4** : les 26 autres étaient déjà enregistrées, leur push ayant
+    simplement été purgé. Une alarme qui naît à 26 est une alarme morte — on
+    apprend à l'ignorer en une semaine, et c'est exactement le silence que ce
+    compteur existe pour briser.
+
+    ⇒ Un fill dont la clôture est **déjà aux livres** n'est pas un défaut.
+    L'appariement se fait sur `(paire, closed_at)` **à la seconde**, parce que
+    `enregistrer_cloture` écrit le `fill_time` tel quel. Mesuré le 30/10 :
+    à la seconde et au jour donnent **le même compte (4)**, donc on garde la
+    règle **la plus stricte** — apparier au jour pourrait masquer une perte
+    réelle survenue un jour où une autre clôture de la même paire a été
+    écrite.
     """
     connus = set()
     for p in pushes:
         for k in ("order_id", "sl_order_id", "tp_order_id"):
             if p.get(k):
                 connus.add(str(p[k]))
-    vus_ici = {str(c["push"]["order_id"]) for c in clotures}
-    return sum(1 for f in fills
-               if float(f.get("realized_pnl") or 0)
-               and str(f.get("order_id")) not in connus
-               and str(f.get("order_id")) not in vus_ici)
+    connus |= {str(c["push"]["order_id"]) for c in clotures}
+
+    orphelins = [f for f in fills
+                 if float(f.get("realized_pnl") or 0)
+                 and str(f.get("order_id")) not in connus]
+    if not orphelins:
+        return 0
+
+    try:
+        with sqlite3.connect(_db_path()) as c:
+            deja = {(p, str(q).replace("Z", "")[:19]) for p, q in c.execute(
+                "SELECT pair, closed_at FROM personal_trades "
+                " WHERE destination_id LIKE '%kraken%' AND closed_at IS NOT NULL")}
+    except sqlite3.Error as e:
+        # ⚠️ Base illisible ⇒ on ne sait pas ce qui est déjà écrit. On rend le
+        # compte BRUT plutôt que zéro : surcompter fait regarder, sous-compter
+        # fait dormir.
+        logger.warning("kraken_sync: livres illisibles, compte brut : %s", e)
+        return len(orphelins)
+
+    manquants = 0
+    for f in orphelins:
+        sym = f.get("symbol")
+        paire = _symbole_vers_paire(sym)
+        if paire is None:
+            # ⛔ Seuls les futures d'ACTIONS sont hors sujet, et ils sont
+            # DÉCLARÉS. Toute autre forme — symbole absent, vide, inattendu —
+            # est un fill qu'on ne peut même pas confronter aux livres : il
+            # COMPTE. Le sauter en silence serait rendre muet le compteur
+            # écrit pour briser le silence.
+            base = str(sym or "").upper()
+            base = base[3:-3] if base.startswith("PF_") and base.endswith("USD") else ""
+            if base in BASES_ACTIONS:
+                continue
+            manquants += 1
+            continue
+        quand = str(f.get("fill_time") or "").replace("Z", "")[:19]
+        if (paire, quand) not in deja:
+            manquants += 1
+    return manquants
 
 
 def _ligne_existante(order_id: str) -> tuple[bool, bool]:

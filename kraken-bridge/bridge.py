@@ -603,6 +603,37 @@ def health():
             "sltp_guard_enabled": SLTP_GUARD_ENABLED,
             "sltp_guard_activated_at": SLTP_GUARD_ACTIVATED_AT or None,
             "sltp_guard_frozen_symbols": sorted(SLTP_GUARD_FROZEN_SYMBOLS),
+            # ─── `garde_fous` : les MEMES valeurs, sous la cle que le radar
+            # interroge (2026-10-30) ───────────────────────────────────────
+            #
+            # ⛔ Ce bloc n'ajoute AUCUNE protection : il regroupe celles qui
+            # etaient deja publiees a plat ci-dessus. La skill `or-politique`
+            # exige un OBJET `garde_fous` et rendait `FAIL` -- « aucun champ
+            # publie, on ne peut pas verifier ce qui protege » -- sur le seul
+            # pont qui, en fait, publiait tout. Le defaut etait la FORME.
+            #
+            # 🔑 Meme convention que les deux ponts MT5, dont la docstring
+            # notait deja « le bridge Kraken publie deja le sien » : la valeur
+            # etait la, le contrat ne l'etait pas. Un correctif ne se propage
+            # pas seul aux routes jumelles.
+            #
+            # ⚠️ Les champs plats restent : d'autres lecteurs s'y appuient, et
+            # un regroupement n'est pas une raison de casser l'existant.
+            "garde_fous": {
+                "max_daily_loss_pct": MAX_DAILY_LOSS_PCT,
+                "max_open_positions": MAX_OPEN_POSITIONS,
+                # 0 = desarme, seul le compteur de positions agit alors.
+                "max_risque_engage_pct": MAX_RISQUE_ENGAGE_PCT,
+                # La liste blanche EST un garde-fou : son nombre dit tout de
+                # suite si elle est vide (donc inoperante).
+                "live_whitelist_count": len(LIVE_WHITELIST_SYMBOLS or ()),
+                # L'ETAT, pas seulement le REGLAGE : sans le solde d'ouverture
+                # le plafond de perte journaliere n'est pas evaluable.
+                "start_of_day_balance": _start_of_day_balance,
+                "sltp_guard_enabled": SLTP_GUARD_ENABLED,
+                "sltp_guard_activated_at": SLTP_GUARD_ACTIVATED_AT or None,
+                "sltp_guard_frozen_count": len(SLTP_GUARD_FROZEN_SYMBOLS or ()),
+            },
         })
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 503
