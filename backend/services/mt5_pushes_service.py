@@ -357,8 +357,54 @@ def discard_push(
             type(e).__name__, e)
 
 
+def _tickets_de_trades_ouverts(c: sqlite3.Connection) -> list[str] | None:
+    """Les références d'ordre dont le trade est encore OUVERT.
+
+    Trois réponses, et la distinction est le cœur de la garde :
+
+    - une **liste** : voilà ce qu'il faut protéger ;
+    - une liste **vide** parce que la table n'existe pas : il n'y a aucun
+      trade, donc rien à protéger — purger est sûr ;
+    - ``None`` : on n'a pas pu savoir. L'appelant **ne purge pas**.
+
+    ⛔ C'est la leçon du 2026-10-30 : la première version joignait
+    `personal_trades` dans le `DELETE`, et sur une base sans cette table
+    l'exception était avalée ⇒ **la purge se neutralisait en silence**.
+    « Absent » et « vide » ne sont pas le même fait.
+    """
+    try:
+        existe = c.execute(
+            "SELECT 1 FROM sqlite_master "
+            " WHERE type='table' AND name='personal_trades'").fetchone()
+        if not existe:
+            return []
+        return [r[0] for r in c.execute(
+            "SELECT DISTINCT mt5_ticket FROM personal_trades "
+            " WHERE status = 'OPEN' AND mt5_ticket IS NOT NULL "
+            "   AND mt5_ticket <> ''")]
+    except sqlite3.Error as e:
+        logger.warning("mt5_pushes: trades ouverts illisibles : %s: %s",
+                       type(e).__name__, e)
+        return None
+
+
 def purge_old_pushes(retention_days: int = 30) -> int:
     """Supprime les pushes de plus de ``retention_days`` jours.
+
+    ⛔ **JAMAIS un push dont un trade est encore OUVERT** (2026-10-30). Le
+    push est le seul lien entre un ordre broker et sa clôture :
+    ``kraken_sync.attribuer_clotures`` ne reconnaît une fermeture que par
+    l'``order_id`` du SL ou du TP **de son push**. Le supprimer rend la
+    clôture **irréconciliable à jamais**.
+
+    Mesuré contre les fills du courtier : **7 clôtures sur 49** manquaient aux
+    livres (14 %), dont une position `DOT` tenue **36 jours** — au-delà de la
+    rétention — et un `XLM` qui a manqué la fenêtre conservée de **20 heures**.
+
+    🔑 La rétention suppose qu'un trade se ferme en quelques minutes. C'est
+    vrai du scalping, faux des perpétuels crypto tenus des semaines. Cette
+    garde remplace l'hypothèse par un fait : *tant que la ligne est ouverte,
+    son push reste*.
 
     Returns
     -------
@@ -367,10 +413,40 @@ def purge_old_pushes(retention_days: int = 30) -> int:
     """
     try:
         with sqlite3.connect(_db_path()) as c:
-            cur = c.execute(
-                "DELETE FROM mt5_pushes WHERE date < date('now', ?)",
+            proteges = _tickets_de_trades_ouverts(c)
+            if proteges is None:
+                # ⛔ Fail-closed. Ne PAS purger vaut mieux que purger à
+                # l'aveugle : le pire cas d'une purge sautée est une table un
+                # peu plus grosse, celui d'une purge aveugle est une clôture
+                # définitivement irréconciliable.
+                logger.warning(
+                    "mt5_pushes: purge ANNULEE — impossible de lister les "
+                    "trades ouverts, donc impossible de savoir quel push "
+                    "protege une position vivante")
+                return 0
+
+            candidats = c.execute(
+                "SELECT id, mt5_ticket, bridge_response FROM mt5_pushes "
+                " WHERE date < date('now', ?)",
                 (f"-{int(retention_days)} days",),
-            )
+            ).fetchall()
+            a_supprimer = [
+                r[0] for r in candidats
+                if not any(t and (t == (r[1] or "") or t in (r[2] or ""))
+                           for t in proteges)
+            ]
+            gardes = len(candidats) - len(a_supprimer)
+            if gardes:
+                logger.info(
+                    "mt5_pushes: %d push(es) ancien(s) GARDE(S) — leur trade "
+                    "est encore OPEN, les supprimer rendrait leur cloture "
+                    "irreconciliable", gardes)
+            if not a_supprimer:
+                return 0
+            marques = ",".join("?" * len(a_supprimer))
+            cur = c.execute(
+                "DELETE FROM mt5_pushes WHERE id IN (%s)" % marques,
+                a_supprimer)
             return cur.rowcount or 0
     except Exception as e:
         logger.warning(

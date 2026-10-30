@@ -370,6 +370,157 @@ def clotures_par_nettage(pushes, fills, positions, deja_closes) -> list[dict[str
 
 # ─── Écriture et notification ──────────────────────────────────────────
 
+# ⛔ Les futures d'ACTIONS, NOMMÉS. Kraken les suffixe d'un `X`
+# (`PF_AAPLXUSD`), mais ce suffixe ne les distingue pas : `AVAX` finit aussi
+# par `X`. Une règle de forme rejetait donc une crypto légitime — défaut
+# trouvé par le test du 2026-10-30. La liste vient de `live_whitelist_symbols`
+# du pont : on DÉCLARE, on ne devine pas.
+BASES_ACTIONS = frozenset({"AAPLX", "MSFTX", "MSTRX", "NVDAX", "QQQX",
+                           "SPYX", "TSLAX"})
+
+
+def _symbole_vers_paire(symbol: str) -> str | None:
+    """``PF_DOTUSD`` → ``DOT/USD``. ``None`` si la forme est inattendue.
+
+    ⛔ Volontairement étroite : seuls les perpétuels `PF_*` cotés en USD sont
+    traduits. Un future d'actions ou une forme inconnue rend `None`, et
+    l'appelant s'abstient. Deviner ici reviendrait à rapprocher une clôture
+    d'une ligne qui n'est pas la sienne.
+    """
+    s = (symbol or "").upper()
+    if not s.startswith("PF_") or not s.endswith("USD"):
+        return None
+    base = s[3:-3]
+    if not base or not base.isalnum() or base in BASES_ACTIONS:
+        return None
+    return "%s/USD" % ("BTC" if base == "XBT" else base)
+
+
+def clotures_orphelines(fills, positions, deja_vus) -> list[dict[str, Any]]:
+    """Les clôtures dont le push d'ouverture a DISPARU.
+
+    ## Le défaut que cette fonction ferme
+
+    ``attribuer_clotures`` ne reconnaît une clôture qu'à travers l'``order_id``
+    du SL ou du TP **de son push**. Un fill sans push correspondant est écarté
+    par un ``continue`` muet. Or ``purge_old_pushes`` supprime les pushes au
+    bout de 30 jours : **toute position qui survit à cette rétention voit sa
+    fermeture devenir irréconciliable à jamais.**
+
+    Mesuré le 2026-10-30 contre les fills du courtier : **7 clôtures sur 49**
+    manquaient aux livres (14 %), dont `AVAX` sortie **pile à son objectif** le
+    19/09 (+3,27 $), `XLM` le 22/09 (+1,40 $) et `DOT` le 27/09 (+0,63 $) —
+    cette dernière ouverte **36 jours**, soit au-delà de la rétention. `XLM`
+    a manqué la fenêtre conservée de **20 heures**.
+
+    🔑 Le push n'apporte que la **cause** (SL ou TP). Les fills portent déjà le
+    symbole, le sens, la taille, le P&L réalisé et l'horodatage — assez pour
+    enregistrer la clôture. Sans push la cause est inconnue, donc `EXTERNE` :
+    **perdre la cause est acceptable, perdre la clôture ne l'est pas.**
+
+    ## Les quatre refus qui la rendent sûre
+
+    ⛔ ``positions is None`` (exposition illisible) → on ne ferme RIEN. Une
+    panne réseau ne doit jamais ressembler à une position fermée.
+    ⛔ Symbole dont l'exposition n'est **pas nulle** → on s'abstient : une
+    réduction partielle n'est pas une clôture.
+    ⛔ **Plus d'une** ligne `OPEN` sur le symbole → on s'abstient et on le DIT.
+    Choisir laquelle fermer serait une attribution inventée.
+    ⛔ Aucun fill de sens opposé postérieur à l'ouverture → rien à écrire.
+    """
+    if positions is None:
+        logger.warning("kraken_sync: exposition illisible, aucune cloture "
+                       "orpheline tentee (refus volontaire)")
+        return []
+
+    plats = {s for s, v in (positions or {}).items() if abs(float(v or 0)) <= 0}
+    symboles = {f.get("symbol") for f in fills if f.get("symbol")} & plats
+    if not symboles:
+        return []
+
+    with sqlite3.connect(_db_path()) as c:
+        c.row_factory = sqlite3.Row
+        ouvertes = c.execute("""
+            SELECT id, pair, direction, entry_price, stop_loss, take_profit,
+                   size_lot, created_at, mt5_ticket
+              FROM personal_trades
+             WHERE destination_id LIKE '%kraken%' AND status = 'OPEN'
+               AND mt5_ticket IS NOT NULL
+        """).fetchall()
+
+    sorties: list[dict[str, Any]] = []
+    for sym in sorted(symboles):
+        paire = _symbole_vers_paire(sym)
+        if paire is None:
+            continue
+        candidates = [r for r in ouvertes if r["pair"] == paire]
+        if not candidates:
+            continue
+        if len(candidates) > 1:
+            logger.warning(
+                "kraken_sync: %d lignes OPEN sur %s alors que l'exposition est "
+                "nulle — aucune n'est fermee, l'attribution serait inventee "
+                "(ids %s)", len(candidates), paire,
+                [r["id"] for r in candidates])
+            continue
+        r = candidates[0]
+        if str(r["mt5_ticket"]) in deja_vus:
+            continue
+
+        ferme = "sell" if str(r["direction"]).lower().startswith("b") else "buy"
+        pertinents = [
+            f for f in fills
+            if f.get("symbol") == sym
+            and str(f.get("side", "")).lower() == ferme
+            and float(f.get("realized_pnl") or 0)
+            and str(f.get("fill_time") or "") > str(r["created_at"] or "")
+        ]
+        if not pertinents:
+            continue
+
+        taille = sum(float(f.get("size") or 0) for f in pertinents)
+        notionnel = sum(float(f.get("size") or 0) * float(f.get("price") or 0)
+                        for f in pertinents)
+        sorties.append({
+            # Un « push » synthétique, reconstruit depuis la ligne ouverte :
+            # `enregistrer_cloture` ne lit que ces champs, et les réutiliser
+            # évite un second chemin d'écriture.
+            "push": {
+                "push_id": None, "order_id": r["mt5_ticket"],
+                "pair": r["pair"], "direction": r["direction"],
+                "entry_price": r["entry_price"], "volume": r["size_lot"],
+                "pushed_at": r["created_at"], "symbol": sym,
+                "sl": r["stop_loss"], "tp": r["take_profit"],
+            },
+            "cause": CAUSE_EXTERNE, "complete": True,
+            "taille": taille, "notionnel": notionnel,
+            "pnl_usd": sum(float(f.get("realized_pnl") or 0) for f in pertinents),
+            "exit_price": (notionnel / taille) if taille else 0.0,
+            "closed_at": max(str(f.get("fill_time")) for f in pertinents),
+        })
+    return sorties
+
+
+def fills_non_attribues(pushes, fills, clotures) -> int:
+    """Combien de fills porteurs d'un P&L ne sont rattachés à RIEN.
+
+    🔑 C'est le chiffre qui aurait crié. ``reconcile`` ne journalisait que
+    ``if n:`` — un cycle qui n'apparie rien n'écrivait pas une ligne, donc
+    « il n'a rien trouvé » était indistinguable de « il n'a jamais tourné ».
+    Les 7 clôtures perdues l'ont été dans ce silence.
+    """
+    connus = set()
+    for p in pushes:
+        for k in ("order_id", "sl_order_id", "tp_order_id"):
+            if p.get(k):
+                connus.add(str(p[k]))
+    vus_ici = {str(c["push"]["order_id"]) for c in clotures}
+    return sum(1 for f in fills
+               if float(f.get("realized_pnl") or 0)
+               and str(f.get("order_id")) not in connus
+               and str(f.get("order_id")) not in vus_ici)
+
+
 def _ligne_existante(order_id: str) -> tuple[bool, bool]:
     """``(la ligne existe, elle est deja close)`` pour cet ordre.
 
@@ -606,17 +757,26 @@ async def reconcile() -> int:
         positions = await fetch_positions(dest)
         pushes = [p for p in pushes_kraken()
                   if p["destination_id"] == dest.destination_id]
-        if not pushes:
-            continue
 
-        # Les ouvertures d'abord : une position invisible échappe au cap par
-        # paire et au garde-fou de corrélation.
-        materialiser_ouvertures(pushes)
+        # ⛔ Il y avait ici un `if not pushes: continue` qui abandonnait la
+        # destination ENTIERE. Or c'est précisément quand les pushes ont été
+        # purgés qu'une clôture risque d'être perdue : l'abandon frappait donc
+        # au seul moment où le rattrapage était nécessaire.
+        clotures: list[dict[str, Any]] = []
+        if pushes:
+            # Les ouvertures d'abord : une position invisible échappe au cap
+            # par paire et au garde-fou de corrélation.
+            materialiser_ouvertures(pushes)
 
-        clotures = [c for c in attribuer_clotures(pushes, fills, volumes_ouverts(), positions)
-                    if c["complete"]]
-        vus = {c["push"]["push_id"] for c in clotures}
-        clotures += clotures_par_nettage(pushes, fills, positions, vus)
+            clotures = [c for c in attribuer_clotures(
+                pushes, fills, volumes_ouverts(), positions) if c["complete"]]
+            vus = {c["push"]["push_id"] for c in clotures}
+            clotures += clotures_par_nettage(pushes, fills, positions, vus)
+
+        # Le rattrapage, APRÈS les voies qui connaissent la cause : une
+        # clôture attribuée à son SL ou son TP vaut mieux qu'un `EXTERNE`.
+        deja = {str(c["push"]["order_id"]) for c in clotures}
+        clotures += clotures_orphelines(fills, positions, deja)
 
         for c in clotures:
             trade = enregistrer_cloture(c, eur_usd)
@@ -639,4 +799,15 @@ async def reconcile() -> int:
         # partielle comprise. Avant cette étape, une position vendue 0,215 et
         # rachetée pour moitié restait affichée à 0,215.
         ajuster_volumes_ouverts(pushes, positions)
+
+        # 🔑 Le cycle se DIT, même quand il n'a rien trouvé. L'ordonnanceur ne
+        # journalisait que `if n:` — un cycle muet était donc indistinguable
+        # d'un cycle qui n'a jamais tourné, et c'est dans ce silence que
+        # 7 clôtures sur 49 ont été perdues entre le 31/08 et le 02/10.
+        orphelins = fills_non_attribues(pushes, fills, clotures)
+        niveau = logger.warning if orphelins else logger.info
+        niveau("kraken_sync[%s]: %d fill(s), %d push(es), %d cloture(s) "
+               "appliquee(s), %d fill(s) NON ATTRIBUE(S)",
+               dest.destination_id, len(fills), len(pushes),
+               len(clotures), orphelins)
     return total

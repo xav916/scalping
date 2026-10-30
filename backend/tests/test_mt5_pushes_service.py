@@ -421,3 +421,89 @@ def test_les_trois_appelants_passent_bien_un_objet(db):
 
     assert isinstance(_detection(), PatternDetection)
     assert not isinstance(_detection(), str)
+
+
+# ─── La garde : jamais purger le push d'un trade encore OUVERT ─────────
+#
+# Mesure du 2026-10-30 : le push est le seul lien entre un ordre broker et sa
+# cloture (`kraken_sync` n'apparie que par l'`order_id` du SL/TP du push). En
+# le supprimant on rend la cloture irreconciliable A JAMAIS. Confronte aux
+# fills du courtier : 7 clotures sur 49 manquaient aux livres, dont une
+# position DOT tenue 36 JOURS -- au-dela de la retention de 30.
+
+def _table_trades(db_file, lignes):
+    """Cree `personal_trades` et y pose des lignes (ticket, statut)."""
+    import sqlite3 as s
+    with s.connect(db_file) as c:
+        c.execute("""CREATE TABLE IF NOT EXISTS personal_trades (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, status TEXT,
+            mt5_ticket TEXT)""")
+        c.executemany("INSERT INTO personal_trades (status, mt5_ticket) "
+                      "VALUES (?,?)", lignes)
+
+
+def _poser_push_ancien(db_file, ticket=None, reponse=None, date="2026-04-01"):
+    import sqlite3 as s
+    with s.connect(db_file) as c:
+        c.execute("INSERT INTO mt5_pushes (destination_id, date, pair, "
+                  "direction, entry_price_5dp, pushed_at, ok, mt5_ticket, "
+                  "bridge_response) VALUES "
+                  "('admin_kraken',?, 'DOT/USD','buy','0.95070',?,1,?,?)",
+                  (date, date + "T00:41:14+00:00", ticket, reponse))
+
+
+def test_un_push_dont_le_trade_est_OUVERT_n_est_PAS_purge(db):
+    """⛔ LE test qui compte. Le cas DOT : ouverte 36 jours, donc son push
+    tombait sous la retention alors que la position vivait encore."""
+    _table_trades(db, [("OPEN", "a28f3377")])
+    _poser_push_ancien(db, ticket="a28f3377")
+    assert mt5_pushes_service.purge_old_pushes(retention_days=10) == 0
+    import sqlite3 as s
+    with s.connect(db) as c:
+        assert c.execute("SELECT COUNT(*) FROM mt5_pushes").fetchone()[0] == 1
+
+
+def test_un_push_dont_le_trade_est_FERME_est_bien_purge(db):
+    """La garde ne doit pas tout garder : une fois la cloture ecrite, le
+    push n'a plus de role."""
+    _table_trades(db, [("CLOSED", "a28f3377")])
+    _poser_push_ancien(db, ticket="a28f3377")
+    assert mt5_pushes_service.purge_old_pushes(retention_days=10) == 1
+
+
+def test_la_reference_est_reconnue_DANS_la_reponse_du_pont(db):
+    """Sur Kraken l'identifiant d'ordre vit dans `bridge_response`, pas dans
+    la colonne `mt5_ticket` : la garde doit le voir la aussi."""
+    _table_trades(db, [("OPEN", "a2b09006-c88e-4169-be10-ebf8a9fa51bd")])
+    _poser_push_ancien(db, ticket=None, reponse=(
+        '{"market_order_id": "a2b09006-c88e-4169-be10-ebf8a9fa51bd",'
+        ' "symbol": "PF_AVAXUSD"}'))
+    assert mt5_pushes_service.purge_old_pushes(retention_days=10) == 0
+
+
+def test_sans_table_personal_trades_la_purge_fonctionne_NORMALEMENT(db):
+    """« Pas de table » = aucun trade a proteger. La premiere version avalait
+    l'exception et rendait 0 : la purge se neutralisait en SILENCE."""
+    _poser_push_ancien(db, ticket="peu-importe")
+    assert mt5_pushes_service.purge_old_pushes(retention_days=10) == 1
+
+
+def test_si_les_trades_ouverts_sont_ILLISIBLES_on_ne_purge_RIEN(db, monkeypatch):
+    """Fail-closed : une purge sautee coute une table un peu plus grosse,
+    une purge aveugle coute une cloture definitivement perdue."""
+    _table_trades(db, [("OPEN", "a28f3377")])
+    _poser_push_ancien(db, ticket="a28f3377")
+    monkeypatch.setattr(mt5_pushes_service, "_tickets_de_trades_ouverts",
+                        lambda c: None)
+    assert mt5_pushes_service.purge_old_pushes(retention_days=10) == 0
+    import sqlite3 as s
+    with s.connect(db) as c:
+        assert c.execute("SELECT COUNT(*) FROM mt5_pushes").fetchone()[0] == 1
+
+
+def test_un_ticket_VIDE_ne_protege_pas_tous_les_pushes(db):
+    """Un `mt5_ticket` vide ou NULL ne doit pas se comporter comme un joker :
+    `'' in n_importe_quoi` est VRAI en Python, ce qui garderait TOUT."""
+    _table_trades(db, [("OPEN", ""), ("OPEN", None)])
+    _poser_push_ancien(db, ticket="sans-rapport")
+    assert mt5_pushes_service.purge_old_pushes(retention_days=10) == 1

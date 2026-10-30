@@ -1364,10 +1364,16 @@ def start_scheduler() -> AsyncIOScheduler:
     # Kraken et ne repassent jamais par le radar. Constaté le 2026-08-04,
     # quatre pertes réelles encaissées sans notification ni trace.
     async def _kraken_reconcile_cycle():
+        # ⛔ Il y avait ici un `if n:` : un cycle qui n'appariait rien
+        # n'écrivait PAS une ligne, donc « il n'a rien trouvé » était
+        # indistinguable de « il n'a jamais tourné ». 7 clôtures sur 49 ont
+        # été perdues dans ce silence. `reconcile()` journalise désormais
+        # chaque cycle lui-même, y compris les fills NON ATTRIBUÉS ; ici on
+        # ne garde qu'un mot quand quelque chose a effectivement changé.
         from backend.services.kraken_sync import reconcile
         n = await reconcile()
         if n:
-            logger.info(f"kraken_sync: {n} cloture(s) reconciliee(s)")
+            logger.warning("kraken_sync: %d cloture(s) reconciliee(s)", n)
 
     _scheduler.add_job(
         _kraken_reconcile_cycle,
