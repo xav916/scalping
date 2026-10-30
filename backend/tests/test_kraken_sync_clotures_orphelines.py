@@ -403,3 +403,89 @@ def test_un_fill_SANS_symbole_COMPTE_plutot_que_d_etre_ignore(base):
 def test_un_symbole_de_forme_INCONNUE_compte_aussi(base):
     """`PF_ETHEUR` n'est ni traduisible ni un future d'actions : on le dit."""
     assert ks.fills_non_attribues([], [_fill(sym="PF_ETHEUR")], []) == 1
+
+
+# ─── L'ALARME doit poser une question REPONDABLE ─────────────────────────
+#
+# `fills_non_attribues` comptait les fills SANS push. Or, dans la fenetre de
+# pushes conservee, « aucun push » PROUVE que le radar n'a pas envoye l'ordre
+# -- donc qu'il est MANUEL, ce que ce module declare « comportement voulu »
+# depuis le 04/08. Mesure du 30/10 : elle annoncait 4 (deux PUMP, un SUI, tous
+# manuels prouves ; un MANA hors fenetre, indeterminable) pour un defaut vivant
+# de ZERO.
+#
+# 🔑 Une alarme dont la reponse n'est jamais « tout va bien » n'est pas une
+# alarme. `clotures_perdues` pose la question repondable : un ordre que NOUS
+# avons envoye s'est-il ferme sans que nos livres le sachent ?
+
+_PUSH = {"push_id": 7, "order_id": "ouv-1", "pair": "AVAX/USD",
+         "sl_order_id": "sl-1", "tp_order_id": "tp-1", "volume": 1.82}
+_FILL_SL = {"order_id": "sl-1", "symbol": "PF_AVAXUSD", "realized_pnl": -1.0,
+            "fill_time": "2026-10-29T10:00:00.000Z", "side": "sell",
+            "size": 1.82, "price": 7.0}
+
+
+def _ligne(db, ticket, status):
+    with sqlite3.connect(db) as c:
+        c.execute("""INSERT INTO personal_trades
+            (pair, direction, entry_price, stop_loss, take_profit, size_lot,
+             status, created_at, mt5_ticket, destination_id)
+            VALUES ('AVAX/USD','buy',8,7,9,1.82,?,'2026-10-28',?, 'admin_kraken')""",
+                  (status, ticket))
+
+
+def test_une_cloture_executee_et_une_ligne_OUVERTE_est_PERDUE(base):
+    """⛔ LE defaut vivant : le stop a saute chez le courtier, nos livres
+    l'ignorent."""
+    _ligne(base, "ouv-1", "OPEN")
+    perdues = ks.clotures_perdues([_PUSH], [_FILL_SL])
+    assert len(perdues) == 1
+    assert perdues[0]["pair"] == "AVAX/USD"
+    assert perdues[0]["_etat"] == "OPEN"
+
+
+def test_une_ligne_DEJA_fermee_n_est_pas_perdue(base):
+    """Le cas normal doit rendre ZERO -- sinon l'alarme est morte-nee."""
+    _ligne(base, "ouv-1", "CLOSED")
+    assert ks.clotures_perdues([_PUSH], [_FILL_SL]) == []
+
+
+def test_une_ligne_ABSENTE_est_PERDUE_et_le_DIT(base):
+    """Aucune ligne du tout : pire que non fermee, et l'etat le nomme."""
+    perdues = ks.clotures_perdues([_PUSH], [_FILL_SL])
+    assert len(perdues) == 1
+    assert perdues[0]["_etat"] == "AUCUNE LIGNE"
+
+
+def test_un_fill_SANS_pnl_n_est_pas_une_cloture(base):
+    """Le fill d'OUVERTURE ne doit pas declencher l'alarme."""
+    _ligne(base, "ouv-1", "OPEN")
+    ouverture = dict(_FILL_SL, order_id="ouv-1", realized_pnl=0.0)
+    assert ks.clotures_perdues([_PUSH], [ouverture]) == []
+
+
+def test_un_fill_SANS_push_n_est_PAS_une_cloture_perdue(base):
+    """🔑 Le coeur du correctif. Un ordre manuel n'est pas un defaut : le
+    radar ne l'a jamais envoye, donc rien ne lui est reproche."""
+    manuel = dict(_FILL_SL, order_id="passe-a-la-main")
+    assert ks.clotures_perdues([_PUSH], [manuel]) == []
+
+
+def test_les_QUATRE_fills_du_30_10_ne_sont_PAS_des_clotures_perdues(base):
+    """PUMP x2, SUI, MANA : aucun push, donc aucun reproche a la
+    reconciliation. C'est ce que l'ancienne alarme comptait a tort."""
+    reels = [
+        {"order_id": "a", "symbol": "PF_MANAUSD", "realized_pnl": -1.0881,
+         "fill_time": "2026-08-31T13:54:45.000Z"},
+        {"order_id": "b", "symbol": "PF_PUMPUSD", "realized_pnl": 0.09,
+         "fill_time": "2026-09-27T14:01:14.000Z"},
+        {"order_id": "c", "symbol": "PF_PUMPUSD", "realized_pnl": 0.1148,
+         "fill_time": "2026-09-27T14:01:14.000Z"},
+        {"order_id": "d", "symbol": "PF_SUIUSD", "realized_pnl": -0.2086,
+         "fill_time": "2026-10-02T18:17:38.000Z"},
+    ]
+    assert ks.clotures_perdues([_PUSH], reels) == []
+
+
+def test_sans_push_du_tout_il_n_y_a_rien_a_reprocher(base):
+    assert ks.clotures_perdues([], [_FILL_SL]) == []

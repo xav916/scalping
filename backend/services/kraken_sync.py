@@ -536,8 +536,71 @@ def clotures_orphelines(fills, positions, deja_vus) -> list[dict[str, Any]]:
     return sorties
 
 
+def clotures_perdues(pushes, fills) -> list[dict[str, Any]]:
+    """LE défaut vivant : un push CONSERVÉ, sa clôture exécutée, et notre
+    ligne qui n'est pas fermée.
+
+    ## Pourquoi cette fonction remplace l'alarme précédente
+
+    `fills_non_attribues` comptait les fills **sans push**. Or, dans la
+    fenêtre de pushes conservée, « aucun push » est une **preuve positive**
+    que le radar n'a pas envoyé cet ordre — donc qu'il a été passé **à la
+    main**. Et le module le dit depuis le 04/08 : « les non reliées sont des
+    ordres passés à la main, ce qui est le **comportement voulu** ».
+
+    ⇒ Cette alarme criait sur du voulu. Mesure du 30/10 : elle annonçait **4**
+    (deux `PUMP`, un `SUI` — tous manuels, prouvés par l'absence de push dans
+    la fenêtre couverte — et un `MANA` du 31/08, **hors** fenêtre, donc
+    indéterminable) alors que le défaut vivant valait **0**.
+
+    🔑 **Une alarme dont la réponse n'est jamais « tout va bien » n'est pas
+    une alarme.** La question posée ici est, elle, répondable : *un ordre que
+    NOUS avons envoyé s'est-il fermé chez le courtier sans que nos livres le
+    sachent ?*
+
+    ⚠️ Elle ne couvre PAS le mode de panne d'origine (pushes purgés avant la
+    clôture) : c'est la garde de `purge_old_pushes` qui l'empêche désormais.
+    Deux défenses complémentaires, et il faut les deux.
+    """
+    par_oid: dict[str, dict] = {}
+    for p in pushes or []:
+        for k in ("sl_order_id", "tp_order_id"):
+            if p.get(k):
+                par_oid[str(p[k])] = p
+
+    candidats: dict[str, dict] = {}
+    for f in fills or []:
+        p = par_oid.get(str(f.get("order_id")))
+        if p is None or not float(f.get("realized_pnl") or 0):
+            continue
+        candidats[str(p["order_id"])] = p
+    if not candidats:
+        return []
+
+    try:
+        with sqlite3.connect(_db_path()) as c:
+            etats = dict(c.execute(
+                "SELECT mt5_ticket, status FROM personal_trades "
+                " WHERE mt5_ticket IS NOT NULL"))
+    except sqlite3.Error as e:
+        # ⚠️ Livres illisibles : on ne sait pas. On le DIT plutôt que de
+        # rendre une liste vide, qui se lirait « tout va bien ».
+        logger.warning("kraken_sync: livres illisibles, clotures perdues "
+                       "INDETERMINEES : %s", e)
+        return [dict(p, _etat="INDETERMINE") for p in candidats.values()]
+
+    return [dict(p, _etat=etats.get(oid, "AUCUNE LIGNE"))
+            for oid, p in candidats.items()
+            if etats.get(oid) != "CLOSED"]
+
+
 def fills_non_attribues(pushes, fills, clotures) -> int:
-    """Combien de clôtures du courtier MANQUENT vraiment aux livres.
+    """INFORMATIF, jamais une alarme : les fills que le radar n'a pas envoyés.
+
+    ⚠️ Ce compte mélange deux choses légitimes — les ordres passés **à la
+    main** dans l'interface du courtier, et l'historique dont les pushes ont
+    été purgés. Aucune des deux n'est un défaut. Pour le défaut, voir
+    `clotures_perdues`.
 
     🔑 C'est le chiffre qui aurait crié. ``reconcile`` ne journalisait que
     ``if n:`` — un cycle qui n'apparie rien n'écrivait pas une ligne, donc
@@ -904,10 +967,22 @@ async def reconcile() -> int:
         # journalisait que `if n:` — un cycle muet était donc indistinguable
         # d'un cycle qui n'a jamais tourné, et c'est dans ce silence que
         # 7 clôtures sur 49 ont été perdues entre le 31/08 et le 02/10.
-        orphelins = fills_non_attribues(pushes, fills, clotures)
-        niveau = logger.warning if orphelins else logger.info
+        # 🔑 DEUX nombres, et un seul est une alarme. Le premier compte des
+        # ordres que NOUS avons envoyés et dont la clôture nous échappe : il
+        # doit valoir 0. Le second mélange ordres manuels et historique
+        # purgé — légitimes tous les deux, donc jamais au niveau WARNING.
+        perdues = clotures_perdues(pushes, fills)
+        hors_radar = fills_non_attribues(pushes, fills, clotures)
+        niveau = logger.warning if perdues else logger.info
         niveau("kraken_sync[%s]: %d fill(s), %d push(es), %d cloture(s) "
-               "appliquee(s), %d fill(s) NON ATTRIBUE(S)",
+               "appliquee(s), %d CLOTURE(S) PERDUE(S), %d fill(s) hors radar "
+               "(manuels ou pushes purges)",
                dest.destination_id, len(fills), len(pushes),
-               len(clotures), orphelins)
+               len(clotures), len(perdues), hors_radar)
+        for p in perdues:
+            logger.warning(
+                "kraken_sync: CLOTURE PERDUE %s push #%s ordre %s — ferme "
+                "chez le courtier, notre ligne est %s",
+                p.get("pair"), p.get("push_id"), p.get("order_id"),
+                p.get("_etat"))
     return total
