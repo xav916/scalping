@@ -460,8 +460,16 @@ def clotures_orphelines(fills, positions, deja_vus) -> list[dict[str, Any]]:
                        "orpheline tentee (refus volontaire)")
         return []
 
-    plats = {s for s, v in (positions or {}).items() if abs(float(v or 0)) <= 0}
-    symboles = {f.get("symbol") for f in fills if f.get("symbol")} & plats
+    # ⛔ Un symbole ABSENT du dictionnaire est PLAT, il n'est pas « inconnu ».
+    # `fetch_positions` le documente : `None` = pont injoignable, un
+    # dictionnaire = la liste des positions OUVERTES. Ma première version
+    # cherchait une entrée explicite à zéro — elle n'a donc rien rattrapé en
+    # production, où un symbole soldé disparaît de la liste. Et mon épreuve
+    # de lecture seule injectait ces zéros elle-même : l'instrument était
+    # d'accord avec moi parce que je l'avais construit pour ça.
+    # `attribuer_clotures` avait déjà la bonne lecture (`.get(sym, 0.0)`).
+    symboles = {s for s in (f.get("symbol") for f in fills) if s
+                and abs(float(positions.get(s, 0.0) or 0)) <= 0}
     if not symboles:
         return []
 

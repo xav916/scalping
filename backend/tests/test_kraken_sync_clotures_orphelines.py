@@ -274,3 +274,47 @@ def test_un_retard_d_une_nuit_notifie_encore():
     """Le seuil doit tolerer un cycle rate, un redemarrage, une nuit — et
     retenir seulement les semaines."""
     assert ks.notifiable(_il_y_a(heures=10)) is True
+
+
+# ─── LE TEST QUI MANQUAIT, et qui a laisse passer un correctif inerte ────
+#
+# Le 30/10, premier deploiement : les 3 clotures N'ONT PAS ete rattrapees.
+# `clotures_orphelines` cherchait une entree explicite a ZERO dans le
+# dictionnaire des positions. Mais `fetch_positions` ne liste que les
+# positions OUVERTES : un symbole solde en est ABSENT, pas a zero.
+#
+# ⛔ Et mon epreuve de lecture seule faisait `positions.setdefault(sym, 0.0)` :
+# elle injectait elle-meme les zeros manquants. L'instrument etait d'accord
+# avec moi parce que je l'avais construit pour ca. Tous les tests ci-dessus
+# passaient le symbole explicitement -- aucun ne testait l'ABSENCE.
+
+def test_un_symbole_ABSENT_des_positions_est_PLAT(base):
+    """⛔ LE cas reel de la production : le pont ne rend que PF_INJUSD, et
+    AVAX -- solde -- n'apparait nulle part. Il doit quand meme etre
+    rattrape."""
+    _ouvrir(base, "AVAX/USD")
+    reel = {"PF_INJUSD": 0.4}        # exactement ce que le pont renvoyait
+    out = ks.clotures_orphelines([F_AVAX], reel, set())
+    assert len(out) == 1, (
+        "un symbole absent du dictionnaire est PLAT : `fetch_positions` ne "
+        "liste que les positions OUVERTES")
+    assert out[0]["pnl_usd"] == pytest.approx(3.2669)
+
+
+def test_un_compte_entierement_a_plat_rattrape_tout(base):
+    """`{}` signifie « compte reellement a plat », et non « inconnu » —
+    c'est la distinction que `fetch_positions` a ete ecrite pour porter."""
+    _ouvrir(base, "AVAX/USD")
+    out = ks.clotures_orphelines([F_AVAX], {}, set())
+    assert len(out) == 1
+
+
+def test_le_symbole_ENCORE_OUVERT_n_est_pas_ferme_lui(base):
+    """Le revers : INJ est dans la liste avec une taille non nulle, donc on
+    n'y touche pas. C'est ce qui distingue un rattrapage d'un degat."""
+    _ouvrir(base, "INJ/USD", entree=7.979, lot=0.4, ticket="a2f5e01e",
+            cree="2026-10-12T01:38:27+00:00")
+    f_inj = {"order_id": "x", "symbol": "PF_INJUSD", "side": "sell",
+             "size": 0.4, "price": 8.5, "realized_pnl": 0.2,
+             "fill_time": "2026-10-29T12:00:00.000Z"}
+    assert ks.clotures_orphelines([f_inj], {"PF_INJUSD": 0.4}, set()) == []
