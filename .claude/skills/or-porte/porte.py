@@ -303,21 +303,7 @@ def _lot_depuis_vivier(depot: pathlib.Path, destination: str) -> dict:
         "            out.append({'pair':p,'direction':s})\n"
         "print(json.dumps(out))"
     )
-    out = distant.executer(depot, src, timeout=120)
-    try:
-        couples = distant.derniere_ligne_json(out, prefixe="[")
-    except RuntimeError as e:
-        # Essayer de trouver un objet erreur au lieu du tableau
-        try:
-            brut = distant.derniere_ligne_json(out, prefixe="{")
-            if "erreur" in brut:
-                raise RuntimeError("%s (connues : %s)"
-                                   % (brut["erreur"],
-                                      ", ".join(brut.get("connues") or []))) from e
-        except RuntimeError:
-            pass
-        # Relever l'erreur originale (pas de ligne [ trouvee)
-        raise e
+    couples = distant.derniere_ligne_json(distant.executer(depot, src), prefixe="[")
     # ⚠️ Important 4 : seuls `pair`/`direction` sont REELS ici. Les NEUF
     # autres champs sont FABRIQUES, chacun desarme une porte precise -- la
     # banniere imprimee par `main()` doit nommer la MEME liste :
