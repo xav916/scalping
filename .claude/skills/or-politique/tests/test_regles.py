@@ -93,3 +93,42 @@ def test_admin_legacy_ne_declenche_AUCUN_fail():
     """Une skill qui alerte sur un compte papier crie au loup."""
     assert not [v for v in R.juger_destination(LEGACY, BLANCHES)
                 if v["verdict"] == R.FAIL]
+
+
+def test_regle3_ILLISIBLE_sur_min_confidence_non_numerique():
+    """min_confidence non interpretable -> ILLISIBLE, pas d'exception."""
+    for mauvais in ("abc", "string", [], {}):
+        v = _regle(dict(LIVE, min_confidence=mauvais), 3)
+        assert v["verdict"] == R.ILLISIBLE, "min_confidence=%r devrait donner ILLISIBLE, pas %s" % (mauvais, v["verdict"])
+
+
+def test_regle2_ILLISIBLE_sur_garde_fous_non_sizable():
+    """garde_fous non sizable (ex: int) -> ILLISIBLE, pas d'exception."""
+    v = _regle(dict(LIVE, garde_fous=42), 2)
+    assert v["verdict"] == R.ILLISIBLE
+
+
+def test_regle2_FAIL_quand_garde_fous_est_dict_vide():
+    """garde_fous={} est une reponse valide (rien publie) -> FAIL, pas ILLISIBLE."""
+    v = _regle(dict(LIVE, garde_fous={}), 2)
+    assert v["verdict"] == R.FAIL
+
+
+def test_juger_destination_ne_leve_jamais_sur_dest_malformee():
+    """juger_destination accepte les donnees malformees, ne leve pas."""
+    malformees = [
+        dict(LIVE, min_confidence="not_a_number"),
+        dict(LIVE, garde_fous=123),
+        dict(LIVE, garde_fous=None),
+        dict(LIVE, classes_porte=None),
+        dict(LIVE, classes_registre=None),
+        {},  # dest vide
+        dict(LIVE, destination_id=None),
+    ]
+    for dest in malformees:
+        verdicts = R.juger_destination(dest, BLANCHES)
+        assert len(verdicts) == 5, "dest %r devrait rendre 5 verdicts" % dest
+        # Ne doit pas lever, verification basique
+        for v in verdicts:
+            assert "regle" in v
+            assert "verdict" in v

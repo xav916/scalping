@@ -44,9 +44,17 @@ def juger_destination(dest: dict, listes_blanches: dict) -> list[dict]:
     if not reel:
         r2 = _v(2, "garde-fous du pont", NON_APPLICABLE,
                 "destinations_registry.is_real_money", "reel=False")
+    elif gf is None or gf == {}:
+        r2 = _v(2, "garde-fous du pont", FAIL, "/health garde_fous",
+                "aucun champ publie -- on ne peut pas verifier ce qui protege")
     elif gf:
-        r2 = _v(2, "garde-fous du pont", CONFORME, "/health garde_fous",
-                "%d champ(s) publie(s)" % len(gf))
+        try:
+            num_champs = len(gf)
+            r2 = _v(2, "garde-fous du pont", CONFORME, "/health garde_fous",
+                    "%d champ(s) publie(s)" % num_champs)
+        except TypeError:
+            r2 = _v(2, "garde-fous du pont", ILLISIBLE, "/health garde_fous",
+                    "presente mais non interpretable: %s" % type(gf).__name__)
     else:
         r2 = _v(2, "garde-fous du pont", FAIL, "/health garde_fous",
                 "aucun champ publie -- on ne peut pas verifier ce qui protege")
@@ -56,12 +64,21 @@ def juger_destination(dest: dict, listes_blanches: dict) -> list[dict]:
     if not reel:
         r3 = _v(3, "seuil de confiance", NON_APPLICABLE,
                 "destinations_registry.is_real_money", "reel=False")
-    elif seuil is None or float(seuil) <= 0:
+    elif seuil is None:
         r3 = _v(3, "seuil de confiance", FAIL, "BridgeConfig.min_confidence",
                 "seuil=%s" % seuil)
     else:
-        r3 = _v(3, "seuil de confiance", CONFORME,
-                "BridgeConfig.min_confidence", "seuil=%s" % seuil)
+        try:
+            seuil_num = float(seuil)
+            if seuil_num <= 0:
+                r3 = _v(3, "seuil de confiance", FAIL, "BridgeConfig.min_confidence",
+                        "seuil=%s" % seuil)
+            else:
+                r3 = _v(3, "seuil de confiance", CONFORME,
+                        "BridgeConfig.min_confidence", "seuil=%s" % seuil)
+        except (ValueError, TypeError):
+            r3 = _v(3, "seuil de confiance", ILLISIBLE, "BridgeConfig.min_confidence",
+                    "non interpretable: %s" % seuil)
 
     # 4 — destination active inconnue du registre
     if dest.get("connue_du_registre"):
