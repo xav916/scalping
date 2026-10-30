@@ -137,10 +137,16 @@ def juger(etat: dict) -> tuple[int, list[str]]:
               ""]
 
     n_fail = n_illisible = n_warn = 0
+    faits_non_lus = []
     for d in dests:
         lignes.append("  %-14s bridge=%-12s argent reel=%s"
                       % (d.get("destination_id"), d.get("bridge_type"),
                          "OUI" if d.get("reel") else "non"))
+        erreur = d.get("erreur")
+        if erreur:
+            n_illisible += 1
+            lignes.append("      ⚠️ fait non lu : %s" % erreur)
+            faits_non_lus.append("%s: %s" % (d.get("destination_id"), erreur))
         for v in R.juger_destination(d, blanches):
             if v["verdict"] == R.FAIL:
                 n_fail += 1
@@ -155,6 +161,11 @@ def juger(etat: dict) -> tuple[int, list[str]]:
 
     lignes.append("=> %d FAIL, %d ILLISIBLE, %d WARN sur %d destination(s) "
                   "active(s)" % (n_fail, n_illisible, n_warn, len(dests)))
+    if faits_non_lus:
+        lignes.append("=> faits non lus (donnee qu'on n'a pas pu lire, "
+                      "comptee en ILLISIBLE) :")
+        for f in faits_non_lus:
+            lignes.append("   - %s" % f)
     return (1 if (n_fail or n_illisible) else 0), lignes
 
 

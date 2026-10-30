@@ -173,6 +173,40 @@ def test_destination_fautive_ne_bloque_pas_les_autres():
         assert nom in texte
 
 
+def test_un_fait_non_lu_ne_doit_pas_sortir_en_0():
+    """Finding 1 de la revue finale (`juger()` ne lisait jamais `erreur`) :
+    `_CHARGE` peut poser `erreur` sur une destination dont un champ n'a pas
+    pu etre lu, meme quand les defauts fail-closed font revenir les cinq
+    regles CONFORME. Le code de sortie doit rester 1, jamais 0, et le fait
+    non lu doit apparaitre dans le corps ET au pied du rapport."""
+    etat = {
+        "fingerprint_running": "abc123", "rem002_allowed": False,
+        "rem002_reason": "DISARMED_MANUALLY",
+        "listes_blanches": {"admin_live": ["XAU/USD"]},
+        "destinations": [
+            {"destination_id": "admin_live", "bridge_type": "mt5",
+             "reel": True, "min_confidence": 42.0,
+             "classes_porte": ["metal"], "classes_registre": ["metal"],
+             "connue_du_registre": True,
+             "garde_fous": {"max_open_positions": 10},
+             "erreur": "registre=AttributeError"},
+        ],
+    }
+    # Prise seule, chaque regle revient CONFORME -- rien ne la retient.
+    verdicts = R.juger_destination(etat["destinations"][0],
+                                   etat["listes_blanches"])
+    assert all(v["verdict"] == R.CONFORME for v in verdicts)
+
+    code, lignes = P.juger(etat)
+    assert code == 1, "un fait non lu doit fermer la porte, jamais sortir en 0"
+    texte = "\n".join(lignes)
+    assert "registre=AttributeError" in texte
+
+    pied = "\n".join(lignes[-5:])
+    assert "admin_live" in pied and "AttributeError" in pied, (
+        "le pied doit NOMMER le fait non lu, pas seulement le compter")
+
+
 def test_le_resume_distingue_FAIL_et_ILLISIBLE():
     """La ligne finale doit nommer les deux comptes separement, pas les
     fondre dans un seul total -- sinon un lecteur ne sait pas lequel des deux
