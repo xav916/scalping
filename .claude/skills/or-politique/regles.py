@@ -120,16 +120,52 @@ def juger_destination(dest: dict, listes_blanches: dict,
                 "active mais absente du registre : on ne peut pas savoir si "
                 "c'est de l'argent reel")
 
-    # 5 — divergence des classes d'actif : WARN, jamais FAIL
+    # 5 — classes d'actif : WARN, jamais FAIL
+    #
+    # ⛔ CORRIGEE le 2026-10-30. Elle comparait `porte == registre` et criait
+    # sur TOUTE difference -- deux WARN permanents sur les deux destinations
+    # en argent reel. Or ces deux ensembles ne sont PAS censes etre egaux :
+    #
+    #   `asset_classes` du registre = « classes que ce broker ACCEPTE »,
+    #                                 c'est-a-dire une CAPACITE ;
+    #   `BridgeConfig.allowed_asset_classes` = ce que NOUS autorisons,
+    #                                 c'est-a-dire une PERMISSION.
+    #
+    # Le registre le dit lui-meme a propos de `metal` sur Kraken : « cette
+    # ligne ne suffit PAS a les faire trader : la whitelist du bridge est la
+    # porte qui tranche ». Une porte plus ETROITE que la capacite du courtier
+    # est donc la prudence NORMALE, pas une anomalie.
+    #
+    # 🔑 Le sens qui compte est l'INVERSE : une classe autorisee par la porte
+    # que le courtier n'accepte PAS. Le flux est alors « simplement refuse,
+    # en silence » -- defaut de justesse, pas d'exposition, d'ou WARN et non
+    # FAIL, conformement au choix d'origine.
+    #
+    # ⚠️ Et l'information n'est pas perdue quand tout va bien : le detail dit
+    # ce que le courtier accepte en PLUS. On arrete de l'appeler alarme, on
+    # ne cesse pas de la publier.
     porte = set(dest.get("classes_porte") or ())
     registre = set(dest.get("classes_registre") or ())
-    if porte == registre:
-        r5 = _v(5, "classes d'actif", CONFORME,
-                "BridgeConfig.allowed_asset_classes", ", ".join(sorted(porte)))
-    else:
+    hors_capacite = porte - registre
+    if hors_capacite:
         r5 = _v(5, "classes d'actif", WARN,
-                "BridgeConfig.allowed_asset_classes (le registre DIVERGE)",
-                "porte=%s / registre=%s"
-                % (", ".join(sorted(porte)) or "-",
-                   ", ".join(sorted(registre)) or "-"))
+                "BridgeConfig.allowed_asset_classes (la PORTE depasse la "
+                "capacite du courtier)",
+                "autorisee(s) mais non acceptee(s) : %s"
+                % ", ".join(sorted(hors_capacite)))
+    elif porte:
+        en_plus = registre - porte
+        r5 = _v(5, "classes d'actif", CONFORME,
+                "BridgeConfig.allowed_asset_classes",
+                "%s%s" % (", ".join(sorted(porte)),
+                          " (le courtier accepte aussi : %s)"
+                          % ", ".join(sorted(en_plus)) if en_plus else ""))
+    else:
+        # Porte vide : rien ne passe. Ce n'est pas une divergence, c'est un
+        # blocage total -- et il merite d'etre vu plutot que lu comme un
+        # « conforme ».
+        r5 = _v(5, "classes d'actif", WARN,
+                "BridgeConfig.allowed_asset_classes",
+                "AUCUNE classe autorisee : cette destination ne peut rien "
+                "recevoir")
     return [r1, r2, r3, r4, r5]

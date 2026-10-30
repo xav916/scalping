@@ -67,12 +67,55 @@ def test_regle4_FAIL_si_inconnue_du_registre():
     assert v["verdict"] == R.FAIL
 
 
-def test_regle5_WARN_et_jamais_FAIL_sur_divergence():
-    assert _regle(LIVE, 5)["verdict"] == R.WARN
-    assert _regle(KRAKEN, 5)["verdict"] == R.WARN
-    coherent = dict(LIVE, classes_registre=LIVE["classes_porte"])
-    assert _regle(coherent, 5)["verdict"] == R.CONFORME
+def test_regle5_une_porte_plus_ETROITE_est_CONFORME():
+    """CORRIGE le 2026-10-30. Cette regle criait sur toute difference, d'ou
+    deux WARN permanents sur les deux destinations en argent reel.
 
+    Or `asset_classes` du registre est une CAPACITE (« classes que ce broker
+    ACCEPTE ») et `allowed_asset_classes` une PERMISSION. Le registre le dit
+    lui-meme pour `metal` sur Kraken : « cette ligne ne suffit PAS a les
+    faire trader ». Une porte plus etroite est donc la prudence NORMALE.
+    """
+    assert _regle(LIVE, 5)["verdict"] == R.CONFORME
+    assert _regle(KRAKEN, 5)["verdict"] == R.CONFORME
+
+
+def test_regle5_dit_quand_meme_ce_que_le_courtier_accepte_en_PLUS():
+    """L'information n'est pas perdue : on arrete de l'appeler alarme, on ne
+    cesse pas de la publier."""
+    v = _regle(KRAKEN, 5)
+    assert "crypto" in v["valeur"]
+    assert "metal" in v["valeur"], "la capacite excedentaire doit rester lisible"
+
+
+def test_regle5_WARN_quand_la_PORTE_DEPASSE_la_capacite():
+    """LE sens qui compte : une classe autorisee que le courtier n'accepte
+    pas. Le flux est alors « simplement refuse, en silence »."""
+    trop = dict(KRAKEN, classes_porte=["crypto", "equity"],
+                classes_registre=["crypto", "metal"])
+    v = _regle(trop, 5)
+    assert v["verdict"] == R.WARN
+    assert "equity" in v["valeur"]
+    assert "metal" not in v["valeur"], (
+        "seule la classe EN TROP doit etre nommee, pas la capacite inutilisee")
+
+
+def test_regle5_ne_rend_JAMAIS_un_FAIL():
+    """Choix d'origine conserve : ce defaut bloque le flux, il n'expose pas
+    d'argent. Il merite un WARN, pas l'arret du rapport."""
+    for d in (LIVE, KRAKEN, LEGACY,
+              dict(KRAKEN, classes_porte=["crypto", "equity"]),
+              dict(KRAKEN, classes_porte=[]),
+              dict(KRAKEN, classes_porte=[], classes_registre=[])):
+        assert _regle(d, 5)["verdict"] != R.FAIL
+
+
+def test_regle5_WARN_sur_une_porte_VIDE():
+    """Une porte vide n'est pas une divergence, c'est un blocage TOTAL : il
+    merite d'etre vu plutot que lu comme un « conforme »."""
+    v = _regle(dict(KRAKEN, classes_porte=[]), 5)
+    assert v["verdict"] == R.WARN
+    assert "AUCUNE" in v["valeur"]
 
 def test_chaque_verdict_nomme_sa_SOURCE_et_sa_VALEUR():
     for v in R.juger_destination(KRAKEN, BLANCHES):
