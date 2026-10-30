@@ -1911,6 +1911,119 @@ def _annuler_ordres(ordres: list) -> tuple:
     return annules, echecs
 
 
+@app.route("/order/annuler", methods=["POST"])
+@require_bridge_key
+def annuler_un_ordre():
+    """Annule UN ordre d'ENTREE, nomme. Jamais une protection.
+
+    ## Pourquoi cette route existe
+
+    Le 2026-10-30, deux achats limite BTC du 27/09 dormaient a 63 366 USD
+    (`reduceOnly: false`, 938 USD de notionnel si touches). Impossible de les
+    annuler : ce pont n'exposait AUCUNE annulation par ordre, et `/kill`
+    aurait aussi ferme au marche une position INJ correctement protegee.
+
+    🔑 **Un interrupteur general n'est pas un outil de precision.** `/kill`
+    reste le geste d'urgence ; celle-ci est le geste chirurgical.
+
+    ⚠️ Et la lecon qui a rendu la route necessaire : **REM-002 empeche le
+    radar d'ENVOYER des ordres, il n'annule pas ceux qui dorment deja chez le
+    courtier.** « L'IA est coupee » ne veut donc pas dire « rien ne peut
+    s'ouvrir ».
+
+    ## Le refus qui fait toute la surete
+
+    ⛔ **Un ordre `reduceOnly` est REFUSE** (409). Ces ordres BORNENT du
+    risque : les annuler laisse une position nue, l'incident du 2026-08-05.
+    Cette route ne peut donc, par construction, que retirer du risque — elle
+    ne peut jamais en decouvrir. Pour retirer une protection il faut passer
+    par `/position/close`, qui ferme d'abord.
+
+    ⛔ **L'ordre est cherche CHEZ LE COURTIER.** On ne peut pas juger
+    `reduceOnly` sur un ordre qu'on ne voit pas : ordres illisibles ⇒ 503,
+    ordre inconnu ⇒ 404, jamais « annule ce qui y ressemble ».
+
+    ⛔ **Et le succes est VERIFIE, pas suppose.** On relit `/openorders` apres
+    coup. L'ancienne version de `/kill` rendait `ok: True` sans regarder le
+    resultat : un mecanisme qui ment sur son propre resultat est pire que son
+    absence, il fait renoncer a verifier.
+
+    Corps : ``{"order_id": "a2d8bded-...", "raison": "texte libre"}``
+    """
+    corps = request.get_json(silent=True) or {}
+    oid = str(corps.get("order_id") or "").strip()
+    raison = str(corps.get("raison") or "")[:200]
+    if not oid:
+        return jsonify({"ok": False, "error": "order_id manquant"}), 400
+
+    try:
+        od = _signed_request("GET", "/api/v3/openorders")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("order/annuler : ordres illisibles : %s", e)
+        return jsonify({"ok": False, "error": "ordres illisibles"}), 503
+    if od.get("result") != "success":
+        return jsonify({"ok": False, "error": "kraken response not success"}), 503
+
+    ordres = od.get("openOrders", []) or []
+    cible = None
+    for o in ordres:
+        if str(o.get("order_id") or o.get("orderId") or "") == oid:
+            cible = o
+            break
+    if cible is None:
+        logger.info("order/annuler : %s introuvable chez le courtier "
+                    "(raison=%s)", oid, raison)
+        return jsonify({"ok": False, "error": "ordre introuvable",
+                        "order_id": oid, "raison": raison}), 404
+
+    if cible.get("reduceOnly"):
+        logger.warning("order/annuler : REFUS, %s est une PROTECTION sur %s "
+                       "(raison=%s)", oid, cible.get("symbol"), raison)
+        return jsonify({
+            "ok": False, "error": "refus : ordre de PROTECTION (reduceOnly)",
+            "order_id": oid, "symbol": cible.get("symbol"),
+            "detail": "annuler un stop laisse la position NUE ; passer par "
+                      "/position/close, qui ferme d'abord",
+            "raison": raison}), 409
+
+    try:
+        _signed_request("POST", "/api/v3/cancelorder", {"order_id": oid})
+    except Exception as e:  # noqa: BLE001
+        logger.warning("order/annuler : annulation refusee pour %s : %s", oid, e)
+        return jsonify({"ok": False, "error": "annulation refusee",
+                        "order_id": oid, "detail": str(e),
+                        "raison": raison}), 502
+
+    # ⛔ Le succes se VERIFIE. Kraken peut accepter l'appel sans retirer
+    # l'ordre (deja en cours d'execution, par exemple).
+    encore = None
+    try:
+        od2 = _signed_request("GET", "/api/v3/openorders")
+        if od2.get("result") == "success":
+            encore = any(
+                str(o.get("order_id") or o.get("orderId") or "") == oid
+                for o in (od2.get("openOrders", []) or []))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("order/annuler : relecture impossible pour %s : %s",
+                       oid, e)
+
+    if encore is True:
+        return jsonify({"ok": False, "error": "toujours present apres annulation",
+                        "order_id": oid, "raison": raison}), 409
+
+    logger.warning("order/annuler : %s annule (%s %s %s) raison=%s",
+                   oid, cible.get("symbol"), cible.get("side"),
+                   cible.get("size"), raison)
+    return jsonify({
+        "ok": True, "order_id": oid, "symbol": cible.get("symbol"),
+        "side": cible.get("side"), "size": cible.get("size"),
+        "limitPrice": cible.get("limitPrice"),
+        # `None` = la relecture a echoue : l'annulation est acceptee mais non
+        # CONFIRMEE. On le dit plutot que de l'affirmer.
+        "confirme": (encore is False),
+        "raison": raison}), 200
+
+
 @app.route("/kill", methods=["POST"])
 @require_bridge_key
 def kill_all():
