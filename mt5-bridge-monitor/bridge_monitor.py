@@ -598,6 +598,40 @@ def dernier_reclaim() -> str:
 
 
 # ------- Telegram helpers -------
+#: Caracteres que Telegram traite comme du balisage en `parse_mode=Markdown`.
+_MD_SPECIAUX = ("_", "*", "`", "[")
+
+
+def _md_libre(valeur) -> str:
+    """Neutralise le balisage Markdown d'une valeur interpolee en TEXTE LIBRE.
+
+    ⛔ Defaut constate le 2026-10-31 : 42 alertes refusees en 7 jours par
+    Telegram, « can't parse entities: Can't find end of the entity ». Les
+    valeurs interpolees (messages d'exception, details de recuperation)
+    arrivaient brutes dans un message envoye en Markdown. Un seul `_` --
+    un `__init__`, un nom de cle, une URL -- ouvre une italique qui ne se
+    ferme jamais, et Telegram refuse le message ENTIER.
+
+    🔑 Le message n'est pas tronque : il n'arrive PAS. Et c'est ce service
+    qui previent quand un pont tombe.
+    """
+    texte = str(valeur)
+    for c in _MD_SPECIAUX:
+        texte = texte.replace(c, "\\" + c)
+    return texte
+
+
+def _md_code(valeur) -> str:
+    r"""Neutralise une valeur placee DANS des backticks.
+
+    ⚠️ Pas le meme traitement que `_md_libre` : dans un span de code,
+    Markdown n'interprete plus `_` ni `*`, donc les echapper afficherait un
+    `\_` litteral. Seul le backtick doit disparaitre -- c'est lui qui
+    fermerait le span trop tot.
+    """
+    return str(valeur).replace("`", "'")
+
+
 def tg_send(msg: str) -> None:
     if not TELEGRAM_ENABLED:
         log.debug("telegram disabled, skip: %s", msg)
@@ -614,7 +648,26 @@ def tg_send(msg: str) -> None:
             timeout=10,
         )
         if not r.ok:
-            log.warning("telegram send http=%s body=%s", r.status_code, r.text[:200])
+            # ⛔ On journalise le MESSAGE, pas seulement la reponse. Pendant
+            # des mois le journal disait « can't parse entities » sans dire
+            # DE QUOI, et le defaut etait donc indiagnosticable depuis les
+            # logs. ⚠️ Jamais l'URL : elle porte le jeton du bot.
+            log.warning("telegram send http=%s body=%s msg=%r",
+                        r.status_code, r.text[:200], msg[:400])
+
+            # 🔑 Repli SANS parse_mode : un message refuse pour son balisage
+            # doit quand meme ARRIVER. Pour une sonde, la livraison passe
+            # avant la mise en forme -- une alerte « pont Live hors service »
+            # en texte brut vaut infiniment mieux qu'aucune alerte.
+            if "parse entities" in (r.text or ""):
+                r2 = requests.post(
+                    f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                    json={"chat_id": TELEGRAM_CHAT_ID, "text": msg,
+                          "disable_web_page_preview": True},
+                    timeout=10,
+                )
+                log.warning("telegram repli sans parse_mode: http=%s",
+                            r2.status_code)
     except requests.RequestException as e:
         log.warning("telegram send failed: %s", e)
 
@@ -662,14 +715,14 @@ def tg_format_alert(
     }
     impact_line = _IMPACT.get(name, "")
 
-    parts = [f"{emoji} *{name_fr}* {verb_fr}"]
+    parts = [f"{emoji} *{_md_libre(name_fr)}* {verb_fr}"]
     parts.append("")
 
     kind = probe.get("kind")
     if kind == "bridge":
         err = probe.get("health_error") or probe.get("account_error")
         if err:
-            parts.append(f"⚙️ Détail technique : `{err[:150]}`")
+            parts.append(f"⚙️ Détail technique : `{_md_code(err[:150])}`")
         acc = probe.get("account") or {}
         if acc and status == "UP":
             parts.append(
@@ -677,10 +730,10 @@ def tg_format_alert(
                 f"{acc.get('positions_count')} position(s) ouverte(s)"
             )
     elif kind == "systemd":
-        parts.append(f"⚙️ État systemd : `{probe.get('active')}`")
+        parts.append(f"⚙️ État systemd : `{_md_code(probe.get('active'))}`")
     elif kind == "data":
         if probe.get("error"):
-            parts.append(f"⚙️ Détail : `{probe['error'][:150]}`")
+            parts.append(f"⚙️ Détail : `{_md_code(probe['error'][:150])}`")
         if probe.get("age_sec") is not None:
             parts.append(f"⏱ Dernier signe de vie : il y a {probe['age_sec']} secondes")
     elif kind == "disk":
@@ -690,7 +743,7 @@ def tg_format_alert(
             )
     elif kind == "tailscale":
         if probe.get("error"):
-            parts.append(f"⚙️ Détail : `{probe['error'][:150]}`")
+            parts.append(f"⚙️ Détail : `{_md_code(probe['error'][:150])}`")
 
     if impact_line and status in ("DOWN", "STILL_DOWN"):
         parts.append("")
@@ -704,8 +757,8 @@ def tg_format_alert(
         rec_status = "réussie" if recovery.get("ok") else "échouée"
         parts.append("")
         parts.append(
-            f"{rec_emoji} Récupération auto {rec_status} : `{recovery.get('action')}` "
-            f"({recovery.get('detail', '')[:80]})"
+            f"{rec_emoji} Récupération auto {rec_status} : `{_md_code(recovery.get('action'))}` "
+            f"({_md_libre(recovery.get('detail', '')[:80])})"
         )
 
     # Footer : heure Paris au lieu d'ISO UTC technique
@@ -1125,8 +1178,20 @@ def tg_build_status_reply() -> str:
             since = int(time.time() - st.get("last_change_ts", time.time()))
             h, m = since // 3600, (since % 3600) // 60
             since_str = f"{h}h{m:02d}m" if h else f"{m}m"
-            name_fr = _NAME_FR.get(name, name)
-            state_fr = _STATE_FR.get(st["confirmed"], st["confirmed"])
+            # ⛔ `_NAME_FR.get(name, name)` retombe sur le nom BRUT de la
+            # sonde, et la table ne connait pas tous les noms vivants.
+            # Mesure du 2026-10-31 : les sondes reelles sont bridge_live,
+            # bridge_vps, disk_root, nginx.service, radar_cycle,
+            # scalping-bridge-monitor.service, scalping.service, tailscale.
+            # `disk_root` n'est PAS mappe (la table dit "disk") : son
+            # souligne arrivait donc brut, en nombre IMPAIR, et Telegram
+            # refusait CHAQUE reponse /status -- 36 refus le seul 31/10.
+            #
+            # 🔑 On echappe au lieu d'ajouter `disk_root` a la table : la
+            # table derivera encore le jour ou une sonde s'ajoute, alors que
+            # l'echappement couvre tous les noms, connus ou non.
+            name_fr = _md_libre(_NAME_FR.get(name, name))
+            state_fr = _md_libre(_STATE_FR.get(st["confirmed"], st["confirmed"]))
             if st["confirmed"] == "UP":
                 lines.append(f"{emoji} {name_fr} · OK depuis {since_str}")
             elif st["confirmed"] == "DOWN":
