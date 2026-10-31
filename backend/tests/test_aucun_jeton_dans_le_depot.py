@@ -43,6 +43,21 @@ _RACINE = pathlib.Path(__file__).resolve().parents[2]
 #: Seul fichier autorise a porter le jeton : il le DENONCE.
 _AUDIT = "docs/audit-externe-2026-09-16.md"
 
+#: Scripts qui CONTROLENT la variable au lieu de l'UTILISER.
+#:
+#: ⚠️ Exception etroite et nommee, pas un assouplissement. Un script qui
+#: VERIFIE la presence du jeton doit tolerer son absence : c'est justement
+#: ce qu'il a pour metier de rapporter. Lui imposer `${VAR:?}` le ferait
+#: mourir avant d'avoir pu dire que la variable manque — donc exactement
+#: l'inverse de son role.
+#:
+#: ⛔ Chaque entree doit PROUVER qu'elle controle, via
+#: `test_chaque_controleur_exempte_RAPPORTE_bien_l_absence`. Une entree qui
+#: n'est pas un controleur est une faille, pas une exception.
+_CONTROLEURS = frozenset({
+    "scripts/verifier_jetons_sur_les_hotes.sh",
+})
+
 _IGNORES = {".git", "node_modules", "__pycache__", ".pytest_cache",
             ".worktrees", "venv", ".venv", "dist", "build", ".omc"}
 
@@ -167,6 +182,8 @@ def test_chaque_lecteur_du_jeton_REFUSE_quand_il_manque():
             continue
         if not rel.endswith((".py", ".sh", ".ps1")):
             continue
+        if rel in _CONTROLEURS:
+            continue  # il RAPPORTE l'absence, il ne l'utilise pas
         texte = (_RACINE / rel).read_text(encoding="utf-8", errors="ignore")
         if "INFRA_NOTIFY_TOKEN" not in texte:
             continue
@@ -178,3 +195,35 @@ def test_chaque_lecteur_du_jeton_REFUSE_quand_il_manque():
     assert sans_refus == [], (
         "%d fichier(s) lisent INFRA_NOTIFY_TOKEN sans refuser son absence :\n%s"
         % (len(sans_refus), "\n".join("  " + f for f in sans_refus)))
+
+
+def test_chaque_controleur_exempte_RAPPORTE_bien_l_absence():
+    """⛔ Le temoin de l'exception. Une liste d'exemptions non verifiee est
+    une porte derobee : il suffirait d'y ajouter un nom pour que le garde-fou
+    cesse de regarder un vrai lecteur.
+
+    Un controleur legitime doit (a) exister, (b) lire la variable, et
+    (c) DIRE quand elle manque — donc porter le mot « ABSENTE ». Un script qui
+    lit le jeton sans jamais signaler son absence n'est pas un controleur.
+    """
+    for rel in sorted(_CONTROLEURS):
+        chemin = _RACINE / rel
+        assert chemin.exists(), (
+            "%s est exempte mais n'existe plus : retirer l'entree, sinon elle "
+            "exemptera un futur fichier du meme nom" % rel)
+        texte = chemin.read_text(encoding="utf-8", errors="ignore")
+        assert "INFRA_NOTIFY_TOKEN" in texte, (
+            "%s est exempte mais ne lit pas la variable : exemption inutile" % rel)
+        assert "ABSENTE" in texte, (
+            "%s est exempte comme CONTROLEUR mais ne signale jamais une "
+            "absence. Ce n'est donc pas un controleur : soit il refuse comme "
+            "les autres lecteurs, soit il rapporte. Pas ni l'un ni l'autre." % rel)
+
+
+def test_la_liste_d_exemptions_reste_MINIMALE():
+    """Une exception par necessite demontree, jamais par commodite. Si cette
+    liste grossit, c'est le signe qu'on contourne la regle au lieu de la
+    suivre — et le chiffre force a s'en expliquer ici."""
+    assert len(_CONTROLEURS) <= 2, (
+        "%d exemptions : au-dela de deux, justifier chacune dans ce test ou "
+        "revoir la regle." % len(_CONTROLEURS))
