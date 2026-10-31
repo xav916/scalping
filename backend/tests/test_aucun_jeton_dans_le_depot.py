@@ -111,7 +111,17 @@ def test_aucun_jeton_de_forme_complete_dans_un_fichier_suivi():
 def test_l_instrument_DETECTE_bien_une_chaine_de_forme_jeton():
     """⛔ Un garde-fou qui ne détecte rien passe toujours. Témoin obligatoire :
     sans lui, le test précédent serait vert même avec une expression cassée."""
-    assert _FORME_JETON.search("token=shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg")
+    # ⛔ Les temoins sont ASSEMBLES a l'execution, et leur corps est
+    # manifestement faux. Ecrire un vrai jeton ici le REINTRODUIRAIT dans le
+    # depot -- ce que ce fichier a fait jusqu'au 2026-10-31 : il portait le
+    # jeton de l'audit en clair a cette ligne meme.
+    #
+    # 🔑 Et il restait VERT, parce que `git ls-files` ne le listait pas encore
+    # quand sa preuve a tourne : il n'etait pas SUIVI. Un garde-fou qui
+    # s'evalue sur un instantane d'ou il est absent ne se garde pas lui-meme.
+    # Il ne s'est denonce qu'au commit SUIVANT, une fois entre dans l'index.
+    forme = "shdw_" + "FAUX" * 4 + "_temoin"
+    assert _FORME_JETON.search("token=" + forme)
     assert _FORME_JETON.search('TOKEN="shdw_' + "a" * 20 + '"')
 
 
