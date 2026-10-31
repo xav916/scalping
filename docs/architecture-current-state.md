@@ -32,7 +32,7 @@ flowchart TB
     end
 
     subgraph GARDE["🚧 GARDE-FOUS — ce qui refuse d'ouvrir"]
-        BANC["✅ Porte du banc d'essai<br/>RESEARCH_BENCH_GATE_ENABLED=true<br/>77 admis par antériorité / 21 refusés"]
+        BANC["✅ Porte du banc d'essai<br/>RESEARCH_BENCH_GATE_ENABLED=true<br/>21 sans couverture, 14 refusés/cycle<br/>77 admis par antériorité"]
         RISQUE["✅ Bloc de risque<br/>plafond €, poches par devise,<br/>refus si taux non vivant"]
         MOTIFS["✅ 28 motifs de refus<br/>fees_exceed_edge 1 238<br/>sl_too_close 431"]
     end
@@ -100,7 +100,7 @@ exécutés — ce qui est la situation voulue.
 
 | Garde-fou | Réglage | Effet mesuré |
 |---|---|---|
-| **Porte du banc d'essai** | `RESEARCH_BENCH_GATE_ENABLED=true` | sur 98 buckets : **77 admis** (tous par la clause d'antériorité du 2026-08-25), **21 refusés** — aucun des 21 n'est en `AUTO_EXEC` |
+| **Porte du banc d'essai** | `RESEARCH_BENCH_GATE_ENABLED=true` | **21 buckets sans couverture** de banc sur 98 (l'exposition), mais **14 refusés par cycle** (les promotions réellement tentées) ; 77 admis par la clause d'antériorité du 2026-08-25. Aucun des 21 n'est en `AUTO_EXEC` |
 | **Bloc de risque** | plafond €, poches par devise, métaux séparés | refuse explicitement quand le taux n'est pas vivant |
 | **`fees_exceed_edge`** | plancher **13,83 $** = prix/300 | **1 238 refus** — c'est lui qui interdit un départ à 9 € |
 | **`sl_too_close`** | stop ≥ **0,05 %** = 2,075 $ | **431 refus** |
@@ -192,7 +192,7 @@ SCALPING_HOST=ec2-user@13.63.77.180 bash deploy-v2.sh
 | Le pont Kraken ne publie pas ses `garde_fous` indépendamment | ouverte |
 | Le **markup hors de l'or est inconnu** | ouverte — à établir **avant** tout niveau absolu ; sur l'or il valait **10 points** entre les deux routes du pont |
 | `RESEARCH_BENCH_GATE_ENABLED` est posé **deux fois** dans le `.env` de prod | ouverte — valeurs concordantes, donc sans effet, mais piège pour le prochain |
-| `"EUR/USD` et `LINK/USD"` (guillemets collés) dans la table d'admission | ouverte — 2 lignes chacune, écrites le 2026-08-23, toutes deux en TELEGRAM donc inoffensives ; `WATCHED_PAIRS` est propre |
+| `"EUR/USD` et `LINK/USD"` (guillemets collés) dans la table d'admission | ouverte — 2 lignes chacune, écrites le 2026-08-23, en TELEGRAM donc inoffensives ; `WATCHED_PAIRS` est propre. Elles gonflent l'univers évalué de **4 buckets fantômes** qui n'aboutissent à aucune décision |
 | Banc prospectif hors échantillon du 13 novembre | pré-inscrit (`4359c74`), reste à écrire |
 | **R-27** : la suite ne rend pas deux fois le même verdict | ouverte — voir les règles non négociables de `CLAUDE.md` |
 

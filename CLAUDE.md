@@ -101,9 +101,18 @@ seul drapeau — un seul drapeau vert ne prouve pas que les trois sont fermées.
 
 - **Porte du banc d'essai** (`RESEARCH_BENCH_GATE_ENABLED=true`) — une
   promotion vers `AUTO_EXEC` en argent réel exige un essai passé, ou la
-  clause d'antériorité du 2026-08-25. Mesurée en lecture seule le
-  2026-10-31 : sur 98 buckets, **77 admis par l'antériorité, 21 refusés** —
-  et aucun des 21 n'est en `AUTO_EXEC`, donc elle n'a rien retiré.
+  clause d'antériorité du 2026-08-25.
+
+  ⚠️ **Deux chiffres, et ils ne disent pas la même chose** (mesuré le
+  2026-10-31) : sur les 98 buckets évalués, **21 n'ont aucune couverture
+  de banc** — c'est l'*exposition* — mais seulement **14 sont refusés à
+  chaque cycle**, parce que la porte n'est consultée que quand le
+  contrôleur *tente* une promotion. Les 7 d'écart : 4 paires fantômes
+  (guillemets collés, aucune donnée) et 3 buckets `DEMOTED`, que le
+  contrôleur ne re-promeut pas. Réconcilié bucket par bucket sur les
+  journaux de production, sans aucun refus non prédit.
+
+  🔑 Et aucun des 21 n'est en `AUTO_EXEC` : la porte n'a rien retiré.
 - **Bloc de risque** — plafond en euros, poches par devise, métaux séparés,
   et un refus explicite quand le taux n'est pas vivant.
 - **28 motifs de refus** ont réellement mordu sur l'or. Les deux qui mordent
