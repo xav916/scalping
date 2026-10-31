@@ -1178,8 +1178,20 @@ def tg_build_status_reply() -> str:
             since = int(time.time() - st.get("last_change_ts", time.time()))
             h, m = since // 3600, (since % 3600) // 60
             since_str = f"{h}h{m:02d}m" if h else f"{m}m"
-            name_fr = _NAME_FR.get(name, name)
-            state_fr = _STATE_FR.get(st["confirmed"], st["confirmed"])
+            # ⛔ `_NAME_FR.get(name, name)` retombe sur le nom BRUT de la
+            # sonde, et la table ne connait pas tous les noms vivants.
+            # Mesure du 2026-10-31 : les sondes reelles sont bridge_live,
+            # bridge_vps, disk_root, nginx.service, radar_cycle,
+            # scalping-bridge-monitor.service, scalping.service, tailscale.
+            # `disk_root` n'est PAS mappe (la table dit "disk") : son
+            # souligne arrivait donc brut, en nombre IMPAIR, et Telegram
+            # refusait CHAQUE reponse /status -- 36 refus le seul 31/10.
+            #
+            # 🔑 On echappe au lieu d'ajouter `disk_root` a la table : la
+            # table derivera encore le jour ou une sonde s'ajoute, alors que
+            # l'echappement couvre tous les noms, connus ou non.
+            name_fr = _md_libre(_NAME_FR.get(name, name))
+            state_fr = _md_libre(_STATE_FR.get(st["confirmed"], st["confirmed"]))
             if st["confirmed"] == "UP":
                 lines.append(f"{emoji} {name_fr} · OK depuis {since_str}")
             elif st["confirmed"] == "DOWN":

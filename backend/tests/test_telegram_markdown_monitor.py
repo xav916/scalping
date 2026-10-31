@@ -217,3 +217,60 @@ def test_un_echec_qui_n_est_PAS_de_balisage_ne_declenche_pas_le_repli(bm, monkey
 
     assert len(envois) == 1, (
         "un echec non lie au balisage a declenche un repli inutile")
+
+
+# --- la reponse /status, la ou le defaut mordait VRAIMENT ---------------
+
+#: Les sondes REELLES, lues sur `status.json` de production le 2026-10-31.
+#: ⛔ Pas des noms inventes : `disk_root` est precisement celui que la table
+#: `_NAME_FR` ne connait pas (elle dit « disk »), et c'est lui qui faisait
+#: refuser chaque reponse /status.
+_SONDES_REELLES = ("bridge_live", "bridge_vps", "disk_root", "nginx.service",
+                   "radar_cycle", "scalping-bridge-monitor.service",
+                   "scalping.service", "tailscale")
+
+
+def test_la_reponse_status_echappe_les_noms_de_sondes_REELS(bm, monkeypatch):
+    """⛔ LE test du vrai declencheur : 36 refus le seul 2026-10-31.
+
+    `_NAME_FR.get(name, name)` retombe sur le nom BRUT. `disk_root` n'est pas
+    dans la table, donc son souligne arrivait tel quel — un seul suffit a
+    ouvrir une italique que rien ne ferme.
+
+    🔑 Le correctif echappe au lieu d'ajouter `disk_root` a la table : une
+    table derive au prochain ajout de sonde, l'echappement non.
+    """
+    import time as _t
+    faux_etat = {nom: {"confirmed": "UP", "last_change_ts": _t.time() - 3600}
+                 for nom in _SONDES_REELLES}
+    monkeypatch.setattr(bm, "_state", faux_etat)
+    monkeypatch.setattr(bm, "_last_cycle_ts", "2026-10-31T19:00:00Z")
+
+    msg = bm.tg_build_status_reply()
+
+    assert "disk" in msg, "la reponse ne mentionne plus les sondes : %r" % msg[:200]
+    hors_code = "".join(part for i, part in enumerate(msg.split("`"))
+                        if i % 2 == 0)
+    non_echappes = sum(1 for i, c in enumerate(hors_code)
+                       if c == "_" and (i == 0 or hors_code[i - 1] != "\\"))
+    assert non_echappes % 2 == 0, (
+        "%d souligne(s) non echappe(s) dans la reponse /status : nombre "
+        "IMPAIR, Telegram la refusera comme il l'a fait 36 fois le 31/10. %r"
+        % (non_echappes, hors_code))
+
+
+def test_une_sonde_INCONNUE_de_la_table_ne_casse_pas_la_reponse(bm, monkeypatch):
+    """Le pendant durable : demain une sonde s'ajoutera, et elle ne sera pas
+    dans `_NAME_FR`. L'echappement doit la couvrir sans qu'on y pense."""
+    import time as _t
+    monkeypatch.setattr(bm, "_state", {
+        "une_sonde_tout_a_fait_nouvelle": {
+            "confirmed": "DOWN", "last_change_ts": _t.time() - 60}})
+    monkeypatch.setattr(bm, "_last_cycle_ts", None)
+    msg = bm.tg_build_status_reply()
+    hors_code = "".join(p for i, p in enumerate(msg.split("`")) if i % 2 == 0)
+    non_echappes = sum(1 for i, c in enumerate(hors_code)
+                       if c == "_" and (i == 0 or hors_code[i - 1] != "\\"))
+    assert non_echappes % 2 == 0, (
+        "une sonde non mappee casse encore la reponse : %d souligne(s) "
+        "non echappe(s)" % non_echappes)
