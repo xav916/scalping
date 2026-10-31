@@ -5,7 +5,8 @@ set -euo pipefail
 # Détecte si les 2 bridges (legacy Pepperstone Demo + live IC Markets) sont DOWN
 # et alerte le bot infra Telegram via dedup + cooldown 3h
 
-HEALTH_TOKEN="shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg"
+# INFRA_NOTIFY_TOKEN est OBLIGATOIRE : aucune valeur par defaut (audit S-1).
+HEALTH_TOKEN="${INFRA_NOTIFY_TOKEN:?INFRA_NOTIFY_TOKEN absente : ce script notifie l infrastructure et ne peut pas s authentifier sans elle. Aucune valeur par defaut n est admise (audit S-1). Poser la variable dans l environnement du cron ou du service.}"
 HEALTH_URL="https://app.scalping-radar.online/api/admin/mt5-bridges-health"
 NOTIFY_URL="https://app.scalping-radar.online/api/admin/notify-infra-telegram"
 

@@ -207,8 +207,11 @@ def construire(jour: str | None, cellules: list[dict]) -> tuple[str, str]:
 
 
 def _poster(titre: str, corps: str) -> int:
-    jeton = os.environ.get("NOTIFY_TOKEN",
-                           "shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg")
+    # INFRA_NOTIFY_TOKEN est OBLIGATOIRE : aucune valeur par defaut (audit S-1).
+    jeton = (os.environ.get("INFRA_NOTIFY_TOKEN") or "").strip()
+    if not jeton:
+        raise SystemExit(
+            "INFRA_NOTIFY_TOKEN absente : ce script notifie l'infrastructure et ne peut pas s'authentifier sans elle. Aucune valeur par defaut n'est admise (audit S-1). Poser la variable dans l'environnement du cron ou du service.")
     # `infra` et non `ic_markets` : c'est une mesure de RECHERCHE, elle
     # n'engage l'argent d'aucun compte. La convention du 06/09 reserve les fils
     # de compte a ce qui touche a leur argent.

@@ -66,7 +66,8 @@ ${ENERGY_LIST}
 Reco : ferme-les à la main depuis MT5 mobile avant la clôture du marché,
 vendredi 22h UTC. Sinon, assume le risque et garde-les le week-end."
 
-TOKEN_NOTIFY="shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg"
+# INFRA_NOTIFY_TOKEN est OBLIGATOIRE : aucune valeur par defaut (audit S-1).
+TOKEN_NOTIFY="${INFRA_NOTIFY_TOKEN:?INFRA_NOTIFY_TOKEN absente : ce script notifie l infrastructure et ne peut pas s authentifier sans elle. Aucune valeur par defaut n est admise (audit S-1). Poser la variable dans l environnement du cron ou du service.}"
 CORPS_JSON=$(TITRE="$TITRE" CORPS="$CORPS" python3 -c '
 import json, os
 print(json.dumps({"title": os.environ["TITRE"], "body": os.environ["CORPS"],

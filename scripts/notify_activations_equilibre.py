@@ -47,7 +47,11 @@ FENETRE_J = int(os.environ.get("FENETRE_J", "7"))
 # plancher déjà retenu par `verdict_directionnel` pour le groupe qui décide.
 N_MIN_JUGEMENT = int(os.environ.get("N_MIN_JUGEMENT", "30"))
 
-TOKEN = os.environ.get("INFRA_NOTIFY_TOKEN", "shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg")
+# INFRA_NOTIFY_TOKEN est OBLIGATOIRE : aucune valeur par defaut (audit S-1).
+TOKEN = (os.environ.get("INFRA_NOTIFY_TOKEN") or "").strip()
+if not TOKEN:
+    raise SystemExit(
+        "INFRA_NOTIFY_TOKEN absente : ce script notifie l'infrastructure et ne peut pas s'authentifier sans elle. Aucune valeur par defaut n'est admise (audit S-1). Poser la variable dans l'environnement du cron ou du service.")
 # channel=sales : c'est un evenement de TRADING. ⛔ Omettre `channel`
 # routerait vers le fil infra EN SILENCE.
 # ── Le fil suit le COMPTE dont parle le message (2026-09-06) ─────────

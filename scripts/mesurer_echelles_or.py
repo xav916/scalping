@@ -166,8 +166,11 @@ def construire(lignes, trades: int, jour: str) -> tuple[str, str]:
 
 
 def _poster(titre: str, corps: str) -> int:
-    jeton = os.environ.get("NOTIFY_TOKEN",
-                           "shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg")
+    # INFRA_NOTIFY_TOKEN est OBLIGATOIRE : aucune valeur par defaut (audit S-1).
+    jeton = (os.environ.get("INFRA_NOTIFY_TOKEN") or "").strip()
+    if not jeton:
+        raise SystemExit(
+            "INFRA_NOTIFY_TOKEN absente : ce script notifie l'infrastructure et ne peut pas s'authentifier sans elle. Aucune valeur par defaut n'est admise (audit S-1). Poser la variable dans l'environnement du cron ou du service.")
     # ⛔ `channel=ic_markets` et non `infra`. La convention du 06/09 envoie sur
     # `infra` une mesure qui COMPARE des courtiers — elle n'appartient au fil
     # d'aucun compte. Ici c'est le cas complémentaire : la décision porte sur

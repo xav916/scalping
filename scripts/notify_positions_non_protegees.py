@@ -43,7 +43,11 @@ DELAI = 10
 INSTANTANE = Path(os.environ.get(
     "NUES_SNAPSHOT_PATH", "/app/data/positions_non_protegees.json"))
 
-TOKEN = os.environ.get("INFRA_NOTIFY_TOKEN", "shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg")
+# INFRA_NOTIFY_TOKEN est OBLIGATOIRE : aucune valeur par defaut (audit S-1).
+TOKEN = (os.environ.get("INFRA_NOTIFY_TOKEN") or "").strip()
+if not TOKEN:
+    raise SystemExit(
+        "INFRA_NOTIFY_TOKEN absente : ce script notifie l'infrastructure et ne peut pas s'authentifier sans elle. Aucune valeur par defaut n'est admise (audit S-1). Poser la variable dans l'environnement du cron ou du service.")
 # channel=sales : une position sans stop est un evenement de TRADING.
 # ── Le fil suit le COMPTE dont parle le message (2026-09-06) ─────────
 #

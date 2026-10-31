@@ -155,7 +155,8 @@ fi
 #
 # Les balises HTML ont ete retirees : l'endpoint passe le corps dans
 # html.escape, elles s'afficheraient telles quelles.
-TOKEN_NOTIFY="shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg"
+# INFRA_NOTIFY_TOKEN est OBLIGATOIRE : aucune valeur par defaut (audit S-1).
+TOKEN_NOTIFY="${INFRA_NOTIFY_TOKEN:?INFRA_NOTIFY_TOKEN absente : ce script notifie l infrastructure et ne peut pas s authentifier sans elle. Aucune valeur par defaut n est admise (audit S-1). Poser la variable dans l environnement du cron ou du service.}"
 CHARGE=$(BODY="$BODY" JOUR="$(date -u '+%Y-%m-%d')" python3 -c '
 import json, os
 print(json.dumps({

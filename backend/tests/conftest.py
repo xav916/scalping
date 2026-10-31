@@ -4,7 +4,10 @@ import os
 import pytest
 import pytest_asyncio
 
-from backend.tests.jeton_de_test import HASH_PUBLIC_DE_TEST
+from backend.tests.jeton_de_test import (
+    HASH_PUBLIC_DE_TEST,
+    JETON_PUBLIC_DE_TEST,
+)
 
 # ─── Le jeton public, pose POUR LES TESTS (audit S-1, 2026-10-31) ────────
 #
@@ -15,6 +18,10 @@ from backend.tests.jeton_de_test import HASH_PUBLIC_DE_TEST
 # `setdefault` et non `=` : si la CI pose une vraie valeur, elle gagne. On
 # fournit un defaut de TEST, on n'ecrase pas une configuration existante.
 os.environ.setdefault("SHADOW_PUBLIC_TOKEN_HASH", HASH_PUBLIC_DE_TEST)
+# Le MEME secret ouvre les deux en production (le jeton en clair pour les
+# scripts, son hash pour les points d'entree) : l'environnement de test
+# reproduit cette relation plutot que d'inventer deux valeurs sans lien.
+os.environ.setdefault("INFRA_NOTIFY_TOKEN", JETON_PUBLIC_DE_TEST)
 
 
 def mock_request():

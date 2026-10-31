@@ -121,7 +121,8 @@ echo "   Désarmement : remettre KRAKEN_SLTP_GUARD_ENABLED=false côté bridge."
 # qu'uvicorn ne serve. L'armement avait bien eu lieu — personne ne l'a su.
 #
 # 🔑 Prouver que l'alerte ARRIVE, pas qu'elle part.
-TOKEN="shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg"
+# INFRA_NOTIFY_TOKEN est OBLIGATOIRE : aucune valeur par defaut (audit S-1).
+TOKEN="${INFRA_NOTIFY_TOKEN:?INFRA_NOTIFY_TOKEN absente : ce script notifie l infrastructure et ne peut pas s authentifier sans elle. Aucune valeur par defaut n est admise (audit S-1). Poser la variable dans l environnement du cron ou du service.}"
 CODE_APP=000
 for _ in $(seq 1 60); do
   CODE_APP=$(curl -s -o /dev/null -w "%{http_code}" -m 5 http://localhost:8000/api/health 2>/dev/null || echo 000)

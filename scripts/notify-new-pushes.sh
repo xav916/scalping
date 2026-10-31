@@ -34,7 +34,8 @@ set -uo pipefail
 # seulement plausible : cf. le test de lecture ratee ci-dessous.
 DB=${DB:-/opt/scalping/data/trades.db}
 ETAT=${ETAT:-/var/lib/scalping/last-failed-push-id.txt}
-TOKEN="shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg"
+# INFRA_NOTIFY_TOKEN est OBLIGATOIRE : aucune valeur par defaut (audit S-1).
+TOKEN="${INFRA_NOTIFY_TOKEN:?INFRA_NOTIFY_TOKEN absente : ce script notifie l infrastructure et ne peut pas s authentifier sans elle. Aucune valeur par defaut n est admise (audit S-1). Poser la variable dans l environnement du cron ou du service.}"
 # Le fil suit le COMPTE du push (2026-09-06).
 #
 # Jusqu'ici tout partait sur `channel=sales`, c'est-a-dire le bot nomme

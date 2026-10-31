@@ -43,7 +43,11 @@ INSTANTANE = Path(os.environ.get(
     "POSITIONS_SNAPSHOT_PATH", "/app/data/positions_ouvertes.json"))
 DELAI = 10
 
-TOKEN = os.environ.get("INFRA_NOTIFY_TOKEN", "shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg")
+# INFRA_NOTIFY_TOKEN est OBLIGATOIRE : aucune valeur par defaut (audit S-1).
+TOKEN = (os.environ.get("INFRA_NOTIFY_TOKEN") or "").strip()
+if not TOKEN:
+    raise SystemExit(
+        "INFRA_NOTIFY_TOKEN absente : ce script notifie l'infrastructure et ne peut pas s'authentifier sans elle. Aucune valeur par defaut n'est admise (audit S-1). Poser la variable dans l'environnement du cron ou du service.")
 # Routage PAR DESTINATION (2026-08-19). Le fil `trades` suit le compte reel
 # 13137475 de bout en bout : son ouverture y est deja annoncee par
 # notify-ordres-reel.sh, sa cloture l'y rejoint. Les autres destinations
