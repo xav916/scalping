@@ -73,9 +73,30 @@ rédaction :
 fabriquer une admission, et aucune donnée n'avait été lue quand ils ont été
 écrits.
 
+⛔ **Troisième amendement, même date, toujours avant toute mesure — et
+celui-ci corrige une faute de ma part.** La première rédaction confrontait le
+`t` **brut** de la cellule au plafond du hasard. C'est précisément le défaut
+que `laboratoire_or` a fermé le 2026-09-15 :
+
+> « Le verdict comparait le `t` BRUT de la cellule (son R contre zéro) au
+> plafond du hasard […] Sur une série qui dérive, une cellule acheteuse a donc
+> un `t` énorme — celui de la tendance — et un delta à peine positif : elle
+> passait RETENU. La question n'est pas *ce motif gagne-t-il ?* mais
+> *gagne-t-il PLUS QUE LE HASARD DE SON SENS ?* »
+
+Le bon statistique est donc **`t_vs_hasard`**, un t de Welch de la cellule
+contre le contrôle aléatoire **de son propre sens**. Et le verdict exige en
+plus `r_moyen > 0` : perdre moins que le hasard n'est pas une méthode de
+trading.
+
+⚠️ **`INSUFFISANT` n'est pas `REFUTE`.** Si toutes les cellules restent sous
+le plafond, la conclusion honnête est « ce volume ne permet pas de conclure »,
+pas « le motif ne marche pas ». Le critère distingue donc *non admis* de
+*réfuté*.
+
 <!-- CRITERE-MACHINE
-admission: t > +2.241 et delta_hasard > +0.02 et n >= 20 aux deux spreads
-rejet: max(t) < +2.241 sur les 24 cellules
+admission: t_vs_hasard > +2.241 et r_moyen > 0 et delta_hasard > +0.02 et n >= 20 aux deux spreads
+rejet: cellules_retenues < 1 sur les 24
 validite: non_resolus_pct < 5 et bougies_m5 >= 90000
 cellules: 24
 plafond: permutation_p95
@@ -100,7 +121,8 @@ effectivement lues, sinon la fenêtre n'est pas celle annoncée.
    échelle rend `n >= 20`**. Si c'est faux, le silence de la production vient
    du détecteur lui-même et non des portes en aval — et la suite du chantier
    change de nature.
-2. **Aucune cellule n'atteint `t > +2.241`.** Je prédis le REJET. Motif de
+2. **Aucune cellule n'atteint `t_vs_hasard > +2.241` avec `r_moyen > 0`.** Je
+   prédis donc qu'aucune n'est admise. Motif de
    cette prédiction : trois fois déjà dans ce dépôt, un effet à `t ≈ 2` sur une
    seule paire en échantillon s'est évaporé (`fvg_up` +2,47 → +0,101,
    `pin_bar_down`, `sur_niveau_majeur`), et rien ici ne vient d'une théorie
