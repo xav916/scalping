@@ -141,10 +141,24 @@ def verdict_cellule(cel: dict) -> str:
     return labo.RETENU
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--essai", type=int, default=0, metavar="N",
+                    help="ESSAI A BLANC sur les N dernieres bougies. "
+                         "⛔ Rend 3 : la validite du rejeu n'est pas tenue, "
+                         "et aucun verdict n'est publiable.")
+    a = ap.parse_args(argv)
+
     bougies = charger_bougies()
     print("bougies M5 lues : %d" % len(bougies))
-    if len(bougies) < MIN_BOUGIES:
+
+    if a.essai:
+        bougies = bougies[-a.essai:]
+        print("⚠️ ESSAI A BLANC sur %d bougies — ce n'est PAS une mesure."
+              % len(bougies))
+
+    if len(bougies) < MIN_BOUGIES and not a.essai:
         print("⛔ VALIDITE DU REJEU NON TENUE : %d bougies < %d exigees."
               % (len(bougies), MIN_BOUGIES))
         print("   Le banc s'arrete : mesurer sur une fenetre plus courte que")
@@ -211,9 +225,16 @@ def main() -> int:
               % (len(refutees), len(mesurables)))
         print("⇒ NON ADMIS, comme predit. Rien a desserrer, rien a armer.")
 
+    if a.essai:
+        print()
+        print("⛔ ESSAI A BLANC : validite du rejeu NON TENUE "
+              "(%d bougies < %d). Aucun verdict publiable."
+              % (len(bougies), MIN_BOUGIES))
+        return 3
+
     with open("/app/data/banc_retour_moyenne_or.json", "w") as fh:
         json.dump({"cellules": toutes, "plafond": PLAFOND,
-                   "t_max": t_max, "admises": [list(a) for a in admises],
+                   "t_max": t_max, "admises": [list(x) for x in admises],
                    "bougies": len(bougies)}, fh, default=str, indent=1)
     print("detail ecrit dans /app/data/banc_retour_moyenne_or.json")
     return 0
