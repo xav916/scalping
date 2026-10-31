@@ -1,211 +1,201 @@
 # Architecture — État actuel (source de vérité)
 
-**Dernière mise à jour :** 2026-04-30
+**Dernière mise à jour :** 2026-10-31
 **Mainteneur :** mettre à jour à chaque transition (activation/désactivation d'une couche)
 
 > Ce document décrit ce qui **tourne réellement en prod aujourd'hui**, pas ce qui
 > existe dans le code. Si tu te demandes "on est sur quel système ?", la réponse
 > est ici.
 
+> ⚠️ **Récrit le 2026-10-31** (constat G-1 de l'audit du 2026-09-16). La version
+> précédente datait du 2026-04-30 et décrivait une démo Pepperstone, un signal
+> « V1 legacy », un bridge sur VPS Lightsail et un *gate S6* fixé au
+> 2026-06-06 : **plus rien de cela n'était vrai**. Les paragraphes conservés
+> sont ceux qui ont été revérifiés.
+
 ## TL;DR en une phrase
 
-**Aujourd'hui, les trades qui se déclenchent en démo Pepperstone sont produits par
-le système V1 (legacy scoring), exécutés via le bridge Python sur VPS Lightsail.**
-L'EA MQL5 et Track A V2_CORE_LONG existent en parallèle mais ne tradent pas encore.
+**Aujourd'hui, l'IA de trading est COUPÉE** (REM-002 `DISARMED_MANUALLY` depuis
+le 2026-10-12). L'infrastructure est en **argent réel** sur trois destinations
+— IC Markets via MT5, Kraken, IBKR — mais la liste blanche d'exécution ne
+contient qu'**une seule paire, `XAU/USD`**, et aucun ordre automatique ne part
+tant que REM-002 n'a pas été réarmé par une décision humaine nommée.
 
 ## Carte des 3 couches
 
 ```mermaid
 flowchart TB
     subgraph SIGNAL["🧠 SIGNAL — qui décide les trades"]
-        V1["✅ V1 scoring (legacy)<br/>ACTIF en prod<br/>verdict 'pas d'edge structurel'<br/>actif depuis ~6 semaines"]
-        TRACKA["📊 Track A V2_CORE_LONG XAU H4<br/>SHADOW LOG (observe seulement)<br/>actif depuis 2026-04-25<br/>Sharpe 1.59 backtest, gate S6 = 2026-06-06"]
+        RADAR["🛑 Cycle radar + 16 motifs sur l'or<br/>CODE ACTIF, SORTIE COUPÉE<br/>REM-002 DISARMED_MANUALLY<br/>depuis 2026-10-12"]
+        DIR["⛔ Direction<br/>RÉFUTÉE 4 fois<br/>49,83 % à bornes symétriques<br/>aucune p sous 0,27"]
+        SORTIE["✅ Gestion de SORTIE<br/>le seul effet payant mesuré<br/>TRAILING_SL = 100 % des gains du 12/10"]
     end
 
-    subgraph EXEC["📡 EXECUTION — qui pousse au broker"]
-        BRIDGE["✅ Bridge Python (VPS Lightsail Windows)<br/>ACTIF pour user admin<br/>VPS 100.74.160.72 / 13.51.157.9<br/>actif depuis 2026-04-20"]
-        EAQUEUE["🆕 EA MQL5 queue (mt5_pending_orders)<br/>DEPLOYÉ mais idle<br/>endpoints /api/ea/* live<br/>aucun user routé encore"]
+    subgraph GARDE["🚧 GARDE-FOUS — ce qui refuse d'ouvrir"]
+        BANC["✅ Porte du banc d'essai<br/>RESEARCH_BENCH_GATE_ENABLED=true<br/>77 admis par antériorité / 21 refusés"]
+        RISQUE["✅ Bloc de risque<br/>plafond €, poches par devise,<br/>refus si taux non vivant"]
+        MOTIFS["✅ 28 motifs de refus<br/>fees_exceed_edge 1 238<br/>sl_too_close 431"]
     end
 
-    subgraph BROKER["🏦 BROKER — où atterrissent les ordres"]
-        PEPPER["✅ Pepperstone démo (compte 62119130)<br/>ACTIF<br/>PaperStone-Demo, paper money"]
+    subgraph EXEC["📡 EXÉCUTION — qui pousse au broker"]
+        MT5["Pont MT5 (PC Windows)<br/>MT5_SERVER vide"]
+        KRAKEN["Pont Kraken (EC2)<br/>port 8790, déploiement À LA MAIN"]
+        IBKR["Route IBKR"]
     end
 
-    V1 ==>|"setups générés<br/>par cycle radar"| BRIDGE
-    BRIDGE ==>|"POST /order"| PEPPER
-    TRACKA -.->|"observe sans<br/>exécuter"| TRACKA
+    subgraph BROKER["🏦 DESTINATIONS — 7 déclarées, 3 actives"]
+        LIVE["💰 admin_live — IC Markets<br/>forex + or — RÉEL"]
+        KRK["💰 admin_kraken — crypto<br/>RÉEL — 22 buckets AUTO_EXEC"]
+        IB["💰 admin_ibkr_us — actions US<br/>RÉEL"]
+        DORM["admin_legacy, admin_kraken_spot,<br/>admin_kraken_stocks, admin_binance<br/>déclarées, inactives"]
+    end
 
-    EAQUEUE -.->|"polls=1<br/>exec=0<br/>(idle)"| BRIDGE_EA["MT5 admin Desktop<br/>(EA attaché XAUUSD M30<br/>depuis 2026-04-30 13h23)"]
+    RADAR ==> BANC
+    BANC ==> RISQUE
+    RISQUE ==> MOTIFS
+    MOTIFS ==>|"bloqué par REM-002"| MT5
+    MT5 ==> LIVE
+    KRAKEN ==> KRK
+    IBKR ==> IB
+    DIR -.->|"ne contribue à aucune décision"| RADAR
+    SORTIE ==> MOTIFS
 
-    style V1 fill:#90EE90
-    style BRIDGE fill:#90EE90
-    style PEPPER fill:#90EE90
-    style TRACKA fill:#FFD700
-    style EAQUEUE fill:#FFA07A
-    style BRIDGE_EA fill:#FFA07A
+    style RADAR fill:#FFB6B6
+    style DIR fill:#D3D3D3
+    style SORTIE fill:#90EE90
+    style BANC fill:#90EE90
+    style RISQUE fill:#90EE90
+    style MOTIFS fill:#90EE90
+    style LIVE fill:#FFD700
+    style KRK fill:#FFD700
+    style IB fill:#FFD700
+    style DORM fill:#D3D3D3
 ```
 
 **Légende :**
-- 🟢 vert = actif, produit du trade en démo
-- 🟡 jaune = actif, produit de la donnée mais pas de trade (observation)
-- 🟠 orange = déployé mais idle (pas de routing vers cette couche)
+- 🟢 vert = actif et vérifié
+- 🟡 jaune = destination en **argent réel**, joignable
+- 🔴 rouge = code actif mais **sortie coupée**
+- ⚪ gris = déclaré, pas en service
 
 ## Détail couche par couche
 
 ### Couche 1 — Signal (qui décide les trades)
 
-| Système | Statut | Depuis | Direction trades | Edge backtest |
-|---|---|---|---|---|
-| **V1 scoring legacy** | ✅ actif prod | ~6 semaines | Multi-pattern, multi-direction, multi-asset | ❌ pas d'edge structurel (verdict 2026-04-25) |
-| **Track A V2_CORE_LONG XAU H4** | 📊 shadow log | 2026-04-25 | LONG only sur XAU + extensions XAG/WTI/ETH | ✅ Sharpe 1.59, maxDD 20% (24m backtest) |
-| ML modèle | ❌ jamais activé | — | — | AUC 0.526 (pas d'edge ML) |
-
-**Ce qui se passe concrètement** : à chaque cycle radar (toutes les ~2 min), V1 calcule
-les setups, les insère en DB. Si `MT5_BRIDGE_ENABLED=true` et le setup match les filtres
-(asset class, confidence ≥ seuil), il est pushé au bridge.
-
-### Couche 2 — Execution (qui pousse les ordres au broker)
-
-| Système | Statut | Depuis | Users routés |
-|---|---|---|---|
-| **Bridge Python (VPS Lightsail)** | ✅ actif | 2026-04-20 | admin (toi) |
-| **EA MQL5 queue** | 🟠 déployé idle | 2026-04-29 deploy + 2026-04-30 attach | aucun (smoke seulement) |
-
-**Pourquoi 2 chemins coexistent** : on est en transition bridge → EA. Le bridge marche,
-on le garde tant que l'EA n'a pas été validé en réel. Une fois Cédric onboardé via EA
-et stabilisé 3-4 jours, on pourra basculer admin sur EA aussi (et déprécier le bridge).
-
-**Routage actuel** :
-- `users.tier = 'premium'` AND `users.api_key_set = true` → EA queue (futur Cédric)
-- Sinon → bridge Python (admin actuellement)
-
-### Couche 3 — Broker (où atterrissent les ordres)
-
-| Broker | Statut | Compte | Mode |
-|---|---|---|---|
-| **Pepperstone UK Demo** | ✅ actif | 62119130 / PepperstoneUK-Demo | Paper money |
-| Pepperstone Réel | ❌ pas activé | — | Bloqué jusqu'à V2 macro ou Track A live |
-
-**Mode démo intentionnel** : V1 a été validé sans edge → on n'investit pas en réel.
-Le passage à argent réel est explicitement gaté sur l'activation Track A (gate S6
-= 2026-06-06) ou un pivot V2 macro.
-
-## Ce qui change dans les 6 prochaines semaines (planning)
-
-| Date | Événement | Impact archi |
+| Système | Statut | Constat |
 |---|---|---|
-| 2026-04-30 (auj.) | Smoke EA admin sur XAUUSD M30 | EA attaché, idle |
-| 2026-04-30 (auj.) | Mail Cédric envoyé | — |
-| ~2026-05-02 | Cédric onboardé sur EA | EA queue passe ACTIVE pour Cédric |
-| 2026-05-03 | Routine W1 shadow log | Premier rapport hebdo Track A |
-| ~2026-05-10 | Décision admin → EA (si Cédric stable) | Bridge Python deprecated |
-| 2026-06-06 | **Gate S6** Track A | GO Phase 5 (auto-exec démo Track A) ou continuation observation |
-| 2026-06+ | Si gate S6 passé | Track A devient signal principal en démo, V1 désactivé |
+| **16 motifs sur l'or** | code actif, **sortie coupée** | produisent des setups ; aucun ne part (REM-002) |
+| **Direction** | ⛔ **réfutée 4 fois** | radar seul (n=59, aucune p < 0,27) ; bornes symétriques (64 062 détections, 6 géométries, **49,83 %**) ; volatilité (ni quand, ni le sens) ; dollar/taux (information **entièrement contemporaine**) |
+| **Gestion de sortie** | ✅ **le seul effet payant** | le 2026-10-12, `TRAILING_SL` : n=108, **+64,02 €**, soit **100 % des gains** |
+| **Traînage indexé sur le spread** | ✅ armé (`0e8a1ae`) | le spread n'agissait auparavant que sur le déclenchement |
+| **Plancher du stop indexé sur le spread** (k=2) | ✅ retenu | banc apparié 3,3 M ticks / 15 j : pire jour −0,151 → −0,129 |
+| **ML** | ❌ jamais activé | AUC 0,526 |
+
+**Ce qui se passe concrètement** : le cycle radar calcule les setups et les
+insère en base. La chaîne de portes les évalue, et **la sortie est fermée** au
+niveau REM-002. Les setups continuent donc d'être **journalisés** sans être
+exécutés — ce qui est la situation voulue.
+
+### Couche 2 — Garde-fous (ce qui refuse d'ouvrir)
+
+| Garde-fou | Réglage | Effet mesuré |
+|---|---|---|
+| **Porte du banc d'essai** | `RESEARCH_BENCH_GATE_ENABLED=true` | sur 98 buckets : **77 admis** (tous par la clause d'antériorité du 2026-08-25), **21 refusés** — aucun des 21 n'est en `AUTO_EXEC` |
+| **Bloc de risque** | plafond €, poches par devise, métaux séparés | refuse explicitement quand le taux n'est pas vivant |
+| **`fees_exceed_edge`** | plancher **13,83 $** = prix/300 | **1 238 refus** — c'est lui qui interdit un départ à 9 € |
+| **`sl_too_close`** | stop ≥ **0,05 %** = 2,075 $ | **431 refus** |
+| **Pause après rafale de stops** | `RAFALE_AUTO_PAUSE_ENABLED=false` | ⛔ **désarmée** par Xavier le 2026-10-12 |
+
+🔑 **Ces garde-fous bloquent l'OUVERTURE.** Aucun ne gère une position déjà
+ouverte — c'est la gestion de sortie qui s'en charge.
+
+### Couche 3 — Exécution et destinations
+
+| Destination | Courtier | Argent | Statut |
+|---|---|---|---|
+| `admin_live` | **IC Markets** via MT5 | réel | active — forex et or |
+| `admin_kraken` | **Kraken** | réel | active — **22 buckets `AUTO_EXEC`** |
+| `admin_ibkr_us` | **IBKR** | réel | active — actions américaines |
+| `admin_legacy` | ancienne route MT5 | réel | inactive |
+| `admin_kraken_spot`, `admin_kraken_stocks`, `admin_binance` | — | — | déclarées, jamais mises en service |
+
+Le registre (`backend/services/destinations_registry.py`) en déclare **7** ;
+**3 sont actives**.
+
+🔑 **Le registre déclare, le `BridgeConfig` décide.** Une destination déclarée
+n'est pas joignable d'office, et une destination joignable n'a pas ses filtres
+armés d'office. C'est ce décalage qui a laissé `admin_kraken` pousser en argent
+réel **sans filtre de paires** jusqu'au 2026-10-30 (`fb8b283`) : la liste
+blanche existait mais était gardée par `bridge_type == "mt5"`.
+
+### Ce qui limite l'exposition réelle, concrètement
+
+```
+MT5_BRIDGE_LIVE_WHITELIST_PAIRS=XAU/USD
+MT5_BRIDGE_ALLOWED_ASSET_CLASSES=forex,metal,energy,crypto
+WATCHED_PAIRS=<25 paires>
+```
+
+- **`WATCHED_PAIRS` est l'univers OBSERVÉ** (25 paires), pas l'univers tradé.
+- **La classe d'actif autorise large**, mais
+- **la liste blanche ne laisse passer que `XAU/USD`** depuis le 2026-10-08.
+  Donc IBKR, l'énergie et les indices **ne partent pas en réel**.
+
+### 🛑 L'interrupteur général
+
+**REM-002 `DISARMED_MANUALLY` depuis le 2026-10-12.** Décision de Xavier après
+une journée à **−38,31 €** : « j'ai perdu assez d'argent aujourd'hui ».
+`MT5_SERVER` est vide.
+
+⛔ **Le réarmement demande une décision humaine explicitement nommée.**
+
+Vérifier avec la skill `or-etat`, qui contrôle les **trois voies d'ordre** —
+un seul drapeau vert ne prouve pas que les trois sont fermées.
 
 ## Comment vérifier ce qui tourne en live (commandes)
 
 ```bash
-# 1. Quel système signal pousse les trades ?
-curl -u admin:PASS https://app.scalping-radar.online/api/trades?limit=5
-# → champ `signal_pattern` = source V1 (range_bounce_down, momentum_up, etc.)
+# 0. Est-ce armé ? La seule réponse qui vaut : les TROIS voies
+#    (skill or-etat ; un drapeau isolé ne prouve rien)
 
-# 2. Quelle couche execution est routée ?
-# → champ `notes` du trade contient "Auto-exec via bridge MT5" = Bridge Python
-# → si "Auto-exec via EA queue" = EA MQL5
+# 1. Accès à l'hôte — la clé est DANS le dépôt, à la racine
+ssh -i scalping-key.pem ec2-user@13.63.77.180
 
-# 3. État du shadow log Track A
-curl https://app.scalping-radar.online/api/shadow/v2_core_long/public-summary?token=<INFRA_NOTIFY_TOKEN>
+# 2. Les réglages qui limitent l'exposition (noms de clés, pas de secrets)
+sudo grep -E '^(MT5_BRIDGE_LIVE_WHITELIST_PAIRS|MT5_BRIDGE_ALLOWED_ASSET_CLASSES|RESEARCH_BENCH_GATE_ENABLED|MT5_SERVER)=' /opt/scalping/.env
 
-# 4. État santé EA admin (sur PC local MT5)
-# Onglet Experts dans MT5 → ligne "[ScalpingRadarEA] alive — polls=N exec=N fail=N"
+# 3. Un setup passerait-il ? Ne PAS deviner : rejouer les ~30 portes réelles
+#    (skill or-porte, par destination)
+
+# 4. La configuration est-elle saine ?
+#    (skill or-politique : refuse une destination en réel sans filtre de paires)
+
+# 5. Déploiement — le script documente lui-même cette surcharge
+SCALPING_HOST=ec2-user@13.63.77.180 bash deploy-v2.sh
 ```
 
-## Pourquoi cet empilement (rationale)
+⚠️ **Pièges de déploiement vérifiés :**
+- un script de `/opt/scalping/jobs/` **écrase celui de l'image à chaque
+  minute** — un rebuild ne le déploie donc pas ;
+- le **pont Kraken se déploie à la main** (`/opt/kraken-bridge/bridge.py`,
+  root:root 644, `kraken-bridge.service`, port 8790 vu comme
+  `172.17.0.1:8790` du conteneur) : CRLF→LF, scp, `py_compile` avec
+  `/opt/kraken-bridge/venv/bin/python`, `sudo install`, redémarrage — **un
+  geste à la fois**, un script `sudo` composé est refusé ;
+- le décalage horaire du pont est **déterministe** :
+  `-decalage_serveur_sec/60 + 180`, **à soustraire** (21 j/21, 154 ancres).
 
-On a **trois ères qui coexistent** parce qu'on est dans une transition :
+## Dettes connues au 2026-10-31
 
-1. **Ère V1 (legacy, ~mars 2026 → aujourd'hui)** : système initial, signaux multi-pattern.
-   Backtest a invalidé son edge le 2026-04-25 mais on continue à le faire tourner en
-   démo car (a) il alimente les analytics, (b) il sert de baseline observable, (c)
-   l'arrêter avant Track A live = trou dans la timeline.
+| Dette | État |
+|---|---|
+| Le pont Kraken ne publie pas ses `garde_fous` indépendamment | ouverte |
+| Le **markup hors de l'or est inconnu** | ouverte — à établir **avant** tout niveau absolu ; sur l'or il valait **10 points** entre les deux routes du pont |
+| `RESEARCH_BENCH_GATE_ENABLED` est posé **deux fois** dans le `.env` de prod | ouverte — valeurs concordantes, donc sans effet, mais piège pour le prochain |
+| `"EUR/USD` et `LINK/USD"` (guillemets collés) dans la table d'admission | ouverte — 2 lignes chacune, écrites le 2026-08-23, toutes deux en TELEGRAM donc inoffensives ; `WATCHED_PAIRS` est propre |
+| Banc prospectif hors échantillon du 13 novembre | pré-inscrit (`4359c74`), reste à écrire |
+| **R-27** : la suite ne rend pas deux fois le même verdict | ouverte — voir les règles non négociables de `CLAUDE.md` |
 
-2. **Ère recherche Track A (2026-04-25 → maintenant)** : pivot vers un système
-   risk-adjusted validé. En shadow log seulement jusqu'à gate S6.
-
-3. **Ère pivot infra MQL5 (2026-04-29 → maintenant)** : changement d'architecture
-   d'exécution (bridge Python → EA). Indépendant du signal, c'est juste pour
-   simplifier l'onboarding des futurs users premium (Cédric en premier).
-
-L'archi finale visée (~2026-06-15+) : **Track A signal → EA queue → Pepperstone démo**.
-Trois couches simplifiées, V1 et bridge Python tous deux deprecated.
-
-## Circuit breaker — auto-pause/auto-resume per-pair sur rafale SL
-
-**Activé depuis 2026-04-30** (env `RAFALE_AUTO_PAUSE_ENABLED=true`, default).
-
-Le watchdog `stop_loss_alerts` tourne toutes les 5 min avec **3 niveaux de
-détection** :
-
-| Détection | Seuil | Action |
-|---|---|---|
-| **Par pair** (chirurgical) | ≥ 3 SL même pair en 1h | ⛔ Pause **cette pair seule** 2h. Les autres pairs continuent. |
-| **Globale** (filet sécu) | ≥ 10 SL toutes pairs en 1h | 🛑 Pause **TOUT** l'auto-exec 2h. Pour incident systémique. |
-| **Par pattern** (info) | ≥ 3 SL même pattern en 1h | 📢 Telegram seul, pas de pause. Aide à décider de désactiver un pattern. |
-
-**Conception per-pair** : un cluster de SL sur XAU déclenche une pause sur
-XAU uniquement. XAG, ETH, WTI continuent à trader normalement. Chaque pair
-a son propre timer d'auto-resume indépendant. Pas d'effet domino sur des
-supports sains.
-
-**Smart resume** (vs blind countdown) : à chaque cycle 5 min, pour chaque
-pair en pause, le watchdog évalue 3 décisions possibles :
-
-- `KEEP_COOL_OFF` : `now < min_resume_at` (default cool-off 30 min,
-  `RAFALE_MIN_COOL_OFF_MIN`) → anti-flapping, garde paused
-- `KEEP_V1_STILL_TRYING` : V1 a tenté le pattern défaillant via
-  `signal_rejections.kill_switch_pair_paused` dans la fenêtre
-  `RAFALE_QUIET_WINDOW_MIN` (default 15 min) → garde paused, V1 est
-  toujours en boucle
-- `SMART_RESUME` : V1 quiet sur le pattern depuis 15 min → resume
-  propre, libération du flag + Telegram "V1 a lâché"
-- `FORCE_RESUME` : `now >= max_resume_at` (plafond 6h
-  `RAFALE_MAX_PAUSE_HOURS`) → resume forcé même si V1 essaie encore +
-  Telegram "Action humaine recommandée"
-
-Les rejections incluent `signal_pattern` dans `details` (JSON) pour
-permettre la query `JSON_EXTRACT(details, '$.signal_pattern')` côté
-watchdog.
-
-**Auto-resume global** (filet de sécu) : timing simple, expire après
-`RAFALE_MAX_PAUSE_HOURS * 60` minutes via
-`consume_expired_global_rafale_pause()`. Pas de smart logic car un
-incident systémique justifie une revue humaine.
-
-**Vérification per-pair côté `mt5_bridge._should_push`** :
-```python
-if kill_switch.is_active(pair=setup.pair):
-    if kill_switch.is_pair_rafale_paused(setup.pair)[0]:
-        return "kill_switch_pair_paused"  # rejection_code dédié
-    return "kill_switch"
-```
-
-**Effet sur les couches** :
-- Couche 1 (signal) : continue de générer pour TOUTES les pairs (analytics intactes)
-- Couche 2 (exec) : ordres bloqués pour les pairs paused uniquement, **trades
-  ouverts continuent** jusqu'à leur SL/TP naturel (pas de fermeture forcée)
-- Couche 3 (broker) : aucun changement
-
-**Endpoint d'observation** : `/api/status` → bloc `kill_switch.paused_pairs`
-liste les pairs actuellement en pause avec leur info (reason, expires_at).
-
-**Désactivation** : `RAFALE_AUTO_PAUSE_ENABLED=false` dans `.env` puis
-restart. Ou clear manuel d'une pair :
-`kill_switch.clear_pair_rafale_pause("XAU/USD")` via shell Python.
-
-## Liens utiles
-
-- Verdict V1 : [`docs/superpowers/specs/2026-04-22-backtest-v1-findings.md`](superpowers/specs/2026-04-22-backtest-v1-findings.md)
-- Synthèse recherche : [`docs/superpowers/specs/2026-04-26-research-project-synthesis.md`](superpowers/specs/2026-04-26-research-project-synthesis.md)
-- Spec EA pivot : [`docs/superpowers/specs/2026-04-29-mql5-ea-pivot-spec.md`](superpowers/specs/2026-04-29-mql5-ea-pivot-spec.md)
-- Multi-tenant routing : [`docs/superpowers/specs/2026-04-28-multi-tenant-bridge-routing.md`](superpowers/specs/2026-04-28-multi-tenant-bridge-routing.md)
-- Journal observation drawdown : [`docs/superpowers/journal/2026-04-30-v1-drawdown-observation.md`](superpowers/journal/2026-04-30-v1-drawdown-observation.md)
+Pour le détail d'un trade de bout en bout :
+[`cycle-de-vie-d-un-trade-or.md`](cycle-de-vie-d-un-trade-or.md).
+Pour les règles de travail : [`../CLAUDE.md`](../CLAUDE.md).
