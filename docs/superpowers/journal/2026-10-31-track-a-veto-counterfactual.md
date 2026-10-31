@@ -1,13 +1,10 @@
-# 2026-10-31 — Track A × veto contrefactuel (auto)
-
-**Sample :** 4381 réconciliés (EXPLOITABLE — signal directionnel possible, intervalles larges)
-**Verdict :** neutral
+> 🚨 **ALERT VERDICT CHANGED** — direction_verdict = `neutral`, n_total = `4387`. Le veto a quitté le statut 'insufficient'.
 
 # Track A × Veto géopolitique — analyse contrefactuelle
 
-**Généré :** 2026-10-31T06:03:45+00:00
+**Généré :** 2026-10-31T07:07:38+00:00
 **Source :** `shadow_setups` filtre `outcome IS NOT NULL AND geopolitical_features_json IS NOT NULL`
-**Échantillon :** 4381 setups réconciliés
+**Échantillon :** 4387 setups réconciliés
 **Groupe décisif (would VETO) :** 73 setups
 **Confiance :** EXPLOITABLE — signal directionnel possible, intervalles larges
 
@@ -15,9 +12,9 @@
 
 | Groupe | n | n_tp | n_sl | n_timeout | win_rate | PF | mean PnL% | total PnL% |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| Tous | 4381 | 790 | 2065 | 1526 | 27.7% | 1.10 | +0.17% | +765.14% |
+| Tous | 4387 | 790 | 2071 | 1526 | 27.6% | 1.10 | +0.17% | +763.69% |
 | Would VETO | 73 | 9 | 29 | 35 | 23.7% | 1.30 | +0.20% | +14.39% |
-| Would PASS | 4308 | 781 | 2036 | 1491 | 27.7% | 1.10 | +0.17% | +750.76% |
+| Would PASS | 4314 | 781 | 2042 | 1491 | 27.7% | 1.10 | +0.17% | +749.30% |
 
 ## Verdict directionnel
 
@@ -25,7 +22,7 @@
 
 ## ⚠️ Paires au résultat invraisemblable
 
-Ces paires gagnent (ou perdent) **100 % du temps**, alors que l'ensemble gagne 38.3 %. Presque sûrement un artefact de log, pas un résultat.
+Ces paires gagnent (ou perdent) **100 % du temps**, alors que l'ensemble gagne 38.2 %. Presque sûrement un artefact de log, pas un résultat.
 
 | Paire | n | mean PnL% |
 |---|---:|---:|
@@ -44,13 +41,13 @@ Ces paires gagnent (ou perdent) **100 % du temps**, alors que l'ensemble gagne 3
 
 | Pair | n | n_tp | n_sl | n_timeout | mean PnL% |
 |---|---:|---:|---:|---:|---:|
-| USD/CAD | 272 | 70 | 112 | 90 | +0.05% |
+| USD/CAD | 274 | 70 | 114 | 90 | +0.05% |
 | GBP/USD | 268 | 52 | 115 | 101 | -0.01% |
 | AUD/USD | 252 | 33 | 154 | 65 | -0.13% |
 | EUR/USD | 248 | 34 | 150 | 64 | -0.13% |
-| EUR/GBP | 215 | 44 | 126 | 45 | -0.11% |
+| EUR/GBP | 217 | 44 | 128 | 45 | -0.11% |
+| USD/CHF | 200 | 46 | 87 | 67 | +0.03% |
 | USD/JPY | 200 | 20 | 112 | 68 | -0.15% |
-| USD/CHF | 198 | 46 | 85 | 67 | +0.03% |
 | EUR/JPY | 194 | 23 | 102 | 69 | -0.16% |
 | GBP/JPY | 188 | 16 | 100 | 72 | -0.13% |
 | WTI/USD | 168 | 24 | 84 | 60 | -0.39% |
