@@ -91,8 +91,8 @@ def charger_bougies() -> list[dict]:
     return bougies
 
 
-def mesurer_un_seuil(bougies_m5: list[dict], seuil: float,
-                     spread: float) -> list[dict]:
+def mesurer_un_seuil(bougies_m5: list[dict], seuil: float, spread: float,
+                     echelles: tuple[int, ...]) -> list[dict]:
     """Les cellules `mean_reversion` pour UN seuil et UN spread.
 
     ⛔ Le seuil est posé sur le module de production, puis restauré. Le
@@ -103,7 +103,7 @@ def mesurer_un_seuil(bougies_m5: list[dict], seuil: float,
     avant = pd.MEAN_REVERSION_SIGMA
     pd.MEAN_REVERSION_SIGMA = seuil
     try:
-        brut = labo.mesurer(bougies_m5, spread, pair=PAIRE)
+        brut = labo.mesurer(bougies_m5, spread, pair=PAIRE, echelles=echelles)
     finally:
         pd.MEAN_REVERSION_SIGMA = avant
 
@@ -148,7 +148,20 @@ def main(argv: list[str] | None = None) -> int:
                     help="ESSAI A BLANC sur les N dernieres bougies. "
                          "⛔ Rend 3 : la validite du rejeu n'est pas tenue, "
                          "et aucun verdict n'est publiable.")
+    # ⚠️ Une echelle a la fois : l'EC2 a 3,75 Go dont 1,34 pris par le radar,
+    # et `detections()` garde en memoire les setups de TOUS les indices de
+    # l'echelle. M5 sur 99 750 bougies est le cas lourd. Decouper ne change
+    # AUCUN chiffre — les cellules sont independantes par echelle, et le
+    # controle aleatoire est deja calcule par echelle et par sens.
+    #
+    # ⛔ Le plafond reste celui des 24 cellules PRE-INSCRITES, jamais celui du
+    # sous-ensemble execute : le reduire parce qu'on mesure par morceaux
+    # abaisserait la barre en douce.
+    ap.add_argument("--echelle", type=int, default=0, metavar="F",
+                    help="ne mesurer QUE cette echelle (1=M5, 3=M15, 6=M30, "
+                         "12=M60). Le plafond reste celui des 24 cellules.")
     a = ap.parse_args(argv)
+    echelles = (a.echelle,) if a.echelle else labo.ECHELLES
 
     bougies = charger_bougies()
     print("bougies M5 lues : %d" % len(bougies))
@@ -172,7 +185,7 @@ def main(argv: list[str] | None = None) -> int:
     toutes: list[dict] = []
     for spread in SPREADS:
         for seuil in SEUILS:
-            cells = mesurer_un_seuil(bougies, seuil, spread)
+            cells = mesurer_un_seuil(bougies, seuil, spread, echelles)
             toutes.extend(cells)
             print("--- seuil %.1f sigma, spread %.2f : %d cellule(s)"
                   % (seuil, spread, len(cells)))
@@ -232,11 +245,13 @@ def main(argv: list[str] | None = None) -> int:
               % (len(bougies), MIN_BOUGIES))
         return 3
 
-    with open("/app/data/banc_retour_moyenne_or.json", "w") as fh:
+    suffixe = ("_x%d" % a.echelle) if a.echelle else ""
+    chemin = "/app/data/banc_retour_moyenne_or%s.json" % suffixe
+    with open(chemin, "w") as fh:
         json.dump({"cellules": toutes, "plafond": PLAFOND,
                    "t_max": t_max, "admises": [list(x) for x in admises],
                    "bougies": len(bougies)}, fh, default=str, indent=1)
-    print("detail ecrit dans /app/data/banc_retour_moyenne_or.json")
+    print("detail ecrit dans %s" % chemin)
     return 0
 
 
