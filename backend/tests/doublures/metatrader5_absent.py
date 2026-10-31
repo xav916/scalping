@@ -46,6 +46,16 @@ vrai MetaTrader5 : ce fichier ne masque jamais le réel quand le réel existe.
 """
 from __future__ import annotations
 
+#: ⛔ Sceau qui permet de RECONNAITRE cette doublure une fois installee dans
+#: `sys.modules["MetaTrader5"]`.
+#:
+#: 🔑 Sans lui, `importlib.util.find_spec("MetaTrader5")` rend le `__spec__`
+#: de CE fichier — donc « le module existe », donc les comparaisons censees
+#: ne tourner que sous Windows comparaient la doublure A ELLE-MEME. Accord
+#: parfait et vide : exactement le piege annonce dans la docstring de
+#: `test_doublure_metatrader5.py`, et il s'est referme sur moi en CI.
+EST_UNE_DOUBLURE = True
+
 __version__ = "doublure-de-test (le vrai module est absent de cet hote)"
 
 # ─── Constantes : valeurs LUES dans MetaTrader5 5.0.5735 le 2026-10-31 ────

@@ -109,9 +109,16 @@ jobs:
         # changeant GRAINE. Chaque valeur est un ordre different, et celle qui
         # echoue reste rejouable pour toujours.
         #
-        # `-rs` liste les motifs de skip : l'objectif fixe est « 0 erreur,
-        # 0 skip sans raison documentee », et un motif vide doit donc se voir
-        # dans le journal du run.
+        # `-ra` liste les motifs de SKIP **et** les noms des ECHECS.
+        #
+        # ⛔ La premiere version mettait `-rs`, qui ne rapporte QUE les skips.
+        # Au premier run rouge, les 5 noms n'etaient donc nulle part dans le
+        # resume : il a fallu fouiller le corps du journal pour les trouver.
+        # Un rapport qui cache ce qui a casse fait perdre le temps qu'une CI
+        # est censee gagner.
+        #
+        # L'objectif fixe reste « 0 erreur, 0 skip sans raison documentee » :
+        # un motif vide doit se voir dans le journal du run.
         env:
           GRAINE: "20261031"
         run: |
@@ -120,4 +127,4 @@ jobs:
           echo "  python -m pytest backend/tests -q --randomly-seed=$GRAINE"
           python -m pytest backend/tests -q \
             -p randomly --randomly-seed="$GRAINE" \
-            -rs --durations=10
+            -ra --durations=10

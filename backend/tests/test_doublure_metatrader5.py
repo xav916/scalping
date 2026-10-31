@@ -23,6 +23,9 @@ mordent, et c'est là que la dérive sera vue.
 from __future__ import annotations
 
 import importlib
+import sys
+from unittest import mock
+import types
 import importlib.util
 
 import pytest
@@ -39,7 +42,24 @@ _CONSTANTES = [
     "TRADE_ACTION_DEAL", "TRADE_ACTION_SLTP", "TRADE_RETCODE_DONE",
 ]
 
-_vrai_dispo = importlib.util.find_spec("MetaTrader5") is not None
+def _le_vrai_module_est_la() -> bool:
+    """⛔ `find_spec("MetaTrader5") is not None` ne suffit PAS.
+
+    Une fois la doublure posee dans `sys.modules`, `find_spec` rend SON
+    `__spec__` : la reponse est « oui » alors que le vrai module est absent.
+    Les comparaisons se faisaient alors doublure contre doublure, et
+    passaient toutes — 16 tests verts et vides, livres en CI le 2026-10-31.
+
+    La question juste est donc : y a-t-il un module `MetaTrader5` qui NE
+    porte PAS le sceau de la doublure ?
+    """
+    installe = sys.modules.get("MetaTrader5")
+    if installe is not None:
+        return not getattr(installe, "EST_UNE_DOUBLURE", False)
+    return importlib.util.find_spec("MetaTrader5") is not None
+
+
+_vrai_dispo = _le_vrai_module_est_la()
 
 _sans_le_vrai = pytest.mark.skipif(
     not _vrai_dispo,
@@ -149,3 +169,47 @@ def test_la_doublure_ne_REMPLACE_pas_le_vrai_module_quand_il_existe():
     assert getattr(installe, "__version__", "") != doublure.__version__, (
         "la doublure a ete installee a la place du vrai module alors qu'il est "
         "disponible : corriger la condition dans conftest.py")
+
+
+# --- le garde du SCEAU, qui empeche le defaut de revenir ---------------
+
+def test_un_module_SCELLE_n_est_jamais_pris_pour_le_vrai():
+    """⛔ Le defaut livre en CI le 2026-10-31, et son garde.
+
+    `find_spec("MetaTrader5") is not None` rendait VRAI une fois la doublure
+    posee dans `sys.modules` — car `find_spec` consulte `sys.modules` avant
+    tout. Les 16 comparaisons « Windows seulement » comparaient donc la
+    doublure A ELLE-MEME : 16 tests verts et vides.
+
+    🔑 Le piege etait ANNONCE dans la docstring de ce fichier — « comparer la
+    doublure a elle-meme donnerait un accord parfait et vide » — et il s'est
+    referme quand meme. L'annoncer ne suffit pas : il faut le verifier.
+
+    ⚠️ Et il etait invisible en local parce que mon simulateur de Linux
+    forcait `find_spec` a rendre None MEME apres l'installation de la
+    doublure. Un temoin plus clement que la realite ne temoigne de rien.
+    """
+    faux = types.ModuleType("MetaTrader5")
+    faux.EST_UNE_DOUBLURE = True
+    faux.__spec__ = importlib.util.spec_from_loader("MetaTrader5", loader=None)
+    with mock.patch.dict(sys.modules, {"MetaTrader5": faux}):
+        assert _le_vrai_module_est_la() is False, (
+            "un module portant EST_UNE_DOUBLURE a ete pris pour le vrai : les "
+            "comparaisons vont se faire doublure contre doublure")
+
+
+def test_un_module_NON_scelle_est_bien_pris_pour_le_vrai():
+    """Le pendant : la detection ne doit pas devenir aveugle au vrai module,
+    sinon les comparaisons ne mordraient plus JAMAIS, nulle part."""
+    vrai_ish = types.ModuleType("MetaTrader5")
+    vrai_ish.TIMEFRAME_H1 = 16385      # pas de sceau
+    with mock.patch.dict(sys.modules, {"MetaTrader5": vrai_ish}):
+        assert _le_vrai_module_est_la() is True
+
+
+def test_la_doublure_livree_PORTE_bien_son_sceau():
+    """Si le sceau disparaissait du fichier de doublure, la detection
+    redeviendrait fausse en silence."""
+    assert getattr(doublure, "EST_UNE_DOUBLURE", False) is True, (
+        "backend/tests/doublures/metatrader5_absent.py a perdu son sceau "
+        "EST_UNE_DOUBLURE : les comparaisons vont repasser a vide")
