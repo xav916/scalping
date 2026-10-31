@@ -114,7 +114,7 @@ curl -u admin:PASS https://app.scalping-radar.online/api/trades?limit=5
 # → si "Auto-exec via EA queue" = EA MQL5
 
 # 3. État du shadow log Track A
-curl https://app.scalping-radar.online/api/shadow/v2_core_long/public-summary?token=shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg
+curl https://app.scalping-radar.online/api/shadow/v2_core_long/public-summary?token=<INFRA_NOTIFY_TOKEN>
 
 # 4. État santé EA admin (sur PC local MT5)
 # Onglet Experts dans MT5 → ligne "[ScalpingRadarEA] alive — polls=N exec=N fail=N"
