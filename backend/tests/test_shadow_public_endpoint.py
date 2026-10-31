@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
+from backend.tests.jeton_de_test import JETON_PUBLIC_DE_TEST
 
 
 @pytest.fixture
@@ -30,7 +31,7 @@ def test_public_summary_invalid_token(client):
 
 def test_public_summary_valid_token(client):
     """Token valide → 200 + structure summary."""
-    valid_token = "shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg"
+    valid_token = JETON_PUBLIC_DE_TEST
     r = client.get(f"/api/shadow/v2_core_long/public-summary?token={valid_token}")
     assert r.status_code == 200
     data = r.json()

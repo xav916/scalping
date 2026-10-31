@@ -18,7 +18,8 @@
 set -euo pipefail
 
 URL_HEALTH="${URL_HEALTH:-http://100.74.160.72:8788/health}"
-TOKEN="shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg"
+# INFRA_NOTIFY_TOKEN est OBLIGATOIRE : aucune valeur par defaut (audit S-1).
+TOKEN="${INFRA_NOTIFY_TOKEN:?INFRA_NOTIFY_TOKEN absente : ce script notifie l infrastructure et ne peut pas s authentifier sans elle. Aucune valeur par defaut n est admise (audit S-1). Poser la variable dans l environnement du cron ou du service.}"
 URL_NOTIFY="https://app.scalping-radar.online/api/admin/notify-infra-telegram?token=${TOKEN}&channel=infra"
 STATE_DIR="/var/lib/scalping"
 STATE_OK="${STATE_DIR}/live-bridge-last-ok.txt"

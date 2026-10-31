@@ -13,7 +13,11 @@ from pathlib import Path
 # Configuration
 HEALTH_ENDPOINT = "https://app.scalping-radar.online/api/admin/auto-exec/health-token"
 NOTIFY_ENDPOINT = "https://app.scalping-radar.online/api/admin/notify-infra-telegram"
-ADMIN_TOKEN = "shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg"
+# INFRA_NOTIFY_TOKEN est OBLIGATOIRE : aucune valeur par defaut (audit S-1).
+ADMIN_TOKEN = (os.environ.get("INFRA_NOTIFY_TOKEN") or "").strip()
+if not ADMIN_TOKEN:
+    raise SystemExit(
+        "INFRA_NOTIFY_TOKEN absente : ce script notifie l'infrastructure et ne peut pas s'authentifier sans elle. Aucune valeur par defaut n'est admise (audit S-1). Poser la variable dans l'environnement du cron ou du service.")
 
 HEARTBEAT_STALE_THRESHOLD = 1800  # 30 min
 MIN_ORDERS_FOR_EXEC_RATE = 3

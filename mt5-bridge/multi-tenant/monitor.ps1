@@ -19,7 +19,12 @@ function Log($msg) {
 }
 
 function Send-InfraAlert($title, $body, $dedupKey, $cooldownSec = 3600) {
-    $token = "shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg"
+    # INFRA_NOTIFY_TOKEN est OBLIGATOIRE : aucune valeur par defaut (audit S-1).
+    $token = $env:INFRA_NOTIFY_TOKEN
+    if (-not $token) {
+        Write-Error "INFRA_NOTIFY_TOKEN absente : ce script notifie l'infrastructure et ne peut pas s'authentifier sans elle. Aucune valeur par defaut n'est admise (audit S-1). Poser la variable dans l'environnement du cron ou du service."
+        exit 1
+    }
     $url = "https://app.scalping-radar.online/api/admin/notify-infra-telegram?token=$token"
     $payload = @{
         title = $title

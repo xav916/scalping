@@ -31,6 +31,7 @@ from config.settings import (
     STRIPE_ENABLED,
     display_name_for,
     email_in_whitelist,
+    exiger_jeton_public,
 )
 
 from backend.services import (
@@ -66,10 +67,59 @@ logger = logging.getLogger(__name__)
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
 
 
+def _verifier_jeton_public(token: str | None) -> None:
+    """Authentifie un appelant des points d'entree publics, ou leve.
+
+    ⛔ Constat d'audit S-1 : ce controle etait recopie a NEUF endroits de ce
+    fichier, chacun portant le hash EN DUR. Neuf copies ne donnent pas neuf
+    chances d'etre juste : elles donnent neuf chances de diverger, et le
+    secret etait de fait publie dans le depot.
+
+    🔑 Un seul controle, une seule lecture (`config.settings`). Les codes et
+    les messages sont INCHANGES — `403 token required` et `403 invalid
+    token` — parce que des tests et des scripts d'exploitation en dependent.
+
+    ⚠️ Une configuration manquante rend **500**, pas 403 : « je ne sais pas
+    authentifier » n'est pas « tu n'es pas autorise ». Confondre les deux
+    ferait chercher un probleme de jeton chez l'appelant alors qu'il est
+    chez nous.
+    """
+    if not token:
+        raise HTTPException(status_code=403, detail="token required")
+    try:
+        attendu = exiger_jeton_public()
+    except RuntimeError:
+        logger.error(
+            "SHADOW_PUBLIC_TOKEN_HASH absente : point d'entree public "
+            "inutilisable. Poser la variable dans le .env et redemarrer.")
+        raise HTTPException(status_code=500,
+                            detail="server misconfigured") from None
+    fourni = hashlib.sha256(token.encode()).hexdigest()
+    # Comparaison a temps constant pour ne pas fuir le hash par la duree.
+    if not secrets.compare_digest(fourni, attendu):
+        raise HTTPException(status_code=403, detail="invalid token")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown lifecycle."""
     logger.info("Starting Scalping Decision Tool...")
+    # ⛔ L'APPLICATION refuse de demarrer sans le secret (audit S-1). Le
+    # controle est ICI et non a l'import de `config.settings` : ce module est
+    # importe par 6 300 tests, par les bancs et par les scripts, qui n'ont
+    # aucune raison d'exiger un secret de production. « Refuser de demarrer »
+    # vise le serveur.
+    exiger_jeton_public()
+    # ⚠️ Une porte DESARMEE doit se voir dans le journal. Un garde-fou qu'on
+    # a eteint six semaines plus tot sans que rien ne le repete est un
+    # garde-fou qu'on croit arme (audit R-2).
+    from config.settings import RESEARCH_BENCH_GATE_ENABLED as _porte_banc
+    if not _porte_banc:
+        logger.warning(
+            "RESEARCH_BENCH_GATE_ENABLED=false : la porte qui exige un banc "
+            "avant une promotion vers l'argent reel est DESARMEE. Elle est "
+            "armee par defaut depuis le 2026-10-31 (audit R-2) ; ce "
+            "desarmement vient donc d'une variable posee explicitement.")
     # Chantier 1 SaaS : init table users + migration user_id. Idempotent.
     try:
         users_service.init_users_schema()
@@ -2370,19 +2420,7 @@ async def api_shadow_public_summary(token: str = ""):
     import hashlib
     from fastapi import HTTPException
 
-    # SHA256 du token clair. Token clair dans la config routine.
-    # Régénérable via : python -c "import secrets; print('shdw_'+secrets.token_urlsafe(24))"
-    SHADOW_PUBLIC_TOKEN_HASH = "e980b1ed0b45ca6873caa3f2d6ddcf27f4d8a1d0aa87cf9072f6e3e0909b31ec"
-
-    if not token:
-        raise HTTPException(status_code=403, detail="token required")
-
-    provided_hash = hashlib.sha256(token.encode()).hexdigest()
-    # Comparison time-constant pour éviter timing attacks
-    import secrets as _s
-    if not _s.compare_digest(provided_hash, SHADOW_PUBLIC_TOKEN_HASH):
-        raise HTTPException(status_code=403, detail="invalid token")
-
+    _verifier_jeton_public(token)
     from backend.services.shadow_v2_core_long import summary
     return summary()
 
@@ -2407,15 +2445,7 @@ async def api_shadow_counterfactual(token: str = "", days: int = 30):
     from pathlib import Path
     from fastapi import HTTPException
 
-    SHADOW_PUBLIC_TOKEN_HASH = "e980b1ed0b45ca6873caa3f2d6ddcf27f4d8a1d0aa87cf9072f6e3e0909b31ec"
-
-    if not token:
-        raise HTTPException(status_code=403, detail="token required")
-    provided_hash = hashlib.sha256(token.encode()).hexdigest()
-    import secrets as _s
-    if not _s.compare_digest(provided_hash, SHADOW_PUBLIC_TOKEN_HASH):
-        raise HTTPException(status_code=403, detail="invalid token")
-
+    _verifier_jeton_public(token)
     from scripts.research.track_a_veto_counterfactual import (
         load_reconciled_setups,
         build_report,
@@ -2469,15 +2499,7 @@ async def api_admin_test_telegram_pedagogic(token: str = "", pair: str = "XAU/US
     from types import SimpleNamespace
     from backend.services.telegram_service import _format_setup, send_text
 
-    SHADOW_PUBLIC_TOKEN_HASH = "e980b1ed0b45ca6873caa3f2d6ddcf27f4d8a1d0aa87cf9072f6e3e0909b31ec"
-
-    if not token:
-        raise HTTPException(status_code=403, detail="token required")
-    provided_hash = hashlib.sha256(token.encode()).hexdigest()
-    import secrets as _s
-    if not _s.compare_digest(provided_hash, SHADOW_PUBLIC_TOKEN_HASH):
-        raise HTTPException(status_code=403, detail="invalid token")
-
+    _verifier_jeton_public(token)
     # Setup factice réaliste pour XAU/USD H4 ACHAT
     presets: dict[str, dict] = {
         "XAU/USD": {
@@ -2563,15 +2585,7 @@ async def api_admin_test_telegram_close_pedagogic(
     from fastapi import HTTPException
     from backend.services.telegram_service import _format_close, send_text
 
-    SHADOW_PUBLIC_TOKEN_HASH = "e980b1ed0b45ca6873caa3f2d6ddcf27f4d8a1d0aa87cf9072f6e3e0909b31ec"
-
-    if not token:
-        raise HTTPException(status_code=403, detail="token required")
-    provided_hash = hashlib.sha256(token.encode()).hexdigest()
-    import secrets as _s
-    if not _s.compare_digest(provided_hash, SHADOW_PUBLIC_TOKEN_HASH):
-        raise HTTPException(status_code=403, detail="invalid token")
-
+    _verifier_jeton_public(token)
     presets: dict[str, dict] = {
         "XAU/USD": {"entry": 4723.35, "tp1": 4814.56, "tp2": 4875.36, "sl": 4672.68, "vol_pts": 50.7},
         "XAG/USD": {"entry": 73.20, "tp1": 75.82, "tp2": 77.56, "sl": 71.75, "vol_pts": 1.45},
@@ -2946,15 +2960,7 @@ async def api_admin_notify_infra_telegram(
     from config import settings as _cfg
     from backend.services import canaux_telegram as ct
 
-    SHADOW_PUBLIC_TOKEN_HASH = "e980b1ed0b45ca6873caa3f2d6ddcf27f4d8a1d0aa87cf9072f6e3e0909b31ec"
-
-    if not token:
-        raise HTTPException(status_code=403, detail="token required")
-    provided_hash = hashlib.sha256(token.encode()).hexdigest()
-    import secrets as _s
-    if not _s.compare_digest(provided_hash, SHADOW_PUBLIC_TOKEN_HASH):
-        raise HTTPException(status_code=403, detail="invalid token")
-
+    _verifier_jeton_public(token)
     # ── Le fil est nommé par COMPTE (2026-09-06) ──────────────────────
     #
     # ⛔ Avant, `trades` désignait le bot Kraken et `sales` le bot IC Markets.
@@ -3645,17 +3651,10 @@ async def api_admin_mt5_bridges_health(token: str = ""):
     """
     import hashlib
     from fastapi import HTTPException
-    import secrets as _s
     from backend.services.mt5_bridge import health_check as bridge_health_check
     from config.settings import MT5_BRIDGE_URL, MT5_BRIDGE_LIVE_URL
 
-    SHADOW_PUBLIC_TOKEN_HASH = "e980b1ed0b45ca6873caa3f2d6ddcf27f4d8a1d0aa87cf9072f6e3e0909b31ec"
-    if not token:
-        raise HTTPException(status_code=403, detail="token required")
-    provided_hash = hashlib.sha256(token.encode()).hexdigest()
-    if not _s.compare_digest(provided_hash, SHADOW_PUBLIC_TOKEN_HASH):
-        raise HTTPException(status_code=403, detail="invalid token")
-
+    _verifier_jeton_public(token)
     legacy_health = await bridge_health_check(MT5_BRIDGE_URL or None)
     live_health = await bridge_health_check(MT5_BRIDGE_LIVE_URL or None)
 
@@ -4345,15 +4344,7 @@ async def api_admin_pair_admission_auto_apply(
     from backend.services import pair_admission_controller as pac
     from config.settings import WATCHED_PAIRS
 
-    SHADOW_PUBLIC_TOKEN_HASH = "e980b1ed0b45ca6873caa3f2d6ddcf27f4d8a1d0aa87cf9072f6e3e0909b31ec"
-
-    if not token:
-        raise HTTPException(status_code=403, detail="token required")
-    provided_hash = hashlib.sha256(token.encode()).hexdigest()
-    import secrets as _s
-    if not _s.compare_digest(provided_hash, SHADOW_PUBLIC_TOKEN_HASH):
-        raise HTTPException(status_code=403, detail="invalid token")
-
+    _verifier_jeton_public(token)
     dry_run = bool((payload or {}).get("dry_run", False))
     actions = []
     promotable_states = {pac.STATE_TELEGRAM, pac.STATE_AUTO_EXEC}
@@ -4453,15 +4444,9 @@ async def api_admin_pair_admission_weekly_report(token: str = ""):
     import hashlib
     import sqlite3 as _sql
     from datetime import datetime, timedelta, timezone
-    import secrets as _s
     from fastapi.responses import PlainTextResponse
 
-    SHADOW_PUBLIC_TOKEN_HASH = "e980b1ed0b45ca6873caa3f2d6ddcf27f4d8a1d0aa87cf9072f6e3e0909b31ec"
-    if not token:
-        raise HTTPException(status_code=403, detail="token required")
-    if not _s.compare_digest(hashlib.sha256(token.encode()).hexdigest(), SHADOW_PUBLIC_TOKEN_HASH):
-        raise HTTPException(status_code=403, detail="invalid token")
-
+    _verifier_jeton_public(token)
     from backend.services import pair_admission_controller as pac
     from backend.services.trade_log_service import _DB_PATH
     from config.settings import WATCHED_PAIRS
@@ -4853,15 +4838,7 @@ async def api_admin_auto_exec_health_token(token: str = ""):
     import hashlib
     from fastapi import HTTPException
 
-    SHADOW_PUBLIC_TOKEN_HASH = "e980b1ed0b45ca6873caa3f2d6ddcf27f4d8a1d0aa87cf9072f6e3e0909b31ec"
-
-    if not token:
-        raise HTTPException(status_code=403, detail="token required")
-    provided_hash = hashlib.sha256(token.encode()).hexdigest()
-    import secrets as _s
-    if not _s.compare_digest(provided_hash, SHADOW_PUBLIC_TOKEN_HASH):
-        raise HTTPException(status_code=403, detail="invalid token")
-
+    _verifier_jeton_public(token)
     # Réutilise la logique existante en injectant un AuthContext factice
     # (require_admin n'est pas appelé — on a déjà le token gate ci-dessus).
     from backend.auth import AuthContext as _AuthCtx

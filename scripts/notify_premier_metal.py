@@ -108,8 +108,18 @@ FILL_TYPES_EXCLUS = frozenset({"liquidation", "assignment", "assignor",
 ETAT = Path(os.environ.get("PREMIER_METAL_ETAT_PATH",
                            "/app/data/premier_metal.json"))
 
-TOKEN = os.environ.get("INFRA_NOTIFY_TOKEN",
-                       "shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg")
+def _jeton_infra() -> str:
+    """INFRA_NOTIFY_TOKEN, ou arret clair. Aucune valeur par defaut.
+
+    Lecture PARESSEUSE et non au niveau module : ce fichier est importe
+    par un test, et un SystemExit a l'import le ferait tomber sans que
+    le test ait rien demande au jeton.
+    """
+    jeton = (os.environ.get("INFRA_NOTIFY_TOKEN") or "").strip()
+    if not jeton:
+        raise SystemExit(
+            "INFRA_NOTIFY_TOKEN absente : ce script notifie l'infrastructure et ne peut pas s'authentifier sans elle. Aucune valeur par defaut n'est admise (audit S-1). Poser la variable dans l'environnement du cron ou du service.")
+    return jeton
 # channel=sales : un ordre qui part est un événement de TRADING, pas
 # d'infrastructure. ⛔ Omettre `channel` route vers le fil infra EN SILENCE.
 # ── Le fil suit le COMPTE dont parle le message (2026-09-06) ─────────
@@ -124,8 +134,12 @@ TOKEN = os.environ.get("INFRA_NOTIFY_TOKEN",
 sys.path.insert(0, "/app")
 from backend.services.canaux_telegram import canal_pour  # noqa: E402
 
-BASE_URL = ("https://app.scalping-radar.online/api/admin/"
-            f"notify-infra-telegram?token={TOKEN}")
+def _base_url() -> str:
+    # ⛔ Construite A L'APPEL, jamais au niveau module : le jeton ne doit
+    # etre exige que si l'on notifie VRAIMENT. Ce fichier est importe par
+    # un test, et une constante f-string le faisait lever des l'import.
+    return ("https://app.scalping-radar.online/api/admin/"
+            f"notify-infra-telegram?token={_jeton_infra()}")
 
 # Le rapport de silence est un digest, pas une alarme : au plus un par jour.
 SILENCE_SEC = int(os.environ.get("PREMIER_METAL_SILENCE_SEC", "86400"))
@@ -416,7 +430,7 @@ def _notifier(titre: str, corps: str, dedup: str,
                          # ⛔ Sans cette duree, la garde du relais est inerte.
                          "cooldown_seconds": COOLDOWN_NOTIF}).encode("utf-8")
     rq = urllib.request.Request(
-        f"{BASE_URL}&channel={canal_pour(destination_id)}", data=charge,
+        f"{_base_url()}&channel={canal_pour(destination_id)}", data=charge,
         headers={"Content-Type": "application/json"}, method="POST")
     try:
         with urllib.request.urlopen(rq, timeout=DELAI_NOTIF) as r:

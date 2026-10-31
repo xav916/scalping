@@ -44,7 +44,7 @@ Si Phase 4 invalide → bascule vers Observatoire SaaS-only.
 | `/api/shadow/v2_core_long/summary` | Cookie | KPIs avancés |
 | `/api/shadow/v2_core_long/public-summary?token=XYZ` | Token | KPIs avancés (pour agents remote) |
 
-**Token public-summary :** `shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg`
+**Token public-summary :** `<INFRA_NOTIFY_TOKEN>`
 - Hash SHA256 dans `backend/app.py` (constante `SHADOW_PUBLIC_TOKEN_HASH`)
 - Token clair dans : ce doc + config des routines remote (claude.ai/code/routines/)
 - Pour révoquer : générer un nouveau token, mettre à jour le hash, redéployer

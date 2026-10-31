@@ -52,7 +52,11 @@ DB = os.environ.get("TRADES_DB", "/app/data/trades.db")
 ETAT = os.environ.get("ETAT_SONDE", "/app/data/sonde_capture_niveaux.json")
 GRACE_MIN = int(os.environ.get("GRACE_MIN", "20"))
 
-TOKEN = os.environ.get("INFRA_NOTIFY_TOKEN", "shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg")
+# INFRA_NOTIFY_TOKEN est OBLIGATOIRE : aucune valeur par defaut (audit S-1).
+TOKEN = (os.environ.get("INFRA_NOTIFY_TOKEN") or "").strip()
+if not TOKEN:
+    raise SystemExit(
+        "INFRA_NOTIFY_TOKEN absente : ce script notifie l'infrastructure et ne peut pas s'authentifier sans elle. Aucune valeur par defaut n'est admise (audit S-1). Poser la variable dans l'environnement du cron ou du service.")
 # channel=sales : evenement de TRADING. ⛔ Omettre `channel` routerait vers le
 # fil infra EN SILENCE — le defaut qui a egare 4 notificateurs du 04/08 au 19/08.
 # ── Le fil suit le COMPTE dont parle le message (2026-09-06) ─────────

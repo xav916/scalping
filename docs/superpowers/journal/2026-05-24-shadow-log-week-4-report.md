@@ -74,7 +74,7 @@
 
 ```
 GET https://app.scalping-radar.online/api/shadow/v2_core_long/public-summary
-     ?token=shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg
+     ?token=<INFRA_NOTIFY_TOKEN>
 → HTTP 200 ✅ — Infra opérationnelle
 ```
 

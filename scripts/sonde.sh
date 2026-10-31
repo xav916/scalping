@@ -21,6 +21,48 @@
 # lit le journal et en fait UN recap.
 set -uo pipefail
 
+# --- Le jeton d infrastructure, pour les sondes qui l exigent ----------
+#
+# Depuis l audit S-1, les sondes n ont plus de jeton par defaut : elles
+# SORTENT EN ERREUR quand INFRA_NOTIFY_TOKEN manque. C est voulu.
+#
+# Mais cron ne donne aucun environnement. Les crons de cet hote ne posent
+# que PATH, SHELL, CRON_TZ et MAILTO : poser la variable dans le .env ne
+# la ferait PAS arriver jusqu a la sonde. 14 sondes sur 15 passent par
+# cette enveloppe, dont check-live-positions-sltp.sh et
+# check-kraken-positions-sltp.sh, qui tournent CHAQUE MINUTE et verifient
+# la protection SL/TP de positions reelles. Sans cette lecture, elles
+# mourraient a chaque passage des le deploiement.
+#
+# Meme idiome que les lectures de BOT/CHAT plus bas : on prend la valeur
+# dans le .env sans sourcer le fichier entier -- sourcer exporterait toute
+# la configuration de production dans chaque sonde.
+#
+# Une variable deja posee dans l environnement GAGNE : cette lecture est
+# un filet pour cron, pas une surcharge.
+#
+# Les guillemets sont retires. Un TOKEN="shdw_..." dans le .env donnerait
+# un jeton avec ses guillemets, donc un hash qui ne correspond pas, donc
+# un 403 silencieux. Ce depot a deja paye cette faute : deux pairs
+# fantomes a guillemets colles vivent dans la table d admission depuis le
+# 2026-08-23 pour exactement cette raison.
+#
+# Une ligne EN DOUBLE dans le .env serait un piege (grep -m1 prend la
+# PREMIERE, un chargeur .env prend la DERNIERE). Le controle
+# scripts/verifier_jetons_sur_les_hotes.sh verifie la concordance
+# jeton/hash et le dirait.
+if [ -z "${INFRA_NOTIFY_TOKEN:-}" ]; then
+  # \042 = guillemet double, \047 = apostrophe. Des echappements octaux evitent
+  # toute imbrication de guillemets -- la faute qui a casse ma premiere version
+  # de cette ligne, et que `bash -n` a attrapee.
+  INFRA_NOTIFY_TOKEN=$(grep -m1 "^INFRA_NOTIFY_TOKEN=" "${SCALPING_ENV_FILE:-/opt/scalping/.env}" 2>/dev/null | cut -d= -f2- | tr -d '\042\047')
+  export INFRA_NOTIFY_TOKEN
+fi
+
+# On ne REFUSE pas ici : cette enveloppe enrobe aussi des sondes qui n ont
+# pas besoin du jeton. Le refus reste dans la sonde qui en a besoin, avec
+# son message qui dit quoi poser -- il ne doit pas etre deplace ici.
+
 if [ "$#" -eq 0 ]; then
   echo "usage: sonde.sh <commande...>   ex: sonde.sh /chemin/x.sh" >&2
   echo "                                ou: sonde.sh python3 /chemin/x.py --arg" >&2

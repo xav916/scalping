@@ -37,7 +37,11 @@ import urllib.request
 sys.path.insert(0, "/app")
 
 DELAI = 8
-TOKEN = os.environ.get("INFRA_NOTIFY_TOKEN", "shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg")
+# INFRA_NOTIFY_TOKEN est OBLIGATOIRE : aucune valeur par defaut (audit S-1).
+TOKEN = (os.environ.get("INFRA_NOTIFY_TOKEN") or "").strip()
+if not TOKEN:
+    raise SystemExit(
+        "INFRA_NOTIFY_TOKEN absente : ce script notifie l'infrastructure et ne peut pas s'authentifier sans elle. Aucune valeur par defaut n'est admise (audit S-1). Poser la variable dans l'environnement du cron ou du service.")
 NOTIFY_URL = ("https://app.scalping-radar.online/api/admin/"
               f"notify-infra-telegram?token={TOKEN}&channel=infra")
 

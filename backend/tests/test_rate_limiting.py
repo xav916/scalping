@@ -135,30 +135,60 @@ def test_verify_email_rate_limit_triggers_after_20_per_hour(client, db, rate_lim
 
 # ─── key_func comportement X-Forwarded-For ──────────────────
 
-def test_rate_limit_key_respects_x_forwarded_for(client, db, rate_limit_on):
-    """Deux IP distinctes (via X-Forwarded-For) ne se partagent pas le
-    compteur : chaque IP garde son propre quota."""
+def test_rate_limit_key_separe_les_IP_via_X_Real_IP(client, db, rate_limit_on):
+    """Deux IP distinctes ne se partagent pas le compteur -- mais la
+    distinction vient de `X-Real-IP`, que NGINX pose, et non de
+    `X-Forwarded-For`, que le CLIENT choisit.
+
+    ⛔ Ce test affirmait l'inverse jusqu'au 2026-10-31 : il exigeait que
+    `X-Forwarded-For` separe les quotas. Son intention etait juste -- chaque
+    IP garde son quota -- mais il l'exprimait par l'en-tete FORGEABLE, et
+    benissait ainsi le defaut S-2. Un test peut encoder une vulnerabilite
+    comme une exigence, et c'est alors lui qui empeche de la corriger.
+    """
     for i in range(10):
         r = client.post(
             "/api/login",
             json={"username": "x", "password": "y"},
-            headers={"X-Forwarded-For": "1.2.3.4"},
+            headers={"X-Real-IP": "1.2.3.4"},
         )
         assert r.status_code == 401
 
     r = client.post(
         "/api/login",
         json={"username": "x", "password": "y"},
-        headers={"X-Forwarded-For": "1.2.3.4"},
+        headers={"X-Real-IP": "1.2.3.4"},
     )
     assert r.status_code == 429
 
+    # Une AUTRE IP reelle garde son propre quota.
     r = client.post(
         "/api/login",
         json={"username": "x", "password": "y"},
-        headers={"X-Forwarded-For": "5.6.7.8"},
+        headers={"X-Real-IP": "5.6.7.8"},
     )
     assert r.status_code == 401
+
+
+def test_un_X_Forwarded_For_change_ne_donne_PAS_un_quota_neuf(
+        client, db, rate_limit_on):
+    """⛔ LE defaut S-2, pris par l'autre bout. Une fois le quota sature,
+    changer `X-Forwarded-For` ne doit plus rien rendre : c'etait pourtant le
+    contournement, et il suffisait d'un en-tete different par requete.
+    """
+    for _ in range(11):
+        client.post("/api/login", json={"username": "x", "password": "y"},
+                    headers={"X-Real-IP": "9.9.9.9"})
+
+    for forge in ("1.1.1.1", "2.2.2.2", "3.3.3.3"):
+        r = client.post(
+            "/api/login",
+            json={"username": "x", "password": "y"},
+            headers={"X-Real-IP": "9.9.9.9", "X-Forwarded-For": forge},
+        )
+        assert r.status_code == 429, (
+            "XFF=%s a rendu un quota neuf : le contournement S-2 est revenu"
+            % forge)
 
 
 # ─── Endpoints non rate-limited (sanity) ────────────────────

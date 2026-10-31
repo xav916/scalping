@@ -27,5 +27,14 @@ jobs:
 
       - name: Run EA health monitor
         run: python3 scripts/ea_health_monitor.py
+        # ⛔ Depuis l audit S-1, ce script n a PLUS de jeton par defaut : il
+        # sort en erreur si la variable manque (c est voulu). Sans cette
+        # ligne il echouerait donc 4 fois par jour, en silence pour qui ne
+        # lit pas les runs.
+        #
+        # ⚠️ Le secret INFRA_NOTIFY_TOKEN doit etre cree dans GitHub :
+        # Settings > Secrets and variables > Actions > New repository secret.
+        # Meme valeur que dans le .env de l EC2.
         env:
           TZ: UTC
+          INFRA_NOTIFY_TOKEN: ${{ secrets.INFRA_NOTIFY_TOKEN }}

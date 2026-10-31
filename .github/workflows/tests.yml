@@ -1,0 +1,130 @@
+# La suite de tests, en CI BLOQUANTE.
+#
+# ## Le defaut corrige (audit S-3 et IT-1, ELEVE)
+#
+# > « 4 200 tests de tres bonne facture sont inexploitables comme filet de
+# >   securite : ni installables d'une seule commande, ni executables en entier
+# >   sur la plateforme de deploiement, ni hermetiques a l'ordre — et executes
+# >   par AUCUNE automatisation. »
+#
+# ⚠️ Ce fichier ne suffit pas a rendre la CI bloquante. Il faut encore
+# PROTEGER LA BRANCHE dans GitHub, sinon une fusion passe outre un echec :
+#
+#     Settings > Branches > Add branch protection rule
+#       Branch name pattern : main
+#       [x] Require status checks to pass before merging
+#       [x] Require branches to be up to date before merging
+#           -> cocher « suite (3.11) » dans la liste des checks
+#
+# Tant que cette case n'est pas cochee, cette CI INFORME sans bloquer.
+
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Un push qui suit un autre sur la meme branche annule le run precedent :
+# inutile de payer deux fois pour un etat depasse.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  suite:
+    name: suite (3.11)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    # ⛔ AUCUN jeton n'est pose ici, et c'est VOULU.
+    #
+    # `backend/tests/conftest.py` fournit deja un jeton de test et SON hash,
+    # par `os.environ.setdefault`, depuis une source unique
+    # (`backend/tests/jeton_de_test.py`). Les poser ici n'ajouterait rien et
+    # ouvrirait deux pieges :
+    #
+    #   1. un `env:` de job l'emporte sur ce qu'une etape ecrit dans
+    #      `$GITHUB_ENV` — le hash calcule a l'etape suivante serait donc
+    #      ignore, et le jeton ne correspondrait plus a son hash ;
+    #   2. un jeton et un hash qui ne CONCORDENT pas font echouer
+    #      l'authentification interne en silence, et des dizaines de tests
+    #      tombent pour une raison etrangere au code teste.
+    #
+    # Ne rien poser verifie aussi ce que l'audit demande : la suite doit
+    # tourner apres DEUX commandes d'installation, sans configuration cachee.
+    #
+    # La porte vers l'argent reel reste a son defaut (armee depuis le
+    # 2026-10-31, audit R-2) : la CI doit verifier le comportement LIVRE, pas
+    # une variante arrangee pour elle.
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Dependances — les DEUX fichiers, et rien de plus
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Preuve que MetaTrader5 est bien ABSENT de ce runner
+        # 🔑 Le correctif IT-1 fait TOURNER sur Linux les cinq fichiers des
+        # garde-fous de risque MT5, grace a une doublure que conftest.py
+        # n'installe QUE si le vrai module manque. Si MetaTrader5 devenait
+        # installable ici, la doublure ne s'installerait plus et ce serait un
+        # autre test que celui qu'on croit lancer — sans que rien ne le dise.
+        run: |
+          python - <<'PY'
+          import importlib.util
+          present = importlib.util.find_spec("MetaTrader5") is not None
+          print("MetaTrader5 present sur ce runner :", present)
+          assert not present, (
+              "MetaTrader5 est devenu installable sur ubuntu-latest : la "
+              "doublure ne s'installera plus et les cinq fichiers de "
+              "garde-fous tourneront contre le vrai module. Verifier que "
+              "c'est voulu avant de retirer cette assertion.")
+          PY
+
+      - name: La suite — ordre aleatoire, graine FIXEE et AFFICHEE
+        # ⛔ R-27 : la suite ne rend pas deux fois le meme verdict. 8 executions
+        # du MEME commit ont donne 7 x `4268 passed` et 1 x
+        # `4262 passed, 6 failed`, cause inconnue.
+        #
+        # 🔑 La graine est FIXEE pour que l'ordre soit identique d'un run a
+        # l'autre, et AFFICHEE pour qu'un echec soit rejouable a l'identique en
+        # local. Un ordre aleatoire a graine perdue rendrait les 6 echecs
+        # encore MOINS reproductibles qu'aujourd'hui.
+        #
+        # Pour chercher activement une combinaison qui casse : relancer en
+        # changeant GRAINE. Chaque valeur est un ordre different, et celle qui
+        # echoue reste rejouable pour toujours.
+        #
+        # `-ra` liste les motifs de SKIP **et** les noms des ECHECS.
+        #
+        # ⛔ La premiere version mettait `-rs`, qui ne rapporte QUE les skips.
+        # Au premier run rouge, les 5 noms n'etaient donc nulle part dans le
+        # resume : il a fallu fouiller le corps du journal pour les trouver.
+        # Un rapport qui cache ce qui a casse fait perdre le temps qu'une CI
+        # est censee gagner.
+        #
+        # L'objectif fixe reste « 0 erreur, 0 skip sans raison documentee » :
+        # un motif vide doit se voir dans le journal du run.
+        env:
+          GRAINE: "20261031"
+        run: |
+          echo "graine d'ordre : $GRAINE"
+          echo "pour rejouer un echec a l'identique en local :"
+          echo "  python -m pytest backend/tests -q --randomly-seed=$GRAINE"
+          python -m pytest backend/tests -q \
+            -p randomly --randomly-seed="$GRAINE" \
+            -ra --durations=10

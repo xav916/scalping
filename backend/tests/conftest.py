@@ -1,6 +1,46 @@
 """Shared pytest fixtures for the Scalping Radar backend."""
+import os
+import importlib.util
+import sys
+
 import pytest
 import pytest_asyncio
+
+from backend.tests.jeton_de_test import (
+    HASH_PUBLIC_DE_TEST,
+    JETON_PUBLIC_DE_TEST,
+)
+
+# ─── Le jeton public, pose POUR LES TESTS (audit S-1, 2026-10-31) ────────
+#
+# `config.settings.exiger_jeton_public()` leve si la variable est absente, et
+# c'est voulu : aucune valeur par defaut n'est admise. L'environnement de test
+# est donc un environnement CONFIGURE, comme la production.
+#
+# `setdefault` et non `=` : si la CI pose une vraie valeur, elle gagne. On
+# fournit un defaut de TEST, on n'ecrase pas une configuration existante.
+os.environ.setdefault("SHADOW_PUBLIC_TOKEN_HASH", HASH_PUBLIC_DE_TEST)
+# Le MEME secret ouvre les deux en production (le jeton en clair pour les
+# scripts, son hash pour les points d'entree) : l'environnement de test
+# reproduit cette relation plutot que d'inventer deux valeurs sans lien.
+os.environ.setdefault("INFRA_NOTIFY_TOKEN", JETON_PUBLIC_DE_TEST)
+
+# ─── MetaTrader5 : une doublure SEULEMENT si le vrai module est absent ────
+#
+# Audit IT-1 : cinq fichiers de tests chargent `mt5-bridge/bridge.py`, qui
+# fait `import MetaTrader5` au premier niveau. Hors Windows la collecte
+# s'interrompait — et ce sont precisement les tests des garde-fous de risque
+# MT5, donc « verifies automatiquement nulle part ».
+#
+# 🔑 La condition est `find_spec`, pas un test de plateforme : sur un poste
+# Windows le vrai module reste en place et les cinq fichiers continuent de
+# tourner contre lui. La doublure ne masque jamais le reel quand il existe.
+#
+# ⛔ Pose AVANT toute collecte (niveau module de conftest), sinon le premier
+# fichier qui charge le pont echoue avant que la doublure n'existe.
+if importlib.util.find_spec("MetaTrader5") is None:
+    from backend.tests.doublures import metatrader5_absent as _mt5_doublure
+    sys.modules["MetaTrader5"] = _mt5_doublure
 
 
 def mock_request():
@@ -188,4 +228,44 @@ def _armer_execution_globale(tmp_path, monkeypatch):
         f"le harnais n'a pas su armer l'execution : {d.reason_code} "
         f"({d.detail}). Corriger la fixture, ne PAS exempter la porte."
     )
+    yield
+
+@pytest.fixture()
+def porte_banc_desarmee(monkeypatch):
+    """Desarme la porte du banc pour un test qui porte sur AUTRE CHOSE.
+
+    ## Pourquoi cette fixture existe
+
+    `RESEARCH_BENCH_GATE_ENABLED` vaut `true` par defaut depuis le
+    2026-10-31 (audit R-2). Armee, la porte refuse toute promotion vers
+    `AUTO_EXEC` en argent reel qui ne soit couverte ni par un essai passe,
+    ni par la clause d'anteriorite -- en levant un `PermissionError`.
+
+    Les tests du CONTROLEUR d'admission posent souvent un `AUTO_EXEC` pour
+    arranger un scenario, puis verifient une retrogradation, une cascade de
+    destinations ou un controle par les pairs. Leur sujet est la DECISION
+    d'admission, en amont de la porte. Les faire pre-enregistrer un banc
+    reviendrait a tester deux choses a la fois.
+
+    ⛔ Ce n'est PAS une exemption de complaisance : la porte a ses propres
+    suites, et elles sont nommees.
+
+    - `test_porte_banc_armee_par_defaut.py` : elle est bien armee sans
+      variable, et un desarmement explicite est crie au demarrage ;
+    - `test_research_bench_porte.py` : ce qu'elle laisse passer et ce
+      qu'elle refuse, destination par destination.
+
+    ⚠️ A ne jamais mettre en `autouse` dans ce conftest : la porte serait
+    desarmee pour TOUTE la suite, y compris pour les deux fichiers
+    ci-dessus, et plus rien ne la surveillerait. Chaque fichier qui en a
+    besoin s'y abonne explicitement, et cet abonnement se lit chez lui.
+    """
+    from config import settings as _st
+    monkeypatch.setattr(_st, "RESEARCH_BENCH_GATE_ENABLED", False)
+    # temoin : si le desarmement ne prend pas, on veut le savoir ICI, pas
+    # dans un PermissionError obscur au milieu du test.
+    from backend.services import research_bench as _rb
+    assert _rb._porte_armee() is False, (
+        "le desarmement n'a pas pris : research_bench ne lit peut-etre plus "
+        "config.settings.RESEARCH_BENCH_GATE_ENABLED")
     yield

@@ -4,7 +4,8 @@ set -euo pipefail
 # EA Health Monitoring — runs 4×/day (00:23, 06:23, 12:23, 18:23 UTC)
 # Détecte anomalies (heartbeat offline, ordres zombies, low exec rate) et alerte Telegram
 
-HEALTH_TOKEN="shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg"
+# INFRA_NOTIFY_TOKEN est OBLIGATOIRE : aucune valeur par defaut (audit S-1).
+HEALTH_TOKEN="${INFRA_NOTIFY_TOKEN:?INFRA_NOTIFY_TOKEN absente : ce script notifie l infrastructure et ne peut pas s authentifier sans elle. Aucune valeur par defaut n est admise (audit S-1). Poser la variable dans l environnement du cron ou du service.}"
 HEALTH_URL="https://app.scalping-radar.online/api/admin/auto-exec/health-token"
 NOTIFY_URL="https://app.scalping-radar.online/api/admin/notify-infra-telegram"
 

@@ -33,7 +33,7 @@ main.py                   # Entry point
 ## Quick Start
 
 ```bash
-# Install dependencies
+# Install dependencies (runtime)
 pip install -r requirements.txt
 
 # Copy and edit config
@@ -44,6 +44,41 @@ python main.py
 ```
 
 Open http://localhost:8000 in your browser.
+
+## Running the tests
+
+```bash
+pip install -r requirements.txt
+pip install -r requirements-dev.txt
+python -m pytest backend/tests -q
+```
+
+Both files are needed. `requirements-dev.txt` adds Flask — the MT5 bridge
+tests import `mt5-bridge/bridge.py`, which depends on it — and
+`pytest-randomly`. Flask is deliberately kept out of `requirements.txt`: the
+backend runs on FastAPI and does not need a second web framework in
+production.
+
+The suite runs in full on Linux. The five MT5 risk-guard test files load the
+bridge, which imports `MetaTrader5` — a Windows-only module. Where it is
+absent, `conftest.py` installs a stand-in whose constants are checked against
+the real module on any Windows machine
+(`backend/tests/test_doublure_metatrader5.py`). Those tests therefore **run**
+off Windows rather than being skipped.
+
+### Reproducing an intermittent failure
+
+The suite does not always return the same verdict (audit finding R-27: eight
+runs of one commit gave seven clean runs and one with six failures, cause
+unknown). CI therefore runs it in random order with a fixed, printed seed, so
+a failure can be replayed exactly:
+
+```bash
+python -m pytest backend/tests -q --randomly-seed=20261031
+```
+
+Change the seed to search for an order that breaks; the seed that fails stays
+replayable.
 
 ## How It Works
 

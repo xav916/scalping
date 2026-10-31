@@ -32,8 +32,42 @@ def charger():
     return mod
 
 
+@pytest.fixture(autouse=True)
+def _verrou_isole(tmp_path, monkeypatch):
+    """Le verrou `flock` doit vivre dans un dossier A NOUS, jamais `/run`.
+
+    ## Le defaut corrige
+
+    `LOCK_PATH = Path(os.getenv("RECLAIM_LOCK", "/run/disk_reclaim.lock"))`.
+    Ces tests ne surchargeaient pas la variable : ils visaient donc tous le
+    MEME `/run/disk_reclaim.lock`.
+
+    ⛔ Sur Windows, `fcntl` est absent, le verrou n'est jamais pris, et les
+    tests passent. Sur Linux non-root — tout runner de CI — `/run` est
+    `drwxr-xr-x root root` : l'ouverture echoue avec `PermissionError`, que
+    `disk_reclaim.py` attrape dans son `except OSError` et traduit en
+    `deja_en_cours`. **Quatre tests tombaient**, en annoncant « un autre
+    passage est en cours » alors qu'aucun ne tournait.
+
+    C'est pour cela qu'ils n'ont jamais ete vus avant : il n'existait aucune
+    CI (constat S-3), et sur un poste Windows le chemin du verrou est mort.
+
+    🔑 Un test ne doit pas ecrire dans `/run`. Chaque test a maintenant son
+    propre verrou, et ils ne peuvent plus se bloquer entre eux ni dependre
+    des droits de l'hote.
+
+    ⚠️ **Le defaut de PRODUCTION n'est pas corrige ici, volontairement.**
+    `disk_reclaim.py` confond toujours « je ne peux pas creer le verrou » et
+    « un passage est deja en cours » : si le verrou devenait inaccessible en
+    production, le nettoyeur s'arreterait EN SILENCE pendant que le disque se
+    remplit, et son journal dirait « deja_en_cours ». Consigne explicite de
+    Xavier : isoler sans corriger dans cette branche.
+    """
+    monkeypatch.setenv("RECLAIM_LOCK", str(tmp_path / "disk_reclaim.lock"))
+
+
 @pytest.fixture
-def dr():
+def dr(_verrou_isole):
     return charger()
 
 
@@ -389,3 +423,56 @@ def test_etape_gzip_ne_compte_rien_si_gzip_echoue(dr, tmp_path, monkeypatch):
     nom, ok, detail, gagne = dr.etape_gzip(False)
     assert not ok and gagne == 0
     assert src.exists(), "un echec ne doit pas faire disparaitre le fichier"
+
+
+# --------------------------------------------------------------------------
+# L isolation du verrou, verifiable sur TOUTE plateforme
+# --------------------------------------------------------------------------
+def test_le_verrou_des_tests_ne_vise_JAMAIS_run(dr):
+    """⛔ Verifiable sous Windows comme sous Linux, et c est tout l interet.
+
+    Sous Windows `fcntl` est absent : le verrou n est jamais pris, donc aucun
+    test de COMPORTEMENT ne peut montrer le defaut. Celui-ci regarde le
+    CHEMIN, qui existe sur les deux plateformes — c est la seule facon de
+    garder l isolation depuis un poste de developpement.
+    """
+    chemin = str(dr.LOCK_PATH)
+    assert not chemin.startswith("/run"), (
+        "le verrou des tests vise %s : sur un runner non-root, l ouverture "
+        "echouera avec PermissionError, que disk_reclaim.py traduit en "
+        "`deja_en_cours`. Quatre tests tomberaient en annoncant qu un autre "
+        "passage tourne." % chemin)
+    assert "disk_reclaim.lock" in chemin, (
+        "le verrou ne porte plus son nom : %s" % chemin)
+
+
+def test_le_DEFAUT_de_production_est_toujours_la_et_documente():
+    """⚠️ Ce test ne corrige rien : il EMPECHE D OUBLIER.
+
+    `disk_reclaim.py` attrape `OSError` autour de l ouverture du verrou et
+    traduit tout en `deja_en_cours`. Or `PermissionError`, `IsADirectoryError`
+    et `OSError` disque plein en sont des sous-classes : un nettoyeur de
+    disque qui perd l acces a son verrou s arrete EN SILENCE pendant que le
+    disque se remplit, et son journal annonce « un autre passage est en
+    cours ».
+
+    Consigne explicite : isoler sans corriger dans cette branche. Quand le
+    correctif viendra — distinguer EWOULDBLOCK/EAGAIN du reste — ce test
+    tombera, et il faudra le remplacer par celui qui verifie la distinction.
+    """
+    texte = MODULE_PATH.read_text(encoding="utf-8")
+    assert 'entree["decision"] = "deja_en_cours"' in texte
+    arbre = ast.parse(texte)
+    larges = []
+    for noeud in ast.walk(arbre):
+        if not isinstance(noeud, ast.ExceptHandler):
+            continue
+        noms = [n.id for n in ast.walk(noeud.type or ast.Pass())
+                if isinstance(n, ast.Name)]
+        corps = ast.unparse(ast.Module(body=noeud.body, type_ignores=[]))
+        if "deja_en_cours" in corps and "OSError" in noms:
+            larges.append(noeud.lineno)
+    assert larges, (
+        "le `except OSError` autour du verrou a change : si la distinction "
+        "EWOULDBLOCK / autre erreur a ete introduite, REMPLACER ce test par "
+        "celui qui la verifie, et retirer la note de la fixture _verrou_isole.")

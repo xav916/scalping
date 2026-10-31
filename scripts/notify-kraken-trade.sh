@@ -20,7 +20,8 @@
 #   DRY_RUN=1 notify-kraken-trade.sh  -> affiche sans notifier
 set -uo pipefail
 
-TOKEN="shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg"
+# INFRA_NOTIFY_TOKEN est OBLIGATOIRE : aucune valeur par defaut (audit S-1).
+TOKEN="${INFRA_NOTIFY_TOKEN:?INFRA_NOTIFY_TOKEN absente : ce script notifie l infrastructure et ne peut pas s authentifier sans elle. Aucune valeur par defaut n est admise (audit S-1). Poser la variable dans l environnement du cron ou du service.}"
 # channel=kraken (2026-09-06) : ce script ne parle QUE de Kraken.
 #
 # Il postait sur `sales`, c'est-a-dire le bot nomme « IC MARKETS trades » :

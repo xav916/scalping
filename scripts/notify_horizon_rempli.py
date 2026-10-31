@@ -74,13 +74,28 @@ DEPLOI = os.environ.get("DEPUIS_DEPLOI", "2026-08-26T07:20:00+00:00")
 
 DESTINATIONS = ("admin_live", "admin_legacy")
 
-TOKEN = os.environ.get("INFRA_NOTIFY_TOKEN", "shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg")
+def _jeton_infra() -> str:
+    """INFRA_NOTIFY_TOKEN, ou arret clair. Aucune valeur par defaut.
+
+    Lecture PARESSEUSE et non au niveau module : ce fichier est importe
+    par un test, et un SystemExit a l'import le ferait tomber sans que
+    le test ait rien demande au jeton.
+    """
+    jeton = (os.environ.get("INFRA_NOTIFY_TOKEN") or "").strip()
+    if not jeton:
+        raise SystemExit(
+            "INFRA_NOTIFY_TOKEN absente : ce script notifie l'infrastructure et ne peut pas s'authentifier sans elle. Aucune valeur par defaut n'est admise (audit S-1). Poser la variable dans l'environnement du cron ou du service.")
+    return jeton
 # channel=infra : c'est une panne d'INSTRUMENTATION, pas un évènement de trading.
 # ⛔ Omettre `channel` routerait vers infra par défaut — ce qui tomberait juste
 # ici, mais par accident. Le défaut qui a égaré 4 notificateurs du 04/08 au
 # 19/08 venait précisément de s'être fié à un défaut.
-NOTIFY_URL = ("https://app.scalping-radar.online/api/admin/"
-              f"notify-infra-telegram?token={TOKEN}&channel=infra")
+def _notify_url() -> str:
+    # ⛔ Construite A L'APPEL, jamais au niveau module : le jeton ne doit
+    # etre exige que si l'on notifie VRAIMENT. Ce fichier est importe par
+    # un test, et une constante f-string le faisait lever des l'import.
+    return ("https://app.scalping-radar.online/api/admin/"
+            f"notify-infra-telegram?token={_jeton_infra()}&channel=infra")
 COOLDOWN_SEC = 86400
 
 
@@ -250,7 +265,7 @@ def envoyer(titre: str, message: str) -> None:
                          "dedup_key": "sonde-horizon",
                          "cooldown_seconds": COOLDOWN_SEC}).encode("utf-8")
     rq = urllib.request.Request(
-        NOTIFY_URL, data=charge,
+        _notify_url(), data=charge,
         headers={"Content-Type": "application/json"}, method="POST")
     try:
         with urllib.request.urlopen(rq, timeout=DELAI) as r:

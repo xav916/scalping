@@ -1,0 +1,40 @@
+# Dependances pour EXECUTER LA SUITE DE TESTS.
+#
+# ## Pourquoi ce fichier existe (audit IT-1, ELEVE)
+#
+# > « La suite n'est pas installable depuis une source de dependances unique.
+# >   Les tests des bridges importent `mt5-bridge/bridge.py`, qui depend de
+# >   **Flask** — declare dans `mt5-bridge/requirements.txt`, **absent de
+# >   `requirements.txt`**. Un auditeur (ou un contributeur) qui suit le
+# >   `README` obtient **120 erreurs** sans qu'aucune documentation ne
+# >   l'explique. »
+#
+# L'auditeur a eu besoin de TROIS passes pour faire tourner la suite, et c'est
+# en soi le premier constat. Deux commandes suffisent maintenant :
+#
+#     pip install -r requirements.txt
+#     pip install -r requirements-dev.txt
+#
+# ⚠️ Flask n'est PAS ajoute a `requirements.txt` : il n'est pas une dependance
+# de l'application (le backend est en FastAPI). Il n'est necessaire que pour
+# charger le pont MT5 depuis un test. Le mettre en production installerait un
+# second framework web pour rien.
+
+-r requirements.txt
+
+# --- Flask : requis pour charger mt5-bridge/bridge.py depuis les tests ------
+# Version alignee sur mt5-bridge/requirements.txt : un ecart ferait tester le
+# pont contre un Flask qui n'est pas celui du VPS Windows.
+Flask==3.0.3
+
+# --- Ordre aleatoire a graine fixee (constat R-27) --------------------------
+#
+# ⛔ R-27 : la suite ne rend pas deux fois le meme verdict. 8 executions du
+# MEME commit ont donne 7 x `4268 passed` et 1 x `4262 passed, 6 failed`,
+# cause inconnue. Un « c'est vert » ne prouve donc plus rien tout seul.
+#
+# `pytest-randomly` bat les tests ET affiche sa graine
+# (« Using --randomly-seed=... »). Avec une graine FIXEE en CI, un echec
+# intermittent devient REPRODUCTIBLE : il suffit de relancer avec la meme
+# graine. Sans graine affichee, les 6 echecs resteraient « cause inconnue ».
+pytest-randomly==3.16.0

@@ -53,7 +53,11 @@ def alert_telegram(env, msg):
     fil du compte concerne, la ou Xavier lit ses trades.
     """
     import json as _json
-    jeton = "shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg"
+    # INFRA_NOTIFY_TOKEN est OBLIGATOIRE : aucune valeur par defaut (audit S-1).
+jeton = (os.environ.get("INFRA_NOTIFY_TOKEN") or "").strip()
+if not jeton:
+    raise SystemExit(
+        "INFRA_NOTIFY_TOKEN absente : ce script notifie l'infrastructure et ne peut pas s'authentifier sans elle. Aucune valeur par defaut n'est admise (audit S-1). Poser la variable dans l'environnement du cron ou du service.")
     url = ("https://app.scalping-radar.online/api/admin/"
            "notify-infra-telegram?token=" + jeton + "&channel=ic_markets")
     lignes = str(msg).splitlines() or [""]

@@ -40,7 +40,11 @@ DELAI = 10
 INSTANTANE = Path(os.environ.get(
     "IBKR_SNAPSHOT_PATH", "/app/data/ibkr_positions.json"))
 
-TOKEN = os.environ.get("INFRA_NOTIFY_TOKEN", "shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg")
+# INFRA_NOTIFY_TOKEN est OBLIGATOIRE : aucune valeur par defaut (audit S-1).
+TOKEN = (os.environ.get("INFRA_NOTIFY_TOKEN") or "").strip()
+if not TOKEN:
+    raise SystemExit(
+        "INFRA_NOTIFY_TOKEN absente : ce script notifie l'infrastructure et ne peut pas s'authentifier sans elle. Aucune valeur par defaut n'est admise (audit S-1). Poser la variable dans l'environnement du cron ou du service.")
 # channel=sales : le fil `trades` est reserve au compte MT5 reel 13137475.
 # IBKR est une autre route, comme Kraken.
 # channel=infra (2026-09-06) : IBKR est ETEINT, son edge mesure negatif.

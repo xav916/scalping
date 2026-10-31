@@ -27,7 +27,8 @@ DATE_FIN="${DATE_FIN:-2026-09-01}"   # surchargeable pour TESTER la branche de f
 TEMOIN="/opt/scalping/data/.rodage-or-4h-termine"
 ENVF="/opt/scalping/.env"
 VALEUR='PAIR_TRADING_HOURS_UTC={"XAU/USD":"06-19"}'
-TOKEN="shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg"
+# INFRA_NOTIFY_TOKEN est OBLIGATOIRE : aucune valeur par defaut (audit S-1).
+TOKEN="${INFRA_NOTIFY_TOKEN:?INFRA_NOTIFY_TOKEN absente : ce script notifie l infrastructure et ne peut pas s authentifier sans elle. Aucune valeur par defaut n est admise (audit S-1). Poser la variable dans l environnement du cron ou du service.}"
 NOTIFY_URL="https://app.scalping-radar.online/api/admin/notify-infra-telegram?token=${TOKEN}&channel=infra"
 
 [ -f "$TEMOIN" ] && { echo "$(date -Is) deja fait ($(cat "$TEMOIN"))"; exit 0; }

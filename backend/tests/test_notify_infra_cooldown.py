@@ -9,9 +9,10 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
+from backend.tests.jeton_de_test import JETON_PUBLIC_DE_TEST
 
 
-VALID_TOKEN = "shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg"
+VALID_TOKEN = JETON_PUBLIC_DE_TEST
 
 
 @pytest.fixture

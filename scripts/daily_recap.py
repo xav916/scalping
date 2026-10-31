@@ -57,7 +57,11 @@ _BASE_URLS = {
 BASE_URL = _BASE_URLS.get(BINANCE_ENV)
 API_KEY = os.getenv("BINANCE_API_KEY", "")
 API_SECRET = os.getenv("BINANCE_API_SECRET", "")
-INFRA_TELEGRAM_TOKEN = os.getenv("INFRA_TELEGRAM_TOKEN", "shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg")
+# INFRA_NOTIFY_TOKEN est OBLIGATOIRE : aucune valeur par defaut (audit S-1).
+INFRA_TELEGRAM_TOKEN = (os.environ.get("INFRA_NOTIFY_TOKEN") or "").strip()
+if not INFRA_TELEGRAM_TOKEN:
+    raise SystemExit(
+        "INFRA_NOTIFY_TOKEN absente : ce script notifie l'infrastructure et ne peut pas s'authentifier sans elle. Aucune valeur par defaut n'est admise (audit S-1). Poser la variable dans l'environnement du cron ou du service.")
 SCALPING_URL = os.getenv("SCALPING_URL", "http://127.0.0.1:8000")
 
 
