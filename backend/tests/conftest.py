@@ -210,3 +210,43 @@ def _armer_execution_globale(tmp_path, monkeypatch):
         f"({d.detail}). Corriger la fixture, ne PAS exempter la porte."
     )
     yield
+
+@pytest.fixture()
+def porte_banc_desarmee(monkeypatch):
+    """Desarme la porte du banc pour un test qui porte sur AUTRE CHOSE.
+
+    ## Pourquoi cette fixture existe
+
+    `RESEARCH_BENCH_GATE_ENABLED` vaut `true` par defaut depuis le
+    2026-10-31 (audit R-2). Armee, la porte refuse toute promotion vers
+    `AUTO_EXEC` en argent reel qui ne soit couverte ni par un essai passe,
+    ni par la clause d'anteriorite -- en levant un `PermissionError`.
+
+    Les tests du CONTROLEUR d'admission posent souvent un `AUTO_EXEC` pour
+    arranger un scenario, puis verifient une retrogradation, une cascade de
+    destinations ou un controle par les pairs. Leur sujet est la DECISION
+    d'admission, en amont de la porte. Les faire pre-enregistrer un banc
+    reviendrait a tester deux choses a la fois.
+
+    ⛔ Ce n'est PAS une exemption de complaisance : la porte a ses propres
+    suites, et elles sont nommees.
+
+    - `test_porte_banc_armee_par_defaut.py` : elle est bien armee sans
+      variable, et un desarmement explicite est crie au demarrage ;
+    - `test_research_bench_porte.py` : ce qu'elle laisse passer et ce
+      qu'elle refuse, destination par destination.
+
+    ⚠️ A ne jamais mettre en `autouse` dans ce conftest : la porte serait
+    desarmee pour TOUTE la suite, y compris pour les deux fichiers
+    ci-dessus, et plus rien ne la surveillerait. Chaque fichier qui en a
+    besoin s'y abonne explicitement, et cet abonnement se lit chez lui.
+    """
+    from config import settings as _st
+    monkeypatch.setattr(_st, "RESEARCH_BENCH_GATE_ENABLED", False)
+    # temoin : si le desarmement ne prend pas, on veut le savoir ICI, pas
+    # dans un PermissionError obscur au milieu du test.
+    from backend.services import research_bench as _rb
+    assert _rb._porte_armee() is False, (
+        "le desarmement n'a pas pris : research_bench ne lit peut-etre plus "
+        "config.settings.RESEARCH_BENCH_GATE_ENABLED")
+    yield

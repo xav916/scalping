@@ -913,7 +913,26 @@ COST_GATE_EXEMPT_PAIRS = frozenset(
     x.strip() for x in _raw_exempt.split(",") if x.strip()
 )
 
-RESEARCH_BENCH_GATE_ENABLED = os.getenv("RESEARCH_BENCH_GATE_ENABLED", "").lower() in ("1", "true", "yes")
+# ─── La porte vers l'argent reel : ARMEE PAR DEFAUT (audit R-2) ────────
+#
+# ⛔ Constat R-2 (2026-09-16, ELEVE) : « RESEARCH_BENCH_GATE_ENABLED=false
+# par defaut : la porte censee bloquer le passage a l'argent reel est
+# OUVERTE ». Le defaut etait la chaine vide, donc faux, donc ouvert.
+#
+# 🔑 Un garde-fou desarme par defaut n'est pas un garde-fou : c'est une
+# intention. Le defaut d'un verrou doit etre « ferme » -- celui qui veut
+# l'ouvrir le declare.
+#
+# ⚠️ Cette porte ne fait que RESTREINDRE : `research_bench._porte_armee()`
+# rend False quand elle est absente, et « un banc non installe ne gele
+# personne ». L'armer refuse des promotions vers l'argent reel sans banc ;
+# elle n'en autorise aucune.
+#
+# La desactivation reste possible, mais elle doit etre DITE :
+# RESEARCH_BENCH_GATE_ENABLED=false dans le .env, et le demarrage le crie
+# au niveau WARNING (cf. `lifespan` dans backend/app.py).
+_raw_gate = os.getenv("RESEARCH_BENCH_GATE_ENABLED", "true").strip().lower()
+RESEARCH_BENCH_GATE_ENABLED = _raw_gate in ("1", "true", "yes", "on")
 
 PAC_EXCLUDED_TICKETS = frozenset(
     int(t.strip())

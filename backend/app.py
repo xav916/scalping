@@ -110,6 +110,16 @@ async def lifespan(app: FastAPI):
     # aucune raison d'exiger un secret de production. « Refuser de demarrer »
     # vise le serveur.
     exiger_jeton_public()
+    # ⚠️ Une porte DESARMEE doit se voir dans le journal. Un garde-fou qu'on
+    # a eteint six semaines plus tot sans que rien ne le repete est un
+    # garde-fou qu'on croit arme (audit R-2).
+    from config.settings import RESEARCH_BENCH_GATE_ENABLED as _porte_banc
+    if not _porte_banc:
+        logger.warning(
+            "RESEARCH_BENCH_GATE_ENABLED=false : la porte qui exige un banc "
+            "avant une promotion vers l'argent reel est DESARMEE. Elle est "
+            "armee par defaut depuis le 2026-10-31 (audit R-2) ; ce "
+            "desarmement vient donc d'une variable posee explicitement.")
     # Chantier 1 SaaS : init table users + migration user_id. Idempotent.
     try:
         users_service.init_users_schema()

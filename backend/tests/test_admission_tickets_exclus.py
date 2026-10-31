@@ -29,6 +29,17 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
+def _la_porte_du_banc_est_hors_sujet(porte_banc_desarmee):
+    """Ces tests portent sur la DECISION d'admission, pas sur la porte du
+    banc d'essai -- qui est armee par defaut depuis le 2026-10-31 et
+    refuserait leurs mises en place en `AUTO_EXEC`.
+
+    La porte elle-meme est couverte par `test_porte_banc_armee_par_defaut`
+    et `test_research_bench_porte`. Voir la fixture `porte_banc_desarmee`
+    dans `conftest.py` pour le raisonnement complet.
+    """
+
+@pytest.fixture(autouse=True)
 def _isolated_db(tmp_path, monkeypatch):
     db_path = tmp_path / "trades.db"
     from backend.services import backtest_service, trade_log_service
