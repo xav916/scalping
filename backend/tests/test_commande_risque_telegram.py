@@ -413,3 +413,77 @@ def test_le_total_tous_comptes_additionne_bien_les_poches():
     ])
 
     assert "98,75" in texte, texte
+
+
+# --------------------------------------------------------------------------
+# Désarmé mais MESURÉ — Kraken Spot (2026-09-30)
+# --------------------------------------------------------------------------
+
+def _eval_desarme_mesure(total=2.0, positions=1, stop_logiciel=False):
+    """Un compte sans plafond dont le risque engagé EST connu.
+
+    C'est le cas du spot : pas de porte de risque, donc `desarme`, mais les
+    watchers donnent `|entrée − stop| × taille`. Montants déjà en euros —
+    `normaliser_en_eur` a converti en amont.
+    """
+    return {
+        "lisible": True, "indecidable": False, "desarme": True,
+        "risque_total": total, "plafond": None, "pct": 0.0, "restant": None,
+        "nues": 0, "non_mesurables": 0, "positions": positions,
+        "candidats": 0, "liberable": 0.0, "login": None,
+        "devise": "EUR", "stop_logiciel": stop_logiciel,
+    }
+
+
+def _spot(evaluation, verdict="ok"):
+    return {"id": "admin_kraken_spot", "badge": "🪙 Kraken Spot",
+            "actif": True, "evaluation": evaluation, "verdict": verdict}
+
+
+def test_un_compte_desarme_mais_MESURE_dit_son_montant():
+    """⛔ Taire un montant mesuré, c'est le compter pour zéro.
+
+    Le spot n'a pas de plafond, mais ses watchers donnent un risque connu.
+    Ne dire que « désarmé » laisserait croire qu'il n'engage rien.
+    """
+    from backend.app import _formater_risque
+    texte = _formater_risque([_spot(_eval_desarme_mesure(total=2.0))])
+    assert "2,00" in texte, texte
+    assert "désarmé" in texte.lower(), texte
+
+
+def test_un_montant_desarme_COMPTE_dans_le_total():
+    """De l'argent engagé reste engagé, plafond ou pas."""
+    from backend.app import _formater_risque
+    texte = _formater_risque([
+        _live(_eval_ok(total=28.75, plafond=33.54), "sature"),
+        _spot(_eval_desarme_mesure(total=2.0)),
+    ])
+    assert "30,75" in texte, texte        # 28,75 + 2,00
+
+
+def test_un_desarme_SANS_mesure_ne_fabrique_aucun_chiffre():
+    """⛔ Le garde-fou. `risque_total is None` veut dire « on ne sait pas » —
+    afficher « 0,00 € » y mettrait une mesure qui n'existe pas."""
+    from backend.app import _formater_risque
+    texte = _formater_risque([_demo(_eval_desarme(), "ok")])
+    assert "désarmé" in texte.lower(), texte
+    assert "0,00" not in texte, texte
+
+
+def test_un_desarme_a_stop_LOGICIEL_le_signale():
+    """⛔ Un watcher est un thread du bridge, pas un ordre du carnet : il meurt
+    avec le processus. Le présenter comme un stop courtier surestimerait la
+    protection — et cette différence ne se voit nulle part ailleurs."""
+    from backend.app import _formater_risque
+    texte = _formater_risque(
+        [_spot(_eval_desarme_mesure(total=2.0, stop_logiciel=True))])
+    assert "logiciel" in texte.lower(), texte
+
+
+def test_un_stop_COURTIER_ne_recoit_PAS_l_avertissement():
+    """L'avertissement doit rester rare pour rester lu."""
+    from backend.app import _formater_risque
+    texte = _formater_risque(
+        [_spot(_eval_desarme_mesure(total=2.0, stop_logiciel=False))])
+    assert "logiciel" not in texte.lower(), texte

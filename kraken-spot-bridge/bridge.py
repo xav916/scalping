@@ -399,8 +399,14 @@ def _watcher_loop(
         time.sleep(5)
 
 
-def _start_watcher(txid: str, pair: str, kraken_pair: str, qty: float, sl: float, tp: float) -> None:
-    """Démarre le watcher SL/TP dans un daemon thread."""
+def _start_watcher(txid: str, pair: str, kraken_pair: str, qty: float,
+                   sl: float, tp: float, entry: float = 0.0) -> None:
+    """Démarre le watcher SL/TP dans un daemon thread.
+
+    `entry` (2026-09-30) est le prix RÉELLEMENT obtenu. Sans lui le risque
+    engagé du spot n'est pas mesurable : `|entrée − stop| × taille` n'a pas
+    de premier terme, et la position passe pour non bornable.
+    """
     t = threading.Thread(
         target=_watcher_loop,
         args=(txid, pair, kraken_pair, qty, sl, tp),
@@ -412,11 +418,110 @@ def _start_watcher(txid: str, pair: str, kraken_pair: str, qty: float, sl: float
             "pair": pair,
             "kraken_pair": kraken_pair,
             "qty": qty,
+            "entry": entry,
             "sl": sl,
             "tp": tp,
             "thread": t,
         }
     t.start()
+
+
+def _prix_de_remplissage(txid: str) -> float:
+    """Prix moyen réellement obtenu, demandé au COURTIER.
+
+    ⛔ `AddOrder` ne rend PAS le prix obtenu : sa réponse ne porte que `txid`
+    et `descr`. Il faut donc le demander — ce qui est de toute façon la règle,
+    l'entrée se lit chez le courtier et jamais chez nous.
+
+    ⛔ Rend `0.0` si Kraken ne l'a pas encore consolidé : un ordre au marché
+    peut rester `pending` une fraction de seconde. `resume_risque_spot`
+    traduit ce zéro en NON BORNABLE, jamais en « risque nul ». Deviner un
+    prix d'entrée fausserait le risque sans que rien ne le dise.
+    """
+    try:
+        d = _signed_post("/0/private/QueryOrders", {"txid": txid})
+        o = ((d.get("result") or {}).get(txid) or {})
+        return float(o.get("price") or 0.0)
+    except Exception as e:  # noqa: BLE001 — une entrée inconnue ne casse rien
+        logger.warning(f"prix de remplissage indisponible pour {txid} : {e}")
+        return 0.0
+
+
+# ─── Risque engagé ─────────────────────────────────────────────────────
+#
+# ⛔ Sur le spot, le stop n'est PAS un ordre : Kraken Spot n'accepte pas d'OCO,
+# et le bridge lance un watcher logiciel qui vend au marché quand le niveau est
+# touché. Le risque se lit donc dans le REGISTRE DES WATCHERS, pas dans un
+# carnet d'ordres.
+#
+# Le contrat de sortie est celui de `resume_risque()` du bridge Futures : le
+# backend lit les deux avec le MÊME code (`_lire_kraken`). Une clé manquante
+# n'y lève pas — elle se lit comme « non mesurable ».
+
+def risque_position_stop(entree, stop, taille) -> float | None:
+    """`|entrée − stop| × taille`, en USD.
+
+    ⛔ Rend `None`, jamais `0.0`, dès qu'une donnée manque : zéro dirait
+    « aucun risque » quand la vérité est « on ne sait pas ». Seul un stop
+    EXACTEMENT à l'entrée rend un vrai zéro — la position ne peut plus
+    perdre, et c'est une mesure.
+    """
+    try:
+        e, s, t = float(entree), float(stop), float(taille)
+    except (TypeError, ValueError):
+        return None
+    if e <= 0 or t <= 0 or s < 0:
+        return None
+    return abs(e - s) * t
+
+
+def resume_risque_spot(watchers: list, positions: list,
+                       equity_usd: float | None) -> dict:
+    """Ce que le spot engage, sous la forme que le backend sait lire.
+
+    ⛔ **Le spot n'a aucune porte de risque engagé** — pas de
+    `MAX_RISQUE_ENGAGE_PCT`. `porte_armee` vaut donc False, et il n'y a ni
+    plafond ni pourcentage : en publier un donnerait un chiffre d'apparence
+    comparable à celui du Futures sans mesurer la même chose.
+
+    ⛔ Une position sans watcher, ou dont le watcher n'a pas d'entrée, est
+    NON BORNABLE — jamais « à risque nul ». Une seule suffit à rendre toute
+    somme trompeuse, et c'est ce champ-là qui compte.
+    """
+    ouvert = 0.0
+    bornes: set[str] = set()
+    for w in watchers or []:
+        if not isinstance(w, dict):
+            continue
+        r = risque_position_stop(w.get("entry"), w.get("sl"), w.get("qty"))
+        if r is None:
+            continue
+        ouvert += r
+        paire = str(w.get("kraken_pair") or w.get("pair") or "")
+        bornes.add(paire)
+
+    non_bornables = []
+    for p in positions or []:
+        if not isinstance(p, dict):
+            continue
+        if str(p.get("kraken_pair") or "") in bornes:
+            continue
+        non_bornables.append(str(p.get("asset") or p.get("pair") or "?"))
+
+    return {
+        "porte_armee": False,
+        "risque_ouvert_usd": round(ouvert, 4),
+        "equity_usd": equity_usd,
+        "plafond_pct": 0.0,
+        "plafond_usd": None,
+        "saturation_pct": None,
+        "non_bornables": sorted(set(non_bornables)),
+        "positions": len(positions or []),
+        # ⚠️ Pas cosmétique : un watcher est un thread du bridge, pas un ordre
+        # du carnet. Il meurt avec le processus, et le présenter comme un stop
+        # courtier surestimerait la protection.
+        "stop_logiciel": True,
+    }
 
 
 # ─── Flask app + auth decorator ────────────────────────────────────────
@@ -549,6 +654,53 @@ def positions():
     except Exception as e:
         logger.exception("positions failed")
         return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/risque", methods=["GET"])
+@require_bridge_key
+def risque_engage():
+    """Expose `resume_risque_spot()` — la lecture réseau, rien d'autre.
+
+    Ajouté le 2026-09-30 : `admin_kraken_spot` était mesurable mais jamais
+    montré. `_lire_kraken` route déjà `kraken_spot` vers `/risque` ; faute de
+    cette route, le compte rendait `illisible` — et un compte illisible
+    REFUSE le total tous comptes.
+
+    ⛔ Une lecture ratée rend une ERREUR, jamais des zéros. « Je n'ai pas pu
+    lire » et « le risque est nul » mènent à des conclusions opposées, et
+    c'est le second qu'on lirait.
+    """
+    try:
+        data = _signed_post("/0/private/Balance", {})
+        if data.get("error"):
+            return jsonify({"ok": False,
+                            "error": f"lecture impossible: {data['error']}"}), 503
+        balances = data.get("result") or {}
+
+        usd = float(balances.get("ZUSD", 0.0))
+        xbt = float(balances.get("XXBT", 0.0))
+        eth = float(balances.get("XETH", 0.0))
+        xbt_price = _get_last_price("XBTUSD") or 0.0
+        eth_price = _get_last_price("ETHUSD") or 0.0
+
+        positions = []
+        if xbt > 0.00001:
+            positions.append({"asset": "XBT", "pair": "BTC/USD",
+                              "kraken_pair": "XBTUSD", "qty": xbt})
+        if eth > 0.0001:
+            positions.append({"asset": "ETH", "pair": "ETH/USD",
+                              "kraken_pair": "ETHUSD", "qty": eth})
+
+        with _watchers_lock:
+            watchers = [{k: v for k, v in w.items() if k != "thread"}
+                        for w in _watchers.values()]
+
+        equity = usd + xbt * xbt_price + eth * eth_price
+        return jsonify({"ok": True,
+                        **resume_risque_spot(watchers, positions, equity)})
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"risque error: {e}")
+        return jsonify({"ok": False, "error": f"lecture impossible: {e}"}), 503
 
 
 @app.route("/tick/<path:pair>", methods=["GET"])
@@ -714,7 +866,8 @@ def place_order():
             decimals = specs.get("pair_decimals", 1)
             sl_val = round(sl_val, decimals)
             tp_val = round(tp_val, decimals)
-        _start_watcher(txid, pair, sym, qty, sl_val, tp_val)
+        _start_watcher(txid, pair, sym, qty, sl_val, tp_val,
+                       entry=_prix_de_remplissage(txid))
         watcher_started = True
 
     logger.warning(

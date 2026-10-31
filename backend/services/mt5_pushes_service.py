@@ -74,10 +74,24 @@ def _ensure_schema() -> None:
         # 🔑 Même défaut que l'horizon un cran plus haut, et même conséquence :
         # dix-huit hypothèses armées sans pouvoir dire laquelle produit quoi.
         # On ne peut pas juger ce qu'on n'enregistre pas.
+        #
+        # Migration 2026-09-30 : `risk_money`, le risque VOULU au moment du
+        # push. Il n'existait nulle part de durable — `journalctl` ne tient
+        # qu'un jour et `bridge_response` ne le porte pas — si bien qu'il a
+        # fallu le reconstruire par arithmetique inverse le 25/08 pour
+        # expliquer un ecart. Pas tenable en routine.
+        #
+        # 🔑 C'est ce qui manquait pour voir les positions placebo du demo :
+        # 455 trades sur 610 risquaient un millieme du voulu, et aucun
+        # controle ne pouvait le dire faute d'avoir garde le voulu.
+        #
+        # ⛔ NULLABLE. Un `risk_money` inconnu ne vaut PAS zero : zero dirait
+        # « on a voulu risquer zero », NULL dit « on ne sait pas ». Les
+        # confondre rendrait tout controle de reciprocite ininterpretable.
         cols = {r[1] for r in c.execute("PRAGMA table_info(mt5_pushes)")}
         for nom, typ in (("horizon", "TEXT"), ("pattern", "TEXT"),
                          ("mt5_ticket", "INTEGER"), ("source", "TEXT"),
-                         ("chaine", "TEXT")):
+                         ("chaine", "TEXT"), ("risk_money", "REAL")):
             if nom not in cols:
                 c.execute(f"ALTER TABLE mt5_pushes ADD COLUMN {nom} {typ}")
         c.execute(
@@ -253,10 +267,18 @@ def update_push_result(
     *,
     ok: bool,
     response: dict[str, Any] | None = None,
+    risk_money: float | None = None,
 ) -> None:
     """Met à jour la ligne avec le résultat du push HTTP.
 
     Best-effort : toute erreur DB est loggée et silenced.
+
+    ``risk_money`` est le risque VOULU, en devise du compte, connu du seul
+    appelant qui a le sizing en portée.
+
+    ⛔ `COALESCE` : un appelant qui ne le fournit pas n'EFFACE pas une valeur
+    déjà écrite. Les appelants sans sizing laissent donc la colonne à NULL —
+    ce qui est la vérité — plutôt qu'à un zéro inventé.
     """
     try:
         body = json.dumps(response, default=str)[:500] if response else None
@@ -273,7 +295,8 @@ def update_push_result(
                 """
                 UPDATE mt5_pushes
                 SET ok = ?, bridge_response = ?,
-                    mt5_ticket = COALESCE(?, mt5_ticket)
+                    mt5_ticket = COALESCE(?, mt5_ticket),
+                    risk_money = COALESCE(?, risk_money)
                 WHERE destination_id = ? AND date = ? AND pair = ?
                   AND direction = ? AND entry_price_5dp = ?
                 """,
@@ -281,6 +304,7 @@ def update_push_result(
                     1 if ok else 0,
                     body,
                     ticket,
+                    risk_money,
                     destination_id,
                     push_date,
                     pair,
