@@ -27,6 +27,60 @@ if AUTH_USERS_RAW:
 if AUTH_USERNAME and AUTH_PASSWORD and AUTH_USERNAME not in AUTH_USERS:
     AUTH_USERS[AUTH_USERNAME] = AUTH_PASSWORD
 
+# ─── Jeton public shadow / notifications d'infrastructure ────────────────
+#
+# ⛔ Constat d'audit S-1 (2026-09-16, ÉLEVÉ) : le hash de ce jeton était écrit
+# EN DUR à NEUF endroits de `backend/app.py`, et le jeton en clair servait de
+# valeur par défaut dans 36 scripts d'exploitation et 4 documents. Le dépôt
+# étant cloné dans des environnements d'agents, le jeton était de fait diffusé.
+#
+# 🔑 **Une seule lecture, ici.** Un secret lu à neuf endroits n'a pas neuf
+# chances d'être juste : il a neuf chances de diverger, et c'est ce qui est
+# arrivé — les neuf blocs étaient identiques par copie, pas par construction.
+#
+# ⚠️ La lecture est FAITE À L'APPEL, pas figée à l'import. Deux raisons :
+#   - `config.settings` est importé par les 6 300 tests, par les bancs et par
+#     les scripts. Lever à l'import exigerait un secret de production pour
+#     lancer un test qui ne touche à aucun point d'entrée ;
+#   - un test peut alors poser la variable par `monkeypatch.setenv` sans avoir
+#     à recharger le module.
+#
+# ⇒ C'est l'APPLICATION qui refuse de démarrer (`lifespan` appelle cette
+# fonction), pas tout processus qui importe la configuration. La distinction
+# est le choix de conception : « refuser de démarrer » vise le serveur, et
+# nous n'avons aucune raison d'empêcher un banc de tourner.
+
+
+def exiger_jeton_public() -> str:
+    """Le hash SHA-256 du jeton public, ou une erreur EXPLICITE.
+
+    ⛔ **Aucune valeur par défaut, jamais.** C'est la recommandation de
+    l'audit mot pour mot : « retirer toute valeur par défaut (échec explicite
+    si la variable d'environnement est absente) ». Un défaut transforme une
+    mauvaise configuration en porte ouverte, et le silence en autorisation.
+    """
+    valeur = (os.environ.get("SHADOW_PUBLIC_TOKEN_HASH") or "").strip()
+    if not valeur:
+        raise RuntimeError(
+            "SHADOW_PUBLIC_TOKEN_HASH est absente de l'environnement. "
+            "Les points d'entree publics (shadow public-summary, "
+            "notifications d'infrastructure) ne peuvent pas authentifier un "
+            "appelant sans elle, et aucune valeur par defaut n'est admise "
+            "(audit S-1). Poser la variable dans le .env du serveur, puis "
+            "redemarrer. Le hash s'obtient par : "
+            "printf %s \"$INFRA_NOTIFY_TOKEN\" | sha256sum")
+    return valeur
+
+
+def jeton_public_configure() -> bool:
+    """Pour une sonde ou un message de demarrage : la variable est-elle la ?
+
+    N'expose pas la valeur, et ne leve pas — c'est une QUESTION, pas une
+    exigence.
+    """
+    return bool((os.environ.get("SHADOW_PUBLIC_TOKEN_HASH") or "").strip())
+
+
 # Mapping username -> nom affiche dans l'UI (format: "user1:Xav,user2:Ced")
 # Utile quand les usernames sont des emails et qu'on veut un prenom a la place.
 _AUTH_DISPLAY_NAMES_RAW = os.getenv("AUTH_DISPLAY_NAMES", "")

@@ -21,6 +21,7 @@ import pytest
 
 from backend.services import digest_telegram as D
 from backend.services import etages_notification as E
+from backend.tests.jeton_de_test import JETON_PUBLIC_DE_TEST
 
 
 @pytest.fixture(autouse=True)
@@ -220,7 +221,7 @@ def test_marquer_AVANT_l_envoi_perdrait_le_bilan(tmp_path):
 
 # ─── ⑥ LA ROUTE elle-même : le test que les unités ne couvrent pas ───────
 
-VALID_TOKEN = "shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg"
+VALID_TOKEN = JETON_PUBLIC_DE_TEST
 URL = f"/api/admin/notify-infra-telegram?token={VALID_TOKEN}&channel=ic_markets"
 
 

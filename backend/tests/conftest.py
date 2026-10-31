@@ -1,6 +1,20 @@
 """Shared pytest fixtures for the Scalping Radar backend."""
+import os
+
 import pytest
 import pytest_asyncio
+
+from backend.tests.jeton_de_test import HASH_PUBLIC_DE_TEST
+
+# ─── Le jeton public, pose POUR LES TESTS (audit S-1, 2026-10-31) ────────
+#
+# `config.settings.exiger_jeton_public()` leve si la variable est absente, et
+# c'est voulu : aucune valeur par defaut n'est admise. L'environnement de test
+# est donc un environnement CONFIGURE, comme la production.
+#
+# `setdefault` et non `=` : si la CI pose une vraie valeur, elle gagne. On
+# fournit un defaut de TEST, on n'ecrase pas une configuration existante.
+os.environ.setdefault("SHADOW_PUBLIC_TOKEN_HASH", HASH_PUBLIC_DE_TEST)
 
 
 def mock_request():
