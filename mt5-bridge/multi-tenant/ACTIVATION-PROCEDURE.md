@@ -188,6 +188,31 @@ Get-ScheduledTask -TaskName "ScalpingClientsLauncher"
 
 ## 📡 Étape 6 — Configurer le monitor toutes les 10 min (~3 min)
 
+> ⛔ **À faire AVANT d'enregistrer la tâche : poser `INFRA_NOTIFY_TOKEN`.**
+>
+> Depuis l'audit S-1, `monitor.ps1` n'a **plus de jeton par défaut** : il
+> s'arrête avec `exit 1` si la variable manque. C'est voulu — une valeur par
+> défaut dans un dépôt cloné équivaut à diffuser le secret.
+>
+> 🔑 **Et une tâche planifiée n'hérite d'aucun fichier `.env`.** Elle hérite
+> des variables d'environnement de la MACHINE. Contrairement à l'EC2, où la
+> variable va dans `/opt/scalping/.env`, il faut donc ici :
+>
+> ```powershell
+> # Variable MACHINE (/M), pour que la tâche planifiée la voie
+> setx /M INFRA_NOTIFY_TOKEN "<le jeton>"
+>
+> # Vérifier dans une NOUVELLE session (setx ne change pas la session en cours)
+> [Environment]::GetEnvironmentVariable("INFRA_NOTIFY_TOKEN", "Machine").Length
+> ```
+>
+> ⚠️ Sans cela, la tâche échoue **toutes les 10 minutes** — et comme c'est
+> elle qui alerte quand la RAM, le disque ou MT5 lâchent, la surveillance
+> serait muette au moment précis où elle devrait crier.
+>
+> ⛔ Ne **jamais** remettre une valeur par défaut dans `monitor.ps1` pour
+> contourner : ce serait exactement le défaut S-1 réintroduit.
+
 ```powershell
 $action = New-ScheduledTaskAction -Execute "powershell.exe" `
     -Argument "-ExecutionPolicy Bypass -File C:\Scalping\monitor.ps1"
