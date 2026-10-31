@@ -14,6 +14,16 @@ jobs:
 
       - name: Run EA health check
         run: bash monitoring/ea-health-check.sh
+        # ⛔ Depuis l audit S-1, ce script n a PLUS de jeton par defaut : il
+        # sort en erreur si la variable manque (c est voulu). Sans cette
+        # ligne il echouerait donc 4 fois par jour, en silence pour qui ne
+        # lit pas les runs.
+        #
+        # ⚠️ Le secret INFRA_NOTIFY_TOKEN doit etre cree dans GitHub :
+        # Settings > Secrets and variables > Actions > New repository secret.
+        # Meme valeur que dans le .env de l EC2.
+        env:
+          INFRA_NOTIFY_TOKEN: ${{ secrets.INFRA_NOTIFY_TOKEN }}
 
       - name: Archive health logs
         if: always()

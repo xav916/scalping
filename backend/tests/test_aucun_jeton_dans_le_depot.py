@@ -58,6 +58,19 @@ _CONTROLEURS = frozenset({
     "scripts/verifier_jetons_sur_les_hotes.sh",
 })
 
+#: Fichiers qui FOURNISSENT la variable au lieu de s'en servir.
+#:
+#: ⚠️ Troisieme categorie, et la derniere. Un fichier qui lit le jeton pour
+#: s'AUTHENTIFIER doit refuser son absence. Un CONTROLEUR la rapporte. Un
+#: FOURNISSEUR la transmet a quelqu'un d'autre — et refuser le ferait
+#: echouer les sondes qui n'ont pas besoin du jeton.
+#:
+#: ⛔ Chaque entree doit PROUVER qu'elle fournit, via
+#: `test_chaque_fournisseur_exempte_TRANSMET_bien_le_jeton`.
+_FOURNISSEURS = frozenset({
+    "scripts/sonde.sh",
+})
+
 _IGNORES = {".git", "node_modules", "__pycache__", ".pytest_cache",
             ".worktrees", "venv", ".venv", "dist", "build", ".omc"}
 
@@ -184,6 +197,8 @@ def test_chaque_lecteur_du_jeton_REFUSE_quand_il_manque():
             continue
         if rel in _CONTROLEURS:
             continue  # il RAPPORTE l'absence, il ne l'utilise pas
+        if rel in _FOURNISSEURS:
+            continue  # il TRANSMET le jeton, il ne s'authentifie pas avec
         texte = (_RACINE / rel).read_text(encoding="utf-8", errors="ignore")
         if "INFRA_NOTIFY_TOKEN" not in texte:
             continue
@@ -227,3 +242,39 @@ def test_la_liste_d_exemptions_reste_MINIMALE():
     assert len(_CONTROLEURS) <= 2, (
         "%d exemptions : au-dela de deux, justifier chacune dans ce test ou "
         "revoir la regle." % len(_CONTROLEURS))
+
+
+def test_chaque_fournisseur_exempte_TRANSMET_bien_le_jeton():
+    """⛔ Le temoin de la troisieme exemption.
+
+    Un fournisseur legitime doit (a) exister, (b) EXPORTER la variable vers
+    ses enfants, et (c) ne PAS porter de valeur par defaut. Un fichier qui
+    lit le jeton sans l'exporter n'est pas un fournisseur : il s'en sert,
+    donc il doit refuser comme les autres.
+    """
+    for rel in sorted(_FOURNISSEURS):
+        chemin = _RACINE / rel
+        assert chemin.exists(), (
+            "%s est exempte comme fournisseur mais n'existe plus" % rel)
+        texte = chemin.read_text(encoding="utf-8", errors="ignore")
+        assert "export INFRA_NOTIFY_TOKEN" in texte, (
+            "%s est exempte comme FOURNISSEUR mais n'exporte pas le jeton. "
+            "Ce n'est donc pas un fournisseur : soit il refuse comme les "
+            "autres lecteurs, soit il exporte." % rel)
+        for interdit in ("INFRA_NOTIFY_TOKEN:-shdw", "INFRA_NOTIFY_TOKEN:-jeton"):
+            assert interdit not in texte, (
+                "%s porte une valeur par defaut du jeton (%s) : ce serait le "
+                "defaut S-1 reintroduit pour toutes ses sondes d'un coup"
+                % (rel, interdit))
+
+
+def test_les_TROIS_categories_restent_disjointes():
+    """Un meme fichier ne peut pas etre a la fois controleur et fournisseur :
+    ce serait le signe qu'une des deux definitions a derive."""
+    commun = _CONTROLEURS & _FOURNISSEURS
+    assert commun == frozenset(), (
+        "fichier(s) a la fois controleur ET fournisseur : %s" % sorted(commun))
+    total = len(_CONTROLEURS) + len(_FOURNISSEURS)
+    assert total <= 3, (
+        "%d exemptions au total : au-dela de trois, la regle elle-meme est a "
+        "revoir plutot qu'a contourner." % total)
