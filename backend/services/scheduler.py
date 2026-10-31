@@ -1879,6 +1879,36 @@ def start_scheduler() -> AsyncIOScheduler:
         )
         logger.info(f"ML trading cycle enabled (interval={ml_trading_interval}s)")
 
+    # ─── Collecte des spreads bid/ask, par minute (2026-10-31) ───────────
+    #
+    # `cout_execution` ne sait mesurer que l'or : c'est la seule paire dont le
+    # bid/ask soit persiste. Partout ailleurs il rend une HYPOTHESE declaree,
+    # que `exiger_mesure()` refuse pour tout niveau absolu -- donc aucun
+    # chiffre de cout n'est publiable sur EUR/USD ou WTI/USD.
+    #
+    # ⛔ `/rates` ne peut pas y suppleer : MT5 y tronque le spread a l'entier,
+    # donc 96 % des bougies EUR/USD affichent ZERO. La route `/ticks` montre
+    # un spread reel de 0,8 pip sur la meme paire.
+    #
+    # 🔑 Place en DERNIER, apres toutes les autres declarations : une levee
+    # ici ne peut couter aucun travail existant. Et l'intervalle passe par
+    # `intervalle_sec`, qui ne leve jamais.
+    async def _collecte_spreads_cycle():
+        import asyncio as _a
+        from scripts.collecter_spreads_forex import main as _collecter
+        # Le collecteur est synchrone et fait des appels reseau : on le sort
+        # de la boucle pour ne pas bloquer l'ordonnanceur.
+        await _a.to_thread(_collecter, ["--minutes", "120"])
+
+    _scheduler.add_job(
+        _collecte_spreads_cycle,
+        "interval",
+        seconds=intervalle_sec("COLLECTE_SPREADS_INTERVAL_SEC", 900),
+        id="collecte_spreads",
+        name="Collecte des spreads bid/ask par minute",
+        replace_existing=True,
+    )
+
     _scheduler.start()
     logger.info(
         f"Scheduler démarré. Analyse {MATAF_POLL_INTERVAL}s, backtest 60s, "
