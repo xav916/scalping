@@ -21,14 +21,48 @@ from starlette.responses import JSONResponse
 
 
 def _get_client_ip(request: Request) -> str:
-    """Extrait l'IP réelle du client, même derrière le reverse proxy nginx.
+    """La clé de limitation : `X-Real-IP`, puis l'IP du socket. JAMAIS XFF.
 
-    Nginx pose `X-Forwarded-For: <client>, <proxy1>, ...` et on prend le
-    premier hop (l'IP d'origine). Fallback sur `request.client.host`.
+    ## Le défaut corrigé (audit S-2, ÉLEVÉ)
+
+    Cette fonction prenait le **premier saut** de `X-Forwarded-For` :
+
+        xff.split(",")[0].strip()
+
+    Or nginx transmet `X-Forwarded-For $proxy_add_x_forwarded_for`, directive
+    qui **AJOUTE** l'IP réelle à la valeur fournie par le client. Un client
+    envoyant `X-Forwarded-For: 1.2.3.4` produisait donc
+    `1.2.3.4, <ip_reelle>`, et l'application retenait `1.2.3.4` — **une
+    valeur entièrement choisie par l'attaquant**.
+
+    ⇒ Le rate limiting était contournable à volonté sur `login`, `signup`,
+    `password-reset`, `email-verify`, `stripe-checkout` et `delete-account` :
+    il suffisait de changer un en-tête à chaque requête. **La protection
+    anti-force-brute des comptes était nulle en pratique.**
+
+    ## Pourquoi `X-Real-IP` est digne de confiance ICI
+
+    🔑 Deux conditions, et il faut les DEUX :
+
+    1. nginx pose `proxy_set_header X-Real-IP $remote_addr` — il **écrase**
+       ce que le client a envoyé, là où `$proxy_add_x_forwarded_for`
+       **concatène** (vérifié : 6 emplacements dans `deploy/nginx.conf` et
+       `deploy/nginx-app-scalping-online.conf`) ;
+    2. l'application n'est pas joignable directement : systemd la publie sur
+       `127.0.0.1:8000`, donc tout trafic passe par nginx.
+
+    ⚠️ **Si l'une des deux tombe, ce correctif est nul** : exposer le port
+    8000, ou retirer la directive, rend `X-Real-IP` aussi forgeable que XFF
+    l'était. Ce n'est pas l'en-tête qui est sûr, c'est le chemin.
+
+    ⛔ `X-Forwarded-For` n'est plus lu DU TOUT. Prendre son dernier élément
+    marcherait aussi, mais ferait dépendre la sécurité du **nombre de
+    proxys** — une valeur que personne ne vérifie et qui change en silence
+    le jour où un CDN s'ajoute.
     """
-    xff = request.headers.get("x-forwarded-for", "")
-    if xff:
-        return xff.split(",")[0].strip()
+    reel = (request.headers.get("x-real-ip") or "").strip()
+    if reel:
+        return reel
     if request.client:
         return request.client.host
     return "unknown"
