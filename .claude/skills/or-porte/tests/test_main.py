@@ -92,3 +92,63 @@ def test_la_banniere_vivier_nomme_tous_les_champs_fabriques(monkeypatch, capsys)
                     "shadow_system_id=None", "risk_pct=0.0",
                     "lot_risque_engage"):
         assert attendu in sortie, "banniere vivier incomplete : %r manquant" % attendu
+
+
+# ─── `--json` doit rester du JSON, SURTOUT sur l'echec (2026-10-31) ───────
+#
+# Le defaut : `--json` n'agissait qu'a la toute fin. Chaque echec precoce
+# imprimait de la PROSE, donc un consommateur machine recevait du texte non
+# analysable avec un code 2. Et quand `juger` rendait 2 avec un etat vide,
+# `--json` imprimait `{}` : du JSON valide qui ne dit RIEN.
+#
+# 🔑 Un mode machine qui retombe en prose sur l'echec est pire qu'absent : il
+# marche a tous les essais sauf celui ou l'on a besoin de savoir pourquoi.
+
+def _json_de(sortie):
+    """Le dernier objet JSON imprime, ou l'echec du test."""
+    import json as _j
+    debut = sortie.find("{")
+    assert debut >= 0, "aucun objet JSON dans la sortie : %r" % sortie[:200]
+    return _j.loads(sortie[debut:])
+
+
+def test_un_lot_ILLISIBLE_rend_du_JSON_en_mode_json(tmp_path, capsys):
+    """⛔ LE test qui compte : un fichier absent est un echec PRECOCE."""
+    code = P.main(["--lot", str(tmp_path / "jamais.json"), "--json",
+                   "--no-write"])
+    assert code == 2
+    d = _json_de(capsys.readouterr().out)
+    assert d["code"] == 2
+    assert d["verdict"] == "ECHEC"
+    assert d["motif"], "le motif doit etre nomme"
+    assert d["cause"], "la cause doit etre nommee"
+    assert d["etat"] is None
+
+
+def test_un_lot_NON_JUGEABLE_rend_du_JSON(tmp_path, capsys):
+    """Un lot syntaxiquement bon mais invalide : meme exigence."""
+    f = tmp_path / "lot.json"
+    f.write_text('{"setups": [{"pair": "XAU/USD"}]}', encoding="utf-8")
+    code = P.main(["--lot", str(f), "--json", "--no-write"])
+    assert code == 2
+    d = _json_de(capsys.readouterr().out)
+    assert d["code"] == 2 and d["verdict"] == "ECHEC"
+    assert d["etat"] is None
+
+
+def test_en_mode_HUMAIN_l_echec_reste_de_la_prose(tmp_path, capsys):
+    """La correction ne doit pas transformer le mode humain en JSON."""
+    code = P.main(["--lot", str(tmp_path / "jamais.json"), "--no-write"])
+    assert code == 2
+    sortie = capsys.readouterr().out
+    assert "ECHEC" in sortie
+    assert not sortie.lstrip().startswith("{"), "le mode humain reste lisible"
+
+
+def test_le_motif_et_la_cause_ne_se_confondent_pas(tmp_path, capsys):
+    """Le motif classe l'echec, la cause le detaille. Deux champs, parce
+    qu'un consommateur veut trier sur le premier sans lire le second."""
+    P.main(["--lot", str(tmp_path / "jamais.json"), "--json", "--no-write"])
+    d = _json_de(capsys.readouterr().out)
+    assert d["motif"] != d["cause"]
+    assert d["motif"] in ("lot illisible", "lot non jugeable")

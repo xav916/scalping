@@ -95,3 +95,88 @@ def test_le_message_d_erreur_porte_stderr_quand_il_existe():
         stdout="", stderr="SyntaxError: quelque chose", returncode=1)
     with pytest.raises(RuntimeError, match="SyntaxError"):
         distant.derniere_ligne_json(sortie)
+
+
+# ─── La CIBLE est reglable, et sa construction est testable (2026-10-31) ──
+#
+# L'adresse a DEJA change une fois, et un repli perime ecrit en dur dans
+# `deploy-v2.sh` a coute une demi-heure le 2026-09-15 : « une adresse de
+# secours fausse coute exactement au moment ou on en a besoin ».
+
+def _recharge(monkeypatch, **env):
+    """Recharge le module avec un environnement donne. Les constantes sont
+    lues a l'IMPORT, donc un simple setenv ne suffirait pas."""
+    import importlib
+    for k in ("OR_HOTE", "OR_CONTENEUR", "OR_CLE_SSH"):
+        monkeypatch.delenv(k, raising=False)
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    return importlib.reload(distant)
+
+
+def test_les_defauts_sont_ceux_de_la_production(monkeypatch):
+    """⛔ Le defaut NE DOIT PAS changer : c'est l'IP publique, pas Tailscale
+    (injoignable depuis le bac a sable)."""
+    d = _recharge(monkeypatch)
+    assert d.HOTE == "ec2-user@13.63.77.180"
+    assert d.CONTENEUR == "scalping-radar"
+    assert d.CLE == "scalping-key.pem"
+    assert "100." not in d.HOTE, "l'adresse Tailscale est injoignable d'ici"
+
+
+def test_l_hote_et_le_conteneur_se_surchargent(monkeypatch):
+    d = _recharge(monkeypatch, OR_HOTE="moi@10.0.0.1",
+                  OR_CONTENEUR="autre", OR_CLE_SSH="k.pem")
+    assert d.HOTE == "moi@10.0.0.1"
+    assert d.CONTENEUR == "autre"
+    assert d.CLE == "k.pem"
+
+
+def test_une_variable_VIDE_retombe_sur_le_defaut(monkeypatch):
+    """`or ...` et non `os.getenv(x, defaut)` : une variable posee mais VIDE
+    doit retomber sur le defaut plutot que de viser une chaine vide."""
+    d = _recharge(monkeypatch, OR_HOTE="", OR_CONTENEUR="")
+    assert d.HOTE == "ec2-user@13.63.77.180"
+    assert d.CONTENEUR == "scalping-radar"
+
+
+def test_la_commande_porte_la_cle_DU_DEPOT(monkeypatch):
+    """🔑 La cle est DANS le depot, pas dans ~/.ssh — une demi-heure perdue
+    a essayer les trois cles de ~/.ssh, toutes refusees."""
+    d = _recharge(monkeypatch)
+    c = d.commande(pathlib.Path("/depot"))
+    assert "-i" in c
+    assert c[c.index("-i") + 1].endswith("scalping-key.pem")
+    # separateur dependant de la plateforme : on compare au Path attendu
+    assert c[c.index("-i") + 1] == str(pathlib.Path("/depot") / "scalping-key.pem")
+
+
+def test_la_commande_garde_le_i_de_docker_exec(monkeypatch):
+    """⛔ Sans `-i`, le conteneur ne recoit pas le flux stdin — et toute la
+    raison d'etre de ce module est de passer par stdin."""
+    d = _recharge(monkeypatch)
+    c = d.commande(pathlib.Path("/depot"))
+    assert "docker exec -i scalping-radar python3 -" in c[-1]
+
+
+def test_la_commande_n_a_PAS_de_n(monkeypatch):
+    """⛔ `-n` fermerait le stdin dont on se sert."""
+    d = _recharge(monkeypatch)
+    assert "-n" not in d.commande(pathlib.Path("/depot"))
+
+
+def test_la_commande_reste_NON_INTERACTIVE(monkeypatch):
+    """BatchMode : un ssh qui attend une saisie bloquerait la skill."""
+    d = _recharge(monkeypatch)
+    c = d.commande(pathlib.Path("/depot"))
+    assert "BatchMode=yes" in c
+    assert "StrictHostKeyChecking=no" in c
+
+
+def test_la_surcharge_atteint_la_commande(monkeypatch):
+    """Le reglage doit AGIR, pas seulement exister."""
+    d = _recharge(monkeypatch, OR_HOTE="moi@10.0.0.1", OR_CONTENEUR="autre")
+    c = d.commande(pathlib.Path("/depot"))
+    assert "moi@10.0.0.1" in c
+    assert "docker exec -i autre python3 -" in c[-1]
+    _recharge(monkeypatch)   # on rend le module a son etat par defaut

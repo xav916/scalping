@@ -93,7 +93,7 @@ def _compute_unrealized_pnl(trade: dict, current_price: float) -> float:
     return round((entry - current_price) * units, 2)
 
 
-def _pip_size(pair: str) -> float:
+def _pip_size(pair: str) -> float | None:
     """Taille d'un pip pour afficher un delta lisible.
 
     ⛔ NE PAS FUSIONNER avec `mt5_sync._pip_size`, malgre le code identique.
@@ -105,11 +105,23 @@ def _pip_size(pair: str) -> float:
         2026-10-28, et la raison pour laquelle `slippage_pct` existe.
     La duplication est donc PORTEUSE, pas un oubli. (note du 2026-10-30)
 
-    ⚠️ RESTE A FAIRE, et volontairement pas fait sous pression : aucun cas
-    crypto ni energie, donc `BTC/USD` s'affiche a ~1 113 350 pips. Le corriger
-    demande de CHOISIR une convention d'affichage (ou de rendre `None` plutot
-    qu'un nombre fabrique) et de tracer les consommateurs de `pnl_pips`.
-    Inventer l'unite ici serait refaire « deux choses sous un meme nom ».
+    ✅ FAIT le 2026-10-31, et la decision est de NE PAS inventer d'unite.
+
+    Le defaut : il n'existe aucune convention de pip pour la crypto ni
+    l'energie, et le repli `0.0001` affichait `BTC/USD` a **~1 113 350 pips**
+    -- le meme defaut qui avait aveugle la sonde de glissement onze semaines
+    (glissement moyen annonce **-19 082,80 pips**).
+
+    🔑 Cette fonction rend donc `None` quand la convention n'existe pas. Un
+    nombre fabrique est pire qu'une absence : il s'affiche, il se croit, et
+    il ne se verifie pas. « Un champ inconnu vaut NULL, jamais 0 » -- la
+    regle du ledger s'applique aussi a un affichage.
+
+    ✅ La plomberie etait deja prete : l'appelant fait
+    `round(delta / pip, 1) if pip else None`, le champ est type
+    `float | None`, et `ActiveTradesPanel.tsx` n'affiche RIEN sur `null`.
+    Seule la decision manquait, et elle n'avait pas a etre prise sous
+    pression.
     """
     base = pair.split("/")[0].upper() if "/" in pair else pair.upper()
     quote = pair.split("/")[1].upper() if "/" in pair else ""
@@ -117,7 +129,13 @@ def _pip_size(pair: str) -> float:
         return 0.01
     if quote == "JPY":
         return 0.01
-    return 0.0001
+    # ⛔ Seul le forex coté en 4 decimales a un pip de 0,0001. Tout le reste
+    # -- crypto, energie, indices, symbole sans barre -- n'a pas de
+    # convention, donc pas de valeur.
+    if quote in {"USD", "EUR", "GBP", "CHF", "CAD", "AUD", "NZD"} \
+            and base in {"EUR", "GBP", "AUD", "NZD", "USD", "CAD", "CHF"}:
+        return 0.0001
+    return None
 
 
 def _risk_money(trade: dict) -> float | None:

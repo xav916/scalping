@@ -16,11 +16,28 @@ besoin : `or-porte` lit tantot un objet, tantot un tableau.
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import subprocess
 
-HOTE = "ec2-user@13.63.77.180"
-CONTENEUR = "scalping-radar"
+# ─── Cible, reglable sans redeployer la skill (2026-10-31) ────────────────
+#
+# ⚠️ L'adresse a DEJA change une fois dans ce projet, et un repli perime
+# ecrit en dur dans `deploy-v2.sh` a coute une demi-heure le 2026-09-15 :
+# « une adresse de secours fausse coute exactement au moment ou on en a
+# besoin ». D'ou l'ouverture par l'environnement.
+#
+# ⛔ Le defaut est l'IP PUBLIQUE, pas l'adresse Tailscale : celle-ci
+# (`100.103.107.75`) est INJOIGNABLE depuis le bac a sable Bash, alors que
+# la publique l'est.
+#
+# ⛔ Noms DISTINCTS de `SCALPING_HOST`, deliberement : cette variable-la est
+# lue par `deploy-v2.sh`, dont le defaut est l'adresse Tailscale. Partager le
+# nom ferait pointer cette skill vers un hote injoignable des que quelqu'un
+# regle l'autre outil.
+HOTE = os.getenv("OR_HOTE") or "ec2-user@13.63.77.180"
+CONTENEUR = os.getenv("OR_CONTENEUR") or "scalping-radar"
+CLE = os.getenv("OR_CLE_SSH") or "scalping-key.pem"
 
 
 def executer(depot: pathlib.Path, src: str,
@@ -31,10 +48,21 @@ def executer(depot: pathlib.Path, src: str,
     prend `-i`, sinon le conteneur ne recoit pas le flux.
     """
     return subprocess.run(
-        ["ssh", "-i", str(depot / "scalping-key.pem"),
-         "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes",
-         HOTE, "sudo docker exec -i %s python3 -" % CONTENEUR],
+        commande(depot),
         input=src, capture_output=True, text=True, timeout=timeout)
+
+
+def commande(depot: pathlib.Path) -> list[str]:
+    """La commande ssh, isolee pour etre TESTABLE sans reseau.
+
+    🔑 `executer` ne peut pas se tester (elle sort de la machine) ; la
+    construction de sa commande, si. C'est la seule partie qui peut se
+    tromper en silence — une cle au mauvais chemin, un `-i` oublie sur
+    `docker exec`, un hote pris a la mauvaise variable.
+    """
+    return ["ssh", "-i", str(depot / CLE),
+            "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes",
+            HOTE, "sudo docker exec -i %s python3 -" % CONTENEUR]
 
 
 def derniere_ligne_json(sortie: subprocess.CompletedProcess,

@@ -336,6 +336,28 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--depuis-vivier", default=None, metavar="DESTINATION")
     a = ap.parse_args(argv)
 
+    def _echec(motif: str, cause: str) -> int:
+        """Sortie 2, LISIBLE DANS LES DEUX MODES (2026-10-31).
+
+        ⛔ Le defaut : `--json` n'agissait qu'a la toute fin. Chaque echec
+        precoce imprimait de la PROSE, donc un consommateur machine recevait
+        du texte non analysable avec un code 2 ; et quand `juger` rendait 2
+        avec un etat vide, `--json` imprimait `{}` -- techniquement du JSON,
+        et qui ne dit RIEN.
+
+        🔑 Un mode machine qui retombe en prose sur l'echec est pire qu'absent :
+        il marche a tous les essais sauf celui ou l'on a besoin de savoir
+        pourquoi.
+        """
+        if a.en_json:
+            print(json.dumps({"code": 2, "verdict": "ECHEC",
+                              "motif": motif, "cause": cause,
+                              "etat": None},
+                             indent=2, ensure_ascii=False))
+        else:
+            print("ECHEC : %s -- %s" % (motif, cause))
+        return 2
+
     try:
         if a.depuis_vivier:
             brut_lot = _lot_depuis_vivier(depot, a.depuis_vivier)
@@ -343,23 +365,21 @@ def main(argv: list[str] | None = None) -> int:
             brut_lot = json.loads(pathlib.Path(a.lot).read_text(encoding="utf-8"))
         lot_valide = L.valider_lot(brut_lot)
     except L.ErreurLot as e:
-        print("ECHEC : lot non jugeable -- %s" % e)
-        return 2
+        return _echec("lot non jugeable", str(e))
     except Exception as e:  # noqa: BLE001
-        print("ECHEC : lot illisible (%s)" % e)
-        return 2
+        return _echec("lot illisible", "%s: %s" % (type(e).__name__, e))
 
     try:
         brut = collecter(depot, lot_valide)
     except Exception as e:  # noqa: BLE001
-        print("ECHEC : production injoignable (%s) -- rien n'est juge" % e)
-        return 2
+        return _echec("production injoignable",
+                      "%s: %s -- rien n'est juge" % (type(e).__name__, e))
 
     try:
         code, lignes, etat = juger(lot_valide, brut)
     except Exception as e:  # noqa: BLE001
-        print("ECHEC : lot non jugeable (%s) -- rien n'est juge" % e)
-        return 2
+        return _echec("lot non jugeable",
+                      "%s: %s -- rien n'est juge" % (type(e).__name__, e))
     if a.depuis_vivier:
         # Important 4 : `_lot_depuis_vivier` fabrique DIX des onze champs que
         # les portes lisent (seuls `pair`/`direction` viennent du vivier) --
@@ -382,7 +402,16 @@ def main(argv: list[str] | None = None) -> int:
               "   risk_pct=0.0 -- la clause de lot `lot_risque_engage` ne "
               "peut JAMAIS bloquer ici (clause d'ORIGINE lot, pas production)")
     if a.en_json:
-        print(json.dumps(etat, indent=2, ensure_ascii=False))
+        # ⛔ Ne JAMAIS imprimer `etat` nu : vide, il rendait `{}` -- du JSON
+        # valide qui ne dit ni le code, ni pourquoi. Le code de sortie et le
+        # verdict sont toujours portes, et `lignes` reste disponible pour que
+        # le consommateur machine ait acces a la MEME explication que
+        # l'humain, sans avoir a la reconstituer.
+        print(json.dumps({"code": code,
+                          "verdict": {0: "PASS", 1: "BLOCK"}.get(code, "ECHEC"),
+                          "etat": etat or None,
+                          "lignes": lignes},
+                         indent=2, ensure_ascii=False))
     else:
         for l in lignes:
             print(l)
