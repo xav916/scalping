@@ -56,8 +56,25 @@ implémentations de la même règle.
 du hasard pour 24 cellules vaut **2,241** (`plafond_hasard(24)`, table simulée
 du 2026-09-08, 40 000 tirages par point).
 
+⚠️ **Amendement posé le 2026-10-31, AVANT que le banc existe et avant d'avoir
+lu une seule bougie.** Deux conventions du dépôt manquaient à la première
+rédaction :
+
+- **Le verdict est exigé aux DEUX spreads** (0,20 et 0,50), comme dans
+  `banc_contre_fil_or.py`. C'est une **conjonction** : elle rend l'admission
+  plus difficile, elle ne multiplie pas les chances de passer. Le compte de
+  cellules reste donc 24, et le plafond 2,241.
+- **La source est `candles_courtier.db`**, jamais `candles_5min.db` : ce
+  dernier est écrit depuis Twelve Data, dont les horodatages sont décalés de
+  façon non constante — inutilisable pour un banc qui dépend d'un instant
+  précis.
+
+🔑 Les deux changements vont dans le sens de la sévérité. Aucun ne peut
+fabriquer une admission, et aucune donnée n'avait été lue quand ils ont été
+écrits.
+
 <!-- CRITERE-MACHINE
-admission: t > +2.241 et delta_hasard > +0.02 et n >= 20
+admission: t > +2.241 et delta_hasard > +0.02 et n >= 20 aux deux spreads
 rejet: max(t) < +2.241 sur les 24 cellules
 validite: non_resolus_pct < 5 et bougies_m5 >= 90000
 cellules: 24
