@@ -1,5 +1,7 @@
 """Shared pytest fixtures for the Scalping Radar backend."""
 import os
+import importlib.util
+import sys
 
 import pytest
 import pytest_asyncio
@@ -22,6 +24,23 @@ os.environ.setdefault("SHADOW_PUBLIC_TOKEN_HASH", HASH_PUBLIC_DE_TEST)
 # scripts, son hash pour les points d'entree) : l'environnement de test
 # reproduit cette relation plutot que d'inventer deux valeurs sans lien.
 os.environ.setdefault("INFRA_NOTIFY_TOKEN", JETON_PUBLIC_DE_TEST)
+
+# ─── MetaTrader5 : une doublure SEULEMENT si le vrai module est absent ────
+#
+# Audit IT-1 : cinq fichiers de tests chargent `mt5-bridge/bridge.py`, qui
+# fait `import MetaTrader5` au premier niveau. Hors Windows la collecte
+# s'interrompait — et ce sont precisement les tests des garde-fous de risque
+# MT5, donc « verifies automatiquement nulle part ».
+#
+# 🔑 La condition est `find_spec`, pas un test de plateforme : sur un poste
+# Windows le vrai module reste en place et les cinq fichiers continuent de
+# tourner contre lui. La doublure ne masque jamais le reel quand il existe.
+#
+# ⛔ Pose AVANT toute collecte (niveau module de conftest), sinon le premier
+# fichier qui charge le pont echoue avant que la doublure n'existe.
+if importlib.util.find_spec("MetaTrader5") is None:
+    from backend.tests.doublures import metatrader5_absent as _mt5_doublure
+    sys.modules["MetaTrader5"] = _mt5_doublure
 
 
 def mock_request():
