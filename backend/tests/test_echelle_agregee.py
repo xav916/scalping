@@ -29,6 +29,8 @@ from __future__ import annotations
 import io
 from datetime import datetime, timedelta, timezone
 
+import time
+
 import pytest
 
 from backend.models.schemas import Candle
@@ -449,11 +451,38 @@ async def test_la_lecture_sans_cache_NE_LIT_ni_n_ECRIT_le_cache(monkeypatch):
 # 23 requetes de 246 bougies sur une API plafonnee A LA MINUTE. Vu en
 # production — 14 refus 429 dans les minutes qui ont suivi.
 
+def _il_y_a_longtemps() -> float:
+    """Une date d'etalement franchement PASSEE, pour une horloge monotone.
+
+    ⛔ `0.0` ne veut PAS dire « il y a longtemps ». `time.monotonic()` compte
+    depuis le DEMARRAGE de la machine : sur un hote fraichement demarre, 0,0
+    veut dire **maintenant**.
+
+    🔑 **C'est la cause des 6 echecs intermittents du constat R-27.** La
+    garde d'etalement est `maintenant - _dernier_preremplissage[0] < 150`.
+    Avec la sentinelle a 0,0 et une machine demarree depuis moins de
+    150 secondes — tout runner de CI — l'ecart est inferieur au seuil, et
+    `preremplir` ne fait RIEN. Les tests voient alors 0 appel au lieu de 1.
+
+    Sur un poste de developpement, `monotonic()` vaut des centaines de
+    milliers de secondes : 0,0 y est bien « il y a longtemps », et les tests
+    passent. D'ou l'intermittence, et d'ou « cause inconnue » : le defaut
+    n'apparait que sur une machine qui vient de demarrer.
+
+    Reproduit a la main le 2026-10-31 : uptime simule a 90 s -> 0 appel
+    (l'echec exact de la CI) ; uptime 6 jours -> 1 appel.
+
+    ⚠️ Le decalage est DERIVE du reglage, pas ecrit en dur : si
+    `SECONDES_ENTRE_PREREMPLISSAGES` change, cette fixture suit.
+    """
+    return time.monotonic() - ea.SECONDES_ENTRE_PREREMPLISSAGES - 1.0
+
+
 @pytest.fixture(autouse=True)
 def _etalement_neuf():
-    ea._dernier_preremplissage[0] = 0.0
+    ea._dernier_preremplissage[0] = _il_y_a_longtemps()
     yield
-    ea._dernier_preremplissage[0] = 0.0
+    ea._dernier_preremplissage[0] = _il_y_a_longtemps()
 
 
 @pytest.mark.asyncio
@@ -533,3 +562,58 @@ def test_AUCUNE_destination_hors_demo_ne_recoit_les_horizons_agreges(monkeypatch
         if d.destination_id == "admin_legacy":
             continue
         assert not recus, (d.destination_id, sorted(recus))
+
+
+# --------------------------------------------------------------------------
+# Le garde de R-27 : il doit mordre sur TOUTE machine
+# --------------------------------------------------------------------------
+def test_la_sentinelle_d_etalement_est_VRAIMENT_dans_le_passe():
+    """⛔ Le garde du constat R-27, verifiable partout.
+
+    `0.0` n'est « il y a longtemps » que sur une machine allumee depuis
+    longtemps. `time.monotonic()` compte depuis le DEMARRAGE : sur un hote
+    demarre il y a moins de `SECONDES_ENTRE_PREREMPLISSAGES`, 0,0 veut dire
+    MAINTENANT, la garde d'etalement bloque tout, et 6 tests tombent.
+
+    C'est la cause des « 6 failed, cause inconnue » de l'audit, et la raison
+    pour laquelle ils etaient introuvables : un poste de developpement a des
+    centaines de milliers de secondes d'uptime.
+    """
+    pose = _il_y_a_longtemps()
+    ecart = time.monotonic() - pose
+    assert ecart > ea.SECONDES_ENTRE_PREREMPLISSAGES, (
+        "la sentinelle n'est qu'a %.1f s dans le passe, pour un seuil de "
+        "%.0f s : la garde d'etalement bloquera les preremplissages."
+        % (ecart, ea.SECONDES_ENTRE_PREREMPLISSAGES))
+
+
+@pytest.mark.asyncio
+async def test_le_preremplissage_marche_sur_une_machine_qui_vient_de_DEMARRER():
+    """🔑 LE test de non-regression de R-27 : il simule l'uptime d'un runner.
+
+    Sans ce test, le defaut ne peut etre vu que sur une machine demarree
+    depuis moins de 150 secondes — donc jamais sur un poste de travail, et
+    seulement par intermittence en CI selon l'endroit ou le test tombe dans
+    l'ordre d'execution. C'est exactement ce qui le rendait « inconnu ».
+    """
+    appels: list[str] = []
+
+    async def faux_fetch(pair, interval=None, outputsize=None):
+        appels.append(pair)
+        return ([], False)
+
+    reel = ea.time.monotonic
+    depart = reel()
+    # 90 s d uptime : l etat d un runner de CI apres checkout et pip install
+    ea.time.monotonic = lambda: 90.0 + (reel() - depart)
+    try:
+        ea._dernier_preremplissage[0] = _il_y_a_longtemps()
+        ea._preremplies.clear()
+        await ea.preremplir("XAU/USD", faux_fetch)
+    finally:
+        ea.time.monotonic = reel
+
+    assert appels == ["XAU/USD"], (
+        "sur une machine fraichement demarree, le preremplissage n'a rien "
+        "fait (appels=%r). La sentinelle d'etalement est-elle repassee a "
+        "0.0 ? Voir `_il_y_a_longtemps`." % appels)
