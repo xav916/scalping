@@ -1,7 +1,7 @@
 """Daily recap PnL par COMPTE — envoie le bilan 24h sur le fil infra.
 
 Une section par compte de trading, nommée avec la convention du 06/09 —
-`[RÉEL · IC_MARKETS]`, `[RÉEL · KRAKEN]`, `[DÉMO · PEPPERSTONE]` — via
+`[RÉEL · IC_MARKETS]`, `[RÉEL · KRAKEN]`, `[DÉMO · IC_MARKETS]` — via
 `canaux_telegram.libelle()`, la seule source de ces libellés.
 
 Source de vérité : `personal_trades` filtré sur `destination_id`.

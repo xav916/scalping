@@ -144,7 +144,7 @@ def test_le_fil_DEMO_est_desormais_routable():
 
 def test_le_libelle_est_le_prefixe_de_compte():
     assert ct.libelle("ic_markets") == "[RÉEL · IC_MARKETS]"
-    assert ct.libelle("demo") == "[DÉMO · PEPPERSTONE]"
+    assert ct.libelle("demo") == "[DÉMO · IC_MARKETS]"
 
 
 # ── Le veto géopolitique (2026-09-06) ─────────────────────────────────────
@@ -212,14 +212,34 @@ def test_les_pictos_sont_DISTINCTS():
 
 
 def test_le_libelle_avec_picto_contient_les_deux():
-    # ⛔ Les couleurs sont celles des MARQUES : IC Markets vert/noir/blanc,
-    # Pepperstone bleu/blanc. Je les avais inversées le 06/09.
+    # ⛔ Les couleurs viennent des MARQUES : IC Markets vert/noir/blanc,
+    # Kraken violet. Je les avais inversées le 06/09.
+    #
+    # ⚠️ Sauf le DÉMO depuis le 2026-11-01 : son compte Pepperstone a expiré
+    # le 24/09 et il est passé chez IC Markets. Les deux fils MT5 relèvent donc
+    # du même courtier, et la marque ne les distingue plus.
+    #
+    # 🔑 Il garde le BLEU exprès. Lui donner le vert le rendrait
+    # indistinguable du fil d'ARGENT RÉEL — la confusion la plus coûteuse que
+    # ce module puisse produire. C'est le libellé qui porte le régime
+    # (`DÉMO` contre `RÉEL`), le picto ne sert qu'à séparer.
     assert ct.libelle_avec_picto("ic_markets") == "🟩 [RÉEL · IC_MARKETS]"
-    assert ct.libelle_avec_picto("demo") == "🟦 [DÉMO · PEPPERSTONE]"
+    assert ct.libelle_avec_picto("demo") == "🟦 [DÉMO · IC_MARKETS]"
     assert ct.libelle_avec_picto("kraken").endswith("[RÉEL · KRAKEN]")
+
+
+def test_le_DEMO_et_le_REEL_ne_partagent_PAS_leur_picto():
+    """⛔ Les deux fils MT5 sont chez le même courtier depuis le 01/11.
+
+    Si un jour quelqu'un « corrige » la couleur du démo pour la mettre au vert
+    d'IC Markets par souci de cohérence de marque, les deux fils deviendraient
+    indistinguables d'un coup d'œil — et un trade démo se lirait comme un
+    trade réel. Ce test est là pour que ce zèle échoue.
+    """
+    assert ct.picto("demo") != ct.picto("ic_markets")
 
 
 def test_le_libelle_SEUL_reste_disponible():
     """⚠️ Les préfixes de réponse en session n'ont pas de picto : le libellé
     nu doit rester utilisable."""
-    assert ct.libelle("demo") == "[DÉMO · PEPPERSTONE]"
+    assert ct.libelle("demo") == "[DÉMO · IC_MARKETS]"

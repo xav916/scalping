@@ -51,19 +51,32 @@ logger = logging.getLogger(__name__)
 #
 #   🟩 IC Markets   vert/noir/blanc
 #   🟪 Kraken       violet
-#   🟦 Pepperstone  bleu/blanc
 #
 # ⛔ Je les avais inversées le 06/09 en réécrivant le récap — bleu pour IC
 # Markets, orange pour Pepperstone — alors que l'ancien code portait les
 # BONNES. Réécrire vaut mieux que rafistoler, mais pas quand on jette au
 # passage une information juste.
+#
+# ⚠️ ET LA RÈGLE « UNE COULEUR PAR MARQUE » NE TIENT PLUS depuis le
+# 2026-11-01. Le démo était chez Pepperstone (bleu) ; son compte a expiré le
+# 24/09 et la destination a été rebranchée sur un démo IC Markets. Les DEUX
+# fils MT5 relèvent donc du même courtier, et la marque ne les distingue plus.
+#
+# 🔑 Le démo GARDE LE BLEU, et ce n'est pas un oubli. Ce qu'on demande à un
+# picto, c'est de séparer les fils d'un coup d'œil — `test_les_pictos_sont_
+# DISTINCTS` l'exige. Donner le vert au démo le rendrait indistinguable du
+# fil d'argent réel, ce qui est exactement l'erreur la plus coûteuse que ce
+# fichier puisse commettre : confondre un trade démo et un trade réel.
+#
+# ⇒ Le libellé dit le courtier ET le régime (`[DÉMO · IC_MARKETS]` contre
+# `[RÉEL · IC_MARKETS]`), le picto ne sert qu'à séparer.
 CANAUX: dict[str, tuple[str, str, str, str]] = {
     "ic_markets": ("SALES_TELEGRAM_BOT_TOKEN", "SALES_TELEGRAM_CHAT_ID",
                    "[RÉEL · IC_MARKETS]", "🟩"),
     "kraken": ("TRADES_TELEGRAM_BOT_TOKEN", "TRADES_TELEGRAM_CHAT_ID",
                "[RÉEL · KRAKEN]", "🟪"),
     "demo": ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID",
-             "[DÉMO · PEPPERSTONE]", "🟦"),
+             "[DÉMO · IC_MARKETS]", "🟦"),
     # 🟥 IBKR — rouge, la couleur d'Interactive Brokers. Fil ouvert le 07/09
     # en rallumant la Voie C sur les ETF sectoriels.
     "ibkr": ("IBKR_TELEGRAM_BOT_TOKEN", "IBKR_TELEGRAM_CHAT_ID",

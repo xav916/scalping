@@ -51,7 +51,7 @@ COMPARABLES = [
 ]
 KRAKEN_SEUL = [("SPY", "PF_SPYXUSD"), ("AAPL", "PF_AAPLXUSD")]
 
-# ─── Candidats forex pour [DÉMO · PEPPERSTONE] (2026-09-06) ──────────
+# ─── Candidats forex pour [DÉMO · IC_MARKETS] (2026-09-06) ──────────
 #
 # Le démo surveille 9 paires forex ; Pepperstone en cote 28 parmi les 8 devises
 # majeures. Les 19 restantes sont TOUTES servies par Twelve Data — le filtre qui
@@ -260,7 +260,7 @@ def bilan() -> int:
         classe = sorted(((_mediane(v["sp"]), p, v["temoin"]) for p, v in fx.items()
                          if _mediane(v["sp"]) is not None), key=lambda x: x[0])
         corps.append("")
-        corps.append("── Candidats forex [DÉMO · PEPPERSTONE], spread médian ──")
+        corps.append("── Candidats forex [DÉMO · IC_MARKETS], spread médian ──")
         for sp, paire, temoin in classe[:14]:
             corps.append(f"• {paire}{' (déjà suivi)' if temoin else ''} : {sp:.4f} %")
         temoins = [x for x in classe if x[2]]
