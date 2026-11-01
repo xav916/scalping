@@ -97,7 +97,7 @@ def _live(evaluation, verdict):
 
 
 def _demo(evaluation, verdict):
-    return _mesure("admin_legacy", "🧪 Demo Pepperstone", evaluation, verdict)
+    return _mesure("admin_legacy", "🧪 Demo IC Markets", evaluation, verdict)
 
 
 # --------------------------------------------------------------------------

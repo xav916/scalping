@@ -151,15 +151,30 @@ DESTINATIONS: dict[str, Destination] = {
     d.id: d for d in (
         Destination(
             id="admin_legacy",
-            badge="🧪 Demo Pepperstone",
-            mode="Pepperstone · Démo",
+            # ⚠️ Le COURTIER du démo a changé le 2026-11-01, pas la
+            # destination. Le démo Pepperstone (62134158) a été refusé par son
+            # serveur à partir du 2026-09-24 — compte expiré — et la
+            # destination a été rebranchée sur un démo IC Markets (53125447,
+            # serveur `ICMarketsEU-Demo`).
+            #
+            # 🔑 L'identifiant `admin_legacy` NE change pas : il est écrit dans
+            # `mt5_pushes`, `signal_rejections` et `personal_trades` depuis des
+            # mois. Le renommer couperait l'historique en deux sans rien
+            # gagner. Seuls les libellés lus par un humain bougent.
+            #
+            # ⚠️ La carte des symboles a changé avec le courtier :
+            # `WTI/USD:XTIUSD` et `NDX:USTEC` chez IC Markets, contre
+            # `SpotCrude` et `NAS100` chez Pepperstone. Elle vit dans le `.env`
+            # du bridge, pas ici.
+            badge="🧪 Demo IC Markets",
+            mode="IC Markets · Démo",
             reel=False,
             bridge_type="mt5",
             url_env="MT5_BRIDGE_URL",
             key_env="MT5_BRIDGE_API_KEY",
             sizing="global",
             asset_classes=frozenset({"forex", "metal", "energy"}),
-            plateforme="MT5 Demo Pepperstone",
+            plateforme="MT5 Demo IC Markets",
             # Pose le 2026-08-23, apres mesure des 55 couples forex/metaux
             # chez le courtier. Impact rejoue sur 60 jours : 6 trades sur 39
             # auraient ete refuses (15 %), essentiellement des DOUBLONS du
