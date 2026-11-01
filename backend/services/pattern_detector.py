@@ -1735,11 +1735,30 @@ def _detect_range_bounce(candles: list[Candle], pair: str) -> list[PatternDetect
     return patterns
 
 
+# Combien d'écarts-types il faut franchir pour que le retour à la moyenne
+# s'annonce. 2,0 est la valeur ARMÉE sur le démo depuis le 2026-09-04
+# (BTC/USD, ETH/USD, et XAU/USD en `_down` seul).
+#
+# ⛔ Réglable pour être MESURÉ, pas pour être réglé à la main. Le banc
+# `scripts/banc_retour_moyenne_or.py` balaie 1,5 / 2,0 / 2,5 sur 17 mois d'or,
+# sous la pré-inscription `docs/predictions/2026-10-31_retour-moyenne-or.md`.
+# Le déplacer sans verdict reviendrait à choisir un seuil sur les données qui
+# l'ont suggéré — ce que `laboratoire_or` dit ne JAMAIS faire.
+#
+# 🔑 Si ce seuil était recopié dans le banc au lieu d'être lu ici, il
+# existerait deux implémentations du même z-score et elles divergeraient un
+# jour en silence. C'est la leçon de `chaines_production.py`.
+MEAN_REVERSION_SIGMA = float(os.getenv("MEAN_REVERSION_SIGMA", "2.0"))
+
+
 def _detect_mean_reversion(candles: list[Candle], pair: str) -> list[PatternDetection]:
     """Détecte les retours à la moyenne (Bollinger-like).
 
     Calcule une moyenne mobile et des écarts-types pour identifier
     quand le prix s'éloigne trop de la moyenne.
+
+    ⚠️ DEUX conditions, pas une : l'écart à la moyenne **et** une bougie de
+    retournement. Un prix étiré qui s'étire encore ne produit rien.
     """
     patterns = []
     now = datetime.now(timezone.utc)
@@ -1755,9 +1774,10 @@ def _detect_mean_reversion(candles: list[Candle], pair: str) -> list[PatternDete
 
     last = candles[-1]
     distance = last.close - sma
+    seuil = MEAN_REVERSION_SIGMA
 
     # Sur-extension baissière → signal d'achat (retour vers le haut)
-    if distance < -std_dev * 2 and last.close > last.open:
+    if distance < -std_dev * seuil and last.close > last.open:
         confidence = min(0.75, 0.55 + abs(distance) / std_dev * 0.05)
         patterns.append(PatternDetection(
             pattern=PatternType.MEAN_REVERSION_UP,
@@ -1770,7 +1790,7 @@ def _detect_mean_reversion(candles: list[Candle], pair: str) -> list[PatternDete
         ))
 
     # Sur-extension haussière → signal de vente (retour vers le bas)
-    if distance > std_dev * 2 and last.close < last.open:
+    if distance > std_dev * seuil and last.close < last.open:
         confidence = min(0.75, 0.55 + abs(distance) / std_dev * 0.05)
         patterns.append(PatternDetection(
             pattern=PatternType.MEAN_REVERSION_DOWN,
