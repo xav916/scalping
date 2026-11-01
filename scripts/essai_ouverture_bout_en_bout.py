@@ -79,7 +79,7 @@ CAS = [
     ("admin_kraken", "[RÉEL · KRAKEN]",
      SetupFictif("ETH/USD", "buy", 4200.0, 4100.0, 4380.0), 0.05,
      "taille de contrat 1 : annonçait « −0,01 € »"),
-    ("admin_legacy", "[DÉMO · PEPPERSTONE]",
+    ("admin_legacy", "[DÉMO · IC_MARKETS]",
      SetupFictif("EUR/GBP", "sell", 0.86500, 0.87000, 0.85600), 0.02,
      "cotation en GBP sous-estimée de 30 % ; fil muet jusqu'au 06/09"),
     # ⛔ Entré le 08/09, en gréant le fil IBKR. Le cas a IMMÉDIATEMENT payé :
