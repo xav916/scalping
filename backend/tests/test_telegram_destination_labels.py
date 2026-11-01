@@ -96,12 +96,24 @@ def _setup():
 
 @pytest.mark.parametrize("dest_id,attendu", [
     ("admin_kraken", "Kraken Futures"),
-    ("admin_live", "IC Markets"),
-    ("admin_legacy", "Pepperstone"),
+    ("admin_live", "IC Markets · LIVE"),
+    ("admin_legacy", "IC Markets · Démo"),
     ("user:2", "Premium"),
 ])
 def test_le_message_douverture_nomme_le_broker(dest_id, attendu):
-    """Exerce `_format_trade_opened`, pas la table seule."""
+    """Exerce `_format_trade_opened`, pas la table seule.
+
+    ⚠️ RÉVISÉ le 2026-11-01. Le démo attendait « Pepperstone » ; son courtier
+    a changé pour IC Markets (le compte Pepperstone était refusé depuis le
+    24/09, expiré).
+
+    ⛔ Et attendre « IC Markets » tout court aurait **affaibli ce test en
+    silence** : les DEUX comptes MT5 sont maintenant chez le même courtier, si
+    bien que le nom du courtier ne les distingue plus. L'attente porte donc
+    sur le libellé entier, `LIVE` contre `Démo` — ce qui est précisément la
+    confusion que ce fichier existe pour interdire (un trade Kraken s'était
+    affiché « Démo » alors qu'il engageait de l'argent réel).
+    """
     from backend.services import telegram_service as ts
     text = ts._format_trade_opened(
         _setup(), ticket="123", fill_price=1868.0, volume=0.1,

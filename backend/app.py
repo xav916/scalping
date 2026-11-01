@@ -3152,7 +3152,7 @@ async def api_admin_notify_infra_telegram(
 
 
 async def _build_sales_recap_text(date_iso: str | None = None) -> str:
-    """Texte du daily recap 3 brokers (Pepperstone Demo + IC Markets Live +
+    """Texte du daily recap 3 brokers (IC Markets Demo + IC Markets Live +
     Binance Testnet) pour la date `date_iso` (YYYY-MM-DD, default = aujourd'hui UTC).
 
     Best-effort : si une source échoue (HTTP, SQL), substitue un placeholder
@@ -3166,13 +3166,17 @@ async def _build_sales_recap_text(date_iso: str | None = None) -> str:
     day = date_iso or datetime.now(timezone.utc).date().isoformat()
     lines = [f"📊 Daily recap {day}", ""]
 
-    # MT5 — Pepperstone Demo (admin_legacy) + IC Markets Live (admin_live)
+    # MT5 — IC Markets Demo (admin_legacy) + IC Markets Live (admin_live)
     try:
         con = sqlite3.connect(str(_DB_PATH))
         con.row_factory = sqlite3.Row
         mt5_blocks: dict[str, dict] = {}
+        # ⚠️ Le démo est passé de Pepperstone à IC Markets le 2026-11-01 (le
+        # compte Pepperstone était refusé depuis le 24/09). Le picto reste
+        # BLEU : les deux comptes sont désormais chez le même courtier, et les
+        # distinguer d'un coup d'œil compte plus que la couleur de la marque.
         for dest, label in (
-            ("admin_legacy", "🟦 Pepperstone Demo"),
+            ("admin_legacy", "🟦 IC Markets Demo"),
             ("admin_live", "🟩 IC Markets Live (argent réel)"),
         ):
             rows = con.execute(
@@ -3660,7 +3664,7 @@ async def api_telegram_sales_webhook(request: Request):
 
 @app.get("/api/admin/mt5-bridges-health")
 async def api_admin_mt5_bridges_health(token: str = ""):
-    """Santé des bridges MT5 (legacy = Demo Pepperstone, live = IC Markets).
+    """Santé des bridges MT5 (legacy = Demo IC Markets, live = IC Markets Live).
 
     Auth-by-token (même hash que notify-infra-telegram / public-summary).
     Réponse : `{now, legacy: {url, ...health}, live: {url, ...health}}`
