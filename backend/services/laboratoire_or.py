@@ -1387,13 +1387,26 @@ def rejouer_cellule(bougies, releve: dict[int, list], motif: str, sens: str,
         signe = 1 if sens == "buy" else -1
         R, sortie = _issue(bougies, i, entree, risque, objectif_r, signe,
                            spread / risque)
+        # ⛔ Un trade qui n'a touché NI son stop NI son objectif a été soldé à
+        # la clôture courante : son R mesure une liquidation administrative, pas
+        # une issue de marché. Sans ce drapeau, une cellule dominée par de tels
+        # trades décrit la dérive du prix pendant la fenêtre de tenue, et son
+        # `t` se lit comme un effet du motif.
+        #
+        # 🔑 La résolution se DÉDUIT de l'indice de sortie, pas d'un second
+        # parcours : `_issue` ne rend la borne `depart + MAX_BOUGIES_TENUE`
+        # (ou la fin des bougies) que lorsqu'elle a épuisé sa boucle sans
+        # conclure. Recalculer l'issue ailleurs en ferait une seconde
+        # implémentation.
+        borne = min(len(bougies), i + MAX_BOUGIES_TENUE)
+        resolu = sortie < borne
         # `risque_pct` : la distance au stop en fraction du PRIX. C'est le
         # denominateur qui decide du cout — `cout_R = spread / risque` — donc
         # le publier a cote du cout rend la cause lisible, pas seulement
         # l'effet. Il est deja calcule deux lignes plus haut pour PLACEBO_PCT.
         trades.append({"R": R, "risque": risque, "cout": spread / risque,
                        "risque_pct": risque / entree,
-                       "objectif_r": objectif_r})
+                       "objectif_r": objectif_r, "resolu": resolu})
         i = sortie + 1
     return trades
 
@@ -1564,6 +1577,13 @@ def mesurer(bougies_m5: list, spread: float, pair: str = PAIRE,
                 "echelle": facteur, "horizon": _horizon(facteur),
                 "motif": motif, "sens": sens, "n": len(R),
                 "r_moyen": moyenne, "t": t, "r_total": sum(R),
+                # ⛔ Combien de ces trades ont été soldés de FORCE, sans avoir
+                # touché stop ni objectif. Une cellule qu'ils dominent ne
+                # mesure pas le motif : elle mesure la dérive du prix pendant
+                # la fenêtre de tenue. Agrégé ici pour qu'une condition de
+                # validité puisse s'y appuyer, au lieu d'être déclarée sans
+                # instrument.
+                "non_resolus": sum(1 for x in trades if not x["resolu"]),
                 "ecart_type": st.stdev(R) if len(R) > 2 else 0.0,
                 "spread_r": st.median(x["cout"] for x in trades),
                 "risque_pct": st.median(x["risque_pct"] for x in trades),
