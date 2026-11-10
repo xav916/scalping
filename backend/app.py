@@ -698,6 +698,80 @@ async def api_ea_download(_ctx: AuthContext = Depends(require_min_tier("premium"
     )
 
 
+# ─── trader-skill → radar relay (push Telegram) ──────────────────────
+#
+# Pont entre les skills Claude .claude/skills/trader-* et le canal Telegram
+# « Scalping Radar Info » (bot @xav_scalping_radar_bot). Auth par clé
+# partagee TRADER_SKILL_WEBHOOK_KEY en env, pas par api_key utilisateur :
+# les skills sont pilotees depuis la session Claude personnelle, pas depuis
+# un user SaaS multi-tenant.
+
+
+_TRADER_SKILL_LEVEL_EMOJI = {"info": "ℹ️", "warn": "⚠️", "critical": "🚨"}
+_TRADER_SKILL_ALLOWED = {"trader-alerts", "trader-analyst", "trader-broker",
+                         "trader-budget", "trader-copycat", "trader-news",
+                         "trader-pelosi", "trader-rebalance", "trader-risk",
+                         "trader-screener", "trader-tax"}
+
+
+@app.post("/api/trader-skill-event")
+async def api_trader_skill_event(payload: dict):
+    """Relaie un event d'une skill trader-* vers Telegram « Info ».
+
+    Body : ``{api_key, skill, level?, title, message?, data?}``
+    - ``api_key`` : doit matcher env ``TRADER_SKILL_WEBHOOK_KEY``
+    - ``skill`` : nom de la skill emettrice (ex ``trader-alerts``)
+    - ``level`` : ``info`` (defaut), ``warn``, ``critical``
+    - ``title`` : titre court
+    - ``message`` : corps libre (markdown/HTML echappe cote serveur)
+    - ``data`` : dict optionnel, affiche en JSON compact en bas du message
+
+    404 si TRADER_SKILL_WEBHOOK_KEY non defini (feature desactivee).
+    """
+    expected_key = os.getenv("TRADER_SKILL_WEBHOOK_KEY", "")
+    if not expected_key:
+        raise HTTPException(status_code=404, detail="trader-skill relay disabled")
+    api_key = (payload or {}).get("api_key", "")
+    if not secrets.compare_digest(api_key, expected_key):
+        raise HTTPException(status_code=401, detail="api_key invalide")
+
+    skill = str((payload or {}).get("skill", "")).strip()
+    if skill not in _TRADER_SKILL_ALLOWED:
+        raise HTTPException(status_code=400, detail=f"skill inconnue : {skill!r}")
+
+    title = str((payload or {}).get("title", "")).strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="title requis")
+
+    level = str((payload or {}).get("level", "info")).lower()
+    if level not in _TRADER_SKILL_LEVEL_EMOJI:
+        level = "info"
+    emoji = _TRADER_SKILL_LEVEL_EMOJI[level]
+
+    message = str((payload or {}).get("message", "")).strip()
+    data = (payload or {}).get("data")
+
+    # HTML escape minimal — send_info_text utilise parse_mode=HTML
+    def _esc(s: str) -> str:
+        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    import json as _json
+    lines = [f"{emoji} <b>[{_esc(skill)}]</b> {_esc(title)}"]
+    if message:
+        lines.append(_esc(message))
+    if isinstance(data, dict) and data:
+        try:
+            data_json = _json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+        except Exception:
+            data_json = str(data)
+        lines.append(f"<code>{_esc(data_json[:2000])}</code>")
+    formatted = "\n".join(lines)
+
+    from backend.services import telegram_service
+    sent = await telegram_service.send_info_text(formatted, parse_mode="HTML")
+    return {"relayed": bool(sent), "level": level, "skill": skill}
+
+
 @app.post("/api/user/broker/generate-api-key")
 async def api_user_broker_generate_api_key(
     ctx: AuthContext = Depends(require_min_tier("premium")),
