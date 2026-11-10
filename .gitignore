@@ -54,6 +54,14 @@ deployment_manifest.json
 or/state/
 or/lot.json
 
+# trader-skill runtime : etat des ordres, lots, portfolio -- jamais commites
+# (trader/config.json et trader/README.md restent suivis : documentation + conf)
+trader/state/*
+!trader/state/.gitkeep
+trader/portfolio.json
+trader/orders.json
+trader/targets.json
+
 # Genere par deploy-v2.sh a chaque build. Non suivi, mais il rendait l'arbre de
 # travail de l'EC2 SALE en permanence — donc `generer_manifest_deploiement.py
 # --exiger-propre` aurait bloque tous les deploiements (trouve le 2026-09-28).
