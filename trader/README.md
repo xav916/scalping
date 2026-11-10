@@ -78,6 +78,59 @@ métaux + indices + crypto. Le filtre ci-dessous reflète cette réalité.
 - `config.json` ci-dessus — modifier `sec_user_agent` si on active jamais
   un skill touchant SEC EDGAR
 
+## Notifications Telegram depuis les skills
+
+Les skills `trader-*` ne poussent rien par défaut (stdout de la session
+Claude seulement). Pour que `trader-alerts` ou `trader-screener`
+apparaissent dans votre canal Telegram « Scalping Radar Info », utilisez
+le helper `trader/notify.py`.
+
+**Mise en place** (une fois) :
+
+1. Côté serveur (fichier `.env` du radar) :
+
+   ```bash
+   TRADER_SKILL_WEBHOOK_KEY="<secret genere>"
+   ```
+
+   Générer la clé : `python -c 'import secrets; print(secrets.token_urlsafe(32))'`
+
+2. Côté machine qui exécute les skills Claude (mêmes valeurs) :
+
+   ```bash
+   export TRADER_SKILL_WEBHOOK_KEY="<meme secret>"
+   export TRADER_SKILL_RADAR_URL="https://scalping-radar.duckdns.org"
+   ```
+
+3. Dans une skill ou un wrapper, à la fin du travail utile :
+
+   ```python
+   from trader.notify import notify_radar
+
+   notify_radar(
+       skill="trader-alerts",
+       title="F a touche 12.20",
+       message="Stop level atteint — 2 shares en risque.",
+       level="warn",  # info | warn | critical
+       data={"symbol": "F", "price": 12.20},
+   )
+   ```
+
+Le helper est **silent no-op** si les env vars ne sont pas posées : les
+skills continuent à fonctionner en local sans push, et vous pouvez les
+activer canal par canal.
+
+**Flux complet** : skill → `notify_radar()` → `POST /api/trader-skill-event`
+→ `telegram_service.send_info_text()` → bot `@xav_scalping_radar_bot`
+(canal Info, pas broadcast clients).
+
+Test de bout en bout :
+
+```bash
+TRADER_SKILL_WEBHOOK_KEY=xxx TRADER_SKILL_RADAR_URL=https://... \
+    python /home/user/scalping/trader/notify.py
+```
+
 ## Flux type pour un ordre
 
 1. `/trader-screener` ou analyse manuelle → identifie une candidate
