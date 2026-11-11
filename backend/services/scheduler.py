@@ -1989,6 +1989,78 @@ def start_scheduler() -> AsyncIOScheduler:
         coalesce=True,
     )
 
+    # ─── Mean Reversion FX via MT5 bridge (2026-11-11) ───────────────────
+    # OFF par défaut (MEANREV_ENABLED=false). Mode live direct : les ordres
+    # partent vers IC Markets via le bridge MT5 sur Lightsail Windows. Pour
+    # tester sans risque : MEANREV_MODE=dry_run.
+    from backend.services import meanrev_trader as _mr_module
+
+    async def _meanrev_cycle_job() -> None:
+        try:
+            await _mr_module.cycle()
+        except Exception as exc:
+            logger.warning("meanrev cycle failed: %s", exc)
+
+    _scheduler.add_job(
+        _meanrev_cycle_job,
+        "interval",
+        seconds=_mr_module.POLL_INTERVAL_SEC,
+        id="meanrev_cycle",
+        name="Mean reversion FX cycle (régime 1h + trigger 15min)",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+
+    async def _meanrev_check_exits_job() -> None:
+        try:
+            await _mr_module.check_exits()
+        except Exception as exc:
+            logger.warning("meanrev check_exits failed: %s", exc)
+
+    _scheduler.add_job(
+        _meanrev_check_exits_job,
+        "interval",
+        seconds=60,
+        id="meanrev_check_exits",
+        name="Mean reversion FX time stops + VWAP targets check",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+
+    async def _meanrev_friday_close_job() -> None:
+        try:
+            await _mr_module.friday_force_close()
+        except Exception as exc:
+            logger.warning("meanrev friday close failed: %s", exc)
+
+    _scheduler.add_job(
+        _meanrev_friday_close_job,
+        _CronTrigger_AT(day_of_week="fri", hour=19, minute=30, timezone="UTC"),
+        id="meanrev_friday_close",
+        name="Mean reversion FX Friday force-close",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+
+    async def _meanrev_daily_recap_job() -> None:
+        try:
+            await _mr_module.daily_recap()
+        except Exception as exc:
+            logger.warning("meanrev daily_recap failed: %s", exc)
+
+    _scheduler.add_job(
+        _meanrev_daily_recap_job,
+        _CronTrigger_AT(day_of_week="mon-fri", hour=22, minute=5, timezone="UTC"),
+        id="meanrev_daily_recap",
+        name="Mean reversion FX recap quotidien",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+
     _scheduler.start()
     logger.info(
         f"Scheduler démarré. Analyse {MATAF_POLL_INTERVAL}s, backtest 60s, "
