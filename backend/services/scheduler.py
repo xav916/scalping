@@ -1909,6 +1909,29 @@ def start_scheduler() -> AsyncIOScheduler:
         replace_existing=True,
     )
 
+    # ─── Veille positions IBKR (cockpit unifié multi-broker, 2026-11-11) ──
+    # Toujours enregistré : le kill switch COCKPIT_IBKR_WATCH_ENABLED est
+    # vérifié à chaque poll, donc on peut activer/désactiver à chaud via env
+    # sans redémarrer le radar. Un poll désactivé retourne immédiatement.
+    from backend.services import positions_watcher as _pw_module
+
+    async def _ibkr_positions_poll_job() -> None:
+        try:
+            await _pw_module.poll()
+        except Exception as exc:  # jamais laisser le job crasher le scheduler
+            logger.warning("positions_watcher poll failed: %s", exc)
+
+    _scheduler.add_job(
+        _ibkr_positions_poll_job,
+        "interval",
+        seconds=_pw_module.POLL_INTERVAL_SEC,
+        id="ibkr_positions_watcher",
+        name="Veille positions IBKR (cockpit)",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+
     _scheduler.start()
     logger.info(
         f"Scheduler démarré. Analyse {MATAF_POLL_INTERVAL}s, backtest 60s, "
