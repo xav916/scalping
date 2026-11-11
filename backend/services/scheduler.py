@@ -1932,6 +1932,46 @@ def start_scheduler() -> AsyncIOScheduler:
         coalesce=True,
     )
 
+    # ─── Auto-trader v1 (2026-11-11) ─────────────────────────────────────
+    # OFF par défaut (AUTO_TRADER_ENABLED=false). Même allumé, mode dry_run
+    # par défaut : pas d'ordre réel, juste logs + Telegram. Pour live : set
+    # AUTO_TRADER_MODE=live ET IBKR_ALLOW_ORDERS=true côté bridge.
+    from backend.services import auto_trader as _at_module
+
+    async def _auto_trader_cycle_job() -> None:
+        try:
+            await _at_module.cycle()
+        except Exception as exc:
+            logger.warning("auto_trader cycle failed: %s", exc)
+
+    _scheduler.add_job(
+        _auto_trader_cycle_job,
+        "interval",
+        seconds=_at_module.POLL_INTERVAL_SEC,
+        id="auto_trader_cycle",
+        name="Auto-trader cycle (screener → risk → exec)",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+
+    async def _auto_trader_friday_close_job() -> None:
+        try:
+            await _at_module.friday_force_close()
+        except Exception as exc:
+            logger.warning("auto_trader friday close failed: %s", exc)
+
+    from apscheduler.triggers.cron import CronTrigger as _CronTrigger_AT
+    _scheduler.add_job(
+        _auto_trader_friday_close_job,
+        _CronTrigger_AT(day_of_week="fri", hour=19, minute=30, timezone="UTC"),
+        id="auto_trader_friday_close",
+        name="Auto-trader Friday force-close",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+
     _scheduler.start()
     logger.info(
         f"Scheduler démarré. Analyse {MATAF_POLL_INTERVAL}s, backtest 60s, "
