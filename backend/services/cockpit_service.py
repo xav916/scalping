@@ -467,6 +467,17 @@ async def build_cockpit(user: str, user_id: int | None = None) -> dict:
     except Exception:
         polymarket = None
 
+    # Positions IBKR : snapshot alimente par positions_watcher (job scheduler
+    # qui poll le bridge toutes les COCKPIT_IBKR_POLL_SEC). None si la veille
+    # est OFF (COCKPIT_IBKR_WATCH_ENABLED=false) ou si aucun poll n'a encore
+    # reussi depuis le boot. Cockpit unifie multi-broker : ces positions
+    # s'ajoutent a celles MT5 / Kraken visibles via active_trades.
+    from backend.services import positions_watcher as _pw
+    try:
+        ibkr_positions = _pw.get_snapshot()
+    except Exception:
+        ibkr_positions = None
+
     alerts = _build_alerts(active_trades, next_events)
     if ks_status.get("active"):
         alerts.insert(0, {
@@ -540,6 +551,7 @@ async def build_cockpit(user: str, user_id: int | None = None) -> dict:
         "fear_greed": fear_greed,
         "geopolitical": geopolitical,
         "polymarket": polymarket,
+        "ibkr_positions": ibkr_positions,
         "next_events": next_events[:5],
         "alerts": alerts,
     }
