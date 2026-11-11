@@ -1972,6 +1972,23 @@ def start_scheduler() -> AsyncIOScheduler:
         coalesce=True,
     )
 
+    # Recap quotidien à la fermeture NYSE (22h UTC = 22h Paris en CET, 23h en CEST)
+    async def _auto_trader_daily_recap_job() -> None:
+        try:
+            await _at_module.daily_recap()
+        except Exception as exc:
+            logger.warning("auto_trader daily_recap failed: %s", exc)
+
+    _scheduler.add_job(
+        _auto_trader_daily_recap_job,
+        _CronTrigger_AT(day_of_week="mon-fri", hour=22, minute=5, timezone="UTC"),
+        id="auto_trader_daily_recap",
+        name="Auto-trader recap quotidien (post-NYSE close)",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+
     _scheduler.start()
     logger.info(
         f"Scheduler démarré. Analyse {MATAF_POLL_INTERVAL}s, backtest 60s, "
