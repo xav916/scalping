@@ -411,11 +411,50 @@ async def _is_daily_loss_exceeded(state: dict, mode: str) -> tuple[bool, dict]:
 # ─── Helpers ────────────────────────────────────────────────────────────
 
 async def _send_info(text: str) -> None:
+    """Route le message selon le mode.
+
+    - ``dry_run`` : canal ``demo`` (bot ``@xav_scalping_radar_bot``, préfixe
+      ``[DÉMO · IC_MARKETS]`` 🟦) via ``send_info_text`` — cohérent avec le
+      fait que les positions sont simulées.
+    - ``live`` : canal ``ibkr`` (bot IBKR trades, préfixe ``[RÉEL · IBKR]``
+      🟥) via POST direct sur l'API Telegram avec les credentials IBKR —
+      les ordres partent sur le compte IBKR réel, le message doit arriver
+      sur le fil IBKR pour ne pas faire croire à de la démo.
+
+    Si le canal ``ibkr`` n'est pas configuré en mode live, repli sur
+    ``send_info_text`` pour ne pas perdre le message — avec un WARNING.
+    """
     try:
         from backend.services import telegram_service
-        await telegram_service.send_info_text(text, parse_mode="HTML")
+        mode = _config_mode()
+        if mode == "live":
+            from backend.services import canaux_telegram as ct
+            jeton, chat = ct.jeton_et_chat("ibkr")
+            if jeton and chat:
+                url = f"https://api.telegram.org/bot{jeton}/sendMessage"
+                payload = {
+                    "chat_id": chat,
+                    "text": text[:4000],
+                    "disable_web_page_preview": True,
+                    "parse_mode": "HTML",
+                }
+                async with httpx.AsyncClient(timeout=10.0) as c:
+                    r = await c.post(url, json=payload)
+                if r.status_code != 200:
+                    logger.warning(
+                        "auto_trader: Telegram IBKR HTTP %s %s — repli demo",
+                        r.status_code, r.text[:200],
+                    )
+                    await telegram_service.send_info_text(text, parse_mode="HTML")
+            else:
+                logger.warning(
+                    "auto_trader: IBKR_TELEGRAM_* non configuré, repli sur canal demo"
+                )
+                await telegram_service.send_info_text(text, parse_mode="HTML")
+        else:
+            await telegram_service.send_info_text(text, parse_mode="HTML")
     except Exception as e:
-        logger.warning("auto_trader: send_info_text failed — %s", e)
+        logger.warning("auto_trader: send telegram failed — %s", e)
 
 
 def _usd_from_eur(eur: float) -> float:
