@@ -41,6 +41,8 @@ from backend.services.meanrev_trader import (
     ATR_EXPANSION_MIN,
     BBW_PERCENTILE_MIN,
     EUR_USD_RATE,
+    INVERT_DIRECTION,
+    MOMENTUM_TP_R_MULT,
     RISK_PCT,
     TIME_STOP_MINUTES,
     TRIGGER_CANDLE_MULT,
@@ -554,21 +556,33 @@ def run_backtest(
             continue
         seen_entries.add(entry_ts)
 
+        # Inversion optionnelle (test momentum au lieu de meanrev)
+        if INVERT_DIRECTION:
+            trigger["direction"] = "sell" if trigger["direction"] == "buy" else "buy"
+
         entry = float(trigger["entry"])
         sl = _sl_from_trigger(trigger, atr_15min)
 
-        # TP = VWAP du jour au moment de l'entrée
-        vwap = _compute_vwap_for_day(visible_15m, entry_ts.date())
-        if vwap is None:
-            continue
-        tp = vwap
+        if INVERT_DIRECTION:
+            # Momentum : TP = R:R fixe dans la direction du trade
+            sl_distance = abs(entry - sl)
+            if trigger["direction"] == "buy":
+                tp = entry + MOMENTUM_TP_R_MULT * sl_distance
+            else:
+                tp = entry - MOMENTUM_TP_R_MULT * sl_distance
+        else:
+            # Meanrev : TP = VWAP du jour au moment de l'entrée
+            vwap = _compute_vwap_for_day(visible_15m, entry_ts.date())
+            if vwap is None:
+                continue
+            tp = vwap
 
-        # Sanity : si direction buy mais tp < entry, ou sell mais tp > entry,
-        # le VWAP est "derrière" (le prix s'est déjà réverté). Skip.
-        if trigger["direction"] == "buy" and tp <= entry:
-            continue
-        if trigger["direction"] == "sell" and tp >= entry:
-            continue
+            # Sanity : si direction buy mais tp < entry, ou sell mais tp > entry,
+            # le VWAP est "derrière" (le prix s'est déjà réverté). Skip.
+            if trigger["direction"] == "buy" and tp <= entry:
+                continue
+            if trigger["direction"] == "sell" and tp >= entry:
+                continue
 
         lots = _size_lots_from_risk(capital_eur, entry, sl, pair) * risk_scale
         if lots <= 0:
