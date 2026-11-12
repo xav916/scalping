@@ -32,6 +32,7 @@ from backend.services.meanrev_trader import (
     _compute_atr,
     _compute_atr_series,
     _compute_bbw_series,
+    _contract_size,
     _detect_regime,
     _detect_trigger,
     _percentile_rank,
@@ -304,11 +305,19 @@ def _simulate_exit(
 
 # ─── Replay principal ───────────────────────────────────────────────────
 
-def _pnl_usd(direction: str, entry: float, exit_price: float, lots: float) -> float:
-    """PnL en USD : (exit - entry) × 100000 × lots pour BUY, inverse pour SELL."""
+def _pnl_usd(direction: str, entry: float, exit_price: float, lots: float, pair: str) -> float:
+    """PnL en USD : (delta prix) × contract_size(pair) × lots.
+
+    ⛔ Bug historique fixé 2026-11-12 : utilisait hardcoded 100000 (forex)
+    pour toutes les classes d'asset, amplifiant le PnL XAU/USD d'un facteur
+    1000× (100 oz × 1000 = 100000). Résultat du backtest : -46K USD pour un
+    risque autorisé de 8 USD × 7 trades. Corrigé en utilisant _contract_size
+    comme _size_lots_from_risk (même logique miroir).
+    """
+    cs = _contract_size(pair)
     if direction == "buy":
-        return (exit_price - entry) * 100000 * lots
-    return (entry - exit_price) * 100000 * lots
+        return (exit_price - entry) * cs * lots
+    return (entry - exit_price) * cs * lots
 
 
 # ─── Quantiles + suggestion de seuils ───────────────────────────────────
@@ -577,7 +586,7 @@ def run_backtest(
             time_stop_minutes=TIME_STOP_MINUTES,
         )
 
-        pnl = _pnl_usd(trigger["direction"], entry, exit_price, lots)
+        pnl = _pnl_usd(trigger["direction"], entry, exit_price, lots, pair)
         trades.append(Trade(
             pair=pair,
             direction=trigger["direction"],
