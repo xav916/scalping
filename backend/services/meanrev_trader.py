@@ -374,7 +374,9 @@ def _detect_trigger(candles_15min: list, atr_15min: float) -> dict | None:
         return {
             "direction": "buy",
             "entry": float(last.close),
-            "extreme": t_low,  # SL référence = le low
+            "extreme": t_low,  # rétro-compat : SL référence pour direction originale
+            "trigger_high": t_high,  # pour SELL post-invert
+            "trigger_low": t_low,   # pour BUY (meanrev) ou SELL inversé
             "trigger_time": trigger.timestamp.isoformat() if hasattr(trigger.timestamp, "isoformat") else str(trigger.timestamp),
             "amplitude": amplitude,
             "atr": atr_15min,
@@ -386,6 +388,8 @@ def _detect_trigger(candles_15min: list, atr_15min: float) -> dict | None:
             "direction": "sell",
             "entry": float(last.close),
             "extreme": t_high,
+            "trigger_high": t_high,
+            "trigger_low": t_low,
             "trigger_time": trigger.timestamp.isoformat() if hasattr(trigger.timestamp, "isoformat") else str(trigger.timestamp),
             "amplitude": amplitude,
             "atr": atr_15min,
@@ -395,11 +399,28 @@ def _detect_trigger(candles_15min: list, atr_15min: float) -> dict | None:
 
 
 def _sl_from_trigger(trigger: dict, atr_15min: float) -> float:
-    """SL = extreme ± buffer 0.1× ATR (de l'autre côté de l'entrée)."""
+    """SL placé de l'autre côté de l'entrée par rapport à la direction courante.
+
+    ⛔ Bug historique corrigé 2026-11-12 : utilisait ``trigger["extreme"]``
+    qui n'avait qu'UNE valeur, alignée sur la direction originale du trigger.
+    Après ``MEANREV_INVERT_DIRECTION``, la direction change mais extreme non,
+    résultat : SL calé du mauvais côté de l'entrée → exits "SL" immédiats
+    avec prix positif pour le trade (symptôme : 10 "SL" + winrate 100%).
+
+    Fix : sélection via ``trigger_high``/``trigger_low`` stockés tous les 2,
+    choix selon la direction courante :
+      - BUY  → SL sous le low de la bougie trigger
+      - SELL → SL au-dessus du high de la bougie trigger
+
+    Fallback sur ``extreme`` pour les triggers construits avant cette PR
+    (tests ou state résiduel).
+    """
     buffer = 0.1 * atr_15min
     if trigger["direction"] == "buy":
-        return trigger["extreme"] - buffer
-    return trigger["extreme"] + buffer
+        anchor = trigger.get("trigger_low", trigger.get("extreme"))
+        return anchor - buffer
+    anchor = trigger.get("trigger_high", trigger.get("extreme"))
+    return anchor + buffer
 
 
 # ─── Bridge MT5 calls ───────────────────────────────────────────────────

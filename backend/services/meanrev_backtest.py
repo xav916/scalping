@@ -23,6 +23,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 import math
+import os
 import sqlite3
 from datetime import date, datetime, timedelta, timezone
 from typing import Iterator
@@ -614,6 +615,12 @@ def run_backtest(
             lots=lots,
             pnl_usd=pnl,
         ))
+        if os.getenv("MEANREV_BACKTEST_PRINT_TRADES", "").strip().lower() in ("true", "1", "yes", "on"):
+            print(
+                f"Trade {len(trades)}: {pair} {trigger['direction'].upper()} "
+                f"entry={entry:.4f} sl={sl:.4f} tp={tp:.4f} "
+                f"exit={exit_price:.4f} reason={reason} pnl={pnl:+.2f} USD"
+            )
 
     funnel: FunnelStats | None = None
     if debug:
