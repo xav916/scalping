@@ -67,6 +67,39 @@ class Trade:
 
 
 @dataclasses.dataclass
+class FunnelStats:
+    """Diagnostic du pipeline de détection setup.
+
+    Ne se peuple qu'en mode ``debug=True``. Les 3 critères (BBW percentile,
+    ATR expansion, trigger amplitude+reversal) sont évalués **séparément**
+    sur chaque bougie 15min pour mesurer le taux de pass de chacun et de
+    leurs intersections — là où la boucle normale short-circuite dès qu'un
+    critère rate.
+    """
+    n_candles_15m_evaluated: int
+    # Compteurs par critère (chacun seul)
+    n_pass_bbw: int
+    n_pass_atr: int
+    n_pass_trigger: int
+    # Compteurs intersections 2 à 2
+    n_pass_bbw_and_atr: int
+    n_pass_bbw_and_trigger: int
+    n_pass_atr_and_trigger: int
+    # Triple AND = nombre de setups que la strat détecterait
+    n_pass_all_three: int
+    # Distributions observées (p10, p25, p50, p75, p90, p95, p99, max)
+    bbw_percentile_quantiles: dict[int, float]
+    atr_expansion_quantiles: dict[int, float]
+    trigger_mult_quantiles: dict[int, float]
+    # Seuils utilisés pour cette évaluation (actuellement les constantes live)
+    bbw_threshold_used: float
+    atr_threshold_used: float
+    trigger_threshold_used: float
+    # Suggestions de seuils (via _suggest_thresholds)
+    suggested_thresholds: dict[int, dict]
+
+
+@dataclasses.dataclass
 class BacktestResults:
     pair: str
     from_dt: datetime
@@ -76,6 +109,7 @@ class BacktestResults:
     n_candles_15m: int
     n_setups_detected: int
     trades: list[Trade]
+    funnel: FunnelStats | None = None
 
     @property
     def pnl_total_usd(self) -> float:
@@ -277,6 +311,103 @@ def _pnl_usd(direction: str, entry: float, exit_price: float, lots: float) -> fl
     return (entry - exit_price) * 100000 * lots
 
 
+# ─── Quantiles + suggestion de seuils ───────────────────────────────────
+
+def _quantile(values: list[float], percentile: float) -> float:
+    """Retourne la valeur au ``percentile`` donné (0-100) par interpolation linéaire."""
+    if not values:
+        return 0.0
+    sorted_vals = sorted(values)
+    n = len(sorted_vals)
+    if percentile <= 0:
+        return sorted_vals[0]
+    if percentile >= 100:
+        return sorted_vals[-1]
+    idx = (percentile / 100.0) * (n - 1)
+    lo = int(idx)
+    hi = min(lo + 1, n - 1)
+    frac = idx - lo
+    return sorted_vals[lo] * (1 - frac) + sorted_vals[hi] * frac
+
+
+def _compute_quantiles(values: list[float]) -> dict[int, float]:
+    """Pack standard de quantiles (p10, p25, p50, p75, p90, p95, p99, 100)."""
+    return {p: _quantile(values, p) for p in (10, 25, 50, 75, 90, 95, 99, 100)}
+
+
+def _suggest_thresholds(
+    bbw_vals: list[float],
+    atr_vals: list[float],
+    trigger_mult_vals: list[float],
+    reversal_flags: list[bool],
+    targets: list[int],
+) -> dict[int, dict]:
+    """Pour chaque N cible, suggère un triplet (bbw, atr, trigger) tel que
+    leur intersection donne ~N setups.
+
+    Hypothèse de travail (optimiste) : indépendance entre les 3 critères.
+    Le trigger inclut une condition reversal, on estime empiriquement sa
+    fréquence via les flags reçus.
+
+    Approche : viser ``p_combined = N / total``, répartir équitablement en
+    cube root sur les 3 critères, puis pour le trigger diviser par la
+    fréquence observée du reversal pour obtenir le seuil d'amplitude
+    attendu. On lit ensuite la valeur réelle au quantile correspondant.
+    """
+    total = len(bbw_vals)
+    if total == 0 or not targets:
+        return {}
+
+    p_reversal = sum(reversal_flags) / total if reversal_flags else 0.25
+    if p_reversal == 0:
+        p_reversal = 0.25  # fallback pour éviter division par zéro
+
+    out: dict[int, dict] = {}
+    for n_target in targets:
+        p_combined = n_target / total
+        if p_combined <= 0:
+            continue
+        p_individual = p_combined ** (1 / 3)
+        # Pour bbw et atr : seuil = quantile tel que (1 - p_individual) le dépasse
+        bbw_threshold = _quantile(bbw_vals, (1 - p_individual) * 100)
+        atr_threshold = _quantile(atr_vals, (1 - p_individual) * 100)
+        # Trigger : le critère effectif est amplitude × reversal, donc on
+        # ajuste pour isoler l'amplitude seule.
+        p_amplitude = min(1.0, p_individual / p_reversal)
+        trig_threshold = _quantile(trigger_mult_vals, (1 - p_amplitude) * 100)
+
+        # Sanity : recompte sur les valeurs réelles pour donner une
+        # estimation plus honnête (contre l'hypothèse d'indépendance).
+        new_bbw_rate = sum(1 for v in bbw_vals if v > bbw_threshold) / total
+        new_atr_rate = sum(1 for v in atr_vals if v > atr_threshold) / total
+        new_amplitude_rate = sum(1 for v in trigger_mult_vals if v > trig_threshold) / total
+        estim_setups = round(
+            total * new_bbw_rate * new_atr_rate * new_amplitude_rate * p_reversal
+        )
+
+        out[n_target] = {
+            "bbw_pct": round(bbw_threshold, 1),
+            "atr_mult": round(atr_threshold, 2),
+            "trigger_mult": round(trig_threshold, 2),
+            "expected_setups": estim_setups,
+        }
+    return out
+
+
+def _is_reversal_pair(trigger_candle: Candle, last_candle: Candle) -> bool:
+    """La paire (trigger, last) forme-t-elle un pattern reversal ?
+
+    Réplique la condition interne de ``_detect_trigger`` :
+      - trigger baissière (close<open) suivie de last haussière (close>open) → reversal BUY
+      - trigger haussière (close>open) suivie de last baissière (close<open) → reversal SELL
+    """
+    t_open, t_close = float(trigger_candle.open), float(trigger_candle.close)
+    l_open, l_close = float(last_candle.open), float(last_candle.close)
+    bullish_rev = (t_close < t_open) and (l_close > l_open)
+    bearish_rev = (t_close > t_open) and (l_close < l_open)
+    return bullish_rev or bearish_rev
+
+
 def run_backtest(
     pair: str,
     from_dt: datetime,
@@ -284,8 +415,15 @@ def run_backtest(
     db_path: str = "/app/data/ticks_courtier.db",
     capital_eur: float = 1600.0,
     risk_pct: float | None = None,
+    debug: bool = False,
 ) -> BacktestResults:
-    """Replay complet. Si risk_pct est None, utilise RISK_PCT du live (0.5%)."""
+    """Replay complet. Si risk_pct est None, utilise RISK_PCT du live (0.5%).
+
+    Si ``debug=True``, collecte les stats du funnel de détection (combien de
+    bougies passent chaque critère seul et en intersection) + les
+    distributions observées + des suggestions de seuils pour atteindre des
+    nombres cibles de setups.
+    """
     # Note : _size_lots_from_risk lit la const RISK_PCT du module meanrev_trader.
     # Si le caller veut un risk_pct custom, on scale manuellement les lots après.
     risk_scale = 1.0
@@ -317,9 +455,19 @@ def run_backtest(
     n_setups = 0
     seen_entries: set[datetime] = set()
 
-    # Index pour recherche rapide des candles disponibles à un instant t
-    ts_1h_sorted = [c.timestamp for c in candles_1h]
-    ts_15m_sorted = [c.timestamp for c in candles_15m]
+    # Collecteurs pour le funnel diagnostic (remplis si debug=True)
+    n_evaluated = 0
+    n_pass_bbw = 0
+    n_pass_atr = 0
+    n_pass_trigger = 0
+    n_pass_bbw_and_atr = 0
+    n_pass_bbw_and_trigger = 0
+    n_pass_atr_and_trigger = 0
+    n_pass_all_three = 0
+    bbw_vals: list[float] = []
+    atr_vals: list[float] = []
+    trigger_mult_vals: list[float] = []
+    reversal_flags: list[bool] = []
 
     for i in range(2, len(candles_15m)):
         current_candle = candles_15m[i]
@@ -335,15 +483,56 @@ def run_backtest(
         regime_candles = visible_1h[-100:]
 
         bbw_pct, atr_exp, regime_ok = _detect_regime(regime_candles)
-        if not regime_ok:
-            continue
 
         # Trigger : les 3 dernières 15m visibles (current + 2 précédentes)
         visible_15m = candles_15m[: i + 1]
         if len(visible_15m) < 3:
+            # Pas de contexte suffisant → ne compte pas dans le funnel
+            if regime_ok:
+                # Early-skip path (jamais atteint vu i>=2 mais défensif)
+                continue
             continue
         atr_15min = _compute_atr(visible_15m, period=14)
         if not atr_15min:
+            continue
+
+        # ─── Collecte pour le funnel ────────────────────────────────────
+        # Chaque critère évalué séparément, SANS short-circuit, pour voir
+        # la vraie distribution et l'intersection.
+        if debug:
+            trigger_candle = visible_15m[-2]
+            last_candle = visible_15m[-1]
+            amplitude = float(trigger_candle.high) - float(trigger_candle.low)
+            trigger_mult = amplitude / atr_15min if atr_15min > 0 else 0.0
+            reversal = _is_reversal_pair(trigger_candle, last_candle)
+
+            n_evaluated += 1
+            bbw_vals.append(bbw_pct)
+            atr_vals.append(atr_exp)
+            trigger_mult_vals.append(trigger_mult)
+            reversal_flags.append(reversal)
+
+            pass_bbw = bbw_pct > BBW_PERCENTILE_MIN
+            pass_atr = atr_exp > ATR_EXPANSION_MIN
+            pass_trigger = (trigger_mult > TRIGGER_CANDLE_MULT) and reversal
+
+            if pass_bbw:
+                n_pass_bbw += 1
+            if pass_atr:
+                n_pass_atr += 1
+            if pass_trigger:
+                n_pass_trigger += 1
+            if pass_bbw and pass_atr:
+                n_pass_bbw_and_atr += 1
+            if pass_bbw and pass_trigger:
+                n_pass_bbw_and_trigger += 1
+            if pass_atr and pass_trigger:
+                n_pass_atr_and_trigger += 1
+            if pass_bbw and pass_atr and pass_trigger:
+                n_pass_all_three += 1
+        # ────────────────────────────────────────────────────────────────
+
+        if not regime_ok:
             continue
 
         trigger = _detect_trigger(visible_15m, atr_15min)
@@ -403,6 +592,33 @@ def run_backtest(
             pnl_usd=pnl,
         ))
 
+    funnel: FunnelStats | None = None
+    if debug:
+        suggestions = _suggest_thresholds(
+            bbw_vals=bbw_vals,
+            atr_vals=atr_vals,
+            trigger_mult_vals=trigger_mult_vals,
+            reversal_flags=reversal_flags,
+            targets=[5, 10, 20, 50],
+        )
+        funnel = FunnelStats(
+            n_candles_15m_evaluated=n_evaluated,
+            n_pass_bbw=n_pass_bbw,
+            n_pass_atr=n_pass_atr,
+            n_pass_trigger=n_pass_trigger,
+            n_pass_bbw_and_atr=n_pass_bbw_and_atr,
+            n_pass_bbw_and_trigger=n_pass_bbw_and_trigger,
+            n_pass_atr_and_trigger=n_pass_atr_and_trigger,
+            n_pass_all_three=n_pass_all_three,
+            bbw_percentile_quantiles=_compute_quantiles(bbw_vals),
+            atr_expansion_quantiles=_compute_quantiles(atr_vals),
+            trigger_mult_quantiles=_compute_quantiles(trigger_mult_vals),
+            bbw_threshold_used=BBW_PERCENTILE_MIN,
+            atr_threshold_used=ATR_EXPANSION_MIN,
+            trigger_threshold_used=TRIGGER_CANDLE_MULT,
+            suggested_thresholds=suggestions,
+        )
+
     return BacktestResults(
         pair=pair,
         from_dt=from_dt,
@@ -412,4 +628,5 @@ def run_backtest(
         n_candles_15m=len(candles_15m),
         n_setups_detected=n_setups,
         trades=trades,
+        funnel=funnel,
     )
