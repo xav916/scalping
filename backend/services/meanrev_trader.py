@@ -503,11 +503,33 @@ def _size_lots_from_risk(balance_eur: float, entry: float, sl: float, pair: str)
 # ─── Telegram helper ────────────────────────────────────────────────────
 
 async def _send_info(text: str) -> None:
+    """Route le message selon le mode.
+
+    - ``dry_run`` : canal ``demo`` (bot ``@xav_scalping_radar_bot``, préfixe
+      ``[DÉMO · IC_MARKETS]`` 🟦) via ``send_info_text`` — cohérent avec le
+      fait que les positions sont simulées.
+    - ``live`` : canal ``ic_markets`` (bot IC_MARKETS trades, préfixe
+      ``[RÉEL · IC_MARKETS]`` 🟩) via ``send_sales_text`` — les ordres
+      partent sur le compte réel IC Markets, le message doit arriver sur le
+      même fil que les trades manuels pour ne pas faire croire à de la démo.
+
+    Si le canal cible n'est pas configuré (env vars manquantes), repli sur
+    ``send_info_text`` pour ne pas perdre le message — avec un WARNING.
+    """
     try:
         from backend.services import telegram_service
-        await telegram_service.send_info_text(text, parse_mode="HTML")
+        mode = _config_mode()
+        if mode == "live":
+            delivered = await telegram_service.send_sales_text(text, parse_mode="HTML")
+            if not delivered:
+                logger.warning(
+                    "meanrev: SALES_TELEGRAM_* non configuré, repli sur canal demo"
+                )
+                await telegram_service.send_info_text(text, parse_mode="HTML")
+        else:
+            await telegram_service.send_info_text(text, parse_mode="HTML")
     except Exception as e:
-        logger.warning("meanrev: send_info_text failed — %s", e)
+        logger.warning("meanrev: send telegram failed — %s", e)
 
 
 # ─── Cycle principal ────────────────────────────────────────────────────
