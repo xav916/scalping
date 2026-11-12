@@ -481,21 +481,68 @@ async def _mt5_close_position(ticket: int | str) -> dict:
 
 # ─── Sizing ─────────────────────────────────────────────────────────────
 
-def _size_lots_from_risk(balance_eur: float, entry: float, sl: float, pair: str) -> float:
-    """Calcule les lots selon risque 0.5% × balance / distance_sl.
+# Classes d'asset supportées, en ordre de priorité pour la détection.
+# Chaque entrée : (predicate_sur_la_pair, contract_size)
+_CONTRACT_SIZES: list[tuple] = [
+    # Métaux précieux : 1 lot = 100 oz (XAU/USD, XAG/USD, XPT/USD, XPD/USD, PAXG/USD)
+    (lambda p: any(m in p for m in ("XAU", "XAG", "XPT", "XPD", "PAXG")), 100),
+    # Crypto : 1 lot = 1 unit. Liste explicite pour éviter les faux positifs.
+    (lambda p: any(c in p for c in (
+        "BTC", "ETH", "SOL", "ADA", "XRP", "LTC", "DOT", "BNB",
+        "ALGO", "UNI", "DOGE", "LINK", "AVAX", "MATIC", "POL",
+        "BCH", "XLM", "DASH",
+    )), 1),
+    # Indices CFD : 1 lot = 1 unit
+    (lambda p: any(i in p for i in (
+        "SPX", "NDX", "DJI", "US500", "US30", "USTEC", "NAS100", "DAX",
+        "FTSE", "CAC", "DE40", "F40", "UK100", "AUS200", "JP225",
+        "STOXX", "US2000",
+    )), 1),
+    # Énergies : 1 lot = 1000 barils WTI
+    (lambda p: "WTI" in p or "OIL" in p, 1000),
+]
+# Défaut : forex majors/crosses → 100000 (lot standard)
+_DEFAULT_CONTRACT_SIZE = 100000
 
-    Simplification : on assume 1 lot standard = 100000 unités, pip value ≈ 10 USD
-    pour les majors. Les lots sont arrondis à 2 décimales (lot minimum 0.01).
+
+def _contract_size(pair: str) -> int:
+    """Taille du contrat pour 1 lot standard, selon la classe d'asset.
+
+    Par défaut (forex majors, crosses, exotics) : 100000 unités.
+    Métaux précieux : 100 onces. Crypto : 1 unit. Indices CFD : 1 unit.
+
+    ⛔ Bug historique corrigé 2026-11-12 : le défaut 100000 s'appliquait à
+    tout, ce qui donnait lots ≈ 0.00004 sur XAU/USD avec un capital modeste
+    et skip systématique de tous les setups. Vérifié par backtest PR #20 :
+    17 setups détectés, 0 trades.
+    """
+    for predicate, size in _CONTRACT_SIZES:
+        if predicate(pair.upper()):
+            return size
+    return _DEFAULT_CONTRACT_SIZE
+
+
+def _size_lots_from_risk(balance_eur: float, entry: float, sl: float, pair: str) -> float:
+    """Calcule les lots selon risque RISK_PCT × balance / (distance × contract_size).
+
+    Le contract size varie par classe :
+    - Forex (EUR/USD, GBP/JPY...) : 100000 unités = 1 lot standard
+    - Métaux (XAU, XAG, XPT, XPD) : 100 onces = 1 lot
+    - Crypto (BTC, ETH, SOL...) : 1 unit = 1 lot
+    - Indices CFD (SPX, NDX, DJI) : 1 unit = 1 lot
+
+    Arrondi vers le bas à 0.01 (lot minimum MT5 standard). Retourne 0.0 si
+    la distance est nulle ou si le résultat ne couvre pas le lot minimum
+    (0.01) — préférable au trade de 0 unité silencieux.
     """
     distance = abs(entry - sl)
     if distance <= 0 or balance_eur <= 0:
         return 0.0
     risk_money_eur = balance_eur * RISK_PCT
     risk_money_usd = risk_money_eur * EUR_USD_RATE
-    # Pour un lot standard (100000), chaque unité de prix bouge = 100000 USD
-    # risk_usd / distance = lots équivalents
-    lots_raw = risk_money_usd / (distance * 100000)
-    # Arrondir vers le bas à 0.01 (lot minimum MT5)
+    contract_size = _contract_size(pair)
+    lots_raw = risk_money_usd / (distance * contract_size)
+    # Arrondir vers le bas à 0.01 (lot min MT5 standard)
     lots = math.floor(lots_raw * 100) / 100
     return max(0.0, lots)
 
