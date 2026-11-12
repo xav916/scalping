@@ -90,6 +90,13 @@ STATE_PATH = os.getenv("MEANREV_STATE_PATH", "/app/data/meanrev_state.json")
 FOMC_VETO_MINUTES = _env_int("MEANREV_FOMC_WINDOW_MINUTES", 120)
 EARNINGS_VETO_HOURS = _env_int("MEANREV_EARNINGS_WINDOW_HOURS", 48)
 EUR_USD_RATE = _env_float("MEANREV_EUR_USD_FIXED", 1.07)
+# ─── Inversion de direction (test momentum vs meanrev) ──────────────────
+# Si True, la direction détectée par _detect_trigger est inversée (buy↔sell) et
+# le TP passe de VWAP à un R:R fixe. Permet de tester une stratégie momentum
+# avec la même détection que meanrev — justifié par backtest PR #22 qui a
+# montré 100% SL sur XAU/USD (le prix continue au lieu de mean-revert).
+INVERT_DIRECTION = _env_bool("MEANREV_INVERT_DIRECTION", "false")
+MOMENTUM_TP_R_MULT = _env_float("MEANREV_MOMENTUM_TP_R_MULT", 2.0)
 
 
 def _get_universe() -> list[str]:
@@ -725,24 +732,38 @@ async def cycle() -> dict:
             })
             continue
 
+        # Inversion optionnelle (test momentum au lieu de meanrev)
+        if INVERT_DIRECTION:
+            trigger["direction"] = "sell" if trigger["direction"] == "buy" else "buy"
+
         # Setup complet : compute SL + TP + lots
         entry = trigger["entry"]
         sl = _sl_from_trigger(trigger, atr_15min)
-        vwap = _compute_vwap_today(candles_15m)
-        if vwap is None:
-            actions.append({"pair": pair, "verdict": "SKIP", "reason": "vwap_indispo"})
-            continue
-        tp = vwap  # cible = VWAP du jour
 
-        # Vérif direction/sens cohérent avec VWAP
-        if trigger["direction"] == "buy" and vwap <= entry:
-            actions.append({"pair": pair, "verdict": "SKIP",
-                            "reason": f"vwap {vwap:.5f} <= entry {entry:.5f}, pas de marge"})
-            continue
-        if trigger["direction"] == "sell" and vwap >= entry:
-            actions.append({"pair": pair, "verdict": "SKIP",
-                            "reason": f"vwap {vwap:.5f} >= entry {entry:.5f}, pas de marge"})
-            continue
+        if INVERT_DIRECTION:
+            # Momentum : TP = R:R fixe dans la direction du trade
+            sl_distance = abs(entry - sl)
+            if trigger["direction"] == "buy":
+                tp = entry + MOMENTUM_TP_R_MULT * sl_distance
+            else:  # sell
+                tp = entry - MOMENTUM_TP_R_MULT * sl_distance
+        else:
+            # Meanrev : TP = VWAP du jour (comportement d'origine)
+            vwap = _compute_vwap_today(candles_15m)
+            if vwap is None:
+                actions.append({"pair": pair, "verdict": "SKIP", "reason": "vwap_indispo"})
+                continue
+            tp = vwap  # cible = VWAP du jour
+
+            # Vérif direction/sens cohérent avec VWAP
+            if trigger["direction"] == "buy" and vwap <= entry:
+                actions.append({"pair": pair, "verdict": "SKIP",
+                                "reason": f"vwap {vwap:.5f} <= entry {entry:.5f}, pas de marge"})
+                continue
+            if trigger["direction"] == "sell" and vwap >= entry:
+                actions.append({"pair": pair, "verdict": "SKIP",
+                                "reason": f"vwap {vwap:.5f} >= entry {entry:.5f}, pas de marge"})
+                continue
 
         lots = _size_lots_from_risk(balance, entry, sl, pair)
         if lots < 0.01:
