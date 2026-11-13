@@ -75,7 +75,10 @@ def _config_mode() -> str:
 
 
 BRIDGE_URL = os.getenv("MEANREV_BRIDGE_URL", "http://100.74.160.72:8787").rstrip("/")
-BRIDGE_KEY = os.getenv("MEANREV_BRIDGE_API_KEY", "")
+# Fallback sur MT5_BRIDGE_API_KEY (déjà configurée pour les autres services
+# MT5 du repo) si MEANREV_BRIDGE_API_KEY n'est pas renseignée explicitement.
+# Évite d'avoir à dupliquer la clé dans le .env.
+BRIDGE_KEY = os.getenv("MEANREV_BRIDGE_API_KEY") or os.getenv("MT5_BRIDGE_API_KEY", "")
 MAX_DAILY_LOSS_EUR = _env_float("MEANREV_MAX_DAILY_LOSS_EUR", 10.0)
 MAX_POSITIONS = _env_int("MEANREV_MAX_POSITIONS", 5)
 RISK_PCT = _env_float("MEANREV_RISK_PCT", 0.5) / 100.0  # 0.5% → 0.005
@@ -426,7 +429,13 @@ def _sl_from_trigger(trigger: dict, atr_15min: float) -> float:
 # ─── Bridge MT5 calls ───────────────────────────────────────────────────
 
 def _headers() -> dict[str, str]:
-    return {"X-Bridge-Key": BRIDGE_KEY} if BRIDGE_KEY else {}
+    # Le bridge MT5 (port 8787/8788 sur Lightsail) attend le header
+    # ``X-API-Key``. Le bridge IBKR utilise ``X-Bridge-Key`` — deux conventions
+    # historiques. On en envoie DEUX avec la même valeur pour être compatible
+    # avec les deux sans fork du code.
+    if not BRIDGE_KEY:
+        return {}
+    return {"X-API-Key": BRIDGE_KEY, "X-Bridge-Key": BRIDGE_KEY}
 
 
 async def _mt5_fetch_balance() -> float | None:
