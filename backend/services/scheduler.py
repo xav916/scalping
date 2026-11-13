@@ -2337,6 +2337,26 @@ def start_scheduler() -> AsyncIOScheduler:
         friday_close=False,
     )
 
+    # ─── Watchdog compte RÉEL (PR #47) ───────────────────────────────────
+    # Alerte quotidienne 22:03 UTC dans le canal 🟩 ic_markets (SALES)
+    # avec format visuel 🔴 explicite pour éviter la confusion avec demo.
+    # Déclenchée après le close NYSE pour avoir le PnL du jour quasi final.
+    from backend.services import real_account_watchdog as _raw_module
+
+    async def _real_account_watchdog_job() -> None:
+        try:
+            await _raw_module.send_daily_real_recap()
+        except Exception as exc:
+            logger.warning("real_account_watchdog failed: %s", exc)
+
+    _scheduler.add_job(
+        _real_account_watchdog_job,
+        _CronTrigger_AT(day_of_week="mon-fri", hour=22, minute=3, timezone="UTC"),
+        id="real_account_watchdog",
+        name="Watchdog compte RÉEL — recap quotidien 🔴",
+        replace_existing=True, max_instances=1, coalesce=True,
+    )
+
     _scheduler.start()
     logger.info(
         f"Scheduler démarré. Analyse {MATAF_POLL_INTERVAL}s, backtest 60s, "
