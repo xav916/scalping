@@ -99,6 +99,12 @@ EUR_USD_RATE = _env_float("MEANREV_EUR_USD_FIXED", 1.07)
 # avec la même détection que meanrev — justifié par backtest PR #22 qui a
 # montré 100% SL sur XAU/USD (le prix continue au lieu de mean-revert).
 INVERT_DIRECTION = _env_bool("MEANREV_INVERT_DIRECTION", "false")
+# Compte MT5 sur lequel pointe BRIDGE_URL : demo ou réel. Sert uniquement
+# au routing Telegram quand ``MODE=live``. Si ``true``, les messages
+# atterrissent sur le canal "demo" 🟦 ([DÉMO · IC_MARKETS]) au lieu de
+# ic_markets 🟩 ([RÉEL · IC_MARKETS]) — évite de faire croire à un trade
+# réel pendant les tests en sandbox demo.
+ACCOUNT_IS_DEMO = _env_bool("MEANREV_ACCOUNT_IS_DEMO", "false")
 MOMENTUM_TP_R_MULT = _env_float("MEANREV_MOMENTUM_TP_R_MULT", 2.0)
 
 
@@ -619,7 +625,10 @@ async def _send_info(text: str) -> None:
     try:
         from backend.services import telegram_service
         mode = _config_mode()
-        if mode == "live":
+        # live + compte réel → canal ic_markets 🟩 [RÉEL · IC_MARKETS]
+        # live + compte demo OU dry_run → canal demo 🟦 [DÉMO · IC_MARKETS]
+        route_to_real = (mode == "live") and (not ACCOUNT_IS_DEMO)
+        if route_to_real:
             delivered = await telegram_service.send_sales_text(text, parse_mode="HTML")
             if not delivered:
                 logger.warning(
