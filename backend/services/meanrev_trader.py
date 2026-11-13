@@ -503,11 +503,18 @@ async def _mt5_fetch_positions() -> list[dict] | None:
 
 async def _mt5_submit_order(
     pair: str, direction: str, lots: float, sl: float, tp: float,
+    entry: float,
 ) -> dict:
-    """POST /order → retourne dict avec ok, order_id, avg_fill_price."""
+    """POST /order → retourne dict avec ok, order_id, avg_fill_price.
+
+    Le bridge MT5 exige le champ ``entry`` dans le payload (prix de référence
+    pour un bracket order), sans quoi il retourne ``{"error":"missing field:
+    entry"}``. On passe le prix du trigger — le bridge fera un ordre MARKET
+    autour de cette référence.
+    """
     payload = {
         "pair": pair, "direction": direction, "lots": lots,
-        "sl": sl, "tp": tp, "dry_run": False,
+        "entry": entry, "sl": sl, "tp": tp, "dry_run": False,
     }
     try:
         async with httpx.AsyncClient(timeout=30.0) as c:
@@ -915,7 +922,7 @@ async def cycle() -> dict:
         }
 
         if mode == "live":
-            resp = await _mt5_submit_order(pair, trigger["direction"], lots, sl, tp)
+            resp = await _mt5_submit_order(pair, trigger["direction"], lots, sl, tp, entry)
             if resp.get("ok"):
                 action["executed"] = True
                 action["ticket"] = resp.get("ticket") or resp.get("order_id")
