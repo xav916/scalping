@@ -2061,6 +2061,65 @@ def start_scheduler() -> AsyncIOScheduler:
         coalesce=True,
     )
 
+    # ─── Scalp intraday RSI/ATR (2026-11-13) ────────────────────────────
+    # OFF par défaut (SCALP_ENABLED=false). Vise ~15-30 setups/jour en
+    # complément de meanrev momentum (qui vise 1-3/semaine).
+    from backend.services import scalp_trader as _sc_module
+
+    async def _scalp_cycle_job() -> None:
+        try:
+            await _sc_module.cycle()
+        except Exception as exc:
+            logger.warning("scalp cycle failed: %s", exc)
+
+    _scheduler.add_job(
+        _scalp_cycle_job, "interval",
+        seconds=_sc_module.POLL_INTERVAL_SEC,
+        id="scalp_cycle", name="Scalp intraday RSI/ATR cycle (1min candles)",
+        replace_existing=True, max_instances=1, coalesce=True,
+    )
+
+    async def _scalp_check_exits_job() -> None:
+        try:
+            await _sc_module.check_exits()
+        except Exception as exc:
+            logger.warning("scalp check_exits failed: %s", exc)
+
+    _scheduler.add_job(
+        _scalp_check_exits_job, "interval", seconds=30,
+        id="scalp_check_exits",
+        name="Scalp intraday SL/TP + time stops check",
+        replace_existing=True, max_instances=1, coalesce=True,
+    )
+
+    async def _scalp_friday_close_job() -> None:
+        try:
+            await _sc_module.friday_force_close()
+        except Exception as exc:
+            logger.warning("scalp friday close failed: %s", exc)
+
+    _scheduler.add_job(
+        _scalp_friday_close_job,
+        _CronTrigger_AT(day_of_week="fri", hour=19, minute=30, timezone="UTC"),
+        id="scalp_friday_close",
+        name="Scalp intraday Friday force-close",
+        replace_existing=True, max_instances=1, coalesce=True,
+    )
+
+    async def _scalp_daily_recap_job() -> None:
+        try:
+            await _sc_module.daily_recap()
+        except Exception as exc:
+            logger.warning("scalp daily_recap failed: %s", exc)
+
+    _scheduler.add_job(
+        _scalp_daily_recap_job,
+        _CronTrigger_AT(day_of_week="mon-fri", hour=22, minute=5, timezone="UTC"),
+        id="scalp_daily_recap",
+        name="Scalp intraday recap quotidien",
+        replace_existing=True, max_instances=1, coalesce=True,
+    )
+
     _scheduler.start()
     logger.info(
         f"Scheduler démarré. Analyse {MATAF_POLL_INTERVAL}s, backtest 60s, "
