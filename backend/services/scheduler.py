@@ -2227,6 +2227,116 @@ def start_scheduler() -> AsyncIOScheduler:
         replace_existing=True, max_instances=1, coalesce=True,
     )
 
+    # ─── Multi-TF pipelines (5m, 30m, 2h, 4h, 1mo) ───────────────────────
+    # Un pipeline par timeframe candles. Chaque pipeline a cycle (scan),
+    # check_exits (SL/TP + time stop), recap, et friday_close (sauf monthly).
+    # Toutes désactivées par défaut via <PREFIX>_ENABLED=false.
+    from backend.services import trader_m5 as _m5_module
+    from backend.services import trader_m30 as _m30_module
+    from backend.services import trader_h2 as _h2_module
+    from backend.services import trader_h4 as _h4_module
+    from backend.services import trader_mo as _mo_module
+
+    def _register_tf_pipeline(module, name, scan_trigger, exits_minutes,
+                              recap_trigger, friday_close=True):
+        """scan_trigger : CronTrigger instance OR ("interval", kwargs_dict).
+        exits_minutes : float (interval en minutes, peut être < 1 pour secondes)
+        """
+        async def _cycle_job():
+            try:
+                await module.cycle()
+            except Exception as exc:
+                logger.warning("%s cycle failed: %s", name, exc)
+
+        if isinstance(scan_trigger, tuple):
+            _scheduler.add_job(
+                _cycle_job, scan_trigger[0], **scan_trigger[1],
+                id=f"{name}_cycle", name=f"{name} cycle",
+                replace_existing=True, max_instances=1, coalesce=True,
+            )
+        else:
+            _scheduler.add_job(
+                _cycle_job, scan_trigger,
+                id=f"{name}_cycle", name=f"{name} cycle",
+                replace_existing=True, max_instances=1, coalesce=True,
+            )
+
+        async def _exits_job():
+            try:
+                await module.check_exits()
+            except Exception as exc:
+                logger.warning("%s check_exits failed: %s", name, exc)
+
+        _scheduler.add_job(
+            _exits_job, "interval", seconds=int(exits_minutes * 60),
+            id=f"{name}_check_exits",
+            name=f"{name} SL/TP + time stops check",
+            replace_existing=True, max_instances=1, coalesce=True,
+        )
+
+        if friday_close and hasattr(module, "friday_force_close"):
+            async def _friday_job():
+                try:
+                    await module.friday_force_close()
+                except Exception as exc:
+                    logger.warning("%s friday_close failed: %s", name, exc)
+
+            _scheduler.add_job(
+                _friday_job,
+                _CronTrigger_AT(day_of_week="fri", hour=19, minute=30, timezone="UTC"),
+                id=f"{name}_friday_close",
+                name=f"{name} Friday force-close",
+                replace_existing=True, max_instances=1, coalesce=True,
+            )
+
+        async def _recap_job():
+            try:
+                await module.period_recap()
+            except Exception as exc:
+                logger.warning("%s recap failed: %s", name, exc)
+
+        _scheduler.add_job(
+            _recap_job, recap_trigger,
+            id=f"{name}_recap", name=f"{name} recap",
+            replace_existing=True, max_instances=1, coalesce=True,
+        )
+
+    # 5min  — scan 5min, exits 30s
+    _register_tf_pipeline(
+        _m5_module, "trader_m5",
+        ("interval", {"minutes": 5}), 0.5,
+        _CronTrigger_AT(day_of_week="mon-fri", hour=22, minute=5, timezone="UTC"),
+        friday_close=True,
+    )
+    # 30min — scan 30min, exits 2min
+    _register_tf_pipeline(
+        _m30_module, "trader_m30",
+        ("interval", {"minutes": 30}), 2,
+        _CronTrigger_AT(day_of_week="mon-fri", hour=22, minute=6, timezone="UTC"),
+        friday_close=True,
+    )
+    # 2h    — scan 2h, exits 5min
+    _register_tf_pipeline(
+        _h2_module, "trader_h2",
+        ("interval", {"hours": 2}), 5,
+        _CronTrigger_AT(day_of_week="mon-fri", hour=22, minute=7, timezone="UTC"),
+        friday_close=True,
+    )
+    # 4h    — scan 4h, exits 10min
+    _register_tf_pipeline(
+        _h4_module, "trader_h4",
+        ("interval", {"hours": 4}), 10,
+        _CronTrigger_AT(day_of_week="mon-fri", hour=22, minute=8, timezone="UTC"),
+        friday_close=True,
+    )
+    # 1mo   — scan 1er du mois 23h UTC, exits 2h, pas de Friday
+    _register_tf_pipeline(
+        _mo_module, "trader_mo",
+        _CronTrigger_AT(day="1", hour=23, minute=0, timezone="UTC"), 120,
+        _CronTrigger_AT(day="1", hour=23, minute=5, timezone="UTC"),
+        friday_close=False,
+    )
+
     _scheduler.start()
     logger.info(
         f"Scheduler démarré. Analyse {MATAF_POLL_INTERVAL}s, backtest 60s, "
