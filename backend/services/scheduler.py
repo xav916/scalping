@@ -2120,6 +2120,53 @@ def start_scheduler() -> AsyncIOScheduler:
         replace_existing=True, max_instances=1, coalesce=True,
     )
 
+    # ─── Weekly swing trader (PR #37) ────────────────────────────────────
+    # Timeframe 1w, hold 2-4 semaines, cycle 1×/semaine après close dimanche.
+    # Pas de friday force-close : les positions traversent le weekend.
+    from backend.services import weekly_trader as _weekly_module
+
+    async def _weekly_cycle_job() -> None:
+        try:
+            await _weekly_module.cycle()
+        except Exception as exc:
+            logger.warning("weekly cycle failed: %s", exc)
+
+    _scheduler.add_job(
+        _weekly_cycle_job,
+        _CronTrigger_AT(day_of_week="sun", hour=23, minute=0, timezone="UTC"),
+        id="weekly_cycle",
+        name="Weekly swing cycle (après close bougie 1w)",
+        replace_existing=True, max_instances=1, coalesce=True,
+    )
+
+    async def _weekly_check_exits_job() -> None:
+        try:
+            await _weekly_module.check_exits()
+        except Exception as exc:
+            logger.warning("weekly check_exits failed: %s", exc)
+
+    _scheduler.add_job(
+        _weekly_check_exits_job,
+        "interval", hours=1,
+        id="weekly_check_exits",
+        name="Weekly SL/TP + time stops check",
+        replace_existing=True, max_instances=1, coalesce=True,
+    )
+
+    async def _weekly_recap_job() -> None:
+        try:
+            await _weekly_module.weekly_recap()
+        except Exception as exc:
+            logger.warning("weekly recap failed: %s", exc)
+
+    _scheduler.add_job(
+        _weekly_recap_job,
+        _CronTrigger_AT(day_of_week="sun", hour=23, minute=5, timezone="UTC"),
+        id="weekly_recap",
+        name="Weekly swing recap hebdomadaire",
+        replace_existing=True, max_instances=1, coalesce=True,
+    )
+
     _scheduler.start()
     logger.info(
         f"Scheduler démarré. Analyse {MATAF_POLL_INTERVAL}s, backtest 60s, "
