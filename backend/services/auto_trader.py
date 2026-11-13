@@ -114,6 +114,10 @@ FOMC_VETO_MINUTES = _env_int("AUTO_TRADER_FOMC_WINDOW_MINUTES", 120)
 SCAN_INTERVAL_SEC = _env_int("AUTO_TRADER_SCAN_INTERVAL_SEC", 300)
 POLL_INTERVAL_SEC = SCAN_INTERVAL_SEC  # alias exposé au scheduler
 STATE_PATH = os.getenv("AUTO_TRADER_STATE_PATH", "/app/data/auto_trader_state.json")
+# Silence les rapports de cycle 5min + daily recap + résumé closures.
+# N'affecte PAS les alertes critiques (daily loss kill, friday force-close
+# report) ni les événements OPEN/CLOSE individuels.
+SILENCE_CYCLES = _env_bool("AUTO_TRADER_SILENCE_CYCLES", "false")
 
 
 # ─── État persisté JSON ─────────────────────────────────────────────────
@@ -638,6 +642,10 @@ async def _report_cycle(
     closed_this_cycle: list, state: dict,
 ) -> None:
     """Rapport Telegram + inclut clôtures simulées + PnL simulé du jour."""
+    # Opt-in silence : rapport de cycle 5min skippé. Les événements OPEN/CLOSE
+    # restent couverts par leurs appels dédiés (ou leurs cartes riches).
+    if SILENCE_CYCLES:
+        return
     # Silence si rien d'intéressant à dire
     if not actions and not closed_this_cycle:
         return
@@ -700,6 +708,8 @@ async def _report_cycle(
 
 async def _report_closures(mode: str, closed_this_cycle: list, state: dict) -> None:
     """Rapport dédié aux clôtures quand on skip le cycle (max_positions)."""
+    if SILENCE_CYCLES:
+        return
     if not closed_this_cycle:
         return
     lines = [f"🏁 <b>auto_trader</b> [{mode}] clôtures simulées"]
@@ -821,6 +831,8 @@ async def daily_recap() -> dict:
     """Rapport Telegram récapitulatif à la fermeture NYSE (22h Paris)."""
     if not _config_enabled():
         return {"ran": False, "reason": "disabled"}
+    if SILENCE_CYCLES:
+        return {"ran": False, "reason": "silenced"}
     mode = _config_mode()
     state = _load_state()
     today_utc = date.today().isoformat()
