@@ -439,30 +439,46 @@ def _headers() -> dict[str, str]:
 
 
 async def _mt5_fetch_balance() -> float | None:
-    """GET /account → retourne balance EUR ou None si bridge down."""
+    """GET /account → retourne balance (devise native du compte) ou None.
+
+    ⛔ Bug historique corrigé 2026-11-13 : le check ``data.get("ok")``
+    attendait une convention IBKR bridge qui n'existe pas côté MT5 bridge.
+    Le MT5 bridge retourne directement ``{"balance": 1000.0, "login": ...,
+    "currency": "USD", ...}`` sans champ ``"ok"``. Résultat : la fonction
+    retournait systématiquement None, le cycle meanrev tombait en mode
+    bridge_unreachable, et ``opening_balance_eur`` restait à ``None`` /
+    fallback 500.
+    """
     try:
         async with httpx.AsyncClient(timeout=10.0) as c:
             r = await c.get(f"{BRIDGE_URL}/account", headers=_headers())
             if r.status_code != 200:
+                logger.warning("meanrev: /account HTTP %s", r.status_code)
                 return None
             data = r.json()
-            if not data.get("ok"):
-                return None
-            return float(data.get("balance") or data.get("Balance") or 0)
+            bal = data.get("balance") or data.get("Balance") or 0
+            return float(bal) if bal else None
     except Exception as e:
         logger.warning("meanrev: fetch_balance failed — %s", e)
         return None
 
 
 async def _mt5_fetch_positions() -> list[dict] | None:
+    """GET /positions → liste des positions ou None si bridge down.
+
+    Idem bug `_mt5_fetch_balance` : le MT5 bridge ne retourne pas de champ
+    ``"ok"``. Il retourne soit ``{"positions": [...]}`` soit directement
+    ``[...]`` selon l'implémentation. On accepte les deux formes.
+    """
     try:
         async with httpx.AsyncClient(timeout=10.0) as c:
             r = await c.get(f"{BRIDGE_URL}/positions", headers=_headers())
             if r.status_code != 200:
+                logger.warning("meanrev: /positions HTTP %s", r.status_code)
                 return None
             data = r.json()
-            if not data.get("ok"):
-                return None
+            if isinstance(data, list):
+                return data
             return data.get("positions", [])
     except Exception as e:
         logger.warning("meanrev: fetch_positions failed — %s", e)
