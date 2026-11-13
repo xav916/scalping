@@ -680,10 +680,18 @@ async def cycle() -> dict:
             _save_state(state)
             return result
     else:
-        # dry_run : balance par défaut 500 EUR
-        balance = 500.0
+        # dry_run : tenter de fetch le vrai solde pour un sizing réaliste,
+        # fallback 500 EUR si le bridge est down (évite de perdre la boucle
+        # de simulation si le MT5 bridge est momentanément injoignable).
+        balance = await _mt5_fetch_balance()
+        if balance is None:
+            logger.info(
+                "meanrev [dry_run]: bridge balance fetch failed, fallback à 500.0 EUR"
+            )
+            balance = 500.0
         if state.get("opening_balance_eur") is None:
             state["opening_balance_eur"] = balance
+            logger.info("meanrev [dry_run]: baseline balance jour = %.2f EUR", balance)
 
         realized_usd = _realized_pnl_today_usd(state)
         if (realized_usd / EUR_USD_RATE) < -MAX_DAILY_LOSS_EUR or state.get("disabled_until_tomorrow"):
