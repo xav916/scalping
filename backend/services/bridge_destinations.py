@@ -32,6 +32,20 @@ from backend.services.cost_model import CostModel
 logger = logging.getLogger(__name__)
 
 
+# ⛔ Post-audit 2026-11-13 : la paire XAG/USD a généré 737 EUR de pertes
+# sur 115 trades sur le compte réel IC Markets (login 13137475), soit 70%
+# des pertes cumulées (-1046 EUR) alors qu'elle ne pèse que 10% du volume.
+# Rapport : ratio pertes/trade terrible (-6.4 EUR/trade vs -0.3 pour XAU),
+# imputé à un SL trop serré vs la volatilité réelle du silver.
+#
+# BLOCKLIST CODE-LEVEL : la paire ne peut JAMAIS atteindre une destination
+# d'argent réel (admin_live, admin_ibkr live...), même si une env var
+# ré-autorise la paire ailleurs (whitelist, extra_pairs). La porte vit
+# dans le résolveur, jamais chez l'appelant — même pattern que le verrou
+# externe au-dessus.
+LIVE_ACCOUNT_BLOCKED_PAIRS: frozenset[str] = frozenset({"XAG/USD"})
+
+
 @dataclass(frozen=True)
 class BridgeConfig:
     """Configuration d'une destination de bridge MT5.
@@ -1005,5 +1019,15 @@ def resolve_destinations(setup: Any) -> list[BridgeConfig]:
         from backend.services.destinations_registry import is_real_money
         destinations = [d for d in destinations
                         if not is_real_money(getattr(d, "destination_id", None))]
+
+    # ⛔ Post-audit 2026-11-13 : les paires de LIVE_ACCOUNT_BLOCKED_PAIRS
+    # ne peuvent jamais atteindre une destination d'argent réel. Le filtre
+    # vit dans le résolveur : config env ne peut PAS le lever.
+    if (paire_du_setup and
+            str(paire_du_setup).upper() in LIVE_ACCOUNT_BLOCKED_PAIRS):
+        from backend.services.destinations_registry import is_real_money
+        destinations = [d for d in destinations
+                        if not is_real_money(
+                            getattr(d, "destination_id", None))]
 
     return destinations
