@@ -112,6 +112,10 @@ MOMENTUM_TP_R_MULT = _env_float("MEANREV_MOMENTUM_TP_R_MULT", 2.0)
 # - admin_live   → canal ic_markets 🟩 [RÉEL · IC_MARKETS]
 # - admin_legacy → canal demo        🟦 [DÉMO · IC_MARKETS]
 MEANREV_DESTINATION_ID = "admin_legacy" if ACCOUNT_IS_DEMO else "admin_live"
+# Silence les rapports de cycle 15min + daily recap + résumé check_exits
+# textuel. N'affecte PAS les alertes critiques (bridge unreachable, daily
+# loss kill, friday force-close report) ni les cartes riches OPEN/CLOSE.
+SILENCE_CYCLES = _env_bool("MEANREV_SILENCE_CYCLES", "false")
 
 
 def _get_universe() -> list[str]:
@@ -963,6 +967,10 @@ async def cycle() -> dict:
 
 
 async def _report_cycle(mode: str, n_open: int, universe: list, actions: list, state: dict) -> None:
+    # Opt-in silence : rapport de cycle 15min skippé. Les cartes riches
+    # OPEN (envoyées via _send_trade_opened_rich) restent actives.
+    if SILENCE_CYCLES:
+        return
     taken = [a for a in actions if a.get("verdict") == "TAKE" and a.get("executed")]
     vetoed = [a for a in actions if a.get("verdict") == "VETO"]
     waits = [a for a in actions if a.get("verdict") == "WAIT"]
@@ -1080,7 +1088,10 @@ async def check_exits() -> dict:
 
     _save_state(state)
 
-    if closed_this_cycle:
+    # Résumé textuel des time stops : silencé via MEANREV_SILENCE_CYCLES.
+    # Les cartes riches individuelles de close sont déjà parties ci-dessus
+    # via _send_close_rich (live) — ce bloc est juste un récap duplicate.
+    if closed_this_cycle and not SILENCE_CYCLES:
         lines = [f"⏰ <b>meanrev</b> [{mode}] time stops 4h"]
         for p in closed_this_cycle:
             lines.append(
@@ -1162,6 +1173,8 @@ async def friday_force_close() -> dict:
 async def daily_recap() -> dict:
     if not _config_enabled():
         return {"ran": False, "reason": "disabled"}
+    if SILENCE_CYCLES:
+        return {"ran": False, "reason": "silenced"}
 
     mode = _config_mode()
     state = _load_state()
