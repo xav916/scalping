@@ -2120,6 +2120,66 @@ def start_scheduler() -> AsyncIOScheduler:
         replace_existing=True, max_instances=1, coalesce=True,
     )
 
+    # ─── Daily swing trader (PR #36) ─────────────────────────────────────
+    # Timeframe 1d, hold 1-5 jours, cycle 1×/jour après close NYSE.
+    from backend.services import daily_trader as _daily_module
+
+    async def _daily_cycle_job() -> None:
+        try:
+            await _daily_module.cycle()
+        except Exception as exc:
+            logger.warning("daily cycle failed: %s", exc)
+
+    _scheduler.add_job(
+        _daily_cycle_job,
+        _CronTrigger_AT(day_of_week="mon-fri", hour=22, minute=0, timezone="UTC"),
+        id="daily_cycle",
+        name="Daily swing cycle (après close NYSE)",
+        replace_existing=True, max_instances=1, coalesce=True,
+    )
+
+    async def _daily_check_exits_job() -> None:
+        try:
+            await _daily_module.check_exits()
+        except Exception as exc:
+            logger.warning("daily check_exits failed: %s", exc)
+
+    _scheduler.add_job(
+        _daily_check_exits_job,
+        "interval", minutes=5,
+        id="daily_check_exits",
+        name="Daily SL/TP + time stops check",
+        replace_existing=True, max_instances=1, coalesce=True,
+    )
+
+    async def _daily_friday_close_job() -> None:
+        try:
+            await _daily_module.friday_force_close()
+        except Exception as exc:
+            logger.warning("daily friday_close failed: %s", exc)
+
+    _scheduler.add_job(
+        _daily_friday_close_job,
+        _CronTrigger_AT(day_of_week="fri", hour=19, minute=30, timezone="UTC"),
+        id="daily_friday_close",
+        name="Daily Friday force-close",
+        replace_existing=True, max_instances=1, coalesce=True,
+    )
+
+    async def _daily_recap_job() -> None:
+        try:
+            await _daily_module.daily_recap()
+        except Exception as exc:
+            logger.warning("daily recap failed: %s", exc)
+
+    _scheduler.add_job(
+        _daily_recap_job,
+        _CronTrigger_AT(day_of_week="mon-fri", hour=22, minute=5, timezone="UTC"),
+        id="daily_recap",
+        name="Daily swing recap quotidien",
+        replace_existing=True, max_instances=1, coalesce=True,
+    )
+
     _scheduler.start()
     logger.info(
         f"Scheduler démarré. Analyse {MATAF_POLL_INTERVAL}s, backtest 60s, "
