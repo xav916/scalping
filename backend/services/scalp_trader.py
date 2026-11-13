@@ -101,6 +101,16 @@ RSI_SHORT_THR = _env_float("SCALP_RSI_SHORT_THR", 70.0)
 SL_ATR_MULT = _env_float("SCALP_SL_ATR_MULT", 1.0)
 TP_R_MULT = _env_float("SCALP_TP_R_MULT", 1.5)
 ATR_PERIOD = _env_int("SCALP_ATR_PERIOD", 14)
+# Si ``true``, la direction détectée par ``_detect_signal`` est inversée
+# (RSI oversold + bougie reversal haussière donne SELL au lieu de BUY).
+# Transforme la logique mean reversion en momentum / continuation : on
+# parie que le mouvement récent continue au lieu de retourner vers la
+# moyenne. Flag miroir de ``MEANREV_INVERT_DIRECTION`` (PR #23).
+INVERT_DIRECTION = _env_bool("SCALP_INVERT_DIRECTION", "false")
+# Quand ``INVERT_DIRECTION=true``, le TP par défaut (atr × R_MULT) devient
+# incohérent (il part du mauvais côté) : on utilise un R:R symétrique
+# fixe depuis la distance SL. Multiplicateur configurable ici.
+MOMENTUM_TP_R_MULT = _env_float("SCALP_MOMENTUM_TP_R_MULT", 2.0)
 TIME_STOP_MINUTES = _env_int("SCALP_TIME_STOP_MINUTES", 60)
 FRIDAY_LATE_BLOCK_UTC = os.getenv("SCALP_FRIDAY_LATE_BLOCK_UTC", "19:30")
 SCAN_INTERVAL_SEC = _env_int("SCALP_SCAN_INTERVAL_SEC", 60)
@@ -378,25 +388,38 @@ def _detect_signal(candles_1min: list, pair: str) -> dict | None:
     last = candles_1min[-1]
     entry = float(last.close)
 
-    # Long : RSI oversold + bougie reversal haussière
+    # Direction MR (défaut) : RSI oversold + haussière → BUY (retour mean)
+    # Direction momentum (INVERT) : même détection → SELL (continuation)
+    mr_direction = None
     if rsi < RSI_LONG_THR and last.close > last.open:
+        mr_direction = "buy"
+    elif rsi > RSI_SHORT_THR and last.close < last.open:
+        mr_direction = "sell"
+    if mr_direction is None:
+        return None
+
+    direction = mr_direction
+    if INVERT_DIRECTION:
+        direction = "sell" if mr_direction == "buy" else "buy"
+
+    if direction == "buy":
         sl = round(entry - SL_ATR_MULT * atr, 5)
-        tp = round(entry + SL_ATR_MULT * TP_R_MULT * atr, 5)
-        return {
-            "direction": "buy", "entry": entry, "sl": sl, "tp": tp,
-            "atr": atr, "rsi": rsi, "pair": pair,
-        }
-
-    # Short : RSI overbought + bougie reversal baissière
-    if rsi > RSI_SHORT_THR and last.close < last.open:
+        if INVERT_DIRECTION:
+            # TP = R:R momentum depuis distance SL
+            tp = round(entry + MOMENTUM_TP_R_MULT * (entry - sl), 5)
+        else:
+            tp = round(entry + SL_ATR_MULT * TP_R_MULT * atr, 5)
+    else:  # sell
         sl = round(entry + SL_ATR_MULT * atr, 5)
-        tp = round(entry - SL_ATR_MULT * TP_R_MULT * atr, 5)
-        return {
-            "direction": "sell", "entry": entry, "sl": sl, "tp": tp,
-            "atr": atr, "rsi": rsi, "pair": pair,
-        }
+        if INVERT_DIRECTION:
+            tp = round(entry - MOMENTUM_TP_R_MULT * (sl - entry), 5)
+        else:
+            tp = round(entry - SL_ATR_MULT * TP_R_MULT * atr, 5)
 
-    return None
+    return {
+        "direction": direction, "entry": entry, "sl": sl, "tp": tp,
+        "atr": atr, "rsi": rsi, "pair": pair,
+    }
 
 
 # ─── Telegram helpers ───────────────────────────────────────────────────
