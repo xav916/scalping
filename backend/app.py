@@ -2147,6 +2147,65 @@ async def system_version():
     return version
 
 
+@app.get("/system/live-status")
+async def system_live_status():
+    """État focalisé du double verrou REM-002-LIVE (compte RÉEL).
+
+    Expose en un seul endroit :
+    - État du verrou live (ON/OFF, motif de refus)
+    - Qui a autorisé / quand / pour quel fingerprint
+    - Temps restant avant blackout automatique
+    - Flag .env MT5_BRIDGE_LIVE_ENABLED
+
+    Lecture-seule. Un dashboard admin peut poller ce endpoint pour afficher
+    l'état live visible d'un coup d'œil sans parser tout /system/version.
+    """
+    import os
+    from datetime import datetime, timezone
+    from backend.services import global_execution_switch as ges
+    from backend.services import deployment_manifest as dm
+
+    status = ges.status()
+
+    # Calcul du temps restant avant blackout absolu (24h par défaut).
+    time_remaining_sec = None
+    authorized_at_str = status.get("live_authorized_at")
+    if authorized_at_str:
+        try:
+            auth_dt = datetime.fromisoformat(authorized_at_str)
+            try:
+                max_age = int(os.getenv(
+                    "LIVE_AUTHORIZATION_MAX_AGE_SEC",
+                    str(ges.LIVE_AUTHORIZATION_MAX_AGE_SEC_DEFAULT),
+                ))
+            except (TypeError, ValueError):
+                max_age = ges.LIVE_AUTHORIZATION_MAX_AGE_SEC_DEFAULT
+            age = (datetime.now(timezone.utc) - auth_dt).total_seconds()
+            time_remaining_sec = max(0, int(max_age - age))
+        except ValueError:
+            pass
+
+    # Flag .env (lecture directe, pas via la destination registry).
+    env_live_enabled = str(
+        os.getenv("MT5_BRIDGE_LIVE_ENABLED", "false")
+    ).strip().lower() in ("true", "1", "yes", "on")
+
+    return {
+        "live_account_execution": status.get("live_account_execution"),
+        "live_account_reason_code": status.get("live_account_reason_code"),
+        "live_account_detail": status.get("live_account_detail"),
+        "env_mt5_bridge_live_enabled": env_live_enabled,
+        "authorized_at": status.get("live_authorized_at"),
+        "authorized_by": status.get("live_authorized_by"),
+        "authorized_reason": status.get("live_authorized_reason"),
+        "authorized_fingerprint": status.get("live_authorized_fingerprint"),
+        "authorized_expires_at": status.get("live_authorized_expires_at"),
+        "time_remaining_sec_before_blackout": time_remaining_sec,
+        "fingerprint_running": dm.fingerprint(),
+        "server_time_utc": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 @app.get("/api/status")
 async def system_status(_=Depends(verify_credentials)):
     """Observabilité : dernier cycle d'analyse, dernières syncs COT / Fear & Greed,

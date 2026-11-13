@@ -101,6 +101,12 @@ LIVE_AUTHORIZED = "LIVE_AUTHORIZED"
 LIVE_NOT_AUTHORIZED = "LIVE_NOT_AUTHORIZED"
 LIVE_FINGERPRINT_MISMATCH = "LIVE_FINGERPRINT_MISMATCH"
 LIVE_EXPIRED = "LIVE_EXPIRED"
+LIVE_MAX_AGE_EXCEEDED = "LIVE_MAX_AGE_EXCEEDED"
+
+#: Âge max absolu d'une autorisation live, applique MEME si expires_at est
+#: absent ou lointain. Blackout de sécurité : si on oublie de révoquer, le
+#: verrou se referme tout seul après 24h. Configurable via env var.
+LIVE_AUTHORIZATION_MAX_AGE_SEC_DEFAULT = 86400
 
 
 @dataclass(frozen=True)
@@ -418,6 +424,32 @@ def live_destination_authorized() -> tuple[bool, str, str | None]:
                     return False, LIVE_EXPIRED, f"expired at {exp}"
             except ValueError:
                 return False, LIVE_EXPIRED, f"invalid expiry: {exp}"
+
+        # ⛔ Plafond absolu : blackout auto si l'autorisation date de plus de
+        # LIVE_AUTHORIZATION_MAX_AGE_SEC (défaut 24h). Protège contre l'oubli
+        # de révoquer après une session de live. S'applique MÊME si
+        # expires_at n'est pas défini ou est très lointain.
+        try:
+            max_age = int(os.getenv(
+                "LIVE_AUTHORIZATION_MAX_AGE_SEC",
+                str(LIVE_AUTHORIZATION_MAX_AGE_SEC_DEFAULT),
+            ))
+        except (TypeError, ValueError):
+            max_age = LIVE_AUTHORIZATION_MAX_AGE_SEC_DEFAULT
+        authorized_at = etat.get("live_authorized_at")
+        if authorized_at:
+            try:
+                auth_dt = datetime.fromisoformat(authorized_at)
+                age_sec = (datetime.now(timezone.utc) - auth_dt).total_seconds()
+                if age_sec >= max_age:
+                    return False, LIVE_MAX_AGE_EXCEEDED, (
+                        f"autorisation vieille de {int(age_sec)}s "
+                        f"(plafond {max_age}s)"
+                    )
+            except ValueError:
+                return False, LIVE_MAX_AGE_EXCEEDED, (
+                    f"live_authorized_at illisible: {authorized_at}"
+                )
 
         return True, LIVE_AUTHORIZED, etat.get("live_authorized_reason")
 
