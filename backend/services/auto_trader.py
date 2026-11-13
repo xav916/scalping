@@ -461,6 +461,40 @@ async def _send_info(text: str) -> None:
         logger.warning("auto_trader: send telegram failed — %s", e)
 
 
+async def _send_take_opened_rich(action: dict, mode: str) -> None:
+    """Carte riche OPEN pour un TAKE auto_trader. Non silencée par SILENCE_CYCLES.
+
+    Utilise ``telegram_service.send_trade_opened`` avec un setup synthétique
+    (SimpleNamespace) et route vers :
+    - ``admin_ibkr_us`` (canal ibkr 🟥) en mode live
+    - ``admin_legacy`` (canal demo 🟦) en mode dry_run
+
+    Format identique aux cartes meanrev — look cohérent sur Telegram.
+    """
+    try:
+        import types
+        from backend.services import telegram_service
+        setup = types.SimpleNamespace(
+            pair=action["ticker"],
+            direction=action["direction"],
+            entry_price=action["entry"],
+            stop_loss=action["sl"],
+            take_profit_1=action["tp"],
+        )
+        destination_id = "admin_ibkr_us" if mode == "live" else "admin_legacy"
+        ticket = action.get("order_id") or f"dryrun-{action['ticker']}"
+        await telegram_service.send_trade_opened(
+            setup=setup,
+            ticket=ticket,
+            fill_price=float(action["entry"]),
+            volume=float(action["qty"]),
+            mode=mode,
+            destination_id=destination_id,
+        )
+    except Exception as e:
+        logger.warning("auto_trader: send_take_opened_rich failed — %s", e)
+
+
 def _usd_from_eur(eur: float) -> float:
     return eur * EUR_USD_RATE
 
@@ -628,7 +662,15 @@ async def cycle() -> dict:
 
     _save_state(state)
 
-    # ─── Reporting Telegram ─────────────────────────────────────────────
+    # ─── Carte riche OPEN pour chaque TAKE exécuté ──────────────────────
+    # Envoyée séparément du _report_cycle pour ne jamais être silencée par
+    # AUTO_TRADER_SILENCE_CYCLES. Garantit que les trades auto_trader sont
+    # vus sur Telegram même quand le rapport de cycle est coupé.
+    for action in actions:
+        if action.get("verdict") == "TAKE" and action.get("executed"):
+            await _send_take_opened_rich(action, mode)
+
+    # ─── Reporting Telegram (silencé si AUTO_TRADER_SILENCE_CYCLES=true) ─
     await _report_cycle(mode, n_open, candidates, actions, closed_this_cycle, state)
 
     result["ran"] = True
