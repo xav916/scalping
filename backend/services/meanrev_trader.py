@@ -916,7 +916,7 @@ async def cycle() -> dict:
         action = {
             "pair": pair, "verdict": "TAKE",
             "direction": trigger["direction"], "lots": lots,
-            "entry": entry, "sl": sl, "tp": tp,
+            "entry": entry, "sl": sl, "tp": tp, "sl_initial": sl,
             "bbw_pct": bbw_pct, "atr_expansion": atr_exp,
             "mode": mode,
         }
@@ -929,7 +929,7 @@ async def cycle() -> dict:
                 fill = resp.get("avg_fill_price") or entry
                 state["open_positions"].append({
                     "pair": pair, "direction": trigger["direction"], "lots": lots,
-                    "entry": float(fill), "sl": sl, "tp": tp,
+                    "entry": float(fill), "sl": sl, "tp": tp, "sl_initial": sl,
                     "vwap_target": tp,
                     "entry_time_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                     "mt5_ticket": action["ticket"], "status": "open",
@@ -950,7 +950,7 @@ async def cycle() -> dict:
             action["reason"] = "dry_run_simulated_open"
             state["open_positions"].append({
                 "pair": pair, "direction": trigger["direction"], "lots": lots,
-                "entry": entry, "sl": sl, "tp": tp,
+                "entry": entry, "sl": sl, "tp": tp, "sl_initial": sl,
                 "vwap_target": tp,
                 "entry_time_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                 "mt5_ticket": None, "status": "open",

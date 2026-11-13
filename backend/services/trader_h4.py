@@ -355,7 +355,7 @@ def _detect_signal(candles, pair: str):
             tp = round(entry - SL_ATR_MULT * TP_R_MULT * atr, 5)
 
     return {
-        "direction": direction, "entry": entry, "sl": sl, "tp": tp,
+        "direction": direction, "entry": entry, "sl": sl, "tp": tp, "sl_initial": sl,
         "atr": atr, "rsi": rsi, "pair": pair,
     }
 
@@ -521,7 +521,7 @@ async def cycle() -> dict:
 
         action = {
             "pair": pair, "direction": direction, "lots": lots,
-            "entry": entry, "sl": sl, "tp": tp,
+            "entry": entry, "sl": sl, "tp": tp, "sl_initial": sl,
             "rsi": signal["rsi"], "atr": signal["atr"], "mode": mode,
         }
 
@@ -534,7 +534,7 @@ async def cycle() -> dict:
                 action["ticket"] = ticket
                 state["open_positions"].append({
                     "pair": pair, "direction": direction, "lots": lots,
-                    "entry": float(fill), "sl": sl, "tp": tp,
+                    "entry": float(fill), "sl": sl, "tp": tp, "sl_initial": sl,
                     "entry_time_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                     "mt5_ticket": ticket, "last_seen_price": float(fill),
                     "status": "open",
@@ -549,7 +549,7 @@ async def cycle() -> dict:
         else:
             state["open_positions"].append({
                 "pair": pair, "direction": direction, "lots": lots,
-                "entry": entry, "sl": sl, "tp": tp,
+                "entry": entry, "sl": sl, "tp": tp, "sl_initial": sl,
                 "entry_time_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                 "mt5_ticket": None, "last_seen_price": entry,
                 "status": "open",
@@ -600,6 +600,16 @@ async def check_exits() -> dict:
             continue
 
         p["last_seen_price"] = last
+
+        # ─── Trailing stop (ratchet one-way) ─────────────────────────────
+        try:
+            from backend.services.trader_trailing import update_trailing_sl
+            new_sl = update_trailing_sl(p, last, "H4")
+            if new_sl is not None:
+                p["sl"] = new_sl
+                sl = new_sl  # relu plus bas pour le check SL
+        except Exception:
+            pass
 
         exit_price = None
         reason = None
