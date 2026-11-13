@@ -36,6 +36,7 @@ import math
 import os
 import pathlib
 import statistics
+import types
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
 
@@ -106,6 +107,11 @@ INVERT_DIRECTION = _env_bool("MEANREV_INVERT_DIRECTION", "false")
 # réel pendant les tests en sandbox demo.
 ACCOUNT_IS_DEMO = _env_bool("MEANREV_ACCOUNT_IS_DEMO", "false")
 MOMENTUM_TP_R_MULT = _env_float("MEANREV_MOMENTUM_TP_R_MULT", 2.0)
+# Destination transmise à send_trade_opened / send_close pour que le routage
+# canaux_telegram pointe sur le bon fil :
+# - admin_live   → canal ic_markets 🟩 [RÉEL · IC_MARKETS]
+# - admin_legacy → canal demo        🟦 [DÉMO · IC_MARKETS]
+MEANREV_DESTINATION_ID = "admin_legacy" if ACCOUNT_IS_DEMO else "admin_live"
 
 
 def _get_universe() -> list[str]:
@@ -641,6 +647,68 @@ async def _send_info(text: str) -> None:
         logger.warning("meanrev: send telegram failed — %s", e)
 
 
+def _make_setup_for_telegram(
+    pair: str, direction: str, entry: float, sl: float, tp: float,
+) -> types.SimpleNamespace:
+    """Objet minimal 'setup-like' pour alimenter ``send_trade_opened``.
+
+    ``telegram_service._format_trade_opened`` lit uniquement
+    ``.pair``, ``.direction`` (str OK), ``.entry_price``, ``.stop_loss``,
+    ``.take_profit_1``.
+    """
+    return types.SimpleNamespace(
+        pair=pair,
+        direction=direction,
+        entry_price=entry,
+        stop_loss=sl,
+        take_profit_1=tp,
+    )
+
+
+async def _send_trade_opened_rich(
+    pair: str, direction: str, entry: float, sl: float, tp: float,
+    volume: float, ticket: int | str,
+) -> None:
+    """Notifie l'ouverture d'une position live via la carte riche standard.
+
+    Transmet ``MEANREV_DESTINATION_ID`` → routage ``canaux_telegram`` vers le
+    bon fil (demo 🟦 si sandbox, ic_markets 🟩 si prod réel).
+    """
+    try:
+        from backend.services import telegram_service
+        setup = _make_setup_for_telegram(pair, direction, entry, sl, tp)
+        await telegram_service.send_trade_opened(
+            setup=setup, ticket=ticket, fill_price=entry, volume=volume,
+            mode="live", destination_id=MEANREV_DESTINATION_ID,
+        )
+    except Exception as e:
+        logger.warning("meanrev: send_trade_opened failed — %s", e)
+
+
+async def _send_close_rich(
+    pair: str, direction: str, entry: float, close_price: float,
+    profit_loss: float, volume: float, ticket: int | str, reason: str,
+) -> None:
+    """Notifie la fermeture d'une position live via la carte riche standard."""
+    try:
+        from backend.services import telegram_service
+        trade = {
+            "pair": pair,
+            "direction": direction,
+            "entry_price": entry,
+            "close_price": close_price,
+            "profit_loss": profit_loss,
+            "volume": volume,
+            "mt5_ticket": ticket,
+            "close_reason": reason,
+        }
+        await telegram_service.send_close(
+            trade=trade, destination_id=MEANREV_DESTINATION_ID,
+        )
+    except Exception as e:
+        logger.warning("meanrev: send_close failed — %s", e)
+
+
 # ─── Cycle principal ────────────────────────────────────────────────────
 
 async def cycle() -> dict:
@@ -856,6 +924,12 @@ async def cycle() -> dict:
                     "mt5_ticket": action["ticket"], "status": "open",
                 })
                 opened_this_cycle = True
+                # Carte riche d'ouverture (format identique aux trades manuels)
+                await _send_trade_opened_rich(
+                    pair=pair, direction=trigger["direction"],
+                    entry=float(fill), sl=sl, tp=tp,
+                    volume=lots, ticket=action["ticket"],
+                )
             else:
                 action["executed"] = False
                 action["reason"] = f"bridge_http_{resp.get('status_code')}: {str(resp.get('body'))[:200]}"
@@ -995,6 +1069,14 @@ async def check_exits() -> dict:
                 "close_date": p["exit_time_utc"],
             })
             closed_this_cycle.append(p)
+            # Carte riche de clôture (live seulement, dry_run reste sur _send_info)
+            if mode == "live" and p.get("mt5_ticket") is not None:
+                await _send_close_rich(
+                    pair=p["pair"], direction=direction,
+                    entry=p["entry"], close_price=exit_price,
+                    profit_loss=p["pnl_usd"], volume=p["lots"],
+                    ticket=p["mt5_ticket"], reason="time_stop_4h",
+                )
 
     _save_state(state)
 
@@ -1052,6 +1134,14 @@ async def friday_force_close() -> dict:
             "close_date": now_utc,
         })
         closed.append(p)
+        # Carte riche de clôture (live seulement, dry_run reste sur _send_info)
+        if mode == "live" and p.get("mt5_ticket") is not None:
+            await _send_close_rich(
+                pair=p["pair"], direction=direction,
+                entry=p["entry"], close_price=exit_price,
+                profit_loss=p["pnl_usd"], volume=p["lots"],
+                ticket=p["mt5_ticket"], reason="friday",
+            )
 
     _save_state(state)
 
