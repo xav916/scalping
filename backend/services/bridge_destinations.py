@@ -487,6 +487,30 @@ def _admin_live_destination() -> BridgeConfig | None:
         and getattr(st, "MT5_BRIDGE_LIVE_API_KEY", "")
     ):
         return None
+
+    # ⛔ REM-002-LIVE : double verrou. En plus du flag .env, le compte
+    # RÉEL exige une autorisation explicite dans l'état du switch global,
+    # portée sur le fingerprint du build actuel. Sans ça, la destination
+    # reste coupée même si MT5_BRIDGE_LIVE_ENABLED=true.
+    #
+    # Fail-closed : toute exception/état illisible → None (pas de live).
+    try:
+        from backend.services import global_execution_switch as _ges
+        _allowed, _reason, _detail = _ges.live_destination_authorized()
+        if not _allowed:
+            import logging as _lg
+            _lg.getLogger(__name__).error(
+                "REM-002-LIVE: destination admin_live BLOQUÉE (%s): %s",
+                _reason, _detail,
+            )
+            return None
+    except Exception as _e:  # noqa: BLE001
+        import logging as _lg
+        _lg.getLogger(__name__).error(
+            "REM-002-LIVE check failed, DENY admin_live par sécurité: %s", _e,
+        )
+        return None
+
     live_symbol_map = getattr(st, "MT5_BRIDGE_LIVE_SYMBOL_MAP", None) or None
     return BridgeConfig(
         destination_id="admin_live",

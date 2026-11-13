@@ -96,6 +96,12 @@ BLOCAGES_CONNUS = (
     "critical_anomaly",          # anomalie critique ouverte
 )
 
+# ─── REM-002-LIVE : motifs de refus du double verrou compte RÉEL ────────
+LIVE_AUTHORIZED = "LIVE_AUTHORIZED"
+LIVE_NOT_AUTHORIZED = "LIVE_NOT_AUTHORIZED"
+LIVE_FINGERPRINT_MISMATCH = "LIVE_FINGERPRINT_MISMATCH"
+LIVE_EXPIRED = "LIVE_EXPIRED"
+
 
 @dataclass(frozen=True)
 class ExecutionDecision:
@@ -329,6 +335,7 @@ def status() -> dict:
     etat, lecture = _lire_etat()
     hash_arme = (etat or {}).get("armed_configuration_hash")
     hash_courant = dm.configuration_hash()
+    live_ok, live_code, live_detail = live_destination_authorized()
     return {
         # 🔴 REM-023 non livre : la derive se VOIT, elle n'arrete rien.
         "configuration_drift": bool(
@@ -347,4 +354,141 @@ def status() -> dict:
         "armed_at": (etat or {}).get("armed_at"),
         "armed_by": (etat or {}).get("armed_by"),
         "armed_reason": (etat or {}).get("armed_reason"),
+        # ─── REM-002-LIVE : double verrou compte RÉEL ─────────────────
+        "live_account_execution": "ON" if live_ok else "OFF",
+        "live_account_reason_code": live_code,
+        "live_account_detail": live_detail,
+        "live_authorized_at": (etat or {}).get("live_authorized_at"),
+        "live_authorized_by": (etat or {}).get("live_authorized_by"),
+        "live_authorized_reason": (etat or {}).get("live_authorized_reason"),
+        "live_authorized_fingerprint": (etat or {}).get(
+            "live_authorized_fingerprint"),
+        "live_authorized_expires_at": (etat or {}).get(
+            "live_authorized_expires_at"),
     }
+
+
+# ─── REM-002-LIVE : double verrou compte RÉEL ──────────────────────────
+#
+# ⛔ Le flag .env `MT5_BRIDGE_LIVE_ENABLED=true` seul ne suffit PLUS à
+# activer la destination `admin_live` (compte RÉEL). Il faut EN PLUS une
+# autorisation explicite dans cet état, portée sur le fingerprint du build
+# en cours, qui expire à chaque re-deploy.
+#
+# 🔑 Raison d'être : le soir du 2026-11-13, un trade XAU/USD a été envoyé
+# sur le compte RÉEL IC Markets (login 13137475) par le pipeline legacy
+# `scheduler.py:509/882` → `mt5_bridge.send_setups` → `resolve_destinations`
+# → destination `admin_live`. Le seul garde-fou était le flag .env, lequel
+# avait été activé depuis au moins 2026-08-28 (`sltp_guard_activated_at`).
+# Un simple `echo MT5_BRIDGE_LIVE_ENABLED=true` + restart était suffisant
+# pour envoyer des ordres sur de l'argent réel sans trace d'autorisation.
+
+
+def live_destination_authorized() -> tuple[bool, str, str | None]:
+    """Autorise-t-on la destination `admin_live` (compte RÉEL) pour CE build ?
+
+    Returns ``(allowed, reason_code, detail)``. Fail-closed : toute
+    exception ou état illisible retourne ``False``.
+    """
+    try:
+        from backend.services import deployment_manifest as dm
+
+        empreinte = dm.fingerprint()
+        etat, lecture = _lire_etat()
+        if etat is None:
+            return False, lecture, "aucun etat lisible"
+
+        if not etat.get("live_authorized"):
+            return False, LIVE_NOT_AUTHORIZED, etat.get(
+                "live_authorized_revoked_reason")
+
+        # L'autorisation live doit porter sur le build qui tourne.
+        arme_pour = etat.get("live_authorized_fingerprint")
+        if not arme_pour or not empreinte or arme_pour != empreinte:
+            return False, LIVE_FINGERPRINT_MISMATCH, (
+                f"live armed for {arme_pour}, running {empreinte}"
+            )
+
+        # Expiration optionnelle (ISO 8601 UTC).
+        exp = etat.get("live_authorized_expires_at")
+        if exp:
+            try:
+                exp_dt = datetime.fromisoformat(exp)
+                if datetime.now(timezone.utc) >= exp_dt:
+                    return False, LIVE_EXPIRED, f"expired at {exp}"
+            except ValueError:
+                return False, LIVE_EXPIRED, f"invalid expiry: {exp}"
+
+        return True, LIVE_AUTHORIZED, etat.get("live_authorized_reason")
+
+    except Exception as e:  # noqa: BLE001
+        logger.error("REM-002-LIVE erreur interne (%s) -> DENY", e)
+        return False, CONTROL_ERROR, str(e)
+
+
+def authorize_live(
+    reason: str, by: str, expires_at: str | None = None,
+) -> dict:
+    """Autorise explicitement l'envoi d'ordres au compte RÉEL pour CE build.
+
+    ⛔ Expire automatiquement dès que le fingerprint change (re-deploy).
+    `expires_at` optionnel : ISO 8601 UTC, bornage temporel supplémentaire.
+
+    ⚠️ Ne se substitue PAS à `arm()` : REM-002 doit aussi être armé pour
+    que les ordres partent. Ce verrou est ADDITIONNEL, pas remplaçant.
+    """
+    from backend.services import deployment_manifest as dm
+
+    integrite = dm.check_integrity()
+    if not integrite.ok:
+        logger.error(
+            "REM-002-LIVE autorisation REFUSÉE : integrite = %s",
+            integrite.status,
+        )
+        return {
+            "ok": False, "reason": DEPLOYMENT_INTEGRITY,
+            "detail": integrite.status,
+        }
+    empreinte = dm.fingerprint()
+    if not empreinte:
+        return {
+            "ok": False, "reason": DEPLOYMENT_INTEGRITY,
+            "detail": "empreinte indisponible",
+        }
+
+    etat, _ = _lire_etat()
+    etat = etat or _defaut()
+    etat.update({
+        "live_authorized": True,
+        "live_authorized_fingerprint": empreinte,
+        "live_authorized_at": datetime.now(timezone.utc).isoformat(),
+        "live_authorized_by": by,
+        "live_authorized_reason": reason,
+        "live_authorized_expires_at": expires_at,
+    })
+    _ecrire_etat(etat)
+    logger.warning(
+        "REM-002-LIVE compte RÉEL AUTORISÉ pour %s par %s (%s, expire=%s)",
+        empreinte, by, reason, expires_at or "jamais",
+    )
+    return {
+        "ok": True, "fingerprint": empreinte, "by": by,
+        "reason": reason, "expires_at": expires_at,
+    }
+
+
+def revoke_live_authorization(reason: str, by: str) -> dict:
+    """Révoque l'autorisation live. Toujours autorisé — ne se négocie pas."""
+    etat, _ = _lire_etat()
+    etat = etat or _defaut()
+    etat.update({
+        "live_authorized": False,
+        "live_authorized_revoked_at": datetime.now(timezone.utc).isoformat(),
+        "live_authorized_revoked_by": by,
+        "live_authorized_revoked_reason": reason,
+    })
+    _ecrire_etat(etat)
+    logger.warning(
+        "REM-002-LIVE autorisation live RÉVOQUÉE par %s (%s)", by, reason,
+    )
+    return {"ok": True, "reason": reason, "by": by}
