@@ -52,7 +52,15 @@ EUR_USD_RATE = float(os.getenv("EUR_USD_FIXED", "1.07"))
 
 
 def _fetch_all_deals() -> list[dict]:
-    """Pagine /audit?since_id=X&limit=100 jusqu'à épuisement."""
+    """Pagine /audit?since_id=X&limit=500 jusqu'à épuisement.
+
+    Shape réel du bridge IC Markets Live (vérifié 2026-11-13) :
+    - clé réponse : ``orders``
+    - id curseur : ``id``
+    - comment : ``client_comment``
+    - timestamp : ``created_at``
+    - pnl : ``pnl``
+    """
     if not BRIDGE_URL or not API_KEY:
         print(
             "ERREUR : MT5_BRIDGE_LIVE_URL et MT5_BRIDGE_LIVE_API_KEY requis.",
@@ -61,7 +69,7 @@ def _fetch_all_deals() -> list[dict]:
         sys.exit(2)
 
     headers = {"X-API-Key": API_KEY}
-    all_deals: list[dict] = []
+    all_orders: list[dict] = []
     since_id = 0
     page_num = 0
     with httpx.Client(timeout=30.0) as client:
@@ -76,51 +84,52 @@ def _fetch_all_deals() -> list[dict]:
                 )
                 break
             data = r.json()
-            entries = data.get("entries") or data.get("deals") or data.get(
-                "audit") or []
-            if not entries:
+            orders = data.get("orders") or []
+            if not orders:
                 break
             print(
-                f"  page {page_num}: +{len(entries)} entries "
+                f"  page {page_num}: +{len(orders)} orders "
                 f"(since_id={since_id})",
                 file=sys.stderr,
             )
-            all_deals.extend(entries)
-            # Progression du curseur
+            all_orders.extend(orders)
             max_id = max(
-                (int(e.get("id") or e.get("deal_id") or e.get("ticket") or 0)
-                 for e in entries),
+                (int(o.get("id") or 0) for o in orders),
                 default=since_id,
             )
             if max_id <= since_id:
                 break
             since_id = max_id
-            if len(entries) < 500:
+            if len(orders) < 500:
                 break
-    return all_deals
+    return all_orders
 
 
-def _is_from_scalping_system(deal: dict) -> bool:
-    comment = (deal.get("comment") or "").lower()
+def _is_from_scalping_system(order: dict) -> bool:
+    """Signé par notre système ? Comment 'scalping-radar-*'."""
+    comment = (
+        order.get("client_comment") or order.get("comment") or ""
+    ).lower()
     return "scalping-radar" in comment
 
 
-def _resolve_pair(deal: dict) -> str:
-    return (deal.get("symbol") or deal.get("pair") or "?").upper()
+def _resolve_pair(order: dict) -> str:
+    return (order.get("pair") or order.get("symbol") or "?").upper()
 
 
-def _resolve_direction(deal: dict) -> str:
-    t = (deal.get("type") or deal.get("direction") or "").lower()
+def _resolve_direction(order: dict) -> str:
+    t = (order.get("direction") or order.get("type") or "").lower()
     if t in ("buy", "0"):
         return "buy"
     if t in ("sell", "1"):
         return "sell"
+    # close-buy / close-sell = fermetures (événements séparés dans l'audit)
     return t or "?"
 
 
-def _resolve_profit_usd(deal: dict) -> float:
-    for k in ("profit_usd", "profit", "pnl", "pnl_usd"):
-        v = deal.get(k)
+def _resolve_profit_usd(order: dict) -> float:
+    for k in ("pnl", "profit_usd", "profit", "pnl_usd"):
+        v = order.get(k)
         if v is not None:
             try:
                 return float(v)
@@ -129,9 +138,9 @@ def _resolve_profit_usd(deal: dict) -> float:
     return 0.0
 
 
-def _resolve_time(deal: dict) -> datetime | None:
-    for k in ("time", "close_time", "exit_time", "time_utc", "timestamp"):
-        v = deal.get(k)
+def _resolve_time(order: dict) -> datetime | None:
+    for k in ("created_at", "time", "close_time", "exit_time", "timestamp"):
+        v = order.get(k)
         if not v:
             continue
         try:
@@ -144,9 +153,10 @@ def _resolve_time(deal: dict) -> datetime | None:
     return None
 
 
-def _resolve_close_reason(deal: dict) -> str:
+def _resolve_close_reason(order: dict) -> str:
     return str(
-        deal.get("close_reason") or deal.get("reason") or "?"
+        order.get("close_reason") or order.get("close_reason_code")
+        or order.get("reason") or "?"
     ).lower()
 
 
