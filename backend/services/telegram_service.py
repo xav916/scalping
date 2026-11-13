@@ -2028,8 +2028,11 @@ async def send_trade_opened(
                         _tracer_trade("echec", _canal_trace, "trade_ouvert",
                                       "telegram %s" % r.status_code, len(text))
                     else:
+                        _pair = getattr(setup, "pair", "?")
+                        _dir = getattr(setup, "direction", "?")
+                        _dir_str = _dir.value if hasattr(_dir, "value") else str(_dir)
                         _tracer_trade("envoye", _canal_trace, "trade_ouvert",
-                                      f"{pair} {direction}", len(text))
+                                      f"{_pair} {_dir_str}", len(text))
             except Exception as e:
                 logger.warning(f"Erreur envoi trade_opened {user}: {e}")
                 _tracer_trade("echec", _canal_trace, "trade_ouvert",
