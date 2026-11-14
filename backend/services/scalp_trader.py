@@ -618,6 +618,26 @@ async def cycle() -> dict:
             "rsi": signal["rsi"], "atr": signal["atr"], "mode": mode,
         }
 
+        # ─── Sim gate (Monte Carlo P(TP first)) ──────────────────────────
+        try:
+            from backend.services.trader_sim_gate import passes_sim_gate as _psg
+            _sim_ok, _sim_p_tp, _sim_reason = await _psg(
+                prefix="SCALP", pair=pair,
+                current_price=entry, sl=sl, tp=tp,
+                direction=direction, horizon_minutes=30,
+            )
+        except Exception:
+            _sim_ok, _sim_p_tp, _sim_reason = True, None, "sim_gate_exception"
+        if not _sim_ok:
+            action["executed"] = False
+            action["reason"] = _sim_reason
+            if _sim_p_tp is not None:
+                action["sim_p_tp"] = _sim_p_tp
+            actions.append(action)
+            continue
+        if _sim_p_tp is not None:
+            action["sim_p_tp"] = _sim_p_tp
+
         if mode == "live":
             resp = await _mt5_submit_order(pair, direction, lots, sl, tp, entry)
             if resp.get("ok"):

@@ -930,6 +930,26 @@ async def cycle() -> dict:
             "mode": mode,
         }
 
+        # ─── Sim gate (Monte Carlo P(TP first)) ──────────────────────────
+        try:
+            from backend.services.trader_sim_gate import passes_sim_gate as _psg
+            _sim_ok, _sim_p_tp, _sim_reason = await _psg(
+                prefix="MEANREV", pair=pair,
+                current_price=entry, sl=sl, tp=tp,
+                direction=trigger["direction"], horizon_minutes=240,
+            )
+        except Exception:
+            _sim_ok, _sim_p_tp, _sim_reason = True, None, "sim_gate_exception"
+        if not _sim_ok:
+            action["verdict"] = "SKIP"
+            action["reason"] = _sim_reason
+            if _sim_p_tp is not None:
+                action["sim_p_tp"] = _sim_p_tp
+            actions.append(action)
+            continue
+        if _sim_p_tp is not None:
+            action["sim_p_tp"] = _sim_p_tp
+
         if mode == "live":
             resp = await _mt5_submit_order(pair, trigger["direction"], lots, sl, tp, entry)
             if resp.get("ok"):

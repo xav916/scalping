@@ -628,6 +628,28 @@ async def cycle() -> dict:
             "notional_usd": round(qty * entry, 2), "mode": mode,
         }
 
+        # ─── Sim gate (Monte Carlo P(TP first)) ──────────────────────────
+        # auto_trader route des actions US/forex sur IBKR, horizon par
+        # défaut 1 jour (1440 min) représente un hold typique auto_trader.
+        try:
+            from backend.services.trader_sim_gate import passes_sim_gate as _psg
+            _sim_ok, _sim_p_tp, _sim_reason = await _psg(
+                prefix="AUTO_TRADER", pair=ticker,
+                current_price=entry, sl=sl, tp=tp,
+                direction="buy", horizon_minutes=1440,
+            )
+        except Exception:
+            _sim_ok, _sim_p_tp, _sim_reason = True, None, "sim_gate_exception"
+        if not _sim_ok:
+            action["verdict"] = "SKIP"
+            action["reason"] = _sim_reason
+            if _sim_p_tp is not None:
+                action["sim_p_tp"] = _sim_p_tp
+            actions.append(action)
+            continue
+        if _sim_p_tp is not None:
+            action["sim_p_tp"] = _sim_p_tp
+
         if mode == "dry_run":
             # Ajouter à la liste virtuelle persistée
             virtual_position = {
