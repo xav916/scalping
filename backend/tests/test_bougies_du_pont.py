@@ -702,3 +702,56 @@ def test_une_derive_d_une_seconde_ne_change_RIEN_meme_avec_deux_regimes():
         cal = bp._sur_la_grille([bp._en_candle(x) for x in brut], 5)
         grilles.append([c.timestamp for c in cal])
     assert grilles[0] == grilles[1] == grilles[2]
+
+
+# ── Silence quand le live est volontairement coupe ───────────────────────────
+#
+# ⛔ Post-audit 2026-11-13 : MT5_BRIDGE_LIVE_ENABLED=false + REM-002-LIVE
+# DISARMED. Dans cet etat ATTENDU, admin_live est absent a chaque cycle. Le
+# job de l'or tourne a 1 Hz : logger WARNING 86400x/jour pour une coupure
+# VOULUE noie les vrais incidents. On DEBUG tant que le flag est off.
+
+@pytest.mark.asyncio
+async def test_silence_quand_live_off_par_design(monkeypatch, caplog):
+    """MT5_BRIDGE_LIVE_ENABLED=false → DEBUG, pas WARNING."""
+    import logging as _logging
+
+    monkeypatch.setattr(bp, "_destination", lambda: None)
+
+    class _FakeSt:
+        MT5_BRIDGE_LIVE_ENABLED = False
+
+    monkeypatch.setitem(__import__("sys").modules, "config",
+                        type("M", (), {"settings": _FakeSt})())
+
+    with caplog.at_level(_logging.DEBUG, logger="backend.services.bougies_du_pont"):
+        res = await bp.fetch_candles("XAU/USD", "5min", 50)
+
+    assert res == []
+    warnings = [r for r in caplog.records if r.levelno >= _logging.WARNING]
+    debugs = [r for r in caplog.records if r.levelno == _logging.DEBUG]
+    assert not warnings, f"attendu AUCUN WARNING, trouve : {[r.message for r in warnings]}"
+    assert any("live off" in r.message for r in debugs), \
+        f"attendu un DEBUG mentionnant 'live off', trouve : {[r.message for r in debugs]}"
+
+
+@pytest.mark.asyncio
+async def test_warning_quand_live_est_cense_etre_actif(monkeypatch, caplog):
+    """MT5_BRIDGE_LIVE_ENABLED=true mais dest absente → WARNING conserve."""
+    import logging as _logging
+
+    monkeypatch.setattr(bp, "_destination", lambda: None)
+
+    class _FakeSt:
+        MT5_BRIDGE_LIVE_ENABLED = True
+
+    monkeypatch.setitem(__import__("sys").modules, "config",
+                        type("M", (), {"settings": _FakeSt})())
+
+    with caplog.at_level(_logging.WARNING, logger="backend.services.bougies_du_pont"):
+        res = await bp.fetch_candles("XAU/USD", "5min", 50)
+
+    assert res == []
+    warnings = [r for r in caplog.records if r.levelno == _logging.WARNING]
+    assert any("introuvable" in r.message for r in warnings), \
+        f"attendu WARNING 'introuvable', trouve : {[r.message for r in warnings]}"

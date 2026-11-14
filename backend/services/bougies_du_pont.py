@@ -267,8 +267,26 @@ async def fetch_candles(pair: str, interval: str, outputsize: int) -> list:
         return []
     dest = _destination()
     if dest is None:
-        logger.warning("bougies_du_pont: destination %r introuvable — %s absente "
-                       "du cycle", DESTINATION, pair)
+        # ⛔ Post-audit 2026-11-13 : le bridge live est VOLONTAIREMENT coupe
+        # (MT5_BRIDGE_LIVE_ENABLED=false + REM-002-LIVE DISARMED). Dans cet
+        # etat attendu, la destination 'admin_live' est absente a chaque
+        # cycle — et le job de l'or tourne a 1 Hz. Logger WARNING fois 86400
+        # par jour pour une coupure VOULUE n'apprend rien ; pire, cela noie
+        # les vrais incidents. On DEBUG tant que le live est off par design.
+        try:
+            from config import settings as _st
+            _live_off_by_design = not getattr(
+                _st, "MT5_BRIDGE_LIVE_ENABLED", False)
+        except Exception:  # noqa: BLE001
+            _live_off_by_design = False
+        if _live_off_by_design:
+            logger.debug(
+                "bougies_du_pont: destination %r absente (live off) — %s "
+                "absente du cycle", DESTINATION, pair)
+        else:
+            logger.warning(
+                "bougies_du_pont: destination %r introuvable — %s absente "
+                "du cycle", DESTINATION, pair)
         return []
     from backend.services.mt5_bridge import _symbole_courtier_pour
     symbole = _symbole_courtier_pour(pair, dest)
