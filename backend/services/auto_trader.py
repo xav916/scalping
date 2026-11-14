@@ -650,6 +650,40 @@ async def cycle() -> dict:
         if _sim_p_tp is not None:
             action["sim_p_tp"] = _sim_p_tp
 
+        # ─── Trader-skills veto (PR auto-trader-skill-veto) ─────────────
+        # Les décisions auto_trader passent par les skills trader-* avant
+        # d'atteindre le bridge IBKR. Si trader-risk refuse, l'ordre est
+        # bloqué. Fail-open si skill indisponible.
+        try:
+            from backend.services.trader_skills_bridge import risk_check as _skill_risk
+            _skill_order = {
+                "symbol": ticker, "side": "buy", "qty": str(qty),
+                "type": "market", "time_in_force": "day",
+            }
+            _skill_portfolio = {
+                "cash_usd": balance,
+                "positions": {p["ticker"]: p.get("qty", 0)
+                              for p in state.get("virtual_positions", [])
+                              if p.get("status") == "open"},
+            }
+            _skill_prices = {ticker: entry}
+            _skill_cfg = {
+                "paper": True,  # IBKR paper account DUR358393
+                "max_positions": MAX_POSITIONS,
+                "max_notional_usd": balance,
+            }
+            _skill_res = _skill_risk(
+                _skill_order, _skill_cfg, _skill_portfolio, _skill_prices,
+            )
+        except Exception as _e:  # noqa: BLE001
+            _skill_res = {"ok": True, "reason": f"skill_exception_fail_open: {_e}"}
+        action["skill_risk_reason"] = _skill_res.get("reason")
+        if not _skill_res.get("ok"):
+            action["verdict"] = "SKIP"
+            action["reason"] = f"skill_veto: {_skill_res.get('reason')}"
+            actions.append(action)
+            continue
+
         if mode == "dry_run":
             # Ajouter à la liste virtuelle persistée
             virtual_position = {
