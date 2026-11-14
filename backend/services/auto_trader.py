@@ -514,6 +514,17 @@ async def cycle() -> dict:
         result["reason"] = "disabled"
         return result
 
+    # ─── Gate trading hours (post-audit 2026-11-14) ────────────────────
+    # Permet de couper auto_trader hors plages via AUTO_TRADER_TRADING_HOURS_UTC.
+    # Vide = aucune restriction (= comportement actuel).
+    try:
+        from backend.services.trader_trading_hours import is_within_trading_hours as _iwth
+        if not _iwth("AUTO_TRADER"):
+            result["reason"] = "outside_trading_hours"
+            return result
+    except Exception:
+        pass
+
     mode = _config_mode()
     today_utc = date.today().isoformat()
 
@@ -646,8 +657,48 @@ async def cycle() -> dict:
                     r = await c.post(f"{BRIDGE_URL}/order", json=payload, headers=_headers())
                 body = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
                 if r.status_code == 200 and body.get("ok"):
-                    action["executed"] = True
-                    action["order_id"] = body.get("order_id")
+                    # ─── Fill guard (défense entry=0 côté IBKR) ─────────────
+                    # Market order → requested_entry=0 désactive la deviation check,
+                    # on vérifie seulement que avg_fill_price > 0.
+                    try:
+                        from backend.services.trader_fill_guard import (
+                            is_fill_price_sane as _ifs,
+                        )
+                        _fill_ok, _fill_reason = _ifs(body, 0.0)
+                    except Exception:
+                        _fill_ok, _fill_reason = True, "fill_guard_exception"
+                    if not _fill_ok:
+                        _oid = body.get("order_id")
+                        _close_resp = None
+                        if _oid:
+                            try:
+                                async with httpx.AsyncClient(timeout=20.0) as _cc:
+                                    _close_resp = await _cc.post(
+                                        f"{BRIDGE_URL}/order",
+                                        json={
+                                            "pair": ticker, "direction": "sell",
+                                            "qty": qty, "sl": 0, "tp": 0,
+                                            "dry_run": False, "close_order_id": _oid,
+                                        },
+                                        headers=_headers(),
+                                    )
+                            except Exception as _ce:  # noqa: BLE001
+                                _close_resp = {"err": str(_ce)}
+                        logger.error(
+                            "auto_trader: fill REJETÉ order_id=%s reason=%s auto_close=%s",
+                            _oid, _fill_reason, _close_resp,
+                        )
+                        await _send_info(
+                            f"🚨 <b>auto_trader</b> position IBKR fill corrompu\n"
+                            f"order_id {_oid} {ticker} qty {qty}\n"
+                            f"motif: {_fill_reason}\n"
+                            f"close auto tenté : {bool(_close_resp)}"
+                        )
+                        action["executed"] = False
+                        action["reason"] = f"fill_rejected: {_fill_reason}"
+                    else:
+                        action["executed"] = True
+                        action["order_id"] = body.get("order_id")
                 else:
                     action["executed"] = False
                     action["reason"] = f"bridge_http_{r.status_code}: {str(body)[:200]}"
