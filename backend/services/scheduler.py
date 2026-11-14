@@ -2391,6 +2391,27 @@ def start_scheduler() -> AsyncIOScheduler:
         replace_existing=True, max_instances=1, coalesce=True,
     )
 
+    # ─── Watchdog Kraken bridge (PR kraken-bridge-watchdog) ──────────────
+    # Même pattern que ibkr_gateway_watchdog : poll /health toutes les 5
+    # min, alerte Telegram infra ⚙️ sur UP→DOWN, recovery sur DOWN→UP.
+    # Argent RÉEL : les positions ouvertes ne sont plus protégées par
+    # kraken_sltp_guard tant que le bridge est muet.
+    from backend.services import kraken_bridge_watchdog as _kbw_module
+
+    async def _kraken_bridge_watchdog_job() -> None:
+        try:
+            await _kbw_module.check_and_alert()
+        except Exception as exc:
+            logger.warning("kraken_bridge_watchdog failed: %s", exc)
+
+    _scheduler.add_job(
+        _kraken_bridge_watchdog_job,
+        "interval", minutes=5,
+        id="kraken_bridge_watchdog",
+        name="Watchdog bridge Kraken — alerte si DOWN",
+        replace_existing=True, max_instances=1, coalesce=True,
+    )
+
     _scheduler.start()
     logger.info(
         f"Scheduler démarré. Analyse {MATAF_POLL_INTERVAL}s, backtest 60s, "
