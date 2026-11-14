@@ -2357,6 +2357,26 @@ def start_scheduler() -> AsyncIOScheduler:
         replace_existing=True, max_instances=1, coalesce=True,
     )
 
+    # ─── Watchdog Gateway IBKR (PR ibkr-gateway-watchdog) ────────────────
+    # Poll /health du bridge IBKR toutes les 5 min. Alerte Telegram infra
+    # instantanée si Gateway DOWN + recovery alert quand elle remonte.
+    # Désactivable via IBKR_GATEWAY_WATCHDOG_ENABLED=false.
+    from backend.services import ibkr_gateway_watchdog as _igw_module
+
+    async def _ibkr_gateway_watchdog_job() -> None:
+        try:
+            await _igw_module.check_and_alert()
+        except Exception as exc:
+            logger.warning("ibkr_gateway_watchdog failed: %s", exc)
+
+    _scheduler.add_job(
+        _ibkr_gateway_watchdog_job,
+        "interval", minutes=5,
+        id="ibkr_gateway_watchdog",
+        name="Watchdog Gateway IBKR — alerte si DOWN",
+        replace_existing=True, max_instances=1, coalesce=True,
+    )
+
     _scheduler.start()
     logger.info(
         f"Scheduler démarré. Analyse {MATAF_POLL_INTERVAL}s, backtest 60s, "
