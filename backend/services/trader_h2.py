@@ -451,6 +451,15 @@ async def cycle() -> dict:
         result["reason"] = "disabled"
         return result
 
+    # ─── Gate trading hours (PR trading-hours-filter) ──────────
+    try:
+        from backend.services.trader_trading_hours import is_within_trading_hours as _iwth
+        if not _iwth("H2"):
+            result["reason"] = "outside_trading_hours"
+            return result
+    except Exception:
+        pass
+
     mode = _config_mode()
     today_key = _period_key(date.today())
     state = _load_state()
