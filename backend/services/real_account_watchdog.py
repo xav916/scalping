@@ -153,7 +153,15 @@ async def send_daily_real_recap() -> dict:
 
     Appelé par le scheduler quotidiennement (cron). Log en cas d'erreur
     mais ne lève jamais : le watchdog ne doit pas tuer le service.
+
+    Désactivable via env ``REAL_ACCOUNT_WATCHDOG_ENABLED=false`` (default true).
+    Utile si le bridge est volontairement off (ex: réel coupé) pour éviter
+    des alertes "Bridge INJOIGNABLE" quotidiennes jugées spammy.
     """
+    import os as _os
+    if _os.getenv("REAL_ACCOUNT_WATCHDOG_ENABLED", "true").strip().lower() not in ("true", "1", "yes", "on"):
+        logger.info("real_account_watchdog: désactivé via env, skip.")
+        return {"sent": False, "skipped": "disabled"}
     try:
         health = await _fetch_health()
         positions = await _fetch_positions()
