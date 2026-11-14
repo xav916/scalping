@@ -101,6 +101,23 @@ ETAGES: dict[str, str] = {
     "energie-weekend": INFRA,
     "exec-client": INFRA,            # un CLIENT payant, pas son compte
     "exec-client-illisible": INFRA,
+
+    # ── Post-audit 2026-11-13 : bridge live volontairement coupe ─────────
+    #
+    # 🔑 Depuis le triple verrou pose apres l'audit -1046 EUR (REM-002-LIVE
+    # DISARMED + MT5_BRIDGE_LIVE_ENABLED=false + XAG blocklist), le bridge
+    # live 8788 ne repond plus. Les notifications suivantes alertent toutes
+    # les minutes sur une coupure VOLONTAIRE, ce n'est pas un incident :
+    #
+    #   live_bridge_unreachable  : le pont live ne reponds pas (attendu)
+    #   marge_or:mesure_absente  : la marge or vient du live, inexistante
+    #   sonde_p0_esc_             : sonde du pont live sans le pont
+    #
+    # Mesure 2026-11-14 : bougies_du_pont emettait ~14 msg/heure dans ces
+    # trois categories, soit >300 messages/jour sur le fil principal.
+    "live_bridge_unreachable": INFRA,
+    "marge_or:mesure_absente": INFRA,
+    "sonde_p0_esc_": INFRA,
 }
 
 # ⚠️ Les prefixes sont testes du PLUS LONG au plus court : `exec-client-illisible`
