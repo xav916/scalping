@@ -528,6 +528,30 @@ async def cycle() -> dict:
         if mode == "live":
             resp = await _mt5_submit_order(pair, direction, lots, sl, tp, entry)
             if resp.get("ok"):
+                # ─── Fill guard (défense entry=0.0, PR fill-guard) ────
+                from backend.services.trader_fill_guard import is_fill_price_sane as _ifs
+                _fill_ok, _fill_reason = _ifs(resp, entry)
+                if not _fill_ok:
+                    _tk = resp.get("ticket")
+                    try:
+                        _ck = int(_tk) if _tk is not None else None
+                    except (TypeError, ValueError):
+                        _ck = None
+                    _close_resp = await _mt5_close_position(_ck) if _ck else {"ok": False}
+                    logger.error(
+                        "H4: fill REJETÉ ticket=%s reason=%s auto_close=%s",
+                        _tk, _fill_reason, _close_resp.get("ok"),
+                    )
+                    await _send_info(
+                        f"🚨 <b>H4</b> position ouverte avec fill corrompu\n"
+                        f"ticket {_tk} {pair} {direction} lots={lots}\n"
+                        f"motif: {_fill_reason}\n"
+                        f"close auto: {'OK' if _close_resp.get('ok') else 'ÉCHEC — fermer MANUELLEMENT'}"
+                    )
+                    action["executed"] = False
+                    action["reason"] = f"fill_rejected_closed: {_fill_reason}"
+                    actions.append(action)
+                    continue
                 ticket = resp.get("ticket") or "unknown"
                 fill = resp.get("avg_fill_price") or entry
                 action["executed"] = True
