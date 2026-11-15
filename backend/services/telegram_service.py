@@ -1923,6 +1923,9 @@ def _format_trade_opened(
     lines.append("")
 
     # Le plan complet : ces trois valeurs manquaient au message.
+    # ⚠️ TP2 (2026-11-15) : il existait dans le schema sans jamais apparaitre
+    # sur Telegram. Ajouter c'est dire au lecteur que le radar a un objectif
+    # etendu, pas seulement TP1.
     detail = [f"Entrée {fill_str}"]
     if volume:
         unite = _unite_de_volume(setup, destination_id)
@@ -1930,10 +1933,13 @@ def _format_trade_opened(
     try:
         sl = float(getattr(setup, "stop_loss", 0) or 0)
         tp = float(getattr(setup, "take_profit_1", 0) or 0)
+        tp2 = float(getattr(setup, "take_profit_2", 0) or 0)
         if sl:
             detail.append(f"SL {sl:.{decimals}f}".replace(".", ","))
         if tp:
             detail.append(f"TP {tp:.{decimals}f}".replace(".", ","))
+        if tp2 and tp2 != tp:
+            detail.append(f"TP2 {tp2:.{decimals}f}".replace(".", ","))
     except (TypeError, ValueError):
         pass
     lines.append(" · ".join(detail))
@@ -1962,6 +1968,23 @@ def _format_trade_opened(
     )
     if just_lines:
         lines.extend(just_lines)
+        # ⚠️ Horizon (2026-11-15) : le message n'indiquait pas quel pipeline
+        # avait decide. Lire « pattern X score 72 » sur un fil mutualise rend
+        # impossible de distinguer un signal 5 min d'un signal 1 jour, qui
+        # n'ont ni le meme risque ni la meme duree attendue. On ajoute 1 ligne.
+        _h = getattr(setup, "horizon", None)
+        _src = getattr(setup, "source", None)
+        if _h:
+            _h_fr = {"5min": "5 min", "15min": "15 min", "30min": "30 min",
+                     "60min": "1 heure", "1h": "1 heure", "2h": "2 heures",
+                     "4h": "4 heures", "1d": "1 jour",
+                     "1day": "1 jour", "1week": "1 semaine"}.get(_h, _h)
+            horizon_line = f"⏱ Horizon {_h_fr}"
+            if _src and _src not in ("pattern", "patterns"):
+                # On n'ajoute la source que si elle est informative. Le defaut
+                # "pattern" ne dit rien de plus que ce que l'oeil voit deja.
+                horizon_line += f" · {_src}"
+            lines.append(horizon_line)
         lines.append("")
 
     lines.append("ℹ️ Le radar a lancé un ordre auto chez ton broker. Le trade tourne seul jusqu'à toucher son objectif ou son stop.")
