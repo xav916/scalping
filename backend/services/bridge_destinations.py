@@ -723,12 +723,38 @@ def _admin_kraken_destination() -> BridgeConfig | None:
             funding_interval_hours=1.0,
         ),
         expected_edge_r=0.110,  # mesuré sur 876 trades réels le 2026-08-04
-        # Kraken n'est viable qu'en détention : ses 0,10 % d'aller-retour
-        # valent 2,6 fois l'edge à l'échelle du scalping. Le restreindre aux
-        # horizons longs coupe le flux 5 min à la porte la moins chère,
-        # avant même la porte de coût.
-        allowed_horizons=frozenset({"4h", "1d"}),
+        # ⚠️ **Horizons Kraken : overridables par env.**
+        #
+        # L'analyse initiale (876 trades, 2026-08-04) concluait que les 0,10 %
+        # d'aller-retour valaient 2,6× l'edge à l'échelle du scalping, et
+        # restreignait Kraken à `{4h, 1d}`. Décision maintenue par défaut.
+        #
+        # Mais l'historique du 2026-10 (59 trades, +18.37 USD / 55 % win rate
+        # sur 25 paires tradées en 15min/30min majoritairement) suggère que la
+        # politique peut être trop conservatrice sur certains horizons ou
+        # qu'elle devrait être ré-évaluée. Xavier a le dernier mot :
+        #
+        #   KRAKEN_BRIDGE_ALLOWED_HORIZONS=*                     → tous horizons
+        #   KRAKEN_BRIDGE_ALLOWED_HORIZONS=5min,15min,30min,1h,4h,1d
+        #                                                        → liste explicite
+        #   KRAKEN_BRIDGE_ALLOWED_HORIZONS unset                 → défaut {4h,1d}
+        allowed_horizons=_kraken_horizons(),
     )
+
+
+def _kraken_horizons() -> frozenset[str] | None:
+    """Horizons admis sur Kraken, overridables via env.
+
+    - ``*`` ou mot-clé "all" → ``None`` (pas de filtre, tous horizons passent)
+    - liste CSV → frozenset de ces horizons
+    - vide / non défini → défaut ``{"4h", "1d"}`` (politique coût 2026-08-04)
+    """
+    raw = os.getenv("KRAKEN_BRIDGE_ALLOWED_HORIZONS", "").strip()
+    if not raw:
+        return frozenset({"4h", "1d"})
+    if raw in ("*", "all", "ALL"):
+        return None
+    return frozenset(h.strip() for h in raw.split(",") if h.strip())
 
 
 def _admin_ibkr_destination() -> BridgeConfig | None:
