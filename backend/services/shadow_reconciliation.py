@@ -187,11 +187,10 @@ async def _fenetre_explicite(
         return []
     _budget_fenetres -= 1
 
+    # ⛔ Routing Binance klines SUPPRIME le 2026-11-15 (cleanup phase 2).
+    # Pour les cryptos, on passe desormais par price_service comme les autres
+    # paires (qui route lui-meme vers bougies_du_pont ou Twelve Data).
     try:
-        from backend.services import binance_klines_service as bks
-        if bks.is_crypto_pair(pair):
-            return await bks.fetch_klines_fenetre(pair, "5min", start, end)
-
         from backend.services import price_service
         return await price_service.fetch_candles_fenetre(
             pair, "5min", start, end)

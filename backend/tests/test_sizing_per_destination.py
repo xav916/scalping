@@ -212,7 +212,7 @@ def _dest_dispatch(bridge_type, dest_id):
 @pytest.mark.parametrize("bridge_type,client_mod,client_fn,dest_id", [
     ("kraken", "kraken_bridge_client", "push_to_kraken", "admin_kraken"),
     ("kraken_spot", "kraken_spot_bridge_client", "push_to_kraken_spot", "admin_kraken_spot"),
-    ("binance", "binance_bridge_client", "push_to_binance", "admin_binance"),
+    # ⛔ Cas "binance" supprime le 2026-11-15 (cleanup phase 2).
 ])
 def test_le_dispatch_passe_bien_dest_au_sizing(monkeypatch, bridge_type, client_mod,
                                                client_fn, dest_id):
