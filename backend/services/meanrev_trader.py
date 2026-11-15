@@ -837,7 +837,12 @@ async def cycle() -> dict:
     from backend.services import price_service
 
     actions: list[dict] = []
-    opened_this_cycle = False
+    # Phase 1 : évaluer tous les candidats jusqu'au sim_gate inclus et
+    # collecter ceux qui passent dans ``viable``. Phase 2 (plus bas) tri par
+    # sim_p_tp décroissant puis exécute le meilleur. Historiquement on prenait
+    # le premier candidat de l'env list qui passait, ce qui biaisait
+    # systématiquement vers la tête de ``WATCHED_PAIRS`` (EUR/USD d'abord).
+    viable: list[dict] = []
 
     for pair in candidates:
         # Veto earnings si applicable
@@ -950,46 +955,69 @@ async def cycle() -> dict:
         if _sim_p_tp is not None:
             action["sim_p_tp"] = _sim_p_tp
 
+        # Candidat viable : on diffère l'exécution à la phase 2.
+        viable.append({"action": action, "direction": trigger["direction"]})
+
+    # ─── Phase 2 : sélection du meilleur candidat + exécution ───────────
+    # Tri par sim_p_tp décroissant. Candidat sans score (sim_gate exception)
+    # traité comme 0.0 → un candidat réellement scoré gagne toujours.
+    # Tri stable : à sim_p_tp égal, on garde l'ordre d'apparition dans
+    # l'univers (donc l'ancien comportement comme tie-breaker).
+    if viable:
+        viable.sort(key=lambda v: v["action"].get("sim_p_tp") or 0.0, reverse=True)
+
+        best = viable[0]
+        best_action = best["action"]
+        best_direction = best["direction"]
+        pair = best_action["pair"]
+        lots = best_action["lots"]
+        entry = best_action["entry"]
+        sl = best_action["sl"]
+        tp = best_action["tp"]
+
         if mode == "live":
-            resp = await _mt5_submit_order(pair, trigger["direction"], lots, sl, tp, entry)
+            resp = await _mt5_submit_order(pair, best_direction, lots, sl, tp, entry)
             if resp.get("ok"):
-                action["executed"] = True
-                action["ticket"] = resp.get("ticket") or resp.get("order_id")
+                best_action["executed"] = True
+                best_action["ticket"] = resp.get("ticket") or resp.get("order_id")
                 fill = resp.get("avg_fill_price") or entry
                 state["open_positions"].append({
-                    "pair": pair, "direction": trigger["direction"], "lots": lots,
+                    "pair": pair, "direction": best_direction, "lots": lots,
                     "entry": float(fill), "sl": sl, "tp": tp, "sl_initial": sl,
                     "vwap_target": tp,
                     "entry_time_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                    "mt5_ticket": action["ticket"], "status": "open",
+                    "mt5_ticket": best_action["ticket"], "status": "open",
                 })
-                opened_this_cycle = True
                 # Carte riche d'ouverture (format identique aux trades manuels)
                 await _send_trade_opened_rich(
-                    pair=pair, direction=trigger["direction"],
+                    pair=pair, direction=best_direction,
                     entry=float(fill), sl=sl, tp=tp,
-                    volume=lots, ticket=action["ticket"],
+                    volume=lots, ticket=best_action["ticket"],
                 )
             else:
-                action["executed"] = False
-                action["reason"] = f"bridge_http_{resp.get('status_code')}: {str(resp.get('body'))[:200]}"
+                best_action["executed"] = False
+                best_action["reason"] = f"bridge_http_{resp.get('status_code')}: {str(resp.get('body'))[:200]}"
         else:
             # dry_run : position virtuelle
-            action["executed"] = True
-            action["reason"] = "dry_run_simulated_open"
+            best_action["executed"] = True
+            best_action["reason"] = "dry_run_simulated_open"
             state["open_positions"].append({
-                "pair": pair, "direction": trigger["direction"], "lots": lots,
+                "pair": pair, "direction": best_direction, "lots": lots,
                 "entry": entry, "sl": sl, "tp": tp, "sl_initial": sl,
                 "vwap_target": tp,
                 "entry_time_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                 "mt5_ticket": None, "status": "open",
             })
-            opened_this_cycle = True
 
-        actions.append(action)
-        # Une seule ouverture par cycle
-        if action.get("executed"):
-            break
+        actions.append(best_action)
+
+        # Runners-up loggés pour visibilité dans le reporting
+        best_score = best_action.get("sim_p_tp")
+        for runner_up in viable[1:]:
+            ra = runner_up["action"]
+            ra["verdict"] = "SKIP"
+            ra["reason"] = f"runner-up (best: {pair} sim_p_tp={best_score})"
+            actions.append(ra)
 
     _save_state(state)
 
