@@ -19,10 +19,14 @@ log() { [[ -n "$VERBOSE" ]] && echo "$@"; }
 fail() { ALERTS+=("$1"); echo "[FAIL] $1"; }
 
 # 1) /health Demo
+#
+# ⛔ Migration 2026-11-15 : abandon Pepperstone, passage a IC Markets Demo.
+# Avant : login 62119130 @ PepperstoneUK-Demo (plus utilise).
+# Apres : login 53125447 @ ICMarketsEU-Demo (sur Lightsail Windows, 8787).
 log "=== 1) Bridge Demo /health ==="
 DH=$(curl -s -m 5 "$DEMO_URL/health")
-echo "$DH" | grep -q "62119130" && log "  OK Pepperstone Demo login 62119130" || fail "Bridge Demo /health KO ou login != 62119130 (got: ${DH:0:120})"
-echo "$DH" | grep -q "PepperstoneUK-Demo" || fail "Bridge Demo server != PepperstoneUK-Demo"
+echo "$DH" | grep -q "53125447" && log "  OK IC Markets Demo login 53125447" || fail "Bridge Demo /health KO ou login != 53125447 (got: ${DH:0:120})"
+echo "$DH" | grep -q "ICMarketsEU-Demo" || fail "Bridge Demo server != ICMarketsEU-Demo"
 
 # 2) /health Live
 log "=== 2) Bridge Live /health ==="
