@@ -193,16 +193,13 @@ def _score_setup(setup: MLTradeSetup, candles: list[Candle]) -> None:
     )
 
     # Ajouter les services auxiliaires (funding, VIX, etc.)
-    try:
-        from backend.services import binance_funding_service as _bf
-        features.update(_bf.get_features_for_setup(setup.pair))
-    except Exception:
-        features.update({
-            "funding_rate": 0.0,
-            "funding_extreme_positive": 0,
-            "funding_extreme_negative": 0,
-            "funding_available": 0,
-        })
+    # ⛔ Features Binance funding supprimees le 2026-11-15 — valeurs neutres.
+    features.update({
+        "funding_rate": 0.0,
+        "funding_extreme_positive": 0,
+        "funding_extreme_negative": 0,
+        "funding_available": 0,
+    })
 
     try:
         from backend.services import vix_service as _vix
@@ -235,14 +232,11 @@ def _score_setup(setup: MLTradeSetup, candles: list[Candle]) -> None:
             "cfg_greed": 0, "cfg_extreme_greed": 0, "cfg_available": 0,
         })
 
-    try:
-        from backend.services import binance_lsr_service as _lsr
-        features.update(_lsr.get_features(setup.pair))
-    except Exception:
-        features.update({
-            "lsr_value": 0.0, "lsr_extreme_long": 0, "lsr_extreme_short": 0,
-            "lsr_available": 0,
-        })
+    # ⛔ Features Binance LSR supprimees le 2026-11-15 — valeurs neutres.
+    features.update({
+        "lsr_value": 0.0, "lsr_extreme_long": 0, "lsr_extreme_short": 0,
+        "lsr_available": 0,
+    })
 
     # Score ML
     proba = ml_predictor.predict_win_proba(features)

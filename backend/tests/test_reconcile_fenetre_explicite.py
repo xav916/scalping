@@ -32,7 +32,8 @@ def _bougies(debut: datetime, n: int) -> list[Candle]:
 @pytest.fixture
 def espions(monkeypatch):
     """Instrumente les trois voies, et neutralise le repli DB locale."""
-    trace: dict[str, list] = {"rapide": [], "td": [], "binance": [], "pont": []}
+    # ⛔ Trace "binance" supprimee le 2026-11-15 (cleanup phase 2).
+    trace: dict[str, list] = {"rapide": [], "td": [], "pont": []}
 
     async def _rapide(pair, interval="5min", outputsize=50):
         trace["rapide"].append((pair, outputsize))
@@ -42,17 +43,11 @@ def espions(monkeypatch):
         trace["td"].append((pair, debut, fin))
         return trace.get("_td_rend", [])
 
-    async def _binance(pair, interval, debut, fin, **kw):
-        trace["binance"].append((pair, debut, fin))
-        return trace.get("_binance_rend", [])
-
     import backend.services.price_service as ps
-    import backend.services.binance_klines_service as bks
     import backend.services.bougies_du_pont as pont
 
     monkeypatch.setattr(ps, "fetch_candles", _rapide)
     monkeypatch.setattr(ps, "fetch_candles_fenetre", _td)
-    monkeypatch.setattr(bks, "fetch_klines_fenetre", _binance)
     monkeypatch.setattr(pont, "paire_du_pont",
                         lambda p: trace.get("_pont") == p)
     monkeypatch.setattr(recon, "_REPLI_DB_LOCALE", False)
@@ -71,7 +66,6 @@ def test_une_fenetre_RECENTE_n_appelle_PAS_la_plage_de_dates(espions):
     assert sortie, "le chemin rapide devait suffire"
     assert espions["rapide"], "le chemin rapide n'a pas ete tente"
     assert espions["td"] == [], "plage de dates appelee pour rien"
-    assert espions["binance"] == [], "plage de dates appelee pour rien"
 
 
 def test_une_fenetre_ANCIENNE_passe_par_la_PLAGE_DE_DATES(espions):
@@ -92,23 +86,9 @@ def test_une_fenetre_ANCIENNE_passe_par_la_PLAGE_DE_DATES(espions):
         espions["td"]
 
 
-def test_la_CRYPTO_va_chez_BINANCE_et_pas_chez_TWELVE_DATA(espions):
-    """Meme routage que la cascade de production.
-
-    ⛔ Twelve Data cote les cryptos en « forex-routed » : volume a 0 et
-    contrat different de celui que Binance publie. Resoudre un setup BTC avec
-    ces prix melangerait deux sources dans la meme colonne.
-    """
-    debut = datetime(2026, 8, 20, 4, tzinfo=timezone.utc)
-    espions["_rapide_rend"] = []
-    espions["_binance_rend"] = _bougies(debut, 12)
-
-    sortie = asyncio.run(recon.fetch_5min_for_window(
-        "BTC/USD", debut, debut + timedelta(hours=1)))
-
-    assert len(sortie) == 12
-    assert espions["binance"], "la crypto n'est pas passee par Binance"
-    assert espions["td"] == [], "la crypto est passee par Twelve Data"
+# ⛔ test_la_CRYPTO_va_chez_BINANCE_et_pas_chez_TWELVE_DATA supprime le
+# 2026-11-15 (cleanup phase 2). Le routage crypto se fait desormais via
+# price_service -> bougies_du_pont ou Twelve Data, plus via Binance.
 
 
 def test_une_paire_du_PONT_ne_demande_RIEN_a_TWELVE_DATA(espions):
@@ -129,7 +109,6 @@ def test_une_paire_du_PONT_ne_demande_RIEN_a_TWELVE_DATA(espions):
 
     assert sortie == [], "l'or a ete resolu avec des prix d'un autre contrat"
     assert espions["td"] == [], espions["td"]
-    assert espions["binance"] == [], espions["binance"]
 
 
 def test_le_nombre_de_PLAGES_par_passage_est_BORNE(espions):

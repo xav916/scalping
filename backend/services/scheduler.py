@@ -1393,30 +1393,9 @@ def start_scheduler() -> AsyncIOScheduler:
         name="Push cockpit via WebSocket",
         replace_existing=True,
     )
-    # Refresh Binance funding rates toutes les 30 min (feature ML 2026-06-16).
-    # Funding rates Binance publiees toutes les 8h ; 30 min cache OK.
-    # Free API public, no auth.
-    #
-    # ⛔ Gate sur BINANCE_FUNDING_SCORING_ENABLED (post-2026-11-14) : sans
-    # ça, le job tournait même quand le scoring consommateur était off, et
-    # fetchait Binance pour rien. Audit : >48 GET/jour vers fapi.binance.com
-    # alors que personne ne lisait le résultat.
-    if os.getenv("BINANCE_FUNDING_SCORING_ENABLED", "true").strip().lower() in ("true", "1", "yes", "on"):
-        try:
-            from backend.services import binance_funding_service as _bf_svc
-            _scheduler.add_job(
-                _bf_svc.refresh_all,
-                "interval",
-                minutes=30,
-                id="binance_funding_refresh",
-                name="Refresh Binance funding rates",
-                replace_existing=True,
-                next_run_time=datetime.now(timezone.utc),
-            )
-        except Exception as _e:
-            logger.warning(f"scheduler: binance_funding_refresh non installé : {_e}")
-    else:
-        logger.info("scheduler: binance_funding_refresh skip (BINANCE_FUNDING_SCORING_ENABLED=false)")
+    # ⛔ Job `binance_funding_refresh` SUPPRIME le 2026-11-15 (cleanup
+    # Binance phase 2). Le service `binance_funding_service` n'existe plus.
+    # L'equivalent Kraken (kraken_funding_scoring) assure la couverture crypto.
     # Refresh VIX toutes les 5 min (feature ML 2026-06-16).
     # Source : Yahoo Finance ^VIX (public, no auth).
     try:
@@ -1464,27 +1443,9 @@ def start_scheduler() -> AsyncIOScheduler:
         )
     except Exception as _e:
         logger.warning(f"scheduler: crypto_fear_greed_refresh non installé : {_e}")
-    # Refresh Binance Long/Short Account Ratio toutes les 15 min.
-    # Source : Binance Futures public API, période 5min.
-    #
-    # ⛔ Gate sur BINANCE_LSR_SCORING_ENABLED (post-2026-11-14) : même motif
-    # que funding — le job tournait quand personne ne consommait le LSR.
-    if os.getenv("BINANCE_LSR_SCORING_ENABLED", "true").strip().lower() in ("true", "1", "yes", "on"):
-        try:
-            from backend.services import binance_lsr_service as _lsr_svc
-            _scheduler.add_job(
-                _lsr_svc.refresh_all,
-                "interval",
-                minutes=15,
-                id="binance_lsr_refresh",
-                name="Refresh Binance long/short account ratio",
-                replace_existing=True,
-                next_run_time=datetime.now(timezone.utc),
-            )
-        except Exception as _e:
-            logger.warning(f"scheduler: binance_lsr_refresh non installé : {_e}")
-    else:
-        logger.info("scheduler: binance_lsr_refresh skip (BINANCE_LSR_SCORING_ENABLED=false)")
+    # ⛔ Job `binance_lsr_refresh` SUPPRIME le 2026-11-15 (cleanup Binance
+    # phase 2). Le LSR long/short account ratio etait une donnee unique a
+    # Binance, non remplacee cote Kraken.
     # Refresh CFTC COT report 1× / jour (publication vendredi 20h UTC, suffit).
     try:
         from backend.services import cot_service as _cot_svc

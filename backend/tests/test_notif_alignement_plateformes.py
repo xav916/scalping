@@ -122,11 +122,12 @@ def test_toute_destination_reelle_notifie_via_le_formateur_unique():
 
     Ce test échouera de la même façon si IBKR est branché sans son hook.
     """
-    from backend.services import (binance_bridge_client, kraken_bridge_client,
+    # ⛔ binance_bridge_client retire le 2026-11-15 (cleanup phase 2).
+    from backend.services import (kraken_bridge_client,
                                   kraken_spot_bridge_client, mt5_bridge)
     clients = {
         "mt5": mt5_bridge, "kraken": kraken_bridge_client,
-        "kraken_spot": kraken_spot_bridge_client, "binance": binance_bridge_client,
+        "kraken_spot": kraken_spot_bridge_client,
     }
     types_reels = {d.bridge_type for d in reg.DESTINATIONS.values() if d.reel}
     sans_hook = sorted(

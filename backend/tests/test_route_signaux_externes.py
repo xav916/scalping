@@ -215,10 +215,12 @@ def test_les_QUATRE_appelants_passent_la_source():
     Le defaut ferme ici a dure du 26 au 28/08 : la colonne existait, les
     quatre appelants l'ignoraient, et tout trade s'enregistrait `interne`.
     """
+    # ⛔ binance_bridge_client.py retire de la liste le 2026-11-15 (cleanup
+    # phase 2). Ajoute kraken_bridge_client.py qui a la meme contrainte.
     fichiers = [
         _RACINE / "backend" / "services" / "mt5_bridge.py",
         _RACINE / "backend" / "services" / "bridge_push_ledger.py",
-        _RACINE / "backend" / "services" / "binance_bridge_client.py",
+        _RACINE / "backend" / "services" / "kraken_bridge_client.py",
     ]
     total, sans_source = 0, []
     for f in fichiers:
@@ -232,5 +234,5 @@ def test_les_QUATRE_appelants_passent_la_source():
             total += 1
             if not any(k.arg == "source" for k in n.keywords):
                 sans_source.append(f"{f.name}:{n.lineno}")
-    assert total >= 4, f"seulement {total} appel(s) trouve(s) — extraction cassee"
+    assert total >= 3, f"seulement {total} appel(s) trouve(s) — extraction cassee"
     assert not sans_source, f"appels sans source : {sans_source}"

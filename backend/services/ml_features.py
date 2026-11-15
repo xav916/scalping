@@ -238,17 +238,14 @@ def extract_features_for_setup(setup: Any, candles: list[Candle]) -> dict[str, A
         setup.stop_loss,
         setup.take_profit_1,
     )
-    # Augmente avec features Binance funding (live shadow log, training à terme)
-    try:
-        from backend.services import binance_funding_service as _bf
-        features.update(_bf.get_features_for_setup(getattr(setup, "pair", "")))
-    except Exception:
-        features.update({
-            "funding_rate": 0.0,
-            "funding_extreme_positive": 0,
-            "funding_extreme_negative": 0,
-            "funding_available": 0,
-        })
+    # ⛔ Features Binance funding supprimees le 2026-11-15 (cleanup phase 2).
+    # Valeurs neutres par defaut pour preserver le schema des features ML.
+    features.update({
+        "funding_rate": 0.0,
+        "funding_extreme_positive": 0,
+        "funding_extreme_negative": 0,
+        "funding_available": 0,
+    })
     # VIX features (cross-asset stress indicator). Pertinent surtout pour
     # SPX/NDX/cryptos (risk-on/off corrélation).
     try:
@@ -282,15 +279,12 @@ def extract_features_for_setup(setup: Any, candles: list[Candle]) -> dict[str, A
             "cfg_value": 0, "cfg_extreme_fear": 0, "cfg_fear": 0,
             "cfg_greed": 0, "cfg_extreme_greed": 0, "cfg_available": 0,
         })
-    # Binance long/short account ratio — pertinent cryptos suivies.
-    try:
-        from backend.services import binance_lsr_service as _lsr
-        features.update(_lsr.get_features(getattr(setup, "pair", "")))
-    except Exception:
-        features.update({
-            "lsr_ratio": 0, "lsr_long_pct": 0, "lsr_short_pct": 0,
-            "lsr_excess_long": 0, "lsr_excess_short": 0, "lsr_available": 0,
-        })
+    # ⛔ Features Binance LSR supprimees le 2026-11-15 (cleanup phase 2).
+    # Pas d'equivalent Kraken public, ces features sont abandonnees.
+    features.update({
+        "lsr_ratio": 0, "lsr_long_pct": 0, "lsr_short_pct": 0,
+        "lsr_excess_long": 0, "lsr_excess_short": 0, "lsr_available": 0,
+    })
     # CFTC COT positionning (forex, métaux, énergie, SPX/NDX, BTC) — z-score
     # vs 52 semaines, plus flags smart_long / smart_short.
     try:
