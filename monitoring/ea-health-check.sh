@@ -4,7 +4,9 @@ set -euo pipefail
 # EA Health Monitoring — runs 4×/day (00:23, 06:23, 12:23, 18:23 UTC)
 # Détecte anomalies (heartbeat offline, ordres zombies, low exec rate) et alerte Telegram
 
-HEALTH_TOKEN="shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg"
+# ⚠️ Token admin radar. Lu depuis l'env (HEALTH_TOKEN) avec fallback sur
+# l'ancien token hardcodé. Le défaut sera supprimé après rotation.
+HEALTH_TOKEN="${HEALTH_TOKEN:-shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg}"
 HEALTH_URL="https://app.scalping-radar.online/api/admin/auto-exec/health-token"
 NOTIFY_URL="https://app.scalping-radar.online/api/admin/notify-infra-telegram"
 

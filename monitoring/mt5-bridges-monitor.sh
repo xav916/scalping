@@ -2,10 +2,18 @@
 set -euo pipefail
 
 # MT5 Bridges Health Monitoring — runs hourly (xx:37 UTC)
-# Détecte si les 2 bridges (legacy Pepperstone Demo + live IC Markets) sont DOWN
-# et alerte le bot infra Telegram via dedup + cooldown 3h
+# Détecte si les 2 bridges MT5 (IC Markets Demo + IC Markets Live) sont DOWN
+# et alerte le bot infra Telegram via dedup + cooldown 3h.
+#
+# ⛔ Migration 2026-11-15 : labels mis à jour. Avant, `legacy` désignait le
+# bridge Pepperstone Demo (login 62119130, serveur PepperstoneUK-Demo).
+# Depuis l'abandon Pepperstone, `legacy` = IC Markets Demo (login 53125447,
+# serveur ICMarketsEU-Demo). Le port reste 8787 côté bridge.
 
-HEALTH_TOKEN="shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg"
+# ⚠️ Token admin radar. A défaut d'un keystore partagé, lu depuis une env
+# var (HEALTH_TOKEN) avec fallback sur l'ancien token hardcodé. Le défaut
+# sera supprimé après rotation du token (cf. todo rotation 2026-11-15).
+HEALTH_TOKEN="${HEALTH_TOKEN:-shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg}"
 HEALTH_URL="https://app.scalping-radar.online/api/admin/mt5-bridges-health"
 NOTIFY_URL="https://app.scalping-radar.online/api/admin/notify-infra-telegram"
 
@@ -66,7 +74,7 @@ issues = []
 for key in ('legacy', 'live'):
     b = d.get(key) or {}
     label = {
-        'legacy': 'Pepperstone Demo (legacy/8787)',
+        'legacy': 'IC Markets Demo (legacy/8787)',
         'live': 'IC Markets Live (live/8788)'
     }[key]
 
@@ -114,7 +122,10 @@ d = json.load(open('$ISSUES_JSON'))
 iss = next(i for i in d['issues'] if i['key'] == '$KEY')
 
 title = f"🚨 Bridge {iss['label']} DOWN"
-body = f"{iss['detail']}\nURL : {iss['url']}\nAction : RDP au VPS cedric-mt5-bridge, relancer mt5-bridge-{iss['key']} via .\\\\venv\\\\Scripts\\\\python.exe .\\\\bridge.py"
+body = (f"{iss['detail']}\nURL : {iss['url']}\n"
+        f"Action : RDP sur Lightsail Windows, vérifier la Scheduled Task "
+        f"'ScalpingBridge' (demo) ou 'ScalpingBridge_Live' (live). "
+        f"Relancer via : Start-ScheduledTask -TaskName 'ScalpingBridge'")
 
 print(json.dumps({
     'title': title,
@@ -160,7 +171,7 @@ print()
 for key in ('legacy', 'live'):
     b = snapshot.get(key) or {}
     label = {
-        'legacy': 'Pepperstone Demo (legacy/8787)',
+        'legacy': 'IC Markets Demo (legacy/8787)',
         'live': 'IC Markets Live (live/8788)'
     }[key]
 
