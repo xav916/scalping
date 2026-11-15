@@ -279,3 +279,57 @@ def test_setup_sans_horizon_pas_de_ligne_vide():
                                   destination_id="admin_live")
     assert "⏱" not in txt
     assert "Horizon" not in txt
+
+
+# ── Decimales par prix (2026-11-15) ───────────────────────────────────────
+#
+# ⛔ Avant : regle hard-codee par symbole (2 decimales pour ADA alors qu'il
+# trade a 0,1545). Un SL a 0,1486 et un TP a 0,1651 s'affichaient tous deux
+# "0,15" ou "0,17" — impossible de lire l'ecart. Pas de BUG metier, mais
+# info clé perdue.
+
+def test_decimals_for_price_metaux_et_btc():
+    """XAU 2400, BTC 65000, ETH 1826 : 2 decimales OK."""
+    assert ts._decimals_for_price(2400.0) == 2
+    assert ts._decimals_for_price(65000.0) == 2
+    assert ts._decimals_for_price(1826.6) == 2
+
+
+def test_decimals_for_price_mid_range():
+    """LTC 90, DOT 7, EUR/USD 1.08 : 4 decimales."""
+    assert ts._decimals_for_price(90.0) == 4
+    assert ts._decimals_for_price(7.5) == 4
+    assert ts._decimals_for_price(1.08) == 4
+
+
+def test_decimals_for_price_sous_1_dollar():
+    """ADA 0,1545, XRP 0,5234 : 5 decimales."""
+    assert ts._decimals_for_price(0.1545) == 5
+    assert ts._decimals_for_price(0.5234) == 5
+    assert ts._decimals_for_price(0.01) == 5
+
+
+def test_decimals_for_price_memecoins():
+    """SHIB/PEPE sous 0.01 : 7 decimales."""
+    assert ts._decimals_for_price(0.000012) == 7
+
+
+def test_decimals_for_price_robuste_input_invalide():
+    """Input non numerique : defaut 4 decimales."""
+    assert ts._decimals_for_price(None) == 4
+    assert ts._decimals_for_price("abc") == 4
+
+
+def test_ouverture_ada_affiche_4_ou_5_decimales():
+    """Carte d'ouverture ADA : prix sous 1 doit s'afficher avec plus de precision."""
+    s = _setup_avec_horizon(horizon="30min", tp2=0.16508)
+    s.pair = "ADA/USD"
+    s.entry_price = 0.15451
+    s.stop_loss = 0.14864
+    s.take_profit_1 = 0.16508
+    txt = ts._format_trade_opened(s, ticket=1, fill_price=0.15451,
+                                  volume=105, mode="LIVE",
+                                  destination_id="admin_kraken")
+    # On doit voir 0,15451 ou au moins 0,1545 — pas juste 0,15
+    assert "0,1545" in txt, f"ADA entry 0.15451 mal arrondi — on attend '0,1545' au moins. txt extrait: {txt[:500]}"
+    assert "0,1486" in txt, "ADA SL 0.14864 mal arrondi"
