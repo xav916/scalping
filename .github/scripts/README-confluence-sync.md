@@ -111,3 +111,4 @@ python .github/scripts/confluence_sync.py
 - L'ordre d'injection place la nouvelle entree en haut de la liste
   (dernier en premier). Si tu veux l'ordre inverse, modifier
   `_inject_entry` pour inserer avant `</ul>` au lieu d'apres `<ul>`.
+
