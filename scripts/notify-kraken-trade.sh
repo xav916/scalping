@@ -100,9 +100,15 @@ for x in ko:
 
 titre = ('Kraken : %d ordre(s) parti(s)' % len(ok)) if ok else 'Kraken : ordre REFUSE par le courtier'
 corps = chr(10).join(lignes)
-corps += chr(10) + chr(10) + 'Route crypto journaliere, LONG ONLY, 1 % de risque par trade.'
+# Footer datait de 2026-09 quand Kraken etait cantonne a une route daily
+# LONG ONLY. Depuis 2026-11-15 (KRAKEN_BRIDGE_ALLOWED_HORIZONS=*), tous les
+# horizons et les 2 sens sont ouverts — le footer "LONG ONLY, 1 %" etait
+# donc faux sur les trades SHORT (incident reel 2026-11-15 12:16 UTC :
+# 3 BUY affiches avec ce footer, puis un SHORT BTC a 12:57 est tombe dans
+# la meme route batch). On garde juste la note sur les refus, qui reste
+# exacte.
 if ko:
-    corps += ' Un refus vient du COMPTE (marge, plafond de positions), pas du filtrage.'
+    corps += chr(10) + chr(10) + 'Un refus vient du COMPTE (marge, plafond de positions), pas du filtrage.'
 
 print(json.dumps({
     'title': titre,
