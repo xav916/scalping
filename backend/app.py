@@ -2505,7 +2505,7 @@ async def api_shadow_public_summary(token: str = ""):
 
     # SHA256 du token clair. Token clair dans la config routine.
     # Régénérable via : python -c "import secrets; print('shdw_'+secrets.token_urlsafe(24))"
-    SHADOW_PUBLIC_TOKEN_HASH = "e980b1ed0b45ca6873caa3f2d6ddcf27f4d8a1d0aa87cf9072f6e3e0909b31ec"
+    SHADOW_PUBLIC_TOKEN_HASH = os.getenv("SHADOW_PUBLIC_TOKEN_SHA256", "e980b1ed0b45ca6873caa3f2d6ddcf27f4d8a1d0aa87cf9072f6e3e0909b31ec")
 
     if not token:
         raise HTTPException(status_code=403, detail="token required")
@@ -2540,7 +2540,7 @@ async def api_shadow_counterfactual(token: str = "", days: int = 30):
     from pathlib import Path
     from fastapi import HTTPException
 
-    SHADOW_PUBLIC_TOKEN_HASH = "e980b1ed0b45ca6873caa3f2d6ddcf27f4d8a1d0aa87cf9072f6e3e0909b31ec"
+    SHADOW_PUBLIC_TOKEN_HASH = os.getenv("SHADOW_PUBLIC_TOKEN_SHA256", "e980b1ed0b45ca6873caa3f2d6ddcf27f4d8a1d0aa87cf9072f6e3e0909b31ec")
 
     if not token:
         raise HTTPException(status_code=403, detail="token required")
@@ -2602,7 +2602,7 @@ async def api_admin_test_telegram_pedagogic(token: str = "", pair: str = "XAU/US
     from types import SimpleNamespace
     from backend.services.telegram_service import _format_setup, send_text
 
-    SHADOW_PUBLIC_TOKEN_HASH = "e980b1ed0b45ca6873caa3f2d6ddcf27f4d8a1d0aa87cf9072f6e3e0909b31ec"
+    SHADOW_PUBLIC_TOKEN_HASH = os.getenv("SHADOW_PUBLIC_TOKEN_SHA256", "e980b1ed0b45ca6873caa3f2d6ddcf27f4d8a1d0aa87cf9072f6e3e0909b31ec")
 
     if not token:
         raise HTTPException(status_code=403, detail="token required")
@@ -2696,7 +2696,7 @@ async def api_admin_test_telegram_close_pedagogic(
     from fastapi import HTTPException
     from backend.services.telegram_service import _format_close, send_text
 
-    SHADOW_PUBLIC_TOKEN_HASH = "e980b1ed0b45ca6873caa3f2d6ddcf27f4d8a1d0aa87cf9072f6e3e0909b31ec"
+    SHADOW_PUBLIC_TOKEN_HASH = os.getenv("SHADOW_PUBLIC_TOKEN_SHA256", "e980b1ed0b45ca6873caa3f2d6ddcf27f4d8a1d0aa87cf9072f6e3e0909b31ec")
 
     if not token:
         raise HTTPException(status_code=403, detail="token required")
@@ -3079,7 +3079,7 @@ async def api_admin_notify_infra_telegram(
     from config import settings as _cfg
     from backend.services import canaux_telegram as ct
 
-    SHADOW_PUBLIC_TOKEN_HASH = "e980b1ed0b45ca6873caa3f2d6ddcf27f4d8a1d0aa87cf9072f6e3e0909b31ec"
+    SHADOW_PUBLIC_TOKEN_HASH = os.getenv("SHADOW_PUBLIC_TOKEN_SHA256", "e980b1ed0b45ca6873caa3f2d6ddcf27f4d8a1d0aa87cf9072f6e3e0909b31ec")
 
     if not token:
         raise HTTPException(status_code=403, detail="token required")
@@ -3780,7 +3780,7 @@ async def api_admin_mt5_bridges_health(token: str = ""):
     from backend.services.mt5_bridge import health_check as bridge_health_check
     from config.settings import MT5_BRIDGE_URL, MT5_BRIDGE_LIVE_URL
 
-    SHADOW_PUBLIC_TOKEN_HASH = "e980b1ed0b45ca6873caa3f2d6ddcf27f4d8a1d0aa87cf9072f6e3e0909b31ec"
+    SHADOW_PUBLIC_TOKEN_HASH = os.getenv("SHADOW_PUBLIC_TOKEN_SHA256", "e980b1ed0b45ca6873caa3f2d6ddcf27f4d8a1d0aa87cf9072f6e3e0909b31ec")
     if not token:
         raise HTTPException(status_code=403, detail="token required")
     provided_hash = hashlib.sha256(token.encode()).hexdigest()
@@ -4476,7 +4476,7 @@ async def api_admin_pair_admission_auto_apply(
     from backend.services import pair_admission_controller as pac
     from config.settings import WATCHED_PAIRS
 
-    SHADOW_PUBLIC_TOKEN_HASH = "e980b1ed0b45ca6873caa3f2d6ddcf27f4d8a1d0aa87cf9072f6e3e0909b31ec"
+    SHADOW_PUBLIC_TOKEN_HASH = os.getenv("SHADOW_PUBLIC_TOKEN_SHA256", "e980b1ed0b45ca6873caa3f2d6ddcf27f4d8a1d0aa87cf9072f6e3e0909b31ec")
 
     if not token:
         raise HTTPException(status_code=403, detail="token required")
@@ -4587,7 +4587,7 @@ async def api_admin_pair_admission_weekly_report(token: str = ""):
     import secrets as _s
     from fastapi.responses import PlainTextResponse
 
-    SHADOW_PUBLIC_TOKEN_HASH = "e980b1ed0b45ca6873caa3f2d6ddcf27f4d8a1d0aa87cf9072f6e3e0909b31ec"
+    SHADOW_PUBLIC_TOKEN_HASH = os.getenv("SHADOW_PUBLIC_TOKEN_SHA256", "e980b1ed0b45ca6873caa3f2d6ddcf27f4d8a1d0aa87cf9072f6e3e0909b31ec")
     if not token:
         raise HTTPException(status_code=403, detail="token required")
     if not _s.compare_digest(hashlib.sha256(token.encode()).hexdigest(), SHADOW_PUBLIC_TOKEN_HASH):
@@ -4984,7 +4984,7 @@ async def api_admin_auto_exec_health_token(token: str = ""):
     import hashlib
     from fastapi import HTTPException
 
-    SHADOW_PUBLIC_TOKEN_HASH = "e980b1ed0b45ca6873caa3f2d6ddcf27f4d8a1d0aa87cf9072f6e3e0909b31ec"
+    SHADOW_PUBLIC_TOKEN_HASH = os.getenv("SHADOW_PUBLIC_TOKEN_SHA256", "e980b1ed0b45ca6873caa3f2d6ddcf27f4d8a1d0aa87cf9072f6e3e0909b31ec")
 
     if not token:
         raise HTTPException(status_code=403, detail="token required")
