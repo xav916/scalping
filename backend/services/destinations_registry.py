@@ -285,18 +285,10 @@ DESTINATIONS: dict[str, Destination] = {
             max_correlated_positions=1,
             plateforme="IBKR actions",
         ),
-        Destination(
-            id="admin_binance",
-            badge="🅑 Binance Testnet",
-            mode="Binance · Testnet (R&D)",
-            reel=False,
-            bridge_type="binance",
-            url_env="BINANCE_BRIDGE_URL",
-            key_env="BINANCE_BRIDGE_API_KEY",
-            sizing="live_balance",
-            asset_classes=frozenset({"crypto"}),
-            plateforme="Binance Futures",
-        ),
+        # ⛔ admin_binance : destination SUPPRIMEE le 2026-11-15 (abandon
+        # Binance apres blocker AMF FR + migration complete vers Kraken
+        # Futures). Voir aussi bridge_destinations._admin_binance_destination,
+        # supprimee dans la meme PR.
     )
 }
 

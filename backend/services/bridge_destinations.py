@@ -550,37 +550,11 @@ def _admin_live_destination() -> BridgeConfig | None:
     )
 
 
-def _admin_binance_destination() -> BridgeConfig | None:
-    """Retourne la config Binance Futures (testnet ou live), ou ``None``.
-
-    Lance Phase 2 du Palier 2 (migration vers vrais cryptos) : pousser les
-    signaux crypto vers Binance USDⓈ-M en parallèle des destinations MT5.
-    En testnet : zéro coût, validation comparative MT5 Demo vs Binance.
-
-    Conditions activation :
-    - BINANCE_BRIDGE_ENABLED=true
-    - BINANCE_BRIDGE_URL set (typique http://127.0.0.1:8789)
-    - bridge_type="binance" déclenche le dispatch vers binance_bridge_client
-      au lieu du push MT5 standard.
-    """
-    from config import settings as st
-
-    if not (
-        getattr(st, "BINANCE_BRIDGE_ENABLED", False)
-        and getattr(st, "BINANCE_BRIDGE_URL", "")
-    ):
-        return None
-    return BridgeConfig(
-        destination_id="admin_binance",
-        user_id=None,
-        bridge_url=st.BINANCE_BRIDGE_URL.rstrip("/"),
-        bridge_api_key=getattr(st, "BINANCE_BRIDGE_API_KEY", "") or "",
-        min_confidence=float(getattr(st, "BINANCE_BRIDGE_MIN_CONFIDENCE", 50)),
-        allowed_asset_classes=frozenset({"crypto"}),
-        auto_exec_enabled=True,
-        bridge_type="binance",
-        leverage=int(getattr(st, "BINANCE_BRIDGE_LEVERAGE", 5)),
-    )
+# ⛔ admin_binance : destination SUPPRIMEE le 2026-11-15 (abandon Binance
+# apres blocker AMF FR + migration complete vers Kraken Futures). Les
+# signaux crypto passent uniquement par admin_kraken desormais. Les fichiers
+# binance_bridge_client, binance_*_scoring et autres seront nettoyes en
+# PRs successives.
 
 
 def _admin_kraken_spot_destination() -> BridgeConfig | None:
@@ -886,7 +860,7 @@ def admin_destinations() -> list[BridgeConfig]:
     """
     constructeurs = (
         _admin_legacy_destination, _admin_live_destination,
-        _admin_binance_destination, _admin_kraken_destination,
+        _admin_kraken_destination,
         _admin_kraken_spot_destination, _admin_kraken_stocks_destination,
         _admin_ibkr_destination,
     )
@@ -983,9 +957,6 @@ def resolve_destinations(setup: Any) -> list[BridgeConfig]:
     admin_live = _admin_live_destination()
     if admin_live is not None:
         destinations.append(admin_live)
-    admin_binance = _admin_binance_destination()
-    if admin_binance is not None:
-        destinations.append(admin_binance)
     admin_kraken = _admin_kraken_destination()
     if admin_kraken is not None:
         destinations.append(admin_kraken)
