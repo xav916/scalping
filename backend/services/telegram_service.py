@@ -33,6 +33,34 @@ logger = logging.getLogger(__name__)
 TELEGRAM_API = "https://api.telegram.org/bot{token}/sendMessage"
 
 
+def _decimals_for_price(price: float) -> int:
+    """Nombre de decimales a afficher pour un prix donne.
+
+    ⛔ Ancienne regle (hard-codee par liste de symboles) renvoyait 2 decimales
+    pour ADA/XRP/DOGE/SEI alors qu'ils tradent sous 1 USD. Un ADA a 0,1545
+    s'affichait "0,15" — les 2 decimales manquantes brouillaient la lecture
+    du SL et du TP (ex. SL 0,1486 et TP 0,1651 affiches tous les deux "0,15"
+    ou "0,17", impossible de distinguer l'ecart).
+
+    Regle derivee du prix :
+    - price >= 100     -> 2 decimales (XAU 2400, BTC 65000, ETH 1826, SOL 72)
+    - 1 <= price < 100 -> 4 decimales (LTC, DOT, LINK, forex majors)
+    - 0.01 <= p < 1    -> 5 decimales (ADA 0,1545, XRP 0,5234)
+    - price < 0.01     -> 7 decimales (SHIB, PEPE, memes)
+    """
+    try:
+        p = abs(float(price))
+    except (TypeError, ValueError):
+        return 4
+    if p >= 100:
+        return 2
+    if p >= 1:
+        return 4
+    if p >= 0.01:
+        return 5
+    return 7
+
+
 # Filtre paires : on ne pousse Telegram QUE pour les "stars" du portefeuille
 # Phase 4 (XAU/XAG/WTI/ETH/XLI/XLK). Évite la pollution par les setups des
 # 12 autres paires WATCHED_PAIRS (forex/SPX/NDX/BTC) sans edge confirmé.
@@ -1361,8 +1389,12 @@ def _format_close(trade: dict, destination_id: str | None = None,
         pass
 
     pnl_sign = "+" if pnl >= 0 else "−"
-    # Prix au format FR
-    decimals = 2 if any(k in pair for k in ("XAU", "XAG", "BTC", "ETH", "SOL", "LTC", "BCH", "DOT", "ADA", "XRP", "WTI")) else 5
+    # Prix au format FR — nombre de decimales adapte au prix lui-meme.
+    #
+    # ⛔ Ancienne regle (2 decimales pour toute crypto listee, 5 pour le forex)
+    # cassait sur ADA 0,1545 affiche "0,15" — on perd 2 decimales utiles pour
+    # lire le SL et le TP. XRP, DOGE, SEI, ADA, MANA... tradent sous 1 USD.
+    decimals = _decimals_for_price(min(entry, exit_price))
     entry_str = f"{entry:.{decimals}f}".replace(".", ",")
     exit_str = f"{exit_price:.{decimals}f}".replace(".", ",")
 
@@ -1887,8 +1919,9 @@ def _format_trade_opened(
     # alors qu'ils engagent de l'argent réel.
     mode_label = destination_label(destination_id, "mode")
 
-    # Prix au format FR (virgule, 2 décimales pour métaux/crypto, 5 pour forex)
-    decimals = 2 if any(k in setup.pair for k in ("XAU", "XAG", "BTC", "ETH", "SOL", "LTC", "BCH", "DOT", "ADA", "XRP", "WTI")) else 5
+    # Prix au format FR — nombre de decimales adapte au prix lui-meme.
+    # Voir `_decimals_for_price` : evite d'afficher "0,15" pour un ADA a 0,1545.
+    decimals = _decimals_for_price(fill_price)
     fill_str = f"{fill_price:.{decimals}f}".replace(".", ",")
 
     # Ligne 1 : QUOI. Ligne 2 : COMBIEN. Le reste est du détail consultable.
