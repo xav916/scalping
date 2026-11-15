@@ -1211,7 +1211,22 @@ def _check_rejection(setup, dest=None) -> str | None:
     # deux repondent a la meme question (<< a-t-on le droit de trader
     # MAINTENANT ? >>) et doivent se relire ensemble.
     from backend.services import fenetre_hebdo
-    if not fenetre_hebdo.ouverte():
+    # ⛔ La fenetre hebdo est MODELEE sur la semaine forex (lun 00:05 Paris
+    # -> ven 22:40 Paris) et c'est volontaire pour FX/metal/energie : leurs
+    # courtiers ferment le weekend. La CRYPTO est 24/7 chez Kraken ; appliquer
+    # ce filtre lui coute 100 % du flux weekend.
+    #
+    # Mesure 2026-11-15 : 5951 rejets Kraken en 4h un samedi, 0 trade. Toutes
+    # les paires de la whitelist Kraken touchees (BTC/ETH/ADA/XRP/SOL/DOT/LTC).
+    # On exclut donc explicitement la classe `crypto` de cette porte. Les
+    # autres filtres (market_hours, sim_gate, risk, REM-002) continuent de
+    # s'appliquer.
+    try:
+        from config.settings import asset_class_for as _acf
+        _is_crypto = _acf(setup.pair) == "crypto"
+    except Exception:  # noqa: BLE001 — fail-closed : on garde le filtre
+        _is_crypto = False
+    if not _is_crypto and not fenetre_hebdo.ouverte():
         # ⛔ `dest_id_for_hours` et NON `dest_id` : ce dernier n'est affecte que
         # DANS le bloc du verdict, 30 lignes plus haut. Sur tout autre chemin
         # le nom n'existe pas, et cette ligne de journal levait
