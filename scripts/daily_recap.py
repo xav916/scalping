@@ -32,8 +32,6 @@ Variables d'env requises (exporter avant l'appel ou via cron) :
 from __future__ import annotations
 
 import argparse
-import hashlib
-import hmac
 import json
 import os
 import subprocess
@@ -41,7 +39,8 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from urllib.parse import urlencode
+# ⛔ hashlib, hmac, urlencode retires le 2026-11-15 (n'etaient utilises que
+# par le code Binance supprime).
 
 try:
     import httpx
@@ -49,94 +48,14 @@ except ImportError:
     print("ERROR: httpx package missing", file=sys.stderr)
     sys.exit(1)
 
-BINANCE_ENV = os.getenv("BINANCE_ENV", "testnet").lower()
-_BASE_URLS = {
-    "testnet": "https://testnet.binancefuture.com",
-    "live": "https://fapi.binance.com",
-}
-BASE_URL = _BASE_URLS.get(BINANCE_ENV)
-API_KEY = os.getenv("BINANCE_API_KEY", "")
-API_SECRET = os.getenv("BINANCE_API_SECRET", "")
+# ⛔ 60+ lignes de code Binance (BINANCE_ENV, BASE_URL, API_KEY, _sign,
+# _signed_get, fetch_binance) SUPPRIMEES le 2026-11-15 (cleanup final).
+# Binance n'est plus utilise, la destination admin_binance a ete retiree,
+# tous les services binance_* ont ete supprimes (PRs #68, #69, #70). Le
+# main() appelait deja juste un dict d'erreur a la place de fetch_binance.
+
 INFRA_TELEGRAM_TOKEN = os.getenv("INFRA_TELEGRAM_TOKEN", "shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg")
 SCALPING_URL = os.getenv("SCALPING_URL", "http://127.0.0.1:8000")
-
-
-def _sign(params: dict[str, Any]) -> dict[str, Any]:
-    params = dict(params)
-    params["timestamp"] = int(time.time() * 1000)
-    query = urlencode(params, doseq=True)
-    sig = hmac.new(API_SECRET.encode(), query.encode(), hashlib.sha256).hexdigest()
-    params["signature"] = sig
-    return params
-
-
-def _signed_get(path: str, params: dict[str, Any] | None = None) -> Any:
-    headers = {"X-MBX-APIKEY": API_KEY}
-    with httpx.Client(timeout=15.0) as c:
-        r = c.get(f"{BASE_URL}{path}", params=_sign(params or {}), headers=headers)
-        r.raise_for_status()
-        return r.json()
-
-
-def fetch_binance(since_ms: int) -> dict[str, Any]:
-    """Wallet snapshot + income décomposé sur 24h.
-
-    ⚠️ BINANCE_DISABLED (2026-08-04) : la destination admin_binance est
-    coupée depuis le 2026-08-02. Sans ce drapeau le recap affichait
-    « Binance API keys missing », ce qui laissait croire à un incident de
-    configuration alors que c'est une décision assumée.
-    """
-    if os.getenv("BINANCE_DISABLED"):
-        return {"error": "destination désactivée (doublon Kraken, arrêtée le 02/08)"}
-    if not API_KEY or not API_SECRET:
-        return {"error": "Binance API keys missing"}
-    try:
-        wallet = _signed_get("/fapi/v2/account")
-    except Exception as e:
-        return {"error": f"wallet fetch: {e}"}
-    try:
-        rows: list[dict[str, Any]] = []
-        cursor = since_ms
-        end_ms = int(time.time() * 1000)
-        while True:
-            batch = _signed_get(
-                "/fapi/v1/income",
-                {"startTime": cursor, "endTime": end_ms, "limit": 1000},
-            )
-            if not batch:
-                break
-            rows.extend(batch)
-            if len(batch) < 1000:
-                break
-            last_ts = max(int(r["time"]) for r in batch)
-            if last_ts <= cursor:
-                break
-            cursor = last_ts + 1
-    except Exception as e:
-        return {"error": f"income fetch: {e}"}
-
-    by_type: dict[str, float] = {}
-    by_symbol: dict[str, float] = {}
-    for r in rows:
-        amt = float(r.get("income", 0))
-        t = r.get("incomeType", "?")
-        sym = r.get("symbol", "")
-        by_type[t] = by_type.get(t, 0) + amt
-        if sym:
-            by_symbol[sym] = by_symbol.get(sym, 0) + amt
-    top = sorted(by_symbol.items(), key=lambda kv: kv[1])[:3]  # 3 plus mauvais
-    best = max(by_symbol.items(), key=lambda kv: kv[1], default=("-", 0))
-    return {
-        "wallet_balance": float(wallet.get("totalWalletBalance", 0)),
-        "unrealized": float(wallet.get("totalUnrealizedProfit", 0)),
-        "realized": by_type.get("REALIZED_PNL", 0),
-        "commission": by_type.get("COMMISSION", 0),
-        "funding": by_type.get("FUNDING_FEE", 0),
-        "total_net": sum(by_type.values()),
-        "top_losses": top,
-        "best_winner": best,
-        "rows_count": len(rows),
-    }
 
 
 def fetch_mt5(since_iso: str) -> dict[str, Any]:
