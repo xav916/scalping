@@ -40,7 +40,7 @@ from datetime import datetime
 sys.path.insert(0, ".")
 
 from backend.models.schemas import Candle  # noqa: E402
-from backend.services import binance_klines_service as bks  # noqa: E402
+# ⛔ Import binance_klines_service retire le 2026-11-15 (cleanup phase 3).
 from backend.services import bougies_du_pont  # noqa: E402
 from backend.services import price_service  # noqa: E402
 from backend.services.shadow_v2_core_long import ensure_schema  # noqa: E402
@@ -57,7 +57,12 @@ def est_forex_rattrapable(paire: str) -> bool:
     ce rattrapage l'exclut automatiquement. Recopier la liste ici aurait
     garanti qu'elle derive.
     """
-    if bks.is_crypto_pair(paire):
+    # ⛔ Detection crypto via bks.is_crypto_pair retiree ; on utilise la
+    # meme regle que config.settings.asset_class_for : paire crypto si le
+    # prefix commence par un ticker crypto connu.
+    _crypto_prefixes = ("BTC", "ETH", "LTC", "XRP", "SOL", "ADA", "DOGE",
+                        "BCH", "DOT")
+    if paire.upper().startswith(_crypto_prefixes):
         return False
     if bougies_du_pont.paire_du_pont(paire):
         return False

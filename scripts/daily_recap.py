@@ -632,7 +632,9 @@ def main() -> int:
     mt5_data = fetch_mt5(since_iso)
 
     activite = fetch_activite(since_iso)
-    binance = fetch_binance(since_ms)
+    # ⛔ Appel fetch_binance supprime le 2026-11-15 (cleanup phase 3).
+    # On passe un dict d'erreur a render() pour conserver l'interface.
+    binance = {"error": "destination supprimee (cleanup Binance 2026-11-15)"}
     objectif_or = fetch_objectif_or()
     body = render(date_str, mt5_data, binance, activite, objectif_or)
     # ⚠️ Le titre disait « 24h » meme avec `--since` : un lancement
