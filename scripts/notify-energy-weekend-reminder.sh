@@ -66,7 +66,9 @@ ${ENERGY_LIST}
 Reco : ferme-les à la main depuis MT5 mobile avant la clôture du marché,
 vendredi 22h UTC. Sinon, assume le risque et garde-les le week-end."
 
-TOKEN_NOTIFY="shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg"
+# ⚠️ Token admin radar lu depuis l'env (INFRA_NOTIFY_TOKEN) avec fallback
+# sur l'ancien token hardcodé. Le défaut sera supprimé après rotation.
+TOKEN_NOTIFY="${INFRA_NOTIFY_TOKEN:-shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg}"
 CORPS_JSON=$(TITRE="$TITRE" CORPS="$CORPS" python3 -c '
 import json, os
 print(json.dumps({"title": os.environ["TITRE"], "body": os.environ["CORPS"],
