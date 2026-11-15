@@ -195,3 +195,87 @@ def test_sans_broker_le_message_reste_valide():
     txt = _cloture(dest=None)
     assert "+12,47 €" in txt
     assert "IC Markets" not in txt
+
+
+# --- enrichissement 2026-11-15 : horizon + TP2 ----------------------------
+#
+# ⛔ Mesure : les messages ne disaient pas de quel pipeline venait un
+# signal, ni si le TP2 existait. Sur un fil mutualise, impossible de
+# distinguer un trade 5 min d'un trade 1 jour, qui n'ont ni meme risque
+# ni meme duree. On ajoute 2 infos sans alourdir : TP2 inline, horizon
+# sur une ligne separee.
+
+def _setup_avec_horizon(horizon="30min", source=None, tp2=3290.0):
+    """Setup minimal avec horizon et TP2."""
+    return NS(pair="XAU/USD", direction=NS(value="sell"),
+              pattern=NS(pattern=PatternType.RANGE_BOUNCE_DOWN,
+                         confidence=0.78, description="Rejet"),
+              confidence_score=74.0, entry_price=3312.40, stop_loss=3320.10,
+              take_profit_1=3298.54, take_profit_2=tp2, risk_pips=7.7,
+              reward_pips_1=13.86, reward_pips_2=22.4, risk_reward_1=1.8,
+              risk_reward_2=2.9, asset_class="metal",
+              horizon=horizon, source=source)
+
+
+def test_horizon_apparait_dans_la_carte_ouverture():
+    """⏱ Horizon doit figurer en français, pas en code brut."""
+    s = _setup_avec_horizon(horizon="30min")
+    txt = ts._format_trade_opened(s, ticket=1, fill_price=3312.40,
+                                  volume=0.02, mode="LIVE",
+                                  destination_id="admin_live")
+    assert "⏱" in txt, "L'icône horloge doit être présente"
+    assert "30 min" in txt, "L'horizon doit être vulgarisé (pas '30min' brut)"
+
+
+def test_horizon_vulgarisation_longs():
+    for horizon, attendu in [("1h", "1 heure"), ("4h", "4 heures"),
+                              ("1d", "1 jour"), ("1day", "1 jour")]:
+        s = _setup_avec_horizon(horizon=horizon)
+        txt = ts._format_trade_opened(s, ticket=1, fill_price=3312.40,
+                                      volume=0.02, mode="LIVE",
+                                      destination_id="admin_live")
+        assert attendu in txt, f"{horizon} devrait être affiché comme {attendu!r}"
+
+
+def test_source_informative_apparait_pas_pattern_default():
+    """`source='pattern'` est trop generique — on ne l'ajoute pas. Autre source oui."""
+    s = _setup_avec_horizon(horizon="1h", source="pattern")
+    txt = ts._format_trade_opened(s, ticket=1, fill_price=3312.40,
+                                  volume=0.02, mode="LIVE",
+                                  destination_id="admin_live")
+    assert "⏱ Horizon 1 heure" in txt
+    # source specifique "macro" : ajoutee
+    s2 = _setup_avec_horizon(horizon="1d", source="macro")
+    txt2 = ts._format_trade_opened(s2, ticket=1, fill_price=3312.40,
+                                   volume=0.02, mode="LIVE",
+                                   destination_id="admin_live")
+    assert "⏱ Horizon 1 jour · macro" in txt2
+
+
+def test_TP2_apparait_quand_different_de_TP1():
+    s = _setup_avec_horizon(horizon="30min", tp2=3290.0)
+    txt = ts._format_trade_opened(s, ticket=1, fill_price=3312.40,
+                                  volume=0.02, mode="LIVE",
+                                  destination_id="admin_live")
+    assert "TP 3298,54" in txt
+    assert "TP2 3290" in txt, "TP2 devrait figurer dans la ligne de détail"
+
+
+def test_TP2_absent_si_identique_a_TP1():
+    """TP2 == TP1 : on ne duplique pas."""
+    s = _setup_avec_horizon(horizon="30min", tp2=3298.54)
+    txt = ts._format_trade_opened(s, ticket=1, fill_price=3312.40,
+                                  volume=0.02, mode="LIVE",
+                                  destination_id="admin_live")
+    assert "TP 3298,54" in txt
+    assert "TP2" not in txt
+
+
+def test_setup_sans_horizon_pas_de_ligne_vide():
+    """Si horizon=None, pas de ligne '⏱ Horizon' du tout."""
+    s = _setup_avec_horizon(horizon=None)
+    txt = ts._format_trade_opened(s, ticket=1, fill_price=3312.40,
+                                  volume=0.02, mode="LIVE",
+                                  destination_id="admin_live")
+    assert "⏱" not in txt
+    assert "Horizon" not in txt
