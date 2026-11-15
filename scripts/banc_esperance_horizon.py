@@ -42,7 +42,8 @@ import numpy as np
 sys.path.insert(0, ".")
 
 from backend.models.schemas import Candle  # noqa: E402
-from backend.services import binance_klines_service as bks  # noqa: E402
+# ⛔ Import binance_klines_service supprime le 2026-11-15 (cleanup phase 3).
+# Le fetch crypto passe desormais par price_service (qui route lui-meme).
 from backend.services import price_service  # noqa: E402
 from backend.services.backtest_engine import simulate_trade_forward  # noqa: E402
 from backend.services.shadow_v2_core_long import DB_PATH  # noqa: E402
@@ -453,8 +454,7 @@ async def charge(paires: dict[str, tuple[datetime, datetime]],
     async def chargeur(paire, debut, fin):
         if fin_chargement is not None and fin > fin_chargement:
             fin = fin_chargement
-        if bks.is_crypto_pair(paire):
-            return await bks.fetch_klines_fenetre(paire, "5min", debut, fin)
+        # ⛔ Routing binance_klines retire — on passe tout par price_service.
         return await price_service.fetch_candles_fenetre(
             paire, "5min", debut, fin, pause_entre_tranches=4.0)
 

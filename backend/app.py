@@ -3294,7 +3294,7 @@ async def _build_sales_recap_text(date_iso: str | None = None) -> str:
     import sqlite3
     import httpx
     from backend.services.trade_log_service import _DB_PATH
-    from config.settings import BINANCE_BRIDGE_URL, BINANCE_BRIDGE_API_KEY
+    # ⛔ BINANCE_BRIDGE_URL/API_KEY retires le 2026-11-15 (cleanup phase 3).
 
     day = date_iso or datetime.now(timezone.utc).date().isoformat()
     lines = [f"📊 Daily recap {day}", ""]
@@ -3348,42 +3348,8 @@ async def _build_sales_recap_text(date_iso: str | None = None) -> str:
         lines.append(f"⚠️ MT5 indisponible ({str(e)[:80]})")
         lines.append("")
 
-    # Binance Testnet (admin_binance) via /pnl_summary du bridge
-    if not BINANCE_BRIDGE_URL:
-        lines.append("🟪 Binance Testnet : bridge non configuré")
-    else:
-        try:
-            url = BINANCE_BRIDGE_URL.rstrip("/") + "/pnl_summary"
-            headers = {"X-Bridge-Key": BINANCE_BRIDGE_API_KEY} if BINANCE_BRIDGE_API_KEY else {}
-            params = {"since": f"{day}T00:00:00Z"}
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                r = await client.get(url, params=params, headers=headers)
-            if r.status_code == 200:
-                d = r.json()
-                w = d.get("wallet") or {}
-                s = d.get("summary") or {}
-                lines.append("🟪 Binance Testnet")
-                lines.append(
-                    f"  Wallet : {w.get('totalWalletBalance', 0):.2f} USDT "
-                    f"+ {w.get('totalUnrealizedProfit', 0):+.2f} unrealized"
-                )
-                lines.append(f"  PnL jour : {s.get('total_net', 0):+.2f} USDT")
-                bt = s.get("by_type") or {}
-                if bt:
-                    parts = " | ".join(f"{k} {v:+.2f}" for k, v in sorted(bt.items(), key=lambda kv: -abs(kv[1])))
-                    lines.append(f"  {parts}")
-                bsym = s.get("by_symbol") or {}
-                if bsym:
-                    ranked = sorted(
-                        bsym.items(), key=lambda kv: -abs(sum(kv[1].values()))
-                    )[:5]
-                    top = " | ".join(f"{sym.replace('USDT', '')} {sum(parts.values()):+.2f}" for sym, parts in ranked)
-                    lines.append(f"  Top : {top}")
-            else:
-                lines.append(f"🟪 Binance Testnet : bridge HTTP {r.status_code}")
-        except Exception as e:
-            logger.exception("sales_recap Binance fetch failed")
-            lines.append(f"🟪 Binance Testnet : erreur ({str(e)[:80]})")
+    # ⛔ Section Binance Testnet SUPPRIMEE le 2026-11-15 (cleanup phase 3).
+    # Le bridge binance et toute la destination admin_binance n'existent plus.
 
     lines.append("")
     lines.append(f"Généré : {datetime.now(timezone.utc).isoformat(timespec='seconds')}")

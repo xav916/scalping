@@ -380,36 +380,13 @@ if _MT5_BRIDGE_LIVE_SYMBOL_MAP_RAW:
             k, v = entry.split(":", 1)
             MT5_BRIDGE_LIVE_SYMBOL_MAP[k.strip()] = v.strip()
 
-# ─── Binance Futures bridge (Phase 2 R&D Palier 2 — 2026-06-17) ───────
-# Routing destination parallèle aux bridges MT5 pour cryptos. En testnet :
-# zéro coût, validation comparative MT5 Demo vs Binance USDⓈ-M sur fills
-# et slippage. Le binance-bridge tourne sur EC2 port 8789 (systemd-run
-# binance-bridge-rd.service), watcher SL/TP émulé côté bridge car le
-# testnet Binance rejette STOP_MARKET via /fapi/v1/order (-4120).
-BINANCE_BRIDGE_ENABLED = os.getenv("BINANCE_BRIDGE_ENABLED", "false").lower() in ("1", "true", "yes", "on")
-BINANCE_BRIDGE_URL = os.getenv("BINANCE_BRIDGE_URL", "")
-BINANCE_BRIDGE_API_KEY = os.getenv("BINANCE_BRIDGE_API_KEY", "")
-BINANCE_BRIDGE_MIN_CONFIDENCE = float(os.getenv("BINANCE_BRIDGE_MIN_CONFIDENCE", "50"))
-BINANCE_BRIDGE_LEVERAGE = int(os.getenv("BINANCE_BRIDGE_LEVERAGE", "5"))
-# Bougies Binance Futures natives (gratuit + illimité) en remplacement de
-# Twelve Data pour les paires crypto uniquement. Forex/métaux/WTI/indices
-# restent sur Twelve Data. Feature flag pour rollback instantané. Cf.
-# project_binance_phase2_chantier1_native_klines_2026_06_18.md
-BINANCE_KLINES_ENABLED = os.getenv("BINANCE_KLINES_ENABLED", "false").lower() in ("1", "true", "yes", "on")
-# Phase 2 Palier 2 chantier #2 (2026-06-18) : funding rate Binance comme
-# filtre contrarien soft sur les setups crypto. Multiplier 0.85 (= veto soft)
-# si funding extrême + direction surcrowdée. Feature flag pour rollback.
-BINANCE_FUNDING_SCORING_ENABLED = os.getenv("BINANCE_FUNDING_SCORING_ENABLED", "false").lower() in ("1", "true", "yes", "on")
-# Chantier #3 (2026-06-18) : LSR Binance comme filtre contrarien soft.
-BINANCE_LSR_SCORING_ENABLED = os.getenv("BINANCE_LSR_SCORING_ENABLED", "false").lower() in ("1", "true", "yes", "on")
-# Chantier #4 (2026-06-18) : order book depth (spread top-of-book) comme filtre thin market.
-BINANCE_ORDERBOOK_SCORING_ENABLED = os.getenv("BINANCE_ORDERBOOK_SCORING_ENABLED", "false").lower() in ("1", "true", "yes", "on")
-# Chantier #5 (2026-06-18) : aggressor side / taker buy ratio comme filtre orderflow.
-BINANCE_ORDERFLOW_SCORING_ENABLED = os.getenv("BINANCE_ORDERFLOW_SCORING_ENABLED", "false").lower() in ("1", "true", "yes", "on")
-# Chantier #6 (2026-06-18) : OI divergence comme filtre squeeze/liquidation 1h.
-BINANCE_OI_SCORING_ENABLED = os.getenv("BINANCE_OI_SCORING_ENABLED", "false").lower() in ("1", "true", "yes", "on")
-# Tier 2 chantier #14 (2026-06-18) : multi-timeframe alignment (HTF 15m+1h vs setup 5m).
-BINANCE_MTF_SCORING_ENABLED = os.getenv("BINANCE_MTF_SCORING_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+# ⛔ Les 10 variables BINANCE_* ont ete SUPPRIMEES le 2026-11-15 (cleanup
+# phase 3). Binance a ete abandonne definitivement apres le blocker AMF FR
+# et la migration complete vers Kraken Futures. Voir aussi PR #68
+# (destination admin_binance) et PR #69 (13 services binance_* + 7
+# consommateurs). Les env vars BINANCE_* qui restent dans /opt/scalping/.env
+# sont inertes et seront purgees en nettoyage env operationnel.
+
 # P1 (2026-08-03) : Veto calendrier économique pre/post news HIGH impact
 # (NFP, CPI, FOMC, ECB, BoE, GDP...). Soft veto ×0.70 si un event HIGH
 # est dans ±30 min de now. Filtre par currency impactée par la paire.
