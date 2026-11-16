@@ -511,6 +511,20 @@ async def _mt5_submit_order(
     pour un bracket order), sans quoi il retourne ``{"error":"missing field:
     entry"}``. On passe le prix du trigger — le bridge fera un ordre MARKET
     autour de cette référence.
+
+    ⛔ Défense en profondeur (2026-11-16). Si le bridge tourne en
+    ``PAPER_MODE=true`` côté son propre ``.env``, il répond ``{"ok": true,
+    "mode": "paper", "message": "Ordre simulé uniquement..."}`` SANS jamais
+    transmettre l'ordre à MT5, et sans ``ticket``. Le code trustait ``ok:
+    true``, retournait ``ticket=None`` et déclenchait une carte Telegram
+    "Le radar a lancé un ordre auto chez ton broker · #None" — mensongère.
+    Confirmé sur AUD/USD 2026-11-16 11:01:42 UTC.
+
+    Depuis, un push n'est considéré comme réussi que si (a) le bridge
+    renvoie ``ok: true``, (b) un ``ticket`` ou ``order_id`` non vide est
+    présent, et (c) ``body["mode"] != "paper"``. Sinon ``ok=False`` est
+    renvoyé avec une ``reason`` explicite, et la carte "trade ouvert" n'est
+    pas envoyée.
     """
     payload = {
         "pair": pair, "direction": direction, "lots": lots,
@@ -523,13 +537,38 @@ async def _mt5_submit_order(
             body = r.json()
         except Exception:
             body = {"raw": r.text[:200]}
+
+        http_ok = r.status_code == 200 and bool(body.get("ok"))
+        ticket = body.get("ticket") or body.get("order_id")
+        bridge_mode = body.get("mode")
+        paper = bridge_mode == "paper"
+        bridge_ok = http_ok and bool(ticket) and not paper
+
+        reason = None
+        if http_ok and not bridge_ok:
+            if paper:
+                reason = (
+                    f"bridge {BRIDGE_URL} en PAPER_MODE "
+                    f"(mode={bridge_mode!r}, msg={body.get('message')!r}) "
+                    f"— aucun ordre transmis à MT5"
+                )
+            elif not ticket:
+                reason = (
+                    f"bridge renvoie ok=true sans ticket ni order_id "
+                    f"(body keys={sorted(body.keys())})"
+                )
+            logger.error("meanrev: _mt5_submit_order %s %s rejeté — %s",
+                         pair, direction, reason)
+
         return {
-            "ok": r.status_code == 200 and bool(body.get("ok")),
+            "ok": bridge_ok,
             "status_code": r.status_code,
             "order_id": body.get("order_id"),
             "ticket": body.get("ticket"),
             "avg_fill_price": body.get("avg_fill_price") or body.get("price"),
             "body": body,
+            "bridge_mode": bridge_mode,
+            "reason": reason,
         }
     except Exception as e:
         return {"ok": False, "exception": str(e)}
