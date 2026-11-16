@@ -261,12 +261,30 @@ async def _mt5_submit_order(
             body = r.json()
         except Exception:
             body = {"raw": r.text[:200]}
+        # ⛔ Defense en profondeur (2026-11-16) : un bridge en PAPER_MODE repond
+        # {"ok": true, "mode": "paper", "message": "Ordre simule..."} sans
+        # transmettre l'ordre a MT5 et sans ticket. Le code trustait ok:true,
+        # retournait ticket=None et envoyait une carte Telegram "#None" bidon.
+        # Cf. incident AUDUSD-paper-trap 2026-11-16 11:01:42 UTC.
+        http_ok = r.status_code == 200 and bool(body.get("ok"))
+        _ticket = body.get("ticket") or body.get("order_id")
+        _bridge_mode = body.get("mode")
+        _paper = _bridge_mode == "paper"
+        bridge_ok = http_ok and bool(_ticket) and not _paper
+        if http_ok and not bridge_ok:
+            _reason = (
+                f"bridge en PAPER_MODE (mode={_bridge_mode!r}, msg={body.get('message')!r})"
+                if _paper else
+                f"bridge ok=true sans ticket (body keys={sorted(body.keys())})"
+            )
+            logger.error("_mt5_submit_order %s %s rejete — %s", pair, direction, _reason)
         return {
-            "ok": r.status_code == 200 and bool(body.get("ok")),
+            "ok": bridge_ok,
             "status_code": r.status_code,
             "ticket": body.get("ticket") or body.get("order_id"),
             "avg_fill_price": body.get("avg_fill_price") or body.get("price") or body.get("fill_price"),
             "body": body,
+            "bridge_mode": _bridge_mode,
         }
     except Exception as e:
         return {"ok": False, "exception": str(e)}
