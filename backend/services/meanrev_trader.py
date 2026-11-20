@@ -579,7 +579,7 @@ async def _mt5_close_position(ticket: int | str) -> dict:
     payload = {"ticket": ticket}
     try:
         async with httpx.AsyncClient(timeout=30.0) as c:
-            r = await c.post(f"{BRIDGE_URL}/close", json=payload, headers=_headers())
+            r = await c.post(f"{BRIDGE_URL}/position/close", json=payload, headers=_headers())
         try:
             body = r.json()
         except Exception:
