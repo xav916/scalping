@@ -6,29 +6,50 @@ l'espace `SCALP` (https://coudercxavier.atlassian.net/wiki/spaces/SCALP).
 
 ## Comment cibler une page depuis une PR
 
-Deux moyens, non exclusifs :
+Trois sources, UNION des cibles. Zero intervention manuelle dans le cas
+nominal : le mapping `files` du JSON derive automatiquement les pages
+depuis les fichiers modifies.
 
-### 1. Via label PR (recommande)
+### 1. Automatique : mapping `files` (recommande, nominal)
+
+Le mapping `files` de [`.github/confluence-pages.json`](../confluence-pages.json)
+associe des patterns `fnmatch` (globs) aux page_ids concernes :
+
+```json
+"files": {
+  "backend/services/meanrev_trader.py": ["2719746"],
+  "backend/services/trader_*.py": ["2588886", "2785332"],
+  "backend/services/*_watchdog.py": ["2719796"]
+}
+```
+
+A chaque PR, le script fetch `/pulls/{n}/files` via l'API GitHub et union
+toutes les pages matchees. Aucune action manuelle n'est necessaire tant
+que le mapping couvre les fichiers modifies.
+
+Requiert `GITHUB_TOKEN` (pre-provisionne par Actions, deja dans le
+workflow). Sans token, cette source est ignoree silencieusement.
+
+### 2. Via label PR (fallback / override explicite)
 
 Ajoute un ou plusieurs labels `confluence:<slug>` a la PR. Le mapping
-label -> page_id est dans [`.github/confluence-pages.json`](../confluence-pages.json).
+`labels` du JSON associe le slug a un page_id.
 
-Exemples :
-- PR qui modifie `backend/services/meanrev_trader.py` -> label `confluence:meanrev`
-- PR qui change le bridge IBKR -> label `confluence:ibkr`
-- PR transverse (ex: refactor sim_gate utilise par 10 pipelines) -> plusieurs
-  labels : `confluence:sim-gate`, `confluence:meanrev`, `confluence:scalp`, ...
+Exemples d'usage :
+- PR qui touche la doc d'une page sans toucher le code (ajout manuel du
+  label pour l'historique)
+- PR transverse qui concerne une page conceptuelle (ex: `confluence:rem-002`)
+  non reliee a un fichier precis
 
-### 2. Via section dans le PR body
+### 3. Via section dans le PR body (override one-shot)
 
-Dans le corps de la PR, ajoute une ligne commencant par
-`Confluence-Pages:` suivie des IDs de pages, separes par virgules :
+Dans le corps de la PR, ligne commencant par `Confluence-Pages:` :
 
 ```
 Confluence-Pages: 2719746, 2785349
 ```
 
-Utile pour one-shot sans creer un nouveau label.
+Utile pour cibler ad-hoc sans creer un label ni toucher le mapping.
 
 ## Ce qui est ajoute
 
