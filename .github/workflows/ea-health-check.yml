@@ -13,6 +13,13 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Run EA health check
+        env:
+          # Token admin rote le 2026-11-15. Sans ce passage explicite du
+          # secret, le script tombe sur son fallback hardcode (l'ancien
+          # token historique) que le backend ne reconnait plus :
+          # SHADOW_PUBLIC_TOKEN_SHA256 dans /opt/scalping/.env prend le
+          # dessus sur le fallback de backend/app.py.
+          HEALTH_TOKEN: ${{ secrets.HEALTH_TOKEN }}
         run: bash monitoring/ea-health-check.sh
 
       - name: Archive health logs
