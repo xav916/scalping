@@ -24,6 +24,53 @@ _COMPARAISON_NUM = re.compile(r"[<>]=?\s*[-+]?\d")
 _NEGATION = re.compile(r"(^|\s)(pas|non|ne)(\s|$)", re.IGNORECASE)
 
 
+def _evaluateur_de_or_verdict():
+    """L'evaluateur de clauses de `or-verdict`, charge dynamiquement.
+
+    ⛔ On IMPORTE le sien, on ne le reecrit pas. Deux analyseurs finiraient
+    par divergir, et c'est exactement le defaut constate le 2026-10-31 :
+    cette skill a accepte un critere que `or-verdict` ne savait pas
+    evaluer. Le banc a tourne, puis le verdict a ete refuse pour une
+    question de FORME -- apres que les chiffres avaient ete vus.
+
+    Le nom du dossier porte un tiret, donc pas d'import normal possible.
+    """
+    import importlib.util
+    chemin = (pathlib.Path(__file__).resolve().parent.parent
+              / "or-verdict" / "verdict.py")
+    if not chemin.exists():
+        return None
+    spec = importlib.util.spec_from_file_location("_or_verdict", chemin)
+    if spec is None or spec.loader is None:
+        return None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return getattr(mod, "evaluer_clauses", None)
+
+
+def lisible_par_or_verdict(expression: str) -> str | None:
+    """`None` si `or-verdict` saura evaluer l'expression, sinon la raison.
+
+    🔑 On fournit a l'evaluateur un resultat FACTICE qui contient TOUS les
+    identifiants cites. Sans cela, un champ absent rendrait aussi `None` et
+    on confondrait « syntaxe illisible » avec « champ manquant » -- or le
+    champ manquant est normal ici : le resultat n'existe pas encore.
+
+    ⚠️ Ne juge QUE la forme. Un critere lisible peut rester mauvais ; les
+    autres controles de cette skill s'en occupent.
+    """
+    evaluer = _evaluateur_de_or_verdict()
+    if evaluer is None:
+        return None          # skill absente : on ne bloque pas sur ca
+    identifiants = {m for m in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", expression)
+                    if m not in ("abs", "ET", "et")}
+    factice = {nom: 1.0 for nom in identifiants}
+    verdict, raisons = evaluer(expression, factice)
+    if verdict is None:
+        return "; ".join(raisons) or "expression non evaluable"
+    return None
+
+
 def valider(markdown: str, anteriorite: bool | None) -> list[str]:
     """La liste des manques. Vide = la pre-inscription tient."""
     manques: list[str] = []
@@ -85,6 +132,25 @@ def valider(markdown: str, anteriorite: bool | None) -> list[str]:
                 manques.append("plafond par permutation absent pour %d cellules : "
                                "le 14/10, sept cellules auraient passe a t=2"
                                % cellules)
+
+    # ⛔ Un critere que `or-verdict` ne sait pas evaluer bloquera la
+    # publication APRES que le banc aura tourne, donc apres que les chiffres
+    # auront ete vus -- et il sera alors trop tard pour le reecrire sans
+    # tricher. Le defaut a ete paye le 2026-10-31 : `admission` ecrite avec
+    # « et » minuscule et une clause sans operateur avait passe ICI et ete
+    # refusee LA-BAS.
+    bloc_crit = sections.bloc_machine(markdown) or {}
+    for cle in ("admission", "rejet"):
+        expr = (bloc_crit.get(cle) or "").strip()
+        if not expr:
+            continue
+        probleme = lisible_par_or_verdict(expr)
+        if probleme:
+            manques.append(
+                "[%s] illisible par or-verdict, donc INPUBLIABLE apres le "
+                "banc : %s. Les clauses se separent par ' ET ' (majuscules) "
+                "et chacune doit porter un operateur et un nombre."
+                % (cle, probleme))
 
     n = sections.compter_predictions(markdown)
     if n < MINIMUM_PREDICTIONS:
