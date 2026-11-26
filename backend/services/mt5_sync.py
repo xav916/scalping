@@ -1448,6 +1448,15 @@ async def _sync_one(name: str, base_url: str, api_key: str) -> tuple[int, int]:
     """Pull /audit d'un bridge MT5 + applique à personal_trades. Retourne (n_open, n_closed).
 
     Le bridge non-joignable est silencieux (PC éteint, VPS down — no-op).
+
+    ⛔ Detection reset du bridge (2026-11-26). Quand le bridge Windows est
+    redemarre et que sa DB audit est reinitialisee (compteur id -> 0), le
+    radar garde `last_synced_id` en l'etat et demande indefiniment
+    `since_id=<ancien_id>` -> `count=0` perpetuel, le sync reste bloque. On
+    detecte ce cas : si since_id renvoie 0 orders, on sonde avec since_id=0
+    pour voir si de nouveaux orders existent sous un id plus petit. Si oui,
+    c'est un reset -> on force `last_id=0` et on re-tire tout.
+    Cf. incident 2026-11-26 ou last_id=6146 bloquait 612 lignes admin_legacy.
     """
     state = _load_state()
     last_id = int(state.get("bridges", {}).get(name, 0))
@@ -1468,7 +1477,35 @@ async def _sync_one(name: str, base_url: str, api_key: str) -> tuple[int, int]:
         return (0, 0)
 
     if not orders:
-        return (0, 0)
+        # Sonde reset : si le bridge a des orders mais avec des ids < last_id,
+        # c'est qu'il a ete reinitialise. On rebascule sur since_id=0.
+        if last_id > 0:
+            try:
+                async with httpx.AsyncClient(timeout=8.0) as client:
+                    probe = await client.get(
+                        url, headers=headers,
+                        params={"since_id": 0, "limit": 1},
+                    )
+                probe_orders = probe.json().get("orders", []) if probe.status_code == 200 else []
+                if probe_orders and int(probe_orders[0].get("id", 0)) < last_id:
+                    logger.warning(
+                        "mt5_sync[%s]: bridge reset detecte (last_id=%d, "
+                        "probe_id=%d) — force since_id=0 et re-sync",
+                        name, last_id, int(probe_orders[0].get("id", 0)),
+                    )
+                    last_id = 0
+                    async with httpx.AsyncClient(timeout=8.0) as client:
+                        r = await client.get(
+                            url, headers=headers,
+                            params={"since_id": 0, "limit": 100},
+                        )
+                    if r.status_code == 200:
+                        orders = r.json().get("orders", [])
+            except Exception as e:
+                logger.debug(f"mt5_sync[{name}]: probe reset failed: {e}")
+
+        if not orders:
+            return (0, 0)
 
     user = _resolve_auto_user()
     new_open = 0
