@@ -862,7 +862,30 @@ async def cycle() -> dict:
             return result
 
     # ─── Gate 6 : positions ouvertes ────────────────────────────────────
+    #
+    # ⛔ meanrev et `mt5_bridge.py` (pipeline legacy) poussent tous les deux
+    # sur le compte MT5 Demo (admin_legacy). mt5_bridge regarde les positions
+    # reelles du courtier via `_positions_courtier` et respecte sa propre
+    # limite par pair ; il voit donc les positions de meanrev et ne doublonne
+    # pas. meanrev, lui, ne regardait que son propre `meanrev_state.json` —
+    # il pouvait rouvrir une position sur une pair deja detenue par le flow
+    # legacy, et resultat deux positions contradictoires sur la meme pair.
+    #
+    # Garde-fou croise (2026-11-27) : avant de choisir les candidats, on lit
+    # les positions reellement ouvertes sur le bridge. Toute pair deja tenue
+    # (par meanrev OU par legacy OU ouverte a la main) est exclue de
+    # l'univers. Si le bridge est muet, on retombe sur le comportement
+    # precedent (fail-open : on ne bloque pas plus qu'avant).
     open_pairs = {p["pair"].upper() for p in _open_positions(state)}
+    bridge_positions = await _mt5_fetch_positions()
+    if bridge_positions is not None:
+        for pos in bridge_positions:
+            sym = (pos.get("symbol") or "").upper()
+            # MT5 renvoie "AUDUSD", "USDCHF", etc. -> "AUD/USD", "USD/CHF"
+            if len(sym) == 6 and "/" not in sym:
+                open_pairs.add(f"{sym[:3]}/{sym[3:]}")
+            elif "/" in sym:
+                open_pairs.add(sym)
     n_open = len(open_pairs)
     if n_open >= MAX_POSITIONS:
         result["reason"] = f"max_positions_reached ({n_open}/{MAX_POSITIONS})"
