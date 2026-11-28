@@ -5,6 +5,7 @@ pour détecter anomalies EAs en production.
 """
 
 import json
+import os
 import sys
 import subprocess
 from datetime import datetime, timezone
@@ -13,7 +14,14 @@ from pathlib import Path
 # Configuration
 HEALTH_ENDPOINT = "https://app.scalping-radar.online/api/admin/auto-exec/health-token"
 NOTIFY_ENDPOINT = "https://app.scalping-radar.online/api/admin/notify-infra-telegram"
-ADMIN_TOKEN = "shdw_diaY5ZBXM1b4CjdwzN8kd572-ylWcbIg"
+
+# Token admin lu depuis l'env (secrets.HEALTH_TOKEN dans le workflow).
+# Pas de fallback hardcode : l'ancien token du repo est roule depuis le
+# 2026-11-15, un fallback silencieux produirait des HTTP 401 répétés.
+ADMIN_TOKEN = os.environ.get("HEALTH_TOKEN")
+if not ADMIN_TOKEN:
+    print("❌ HEALTH_TOKEN env var manquant — passer le secret GitHub HEALTH_TOKEN au workflow", file=sys.stderr)
+    sys.exit(2)
 
 HEARTBEAT_STALE_THRESHOLD = 1800  # 30 min
 MIN_ORDERS_FOR_EXEC_RATE = 3
