@@ -233,6 +233,34 @@ async def _mt5_fetch_balance() -> float | None:
         return None
 
 
+async def _mt5_fetch_positions() -> list[dict] | None:
+    """GET /positions → liste des positions ou None si bridge down.
+
+    Idem bug `_mt5_fetch_balance` : le MT5 bridge ne retourne pas de champ
+    ``"ok"``. Il retourne soit ``{"positions": [...]}`` soit directement
+    ``[...]`` selon l'implémentation. On accepte les deux formes.
+
+    Utilise pour le garde-fou cross-pipeline (cf. gate positions du cycle) :
+    plusieurs pipelines poussent sur `admin_legacy` sans se coordonner. Sans
+    ce fetch, chacun ne regarde que son propre state file et peut rouvrir
+    une position deja tenue par un autre pipeline. Pattern etendu de PR #84
+    (meanrev) a tous les traders MT5.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as c:
+            r = await c.get(f"{BRIDGE_URL}/positions", headers=_headers())
+            if r.status_code != 200:
+                logger.warning("fetch_positions HTTP %s", r.status_code)
+                return None
+            data = r.json()
+            if isinstance(data, list):
+                return data
+            return data.get("positions", [])
+    except Exception as e:
+        logger.warning("fetch_positions failed — %s", e)
+        return None
+
+
 async def _mt5_fetch_tick(pair: str) -> dict | None:
     """GET /tick/<pair> → retourne {bid, ask, ...} ou None."""
     try:
@@ -598,7 +626,28 @@ async def cycle() -> dict:
         return result
 
     # Gate 5 : max positions
+    # ─── Gate positions ouvertes + garde-fou cross-pipeline ──────────────
+    #
+    # ⛔ Plusieurs pipelines poussent sur `admin_legacy` (meanrev, scalp,
+    # daily, weekly, M5/M30/H2/H4/MO, mt5_bridge legacy) sans se
+    # coordonner. Sans ce fetch, chacun ne regarde que son propre state et
+    # peut rouvrir une position deja tenue par un autre pipeline.
+    #
+    # Garde-fou croise (etend PR #84 meanrev) : avant de choisir les
+    # candidats, on lit les positions reellement ouvertes sur le bridge.
+    # Toute pair deja tenue (par moi OU un autre pipeline OU ouverte a la
+    # main) est exclue de l'univers. Si le bridge est muet, on retombe sur
+    # le comportement precedent (fail-open : on ne bloque pas plus qu'avant).
     open_pairs = {p["pair"].upper() for p in _open_positions(state)}
+    bridge_positions = await _mt5_fetch_positions()
+    if bridge_positions is not None:
+        for pos in bridge_positions:
+            sym = (pos.get("symbol") or "").upper()
+            # MT5 renvoie "AUDUSD", "USDCHF", etc. -> "AUD/USD", "USD/CHF"
+            if len(sym) == 6 and "/" not in sym:
+                open_pairs.add(f"{sym[:3]}/{sym[3:]}")
+            elif "/" in sym:
+                open_pairs.add(sym)
     if len(open_pairs) >= MAX_POSITIONS:
         result["reason"] = f"max_positions_reached ({len(open_pairs)}/{MAX_POSITIONS})"
         _save_state(state)
