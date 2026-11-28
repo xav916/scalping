@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Sync merged PR to Confluence pages' 'Historique des changements' section.
 
-Lit l'event GitHub depuis GITHUB_EVENT_PATH, extrait les pages cibles via :
-1. Labels PR (ex: 'confluence:meanrev' -> page_id via .github/confluence-pages.json)
-2. Section 'Confluence-Pages: <id1>,<id2>' dans le PR body (override direct)
+Lit l'event GitHub depuis GITHUB_EVENT_PATH, extrait les pages cibles via
+UNION de trois sources :
+1. Labels PR (ex: 'confluence:meanrev' -> page_id via mapping 'labels')
+2. Fichiers modifies par la PR (fnmatch) -> page_ids via mapping 'files'
+3. Section 'Confluence-Pages: <id1>,<id2>' dans le PR body (override explicite)
 
 Pour chaque page cible, ajoute une entree dans la section 'Historique des
 changements' (ou la cree si absente). Idempotent : si la meme PR est deja
@@ -14,10 +16,14 @@ Variables d'environnement requises :
 - CONFLUENCE_EMAIL : email Atlassian du compte owner du token
 - CONFLUENCE_API_TOKEN : API token Atlassian
 - CONFLUENCE_BASE_URL : ex https://coudercxavier.atlassian.net/wiki
+- GITHUB_TOKEN : token GitHub pour lire les fichiers de la PR (fourni par
+  Actions via secrets.GITHUB_TOKEN). Optionnel : sans lui, le mapping
+  'files' est ignore, labels + body continuent de fonctionner.
 """
 from __future__ import annotations
 
 import base64
+import fnmatch
 import json
 import os
 import re
@@ -48,10 +54,72 @@ def _load_mapping() -> dict:
         return json.load(f)
 
 
-def _targets_from_pr(pr: dict, mapping: dict) -> list[str]:
+def _github_get(url: str) -> list | dict:
+    """GET GitHub API avec token optionnel. Pagine Link header au besoin."""
+    token = os.environ.get("GITHUB_TOKEN", "").strip()
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    results: list = []
+    next_url: str | None = url
+    while next_url:
+        req = urllib.request.Request(next_url, headers=headers)
+        with urllib.request.urlopen(req, timeout=30) as r:
+            payload = json.loads(r.read().decode("utf-8"))
+            link = r.headers.get("Link", "") or ""
+        if isinstance(payload, list):
+            results.extend(payload)
+        else:
+            return payload
+        m = re.search(r'<([^>]+)>;\s*rel="next"', link)
+        next_url = m.group(1) if m else None
+    return results
+
+
+def _pr_files(repo_full_name: str, pr_number: int) -> list[str]:
+    """Liste des fichiers modifies par la PR (via /pulls/{n}/files).
+
+    Retourne les paths relatifs. Ignore silencieusement si GITHUB_TOKEN
+    absent ou si l'API echoue (le script continue avec labels + body).
+    """
+    if not os.environ.get("GITHUB_TOKEN"):
+        return []
+    try:
+        url = f"https://api.github.com/repos/{repo_full_name}/pulls/{pr_number}/files?per_page=100"
+        files = _github_get(url)
+        if not isinstance(files, list):
+            return []
+        return [f.get("filename") for f in files if isinstance(f, dict) and f.get("filename")]
+    except Exception as e:
+        print(f"[WARN] pr_files fetch failed: {type(e).__name__} {e}", file=sys.stderr)
+        return []
+
+
+def _targets_from_files(files_changed: list[str], mapping: dict) -> list[str]:
+    """Match chaque fichier modifie contre les patterns de mapping['files']."""
+    files_map = mapping.get("files") or {}
+    if not files_map:
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for f in files_changed:
+        for pattern, ids in files_map.items():
+            if fnmatch.fnmatch(f, pattern) or f == pattern:
+                for pid in ids:
+                    if pid not in seen:
+                        out.append(pid)
+                        seen.add(pid)
+    return out
+
+
+def _targets_from_pr(pr: dict, mapping: dict, files_changed: list[str]) -> list[str]:
     ids: list[str] = []
     seen: set[str] = set()
 
+    # Source 1 : labels PR
     for label in pr.get("labels") or []:
         name = label.get("name") if isinstance(label, dict) else str(label)
         pid = mapping["labels"].get(name)
@@ -59,6 +127,13 @@ def _targets_from_pr(pr: dict, mapping: dict) -> list[str]:
             ids.append(pid)
             seen.add(pid)
 
+    # Source 2 : fichiers modifies (fnmatch sur mapping['files'])
+    for pid in _targets_from_files(files_changed, mapping):
+        if pid not in seen:
+            ids.append(pid)
+            seen.add(pid)
+
+    # Source 3 : override explicite dans le body
     body = pr.get("body") or ""
     m = re.search(r"^Confluence-Pages:\s*([0-9,\s]+)", body, re.MULTILINE | re.IGNORECASE)
     if m:
@@ -203,9 +278,14 @@ def main() -> int:
         return 0
 
     mapping = _load_mapping()
-    targets = _targets_from_pr(pr, mapping)
+    repo_full = ((event.get("repository") or {}).get("full_name")) or ""
+    files_changed: list[str] = []
+    if repo_full and pr.get("number"):
+        files_changed = _pr_files(repo_full, int(pr["number"]))
+        print(f"[INFO] PR #{pr['number']} : {len(files_changed)} fichier(s) modifie(s)")
+    targets = _targets_from_pr(pr, mapping, files_changed)
     if not targets:
-        print(f"[INFO] PR #{pr.get('number')} sans label confluence: ni section Confluence-Pages, skip")
+        print(f"[INFO] PR #{pr.get('number')} aucune cible (label / fichier / body), skip")
         return 0
 
     base_url = _env("CONFLUENCE_BASE_URL")
