@@ -26,6 +26,10 @@ jobs:
           python-version: '3.11'
 
       - name: Run EA health monitor
-        run: python3 scripts/ea_health_monitor.py
         env:
+          # Token admin roté le 2026-11-15. Sans ce passage explicite du
+          # secret, le script s'arrête (exit 2 "HEALTH_TOKEN env var manquant") :
+          # plus de fallback silencieux sur l'ancien token burnt.
+          HEALTH_TOKEN: ${{ secrets.HEALTH_TOKEN }}
           TZ: UTC
+        run: python3 scripts/ea_health_monitor.py
