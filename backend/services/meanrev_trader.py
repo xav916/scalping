@@ -1183,6 +1183,26 @@ async def check_exits() -> dict:
                     logger.warning("meanrev: close failed for ticket %s: %s",
                                    p.get("mt5_ticket"), resp.get("body"))
                     continue
+            elif mode == "live" and p.get("mt5_ticket") is None:
+                # ⛔ Position ORPHELINE : /order n'a jamais transmis l'ordre a
+                # MT5. Cas PAPER_MODE bridge pre-#78/#79, documente sur
+                # AUD/USD 2026-11-16 11:01:42 UTC. Depuis PR #78,
+                # `_mt5_submit_order` refuse ok=true sans ticket, donc cet
+                # etat ne doit PLUS survenir cote radar -- s'il reapparait,
+                # c'est un chemin non prevu (regression bridge, rollback,
+                # etc.). Defense en profondeur a la fermeture : retirer la
+                # position sans inventer de pnl ni polluer closed_history.
+                logger.error(
+                    "meanrev: position orpheline retiree sans closed_history "
+                    "-- %s %s, mt5_ticket=None (probable PAPER_MODE a l'open)",
+                    p["pair"], p["direction"],
+                )
+                p["status"] = "closed_virtual_no_ticket"
+                p["exit_price"] = None
+                p["exit_time_utc"] = now_utc.isoformat(timespec="seconds")
+                p["pnl_usd"] = None
+                closed_this_cycle.append(p)
+                continue
             else:
                 # dry_run : fermer au VWAP target (approximation)
                 exit_price = p["vwap_target"]
@@ -1252,6 +1272,19 @@ async def friday_force_close() -> dict:
                 exit_price = float(resp.get("exit_price") or p["entry"])
             else:
                 exit_price = p["entry"]  # fallback = flat
+        elif mode == "live" and p.get("mt5_ticket") is None:
+            # ⛔ Position ORPHELINE (cf. check_exits) : retrait sans pnl.
+            logger.error(
+                "meanrev friday: position orpheline retiree sans closed_history "
+                "-- %s %s, mt5_ticket=None",
+                p["pair"], p["direction"],
+            )
+            p["status"] = "closed_virtual_no_ticket"
+            p["exit_price"] = None
+            p["exit_time_utc"] = now_utc
+            p["pnl_usd"] = None
+            closed.append(p)
+            continue
         else:
             exit_price = p["entry"]  # dry_run : flat
 
