@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""BATIR un magasin de TICKS de l'or depuis le pont, en UTC vrai.
+"""BATIR un magasin de (pseudo-)TICKS de l'or depuis le pont, en UTC vrai.
 
 Demande de Xavier le 2026-10-11 : « je veux que tu analyses le cours reel du
 trade a l'aide de MetaTrader 5 et non les bougies ».
@@ -14,13 +14,24 @@ trade a l'aide de MetaTrader 5 et non les bougies ».
 3. **la cadence reelle est simulable** : 2,7 ticks par seconde sur l'or, donc
    un trainage sonde a la seconde se rejoue vraiment.
 
-⚠️ La fenetre `from`/`to` du pont est en ETIQUETTES BRUTES, comme `/rates`. On
-corrige avec `decalage_serveur_sec` DE LA MEME REPONSE, jamais memorise d'un
-appel a l'autre : le champ derive de dizaines de minutes par heure.
+⛔ BASCULE DU 2026-11-28 : la route `/ticks` a disparu du bridge Windows
+(-> 404 Not Found, confirme sur `/ticks` ET `/tick` sur le SHA b85ec3b010cd).
+Dernier vrai tick ecrit : 2026-11-13 20:57:26. On se rabat sur `/rates`
+horizon=M1 et on genere UN pseudo-tick par bougie close :
 
-Verification faite avant d'ecrire ce fichier : la fenetre corrigee tombe
-exactement sur celle demandee, et le prix d'execution reel du 09/10 a 08h20
-(4 200,22 a l'achat) tombe dans la plage des bids de cette minute.
+    ts_utc = bougie.t
+    bid    = c - s * point / 2
+    ask    = c + s * point / 2
+
+Les trois promesses ci-dessus RETOMBENT en partie : plus d'ordre intra-minute,
+plus de cadence 2,7/s, seul le spread au close de la minute est connu. On
+CODE cette perte dans la table `provenance` pour que les bancs qui lisent le
+magasin apres cette date la trouvent sans relire ce fichier.
+
+⚠️ L'ancien chemin `/ticks` lisait `from`/`to` en ETIQUETTES BRUTES et devait
+corriger avec `decalage_serveur_sec`. `/rates` renvoie deja ses `t` corriges
+cote serveur (observe : fenetre `from=20:00:00&to=20:05:00` rend des bougies
+aux `t` 20:00:03, 20:01:03, ...). Pas de correction manuelle necessaire.
 """
 from __future__ import annotations
 
@@ -52,75 +63,61 @@ db.execute("CREATE INDEX IF NOT EXISTS idx_t ON ticks(pair, ts_utc)")
 db.execute("""CREATE TABLE IF NOT EXISTS provenance (
     cle TEXT PRIMARY KEY, valeur TEXT)""")
 db.executemany("INSERT OR REPLACE INTO provenance VALUES (?,?)", [
+    # Marqueurs historiques : gardes pour les lignes ecrites jusqu'au
+    # 2026-11-13 20:57:26, qui sont de VRAIS ticks /ticks.
     ("source", "pont MT5 IC Markets route /ticks, PAS Twelve Data"),
     ("fuseau", "UTC vrai, corrige par -decalage_serveur_sec/60 + 180"),
     ("ancre_verifiee", "fill 09/10 08:20:21 a 4200.22 dans la plage des bids"),
     ("bati_le", "2026-10-11"),
+    # 🔑 Bascule du 2026-11-28 : /ticks disparu du bridge (SHA b85ec3b010cd).
+    ("source_depuis_2026-11-28",
+     "pont /rates horizon=M1, 1 pseudo-tick par bougie close, "
+     "bid = c - s*point/2, ask = c + s*point/2"),
+    ("bascule_motif",
+     "route /ticks 404 Not Found depuis 2026-11-13 ~22:37 UTC, "
+     "confirme le 2026-11-28 sur SHA b85ec3b010cd"),
+    ("bascule_resolution_perdue",
+     "de 2,7 ticks/s a 1 tick/min : ordre intra-minute perdu, "
+     "la convention 'bougie qui contient les deux bornes = stop' "
+     "revient par la petite porte sur les bancs qui lisent apres cette date"),
 ])
 db.commit()
 
 
 def tranche(debut_reel: dt.datetime, fin_reel: dt.datetime):
-    """Rend les ticks d'une tranche REELLE, deja corriges."""
-    # 1er appel : on apprend le decalage du moment
-    q = urllib.parse.urlencode({"pair": PAIRE, "from": debut_reel.isoformat(),
-                                "to": fin_reel.isoformat(), "resume": 1})
-    rq = urllib.request.Request(base + "/ticks?" + q, headers={"X-API-Key": cle})
-    o = json.loads(urllib.request.urlopen(rq, timeout=180).read())
-    ds = o.get("decalage_serveur_sec")
-    if ds is None:
-        return [], None
-    dec = dt.timedelta(minutes=int(round(-float(ds) / 60.0 + 180)))
-    # 2e appel : la fenetre BRUTE qui correspond a la fenetre reelle voulue
-    q2 = urllib.parse.urlencode({"pair": PAIRE,
-                                 "from": (debut_reel + dec).isoformat(),
-                                 "to": (fin_reel + dec).isoformat()})
-    rq2 = urllib.request.Request(base + "/ticks?" + q2,
-                                 headers={"X-API-Key": cle})
-    o2 = json.loads(urllib.request.urlopen(rq2, timeout=180).read())
-    ds2 = o2.get("decalage_serveur_sec")
-    if ds2 is None:
-        return [], None
-    # 🔑 le decalage de CETTE reponse, pas celui du premier appel
-    dec2 = dt.timedelta(minutes=int(round(-float(ds2) / 60.0 + 180)))
+    """Rend les pseudo-ticks d'une tranche REELLE via `/rates` M1.
+
+    Un seul appel suffit : `/rates` rend les `t` deja corriges serveur-side.
+    Pas de pagination (une tranche de 10 min = 10 bougies M1 max, loin du
+    plafond de la route).
+    """
+    q = urllib.parse.urlencode({
+        "pair": PAIRE,
+        "from": debut_reel.isoformat(),
+        "to": fin_reel.isoformat(),
+        "horizon": "M1",
+    })
+    rq = urllib.request.Request(base + "/rates?" + q,
+                                headers={"X-API-Key": cle})
+    o = json.loads(urllib.request.urlopen(rq, timeout=60).read())
+    bougies = o.get("bougies") or []
+    point = float(o.get("point") or 0.01)
     rows = []
-    pages = 0
-    # ⛔ LA ROUTE TRONQUE A 20 000 TICKS PAR APPEL. Mesure : une tranche de
-    # 30 min du 01/09 rendait EXACTEMENT 20 000 ticks -- donc tronquee, et mon
-    # premier constructeur l'ignorait : il perdait des ticks EN SILENCE sur
-    # toutes les tranches chargees. On suit `suite_from` jusqu'a ce que
-    # `tronque` retombe a faux.
-    while True:
-        lot = o2.get("ticks") or []
-        for t in lot:
-            brut = dt.datetime.fromisoformat(t["t"])
-            if brut.tzinfo:
-                brut = brut.replace(tzinfo=None)
-            vrai = brut - dec2
-            rows.append((PAIRE, vrai.isoformat(), int(t.get("ms") or 0),
-                         float(t["bid"]), float(t["ask"])))
-        pages += 1
-        sf = o2.get("suite_from")
-        if not o2.get("tronque") or not sf or pages >= 40:
-            if o2.get("tronque") and pages >= 40:
-                print("   ⛔ %s : encore tronque apres 40 pages — tranche "
-                      "INCOMPLETE, et c'est dit" % debut_reel)
-            break
-        q3 = urllib.parse.urlencode({"pair": PAIRE, "from": sf,
-                                     "to": (fin_reel + dec).isoformat()})
-        rq3 = urllib.request.Request(base + "/ticks?" + q3,
-                                     headers={"X-API-Key": cle})
-        o2 = json.loads(urllib.request.urlopen(rq3, timeout=180).read())
-        ds3 = o2.get("decalage_serveur_sec")
-        if ds3 is not None:
-            dec2 = dt.timedelta(minutes=int(round(-float(ds3) / 60.0 + 180)))
-        time.sleep(0.1)
-    return rows, dec2
+    for b in bougies:
+        brut = dt.datetime.fromisoformat(b["t"])
+        if brut.tzinfo:
+            brut = brut.replace(tzinfo=None)
+        c = float(b["c"])
+        s = float(b.get("s") or 0)
+        half = s * point / 2.0
+        rows.append((PAIRE, brut.isoformat(), 0, c - half, c + half))
+    return rows
 
 
 def main():
     print("cible : %s" % CIBLE)
     print("fenetre REELLE demandee : %s -> %s" % (DEBUT, FIN))
+    print("source : /rates horizon=M1 (route /ticks disparue, cf. provenance)")
     curseur = DEBUT
     total = 0
     t0 = time.time()
@@ -128,7 +125,7 @@ def main():
     while curseur < FIN:
         fin_t = min(curseur + dt.timedelta(minutes=PAS_MIN), FIN)
         try:
-            rows, dec = tranche(curseur, fin_t)
+            rows = tranche(curseur, fin_t)
         except Exception as e:  # noqa: BLE001
             print("   %s -> %s : %s %s — tranche sautee"
                   % (curseur, fin_t, type(e).__name__, e))
@@ -141,17 +138,14 @@ def main():
             total += len(rows)
         tranches += 1
         if tranches % 20 == 0:
-            print("   %s : %d ticks cumules, decalage %+.0f min, %.0f s"
-                  % (curseur.date(), total,
-                     dec.total_seconds() / 60 if dec else 0, time.time() - t0),
-                  flush=True)
+            print("   %s : %d pseudo-ticks cumules, %.0f s"
+                  % (curseur.date(), total, time.time() - t0), flush=True)
         curseur = fin_t
         time.sleep(PAUSE)
     n, a, b = db.execute(
         "SELECT count(*), min(ts_utc), max(ts_utc) FROM ticks WHERE pair = ?",
         (PAIRE,)).fetchone()
     print("\n%d ticks ecrits en %.0f s   %s -> %s" % (n, time.time() - t0, a, b))
-    # continuite : combien de secondes sans aucun tick, en heures de cotation
     print("tranches lues : %d" % tranches)
     return 0
 
