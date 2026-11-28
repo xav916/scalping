@@ -24,7 +24,37 @@ Vide ou absent = aucune restriction (= comportement actuel).
   matin + Londres/NY, skip Asie illiquide et nuit profonde.
 - ``SCALP_TRADING_HOURS_UTC="08:00-16:00"`` : seulement session Londres
   (overlap NY inclus).
+- ``MEANREV_TRADING_HOURS_UTC="13:00-16:00"`` : overlap Londres/NY
+  uniquement — maximum liquidité pour les majors FX (cf. mesure
+  2026-11-28 ci-dessous).
 - Non défini : comportement actuel (trade H24 selon forex_hours).
+
+## Mesure liquidité 2026-11-28 (28 jours tick_volume, majors FX)
+
+Depuis ``spreads_minute.db``, tick_volume moyen par heure UTC
+(marché ouvert) pour les 3 majors meanrev :
+
+    AUD/USD : top 5 = 15h(58), 16h(56), 17h(53), 14h(49), 13h(49) t/min
+              bot 5 = 22h(20), 23h(24), 00h(25), 21h(28), 06h(28)
+    USD/CHF : top 5 = 15h(92), 16h(85), 14h(79), 17h(77), 13h(75) t/min
+              bot 5 = 22h(21), 23h(28), 21h(29), 06h(32), 20h(35)
+    GBP/USD : top 5 = 15h(122), 16h(120), 14h(110), 13h(104), 17h(103)
+              bot 5 = 22h(27), 23h(32), 21h(43), 00h(47), 06h(51)
+
+L'overlap Londres/NY (13h-16h UTC) sort systématiquement en tête :
+sur ces 3 paires, 13-16h concentre le top 4 des tickvolume horaires.
+Pour maximiser la profondeur de carnet (spreads serrés, slippage
+minimum), restreindre MEANREV_TRADING_HOURS_UTC à "13:00-16:00".
+
+Trade-off : fréquence de signaux divisée par ~4 (fenêtre 13h/24h →
+3h/24h). À arbitrer selon le volume de trades souhaité.
+
+Observation 16-23 nov (3 trades meanrev du state) :
+- AUD/USD 11:01 UTC → 33 t/min, rang 14/24 (milieu)
+- USD/CHF 15:07 UTC → 92 t/min, rang 1/24 (pic)
+- GBP/USD 16:03 UTC → 120 t/min, rang 2/24 (quasi-pic)
+
+L'AUD/USD aurait gagné +75% de liquidité en attendant 13-15h UTC.
 """
 from __future__ import annotations
 
